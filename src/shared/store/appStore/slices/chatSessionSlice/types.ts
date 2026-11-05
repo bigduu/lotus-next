@@ -48,7 +48,8 @@ export interface ChatSlice {
   addChat: (chat: Omit<ChatItem, "id">) => Promise<string>;
   selectSession: (sessionId: string | null) => void;
   deleteSession: (sessionId: string) => Promise<void>;
-  getSessionNavigationRevision: () => number;
+  /** Current deletion revision, optionally scoped to the sessions a navigation uses. */
+  getSessionNavigationRevision: (sessionIds?: Iterable<string>) => number;
   invalidateSessionNavigation: (sessionId?: string) => void;
   deleteSessions: (sessionIds: string[]) => Promise<void>;
   updateSession: (

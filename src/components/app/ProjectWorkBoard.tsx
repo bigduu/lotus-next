@@ -7,14 +7,17 @@ import type { WorkCommandContext } from "./project-work/projectWorkControls"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ProjectManifest } from "@services/project"
 import { getErrorMessage } from "@services/api"
-import { boardCountsKnown, projectBoardClient, type BoardStage, type BoardWorkView, type ProjectBoardRow, type ProjectContext } from "@services/tickets/projectBoard"
+import { boardCountsKnown, projectBoardClient, type BoardAssignment, type BoardStage, type BoardWorkView, type ProjectBoardRow, type ProjectContext } from "@services/tickets/projectBoard"
 import type { SnapshotRef } from "@services/tickets/types"
+import { readPatrolStatus, type PatrolStatusRead } from "@services/tickets/patrolStatus"
+import { readRuntimeObservation, type RuntimeObservationRead } from "@services/tickets/runtimeObservation"
 import { useProjectWorkBoard } from "@/hooks/useProjectWorkBoard"
 import { useAssignmentSessions } from "@/hooks/useAssignmentSessions"
 import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
 import { Button } from "@/components/ui/button"
 
 import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
+import { runtimeObservationTarget, savedPatrolTarget, type HealthRead } from "./project-work/assignmentHealth"
 import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
 import { ProjectSprintPanel } from "./project-work/ProjectSprintPanel"
 import type { SprintFilter } from "@services/tickets/sprints"
@@ -35,6 +38,8 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
   const locale = useUiLocale()
   const [view, setView] = useState<BoardWorkView | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [observation, setObservation] = useState<RuntimeObservationRead>({ status: "unknown" })
+  const [patrolStatus, setPatrolStatus] = useState<PatrolStatusRead>({ status: "unknown" })
   const [navigationError, setNavigationError] = useState<string | null>(null)
   const [opening, setOpening] = useState(false)
   const navigationBusy = useRef(false)
@@ -55,7 +60,46 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
       .catch((failure) => { if (!controller.signal.aborted) setError(getErrorMessage(failure)) })
     return () => controller.abort()
   }, [row.ticket.id, snapshot])
-  const assignment = view?.assignments.find((item) => item.id === row.ticket.active_assignment)
+  const { id: workId, generation, active_assignment: currentAssignmentId } = row.ticket
+  const attempts: HealthRead<readonly BoardAssignment[]> = view && sessions.online
+    ? { status: "available", value: view.assignments, updatedAt: null }
+    : { status: "unknown", reason: error ?? (sessions.online ? uiText("project_work_loading") : uiText("assignment_health_stale_hint")) }
+  const nowMs = Date.now()
+  const { commit, seq, authority_epoch: authorityEpoch } = snapshot
+  const target = view && sessions.online ? runtimeObservationTarget(row.ticket, view, authorityEpoch, nowMs) : undefined
+  const assignmentId = target?.assignmentId
+  const assignmentAuthorityEpoch = target?.assignmentAuthorityEpoch
+  const mode = target?.mode
+  useEffect(() => {
+    setObservation({ status: "unknown" })
+    if (!assignmentId || !mode || assignmentAuthorityEpoch === undefined) return
+    const controller = new AbortController()
+    const target = {
+      mode, projectId, workId, assignmentId, generation, assignmentAuthorityEpoch,
+      snapshot: { commit, seq, authority_epoch: authorityEpoch },
+    }
+    void readRuntimeObservation(target, controller.signal).then((result) => {
+      if (!controller.signal.aborted && navigator.onLine) setObservation(result)
+    })
+    return () => controller.abort()
+  }, [mode, projectId, workId, assignmentId, generation, assignmentAuthorityEpoch, commit, seq, authorityEpoch])
+
+  const patrolTarget = view && sessions.online ? savedPatrolTarget(row.ticket, view, authorityEpoch, nowMs) : undefined
+  const patrolAssignmentId = patrolTarget?.assignmentId
+  const patrolAuthorityEpoch = patrolTarget?.assignmentAuthorityEpoch
+  useEffect(() => {
+    setPatrolStatus({ status: "unknown" })
+    if (!patrolAssignmentId || patrolAuthorityEpoch === undefined) return
+    const controller = new AbortController()
+    void readPatrolStatus({
+      projectId, workId, assignmentId: patrolAssignmentId, generation, assignmentAuthorityEpoch: patrolAuthorityEpoch,
+      snapshot: { commit, seq, authority_epoch: authorityEpoch },
+    }, controller.signal).then((result) => {
+      if (!controller.signal.aborted && navigator.onLine) setPatrolStatus(result)
+    })
+    return () => controller.abort()
+  }, [projectId, workId, patrolAssignmentId, generation, patrolAuthorityEpoch, commit, seq, authorityEpoch])
+  const assignment = view?.assignments.find((item) => item.id === currentAssignmentId)
   return <section aria-label={row.ticket.contract.title} className="min-w-0 rounded-xl border bg-background p-4 text-sm" data-testid="project-work-details">
     <div className="flex items-start justify-between gap-3"><h3 className="min-w-0 break-words font-semibold">{row.ticket.contract.title}</h3><Button size="sm" variant="ghost" onClick={onClose}>{uiText("project_work_close_details")}</Button></div>
     <h4 className="mt-3 font-medium">{uiText("project_work_contract")}</h4>
@@ -69,11 +113,11 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
       {assignment?.workspace ? <><dt>{uiText("project_work_repos")}</dt><dd className="break-all">{assignment.workspace.repo}<br />{assignment.workspace.branch}<br />{assignment.workspace.worktree}</dd></> : null}
     </dl>
     <div className="mt-4"><AssignmentHealthPanel
-      workId={row.ticket.id} generation={row.ticket.generation} authorityEpoch={snapshot.authority_epoch}
-      currentAssignmentId={row.ticket.active_assignment}
-      attempts={view && sessions.online ? { status: "available", value: view.assignments, updatedAt: null } : { status: "unknown", reason: error ?? (sessions.online ? uiText("project_work_loading") : uiText("assignment_health_stale_hint")) }}
-      observations={{ status: "unsupported" }} incidents={{ status: "unsupported" }} sessions={sessions.sessions}
-      blockReason={row.ticket.blocked?.reason} nowMs={Date.now()} locale={locale} copy={makeAssignmentHealthCopy()}
+      workId={workId} generation={generation} authorityEpoch={authorityEpoch}
+      currentAssignmentId={currentAssignmentId} attempts={attempts}
+      patrolStatus={patrolAssignmentId ? patrolStatus : { status: "unknown" }}
+      runtimeObservation={assignmentId ? observation : { status: "unknown" }} sessions={sessions.sessions}
+      blockReason={row.ticket.blocked?.reason} nowMs={nowMs} locale={locale} copy={makeAssignmentHealthCopy()}
       onOpenSession={onOpenSession && sessions.online ? (id) => void openSession(id) : undefined}
     /></div>
     {opening ? <p role="status" className="mt-2 text-xs">{uiText("assignment_health_opening_session")}</p> : null}
@@ -152,7 +196,7 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
     {page?.next_cursor ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void loadMore()}>{uiText("project_work_more")}</Button> : null}
-    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} projectId={project.id} onOpenSession={onOpenSession} onClose={() => setSelectedId(null)} />
+    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={JSON.stringify([project.id, page.snapshot.commit, page.snapshot.seq, page.snapshot.authority_epoch, selected.ticket.id, selected.ticket.generation, selected.ticket.active_assignment])} row={selected} snapshot={page.snapshot} projectId={project.id} onOpenSession={onOpenSession} onClose={() => setSelectedId(null)} />
       {staleControls ? <p role="status" className="text-sm text-muted-foreground">{uiText("project_work_controls_unavailable_context")}</p> : null}
       {planning ? <ProjectWorkPlanningControls key={`planning:${selected.ticket.id}:${selected.ticket.generation}`} {...planning} owner={owner && planning.owner} command={commandAtSnapshot(planning.command, selected, page.snapshot)} copy={projectWorkControlsCopy()} /> : null}
       {ownerControls ? <ProjectWorkOwnerControls key={`owner:${selected.ticket.id}:${selected.ticket.generation}`} {...ownerControls} owner={owner && ownerControls.owner} commands={ownerCommands} copy={projectWorkControlsCopy()} /> : null}

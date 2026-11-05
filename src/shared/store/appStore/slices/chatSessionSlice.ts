@@ -94,6 +94,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       .find((candidate) => candidate && (candidate.selection
         ? selection && sameIdentity?.(candidate.selection, selection) : !selection));
   let navigationRevision = 0;
+  let navigationResetRevision = 0;
+  const sessionNavigationRevisions = new Map<string, number>();
   const reconcileClear = (sessionId: string, newEvent: boolean) => {
     // An event has no revision. Fence work known at notification time, not
     // newer work created while the replacement read is in flight.
@@ -219,13 +221,24 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     set({ currentSessionId: sessionId, latestActiveSessionId: sessionId });
   },
 
-  getSessionNavigationRevision: () => navigationRevision,
+  getSessionNavigationRevision: (sessionIds) => {
+    if (!sessionIds) return navigationRevision;
+    let revision = navigationResetRevision;
+    for (const id of sessionIds) revision = Math.max(revision, sessionNavigationRevisions.get(id) ?? 0);
+    return revision;
+  },
   invalidateSessionNavigation: (sessionId) => {
     navigationRevision += 1;
     const reads = historyReads.get(get);
-    if (!sessionId) { reads?.clear(); pendingClearRevisions.clear(); replacementRevisions.clear(); acknowledgedClears.clear(); return; }
+    if (!sessionId) {
+      navigationResetRevision = navigationRevision;
+      sessionNavigationRevisions.clear();
+      reads?.clear(); pendingClearRevisions.clear(); replacementRevisions.clear(); acknowledgedClears.clear();
+      return;
+    }
     const affected = new Set([sessionId, ...get().chats.filter((chat) => chat.rootSessionId === sessionId).map((chat) => chat.id)]);
     for (const id of affected) {
+      sessionNavigationRevisions.set(id, navigationRevision);
       reads?.delete(id); pendingClearRevisions.delete(id); replacementRevisions.delete(id); acknowledgedClears.delete(id);
     }
   },

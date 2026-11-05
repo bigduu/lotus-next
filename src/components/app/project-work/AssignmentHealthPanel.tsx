@@ -1,4 +1,7 @@
 import { useId, type ReactNode } from "react"
+import type { PatrolStatusRead } from "@services/tickets/patrolStatus"
+import { PatrolStatusSummary } from "./PatrolStatusSummary"
+import type { RuntimeObservationRead } from "@services/tickets/runtimeObservation"
 import { Button } from "@/components/ui/button"
 import {
   currentAssignment, healthReadStatus, recoveryState, sameFence, sessionAccess, timestampMs, verifiedObservation,
@@ -11,6 +14,8 @@ export interface AssignmentHealthPanelProps {
   authorityEpoch: number
   currentAssignmentId: string | null
   attempts: HealthRead<readonly AssignmentAttempt[]>
+  runtimeObservation?: RuntimeObservationRead
+  patrolStatus?: PatrolStatusRead
   observations?: HealthRead<readonly AssignmentObservation[]>
   incidents?: HealthRead<readonly PatrolIncident[]>
   sessions?: HealthRead<readonly SessionAccessRef[]>
@@ -34,6 +39,10 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
   const status = healthReadStatus(attemptRead, nowMs)
   const attempts = props.attempts.status === "available" ? props.attempts.value.filter((item) => item.work_id === undefined || item.work_id === workId) : []
   const observation = owner.attempt ? verifiedObservation(owner.attempt, props.observations, nowMs) : undefined
+  // The HTTP snapshot has a different contract from the hypothetical incident
+  // and recovery inputs. It does not assert execution state or recovery.
+  const runtime = props.runtimeObservation?.status === "sample" ? props.runtimeObservation.facts : undefined
+  const wait = runtime?.wait
   const history = attempts.filter((item) => item !== owner.attempt)
   const incidentScopeMismatch = props.incidents?.status === "available" && props.incidents.value.some((item) => item.work_id !== workId)
   const incidentStatus = incidentScopeMismatch ? "unknown" : healthReadStatus(props.incidents, nowMs, true)
@@ -46,6 +55,8 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
     return at === null ? <span className="text-muted-foreground">{copy.notRecorded}</span>
       : <time dateTime={value!}>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "long" }).format(at)}</time>
   }
+  const runtimeTime = (value: number | null | undefined) => value == null
+    ? <span className="text-muted-foreground">{copy.unknown}</span> : time(new Date(value).toISOString())
   const identifier = (value: string | null | undefined) => value ? <code className="break-all text-xs">{value}</code> : <span className="text-muted-foreground">{copy.notRecorded}</span>
   const session = (attempt: AssignmentAttempt) => {
     const access = sessionAccess(attempt, props.sessions, nowMs)
@@ -89,19 +100,41 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
       {owner.status === "none" ? <p className="mb-3 text-xs text-muted-foreground">{copy.noCurrentHint}</p> : null}
       {owner.attempt ? attemptFacts(owner.attempt) : props.currentAssignmentId ? <dl><Fact label={copy.assignment}>{identifier(props.currentAssignmentId)}</Fact></dl> : null}
       <div className="mt-3 rounded-lg bg-muted/40 p-3" data-testid="assignment-observation">
-        <p className="mb-2 font-medium" data-testid="assignment-execution-status">{copy[execution]}</p>
-        <p className="mb-3 text-xs text-muted-foreground">{copy.updatedAt}: {time(observation ? props.observations?.updatedAt : null)}</p>
-        <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-          <Fact label={copy.heartbeat}>{time(observation?.heartbeat_at)}</Fact>
-          <Fact label={copy.progress}>{time(observation?.progress?.at)}</Fact>
-          <Fact label={copy.waitReason}>{observation?.wait_reason || copy.notRecorded}</Fact>
-          <Fact label={copy.blockReason}>{props.blockReason || observation?.block_reason || copy.notRecorded}</Fact>
-          <Fact label={copy.nextCheck}>{time(observation?.next_check_at)}</Fact>
-          {observation?.progress ? <Fact label={copy.evidence}>{identifier(observation.progress.evidence_ref)}</Fact> : null}
-          {observation?.terminal ? <><Fact label={copy.terminal_observed}>{observation.terminal.state}</Fact><Fact label={copy.evidence}>{identifier(observation.terminal.evidence_ref)}</Fact></> : null}
-        </dl>
+        {props.runtimeObservation
+          ? <h6 className="mb-2 font-medium">{copy.runtimeTitle}</h6>
+          : <p className="mb-2 font-medium" data-testid="assignment-execution-status">{copy[execution]}</p>}
+        {props.runtimeObservation ? <>
+          <p className="mb-3 text-xs text-muted-foreground">{copy.runtimeSnapshot}</p>
+          <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+            <Fact label={copy.taskEntry}>{runtimeTime(runtime?.startedAt)}</Fact>
+            <Fact label={copy.heartbeat}>{runtimeTime(runtime?.heartbeatAt)}</Fact>
+            <Fact label={copy.progress}>{runtimeTime(runtime?.progress?.at)}</Fact>
+            {runtime?.progress ? <Fact label={copy.progressSequence}>{runtime.progress.sequence}</Fact> : null}
+            <Fact label={copy.waitReason}>{wait ? copy[wait.kind] : copy.unknown}</Fact>
+            <Fact label={copy.blockReason}>{props.blockReason || copy.notRecorded}</Fact>
+            {wait ? <>
+              <Fact label={copy.waitIssued}>{runtimeTime(wait.issuedAt)}</Fact>
+              <Fact label={copy.diagnosticAllowance}>{runtimeTime(wait.allowanceUntil)}</Fact>
+            </> : null}
+          </dl>
+          {runtime?.outcomeUnknown ? <p className="mt-3 text-xs">{copy.outcomeUnknown}</p> : null}
+          {props.runtimeObservation.status === "denied" || props.runtimeObservation.status === "unavailable" ? <p className="mt-1 text-xs" data-testid="assignment-observation-status">
+            {props.runtimeObservation.status === "denied" ? copy.runtimeDenied : copy.runtimeUnavailable}
+          </p> : null}
+        </> : <>
+          <p className="mb-3 text-xs text-muted-foreground">{copy.updatedAt}: {time(observation ? props.observations?.updatedAt : null)}</p>
+          <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+            <Fact label={copy.heartbeat}>{time(observation?.heartbeat_at)}</Fact>
+            <Fact label={copy.progress}>{time(observation?.progress?.at)}</Fact>
+            <Fact label={copy.waitReason}>{observation?.wait_reason || copy.notRecorded}</Fact>
+            <Fact label={copy.blockReason}>{props.blockReason || observation?.block_reason || copy.notRecorded}</Fact>
+            <Fact label={copy.nextCheck}>{time(observation?.next_check_at)}</Fact>
+            {observation?.progress ? <Fact label={copy.evidence}>{identifier(observation.progress.evidence_ref)}</Fact> : null}
+            {observation?.terminal ? <><Fact label={copy.terminal_observed}>{observation.terminal.state}</Fact><Fact label={copy.evidence}>{identifier(observation.terminal.evidence_ref)}</Fact></> : null}
+          </dl>
+          {healthReadStatus(props.observations, nowMs, true) !== "available" ? <p className="mt-1 text-xs" data-testid="assignment-observation-status">{copy[healthReadStatus(props.observations, nowMs, true)]}</p> : null}
+        </>}
         <p className="mt-3 text-xs text-muted-foreground">{copy.heartbeatHint}</p>
-        {healthReadStatus(props.observations, nowMs, true) !== "available" ? <p className="mt-1 text-xs" data-testid="assignment-observation-status">{copy[healthReadStatus(props.observations, nowMs, true)]}</p> : null}
       </div>
     </div>
 
@@ -111,7 +144,8 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
         : <p className="mt-2 text-muted-foreground">{status === "available" ? copy.emptyHistory : copy[status]}</p>}
     </details>
 
-    <div className="mt-4 min-w-0 border-t pt-3" data-testid="assignment-patrol">
+    {props.patrolStatus ? <PatrolStatusSummary read={props.patrolStatus} locale={locale} />
+      : <div className="mt-4 min-w-0 border-t pt-3" data-testid="assignment-patrol">
       <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{copy.patrol}</h5><span className="rounded-md border px-2 py-0.5 text-xs">{copy[incidentStatus]}</span></div>
       <p className="mt-1 text-xs text-muted-foreground">{copy.updatedAt}: {time(props.incidents?.updatedAt)}</p>
       {incidentStatus === "unsupported" ? <p className="mt-2">{copy.patrolUnsupported}</p> : incidentStatus === "unknown" ? <p className="mt-2">{copy.staleHint}</p> : !incidents.length ? <p className="mt-2">{copy.noIncidents}</p> : null}
@@ -146,6 +180,6 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
           <p className="mt-3 text-xs text-muted-foreground">{copy.recoveryHint}</p>
         </li>
       })}</ul>
-    </div>
+    </div>}
   </section>
 }

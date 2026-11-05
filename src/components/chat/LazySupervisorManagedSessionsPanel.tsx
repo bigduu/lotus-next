@@ -15,7 +15,7 @@ export function LazySupervisorManagedSessionsPanel({ loadPanel = loadSessions, .
   useUiLocale()
   const [Panel, setPanel] = useState(() => feature(loadPanel))
   return <ErrorBoundary name="Supervisor sessions" fallback={(_error, reset) => <div role="alert" className="text-sm">
-    <p>{uiText("supervisor_sessions_unavailable")}</p>
+    <p>{uiText("supervisor_sessions_render_failed")}</p>
     <button type="button" className="mt-2 underline" onClick={() => { setPanel(feature(loadPanel)); reset() }}>{uiText("retry_b8784c8d")}</button>
   </div>}>
     <Suspense fallback={<p role="status" className="text-xs text-muted-foreground">{uiText("supervisor_sessions_loading")}</p>}>

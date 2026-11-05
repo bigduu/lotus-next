@@ -34,6 +34,7 @@ export interface PendingRequest {
   contract_revision: number; prompt_revision: number; updated_seq: number
   kind: { kind: "question" } | { kind: "approval"; fingerprint: string; action: Action }
   prompt: string; status: RequestStatus; answer: string | null
+  worker_packet_hash?: string | null
 }
 export type AssignmentState = "planned" | "dispatch_pending" | "admitted" | "running" | "submitted" | "blocked" | "failed" | "cancelling" | "cancelled" | "outcome_unknown"
 export interface Assignment {

@@ -1,7 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { isApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
-import { actorSnapshotRegresses, actorTreeCursorCovers, getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
+import { actorSnapshotRegresses, actorTreeCursorCovers, getActorSnapshot, InvalidActorSnapshotError, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
 import { subscribeActor, subscribeActorTree } from "@services/chat/v2Stream"
 import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
 
@@ -12,6 +12,8 @@ interface SnapshotState {
   snapshot: ActorSubtreeSnapshot | null
   loading: boolean
   error: string | null
+  /** Classification of the retained error; only UI affordances read it. */
+  retryable: boolean
   /** A gap clears only when its own authority domain is proven recovered. */
   gapReason: ActorSnapshotGapReason | null
   /** Origin of the retained Actor warning; null for Root/tree observations. */
@@ -24,7 +26,11 @@ function failureMessage(error: unknown): string {
     if (error.status === 404 || error.status === 501) return uiText("this_bamboo_version_does_not_provide_agent_structure_ch_ae23a7fe")
     if (error.status === 409) return uiText("agent_structure_or_permissions_are_changing_and_cannot__bc1899b0")
     if (error.status === 413) return uiText("agent_structure_exceeds_the_current_read_limit_and_cann_a53518ef")
+    if (error.status >= 500) return uiText("bamboo_is_temporarily_unavailable_check_that_the_servic_f2489632")
   }
+  if (error instanceof InvalidActorSnapshotError) return uiText("the_agent_structure_response_is_invalid_or_unsupported__d3bdb4ac")
+  if (error instanceof RequestTimeoutError) return uiText("actor_structure_read_timeout")
+  if (error instanceof NetworkRequestError) return uiText("actor_structure_read_network")
   return uiText("agent_structure_cannot_be_confirmed_right_now_reload_st_2ba610a7")
 }
 
@@ -37,7 +43,7 @@ function retryableSnapshotFailure(error: unknown): boolean {
 export function useActorSnapshot(rootId: string | null, active: boolean, interestedActorId: string | null = null, descendantCountHint: number | null = null) {
   useUiLocale()
   useRenderProbe("hook.useActorSnapshot")
-  const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null, gapActorId: null })
+  const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, retryable: false, gapReason: null, gapActorId: null })
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -68,7 +74,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     const controller = new AbortController()
     request.current = controller
     setState((previous) => ({ rootId: id, snapshot: previous.rootId === id ? previous.snapshot : null,
-      loading: true, error: null, gapReason: previous.rootId === id ? previous.gapReason : null,
+      loading: true, error: null, retryable: false, gapReason: previous.rootId === id ? previous.gapReason : null,
       gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     try {
       const snapshot = await getActorSnapshot(id, id, controller.signal)
@@ -85,17 +91,19 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         actorTreeCursorCovers(snapshot.stream_cursor, requiredTreeCursor.current)) {
         requiredTreeCursor.current = undefined
       }
-      setState(() => ({ rootId: id, snapshot, loading: false, error: null,
+      setState(() => ({ rootId: id, snapshot, loading: false, error: null, retryable: false,
         gapReason: workerGap.current?.reason ?? (requiredTreeCursor.current !== undefined ? "transport_gap" : null),
         gapActorId: workerGap.current?.actorId ?? null }))
     } catch (error) {
       if (controller.signal.aborted || generation.current !== version || scope.current.rootId !== id || !scope.current.active) return
-      if (snapshotRef.current && requiredTreeCursor.current !== undefined && retryableSnapshotFailure(error)) {
+      const retryable = retryableSnapshotFailure(error)
+      const pendingTreeGap = requiredTreeCursor.current !== undefined
+      if (snapshotRef.current && pendingTreeGap && retryable) {
         // A pending Host transaction or interrupted read cannot revoke the
         // last confirmed tree. Keep its subscription and retry at a bounded
         // rate until a covering Root snapshot proves the gap repaired.
         setState((previous) => previous.rootId === id ? {
-          ...previous, loading: false, error: failureMessage(error),
+          ...previous, loading: false, error: failureMessage(error), retryable: true,
           gapReason: workerGap.current?.reason ?? "transport_gap", gapActorId: workerGap.current?.actorId ?? null,
         } : previous)
         const delay = Math.min(500 * 2 ** Math.min(retryAttempts.current, 6), 30_000)
@@ -106,8 +114,11 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         }, delay)
         return
       }
-      snapshotRef.current = null
-      setState((previous) => ({ rootId: id, snapshot: null, loading: false, error: failureMessage(error),
+      // Transport failures leave the last confirmed tree usable. A conflict
+      // outside gap recovery can change the authority behind that tree.
+      const lastConfirmed = retryable && !(isApiError(error) && error.status === 409) ? snapshotRef.current : null
+      snapshotRef.current = lastConfirmed
+      setState((previous) => ({ rootId: id, snapshot: lastConfirmed, loading: false, error: failureMessage(error), retryable,
         gapReason: previous.rootId === id ? previous.gapReason : null,
         gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     } finally {
@@ -267,6 +278,6 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   }, [authorized, rootId, interestedActorId, queueRefresh])
 
   const visible = state.rootId === rootId ? state : { rootId, snapshot: null,
-    loading: active && rootId !== null, error: null, gapReason: null, gapActorId: null }
+    loading: active && rootId !== null, error: null, retryable: false, gapReason: null, gapActorId: null }
   return { ...visible, refresh }
 }

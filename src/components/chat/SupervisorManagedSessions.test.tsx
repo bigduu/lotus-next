@@ -2,6 +2,7 @@ import { act, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
+import { NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
 import { uiText } from "@shared/i18n/ui"
 import type { ManagedSessionsResponse } from "@services/supervisorScope/managedSessions"
 import type { ManagedSessionsDependencies } from "@/hooks/useSupervisorManagedSessions"
@@ -86,6 +87,33 @@ it("keeps old backend management unsupported without inventing an empty authoriz
   expect(document.body.textContent).not.toContain(uiText("supervisor_sessions_empty"))
   expect(document.querySelectorAll('[data-managed-session]')).toHaveLength(0)
   expect(h.dependencies.update).not.toHaveBeenCalled()
+})
+it.each([
+  ["503", new ApiError("unavailable", 503, "")],
+  ["502", new ApiError("bad gateway", 502, "")],
+  ["network", new NetworkRequestError()],
+  ["timeout", new RequestTimeoutError()],
+])("keeps a %s read failure transient with an invitation to refresh", async (_label, failure) => {
+  const read: ManagedSessionsDependencies["read"] = vi.fn(async () => { throw failure })
+  await mount({ panel: true, read })
+  const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
+  expect(panel.querySelector('[role="alert"]')?.textContent).toBe(uiText("supervisor_sessions_unavailable"))
+  expect(panel.textContent).not.toContain(uiText("supervisor_sessions_read_failed"))
+})
+it("reports an unclassified read failure without inventing a cause", async () => {
+  const read: ManagedSessionsDependencies["read"] = vi.fn(async () => { throw new Error("unexpected failure") })
+  await mount({ panel: true, read })
+  const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
+  expect(panel.querySelector('[role="alert"]')?.textContent).toBe(uiText("supervisor_sessions_read_failed"))
+  expect(panel.textContent).not.toContain(uiText("supervisor_sessions_unavailable"))
+})
+it("names a vanished Project distinctly from a generic read failure", async () => {
+  const read: ManagedSessionsDependencies["read"] = vi.fn(async () => { throw new ApiError("gone", 404, "", JSON.stringify({ code: "project_unavailable" })) })
+  await mount({ panel: true, read })
+  const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
+  expect(panel.querySelector('[role="alert"]')?.textContent).toBe(uiText("supervisor_sessions_project_unavailable"))
+  expect(panel.querySelectorAll('[role="alert"]')).toHaveLength(1)
+  expect(panel.textContent).not.toContain(uiText("supervisor_sessions_unavailable"))
 })
 it("makes managed independent sessions the panel contents and opens the selected target", async () => {
   const h = await mount({ panel: true })
