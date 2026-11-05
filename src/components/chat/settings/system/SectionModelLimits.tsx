@@ -328,6 +328,7 @@ export function SectionModelLimits({
     add(defaults?.planning?.model)
     add(defaults?.search?.model)
     add(defaults?.code_review?.model)
+    add(defaults?.work_review?.model)
     add(defaults?.sub_agent?.model)
     Object.values(defaults?.subagent_models ?? {}).forEach((reference) => add(reference.model))
 

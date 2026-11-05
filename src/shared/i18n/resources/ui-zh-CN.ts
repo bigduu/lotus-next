@@ -2923,5 +2923,7 @@ export const uiZhCn = {
   "session_migration_blocked": "当前暂不能迁移",
   "session_migration_in_progress": "正在迁移…",
   "session_migration_confirm_result": "确认迁移结果",
-  "session_migration_refresh": "刷新迁移状态"
+  "session_migration_refresh": "刷新迁移状态",
+  "work_review_model_purpose": "工作审查",
+  "work_review_model_description": "复核 Work 的目的、进度与交接记录；未设置时只回退到已配置的快速模型。"
 } as const

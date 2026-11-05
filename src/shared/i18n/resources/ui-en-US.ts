@@ -2925,5 +2925,7 @@ export const uiEnUs = {
   "session_migration_blocked": "Migration is temporarily unavailable",
   "session_migration_in_progress": "Migrating…",
   "session_migration_confirm_result": "Confirm migration result",
-  "session_migration_refresh": "Refresh migration state"
+  "session_migration_refresh": "Refresh migration state",
+  "work_review_model_purpose": "Work review",
+  "work_review_model_description": "Reviews a Work's purpose, progress and handoff records. Falls back only to configured Fast when unset."
 } as const

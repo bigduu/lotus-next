@@ -929,6 +929,59 @@ describe("Provider defaults authoritative refresh", () => {
     expect(container.textContent).toContain("只回退到已配置的快速模型")
   })
 
+  it("saves and reads back an explicit Work review route without changing other purposes", async () => {
+    const current = {
+      ...snapshot(),
+      defaults: {
+        ...snapshot().defaults!,
+        fast: { provider: instance.id, model: "gpt-5.6-luna", reasoning_effort: "max" as const },
+        subagent_models: { worker: { provider: instance.id, model: "gpt-5.6-sol" } },
+      },
+    }
+    const review = { provider: instance.id, model: "new-review", reasoning_effort: "none" as const }
+    const saved = { ...current, defaults: { ...current.defaults, work_review: review } }
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({ providerSnapshot: saved, providerStatus: "ready" })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+    await chooseSelectOption("工作审查提供方", "Primary OpenAI")
+    await changeInput(roleByName("combobox", "工作审查模型", container) as HTMLInputElement, "new-review")
+    await chooseSelectOption("工作审查推理强度", "关闭")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
+    await flush()
+    expect(post).toHaveBeenCalledWith("/bamboo/config", expect.objectContaining({
+      defaults: expect.objectContaining({ ...current.defaults, work_review: review }),
+    }))
+    expect(loadProviderInstances).toHaveBeenCalledOnce()
+    expect((roleByName("combobox", "工作审查模型", container) as HTMLInputElement).value).toBe("new-review")
+    expect(roleByName("combobox", "工作审查推理强度", container).textContent).toBe("关闭")
+    expect(container.querySelector(".text-emerald-500")?.textContent).toBe("已保存")
+  })
+
+  it("unsets only the Work review override after authoritative readback", async () => {
+    const saved = { ...snapshot(), defaults: { ...snapshot().defaults!, fast: { provider: instance.id, model: "gpt-5.6-luna" } } }
+    const current = { ...saved, defaults: { ...saved.defaults, work_review: { provider: instance.id, model: "new-review" } } }
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({ providerSnapshot: saved, providerStatus: "ready" })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+    await chooseSelectOption("工作审查提供方", "未设置")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
+    await flush()
+    expect(post).toHaveBeenCalledWith("/bamboo/config", expect.objectContaining({
+      defaults: expect.objectContaining({ ...saved.defaults, work_review: null }),
+    }))
+    expect(container.querySelector(".text-emerald-500")?.textContent).toBe("已保存")
+  })
+
   it("shows the four everyday Bodhi roles with guidance and keeps specialist routes collapsed", async () => {
     setStore({})
 
