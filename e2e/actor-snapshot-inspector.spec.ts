@@ -445,14 +445,15 @@ test("child side chat follows automatic corrections and pauses only for upward r
   await page.screenshot({ path: testInfo.outputPath("child-bottom-follow-restored.png") })
 })
 
-test("pending and budget-rejected snapshots never present a partial actor tree", async ({ page }, testInfo) => {
+test("budget and transient refresh errors expose distinct actor tree states", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "tablet-chromium", "desktop and phone acceptance")
   const { observation } = await prepare(page)
   let release!: () => void
   const pending = new Promise<void>((resolve) => { release = resolve })
-  let blocked = true
+  let errorStatus: 413 | 503 | null = 413
   await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, async (route) => {
-    if (blocked) { await pending; return route.fulfill({ status: 413, json: { schema_version: 1, error: "budget_exceeded" } }) }
+    if (errorStatus === 413) { await pending; return route.fulfill({ status: 413, json: { schema_version: 1, error: "budget_exceeded" } }) }
+    if (errorStatus === 503) return route.fulfill({ status: 503, json: { error: "unavailable" } })
     return route.fulfill({ json: actorSnapshotFixture(rootId, 0) })
   })
   await page.goto(standaloneScenario.entryUrl)
@@ -464,10 +465,24 @@ test("pending and budget-rejected snapshots never present a partial actor tree",
   release()
   await expect(panel.getByRole("alert")).toContainText("超过当前读取上限")
   await expect(panel.getByRole("treeitem")).toHaveCount(0)
-  await expect(panel.getByText("代理结构尚未确认。")).toBeVisible()
+  await expect(panel.getByText("代理结构尚未确认。")).toHaveCount(0)
+  const refresh = panel.getByRole("button", { name: "刷新代理结构" })
+  const retry = panel.getByRole("button", { name: "重试", exact: true })
+  await expect(refresh).toHaveCount(0)
+  await expect(retry).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath("actor-snapshot-budget-error.png") })
-  blocked = false
-  await panel.getByRole("button", { name: "重试", exact: true }).click()
+  errorStatus = null
+  await page.reload()
+  await expect(panel.getByRole("treeitem")).toHaveCount(1)
+  errorStatus = 503
+  await refresh.click()
+  await expect(panel.getByRole("alert")).toContainText("Bamboo 服务暂时不可用")
+  await expect(panel.getByRole("treeitem")).toHaveCount(1)
+  await expect(refresh).toHaveCount(0)
+  await expect(retry).toHaveCount(1)
+  await page.screenshot({ path: testInfo.outputPath("actor-snapshot-transient-error.png") })
+  errorStatus = null
+  await retry.click()
   await expect(panel.getByRole("treeitem")).toHaveCount(1)
   await expect(panel.getByRole("alert")).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])

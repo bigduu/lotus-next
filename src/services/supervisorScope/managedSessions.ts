@@ -1,4 +1,5 @@
 import { apiClient, isApiError } from "@services/api"
+import { NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
 import { agentClient, type HistoryResponse } from "@services/chat/AgentService"
 import { projectId, safeRevision, sameSupervisor, scopeProblem } from "./client"
 import type { ScopeProblem, SupervisorReference } from "./types"
@@ -166,7 +167,11 @@ export const canWriteManagedSessions = (value: ManagedSessionsResponse | null) =
   && value?.capabilities.managed_sessions_http_v1 === true && value.owner_authorization.available
 export function managedSessionsProblem(error: unknown): ScopeProblem {
   if (error instanceof InvalidManagedSessions) return { kind: "invalid" }
-  if (isApiError(error) && error.status === 501) return { kind: "unsupported" }
+  if (isApiError(error)) {
+    if (error.status === 501) return { kind: "unsupported" }
+    if (error.status >= 500) return { kind: "unavailable" }
+  }
+  if (error instanceof NetworkRequestError || error instanceof RequestTimeoutError) return { kind: "unavailable" }
   return scopeProblem(error)
 }
 function decodedTarget(value: unknown): CurrentUserSessionTarget {
