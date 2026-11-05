@@ -7,6 +7,10 @@ import {
   type SharePreviewResponse, type ShareSelection, type ShareRevisions,
 } from "@shared/types/configShare"
 
+// The accepted sharing wire schema has no work_review scenario yet. Reading
+// and editing that saved purpose must not advertise an unsupported export.
+const SHARE_MODEL_REF_KEYS = PROVIDER_DEFAULT_MODEL_REF_KEYS.filter((key) => key !== "work_review")
+
 export class ConfigShareError extends Error {
   constructor(readonly kind: "invalid" | "stale" | "unavailable" | "unconfirmed") {
     // Never retain backend errors: they can contain submitted sensitive data.
@@ -74,7 +78,7 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
     if (!boundedString(row.provider) || !boundedString(row.model)) throw new ConfigShareError("unavailable")
   }
   for (const row of p.scenarios as Record<string, unknown>[]) {
-    if (!PROVIDER_DEFAULT_MODEL_REF_KEYS.includes(row.scenario as never)) throw new ConfigShareError("unavailable")
+    if (!SHARE_MODEL_REF_KEYS.includes(row.scenario as never)) throw new ConfigShareError("unavailable")
   }
   for (const row of [...p.subagent_models as Record<string, unknown>[], ...p.env as Record<string, unknown>[]]) {
     if (!boundedString(row.name)) throw new ConfigShareError("unavailable")
@@ -177,7 +181,7 @@ export class ConfigShareService {
       // Store only display metadata. Existing GETs never supply API keys.
       return {
         providers: snapshot.instances.map(({ id, label, type }) => ({ id, label, type })),
-        scenarios: PROVIDER_DEFAULT_MODEL_REF_KEYS.flatMap((name) => {
+        scenarios: SHARE_MODEL_REF_KEYS.flatMap((name) => {
           const ref = snapshot.defaults?.[name]
           return ref ? [{ name, provider: routingId(ref.provider), model: ref.model }] : []
         }),

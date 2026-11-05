@@ -18,6 +18,17 @@ const applyRequest = (): ShareApplyRequest => ({
 })
 
 describe("ConfigShareService", () => {
+  it("does not advertise Work review through the older sharing scenario schema", async () => {
+    const chat = { provider: "sample", model: "chat" }
+    vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue({
+      default_provider_instance_id: "sample",
+      instances: [{ id: "sample", type: "openai", label: "Sample", enabled: true, config: {} }],
+      defaults: { chat, work_review: { provider: "sample", model: "review", reasoning_effort: "none" } },
+    })
+    vi.spyOn(settingsService, "getEnvVars").mockResolvedValue({ revision: 1, entries: [] })
+    expect((await service.inventory()).scenarios).toEqual([{ name: "chat", ...chat }])
+  })
+
   const revisions = { providers: 4, env: 5, credentials: 6 }
   const health = () => ({
     providers: { revision: 4, status: "healthy" },

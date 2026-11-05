@@ -884,6 +884,104 @@ describe("Editable provider model combobox", () => {
 })
 
 describe("Provider defaults authoritative refresh", () => {
+  it("preserves a saved Work review route when another purpose is edited", async () => {
+    const review = { provider: instance.id, model: "new-review", reasoning_effort: "none" as const }
+    const current = {
+      ...snapshot(),
+      defaults: {
+        ...snapshot().defaults!,
+        fast: { provider: instance.id, model: "gpt-5.6-luna" },
+        work_review: review,
+        subagent_models: { worker: { provider: instance.id, model: "gpt-5.6-sol" } },
+      },
+    }
+    const saved = {
+      ...current,
+      defaults: { ...current.defaults, fast: { ...current.defaults.fast, reasoning_effort: "low" as const } },
+    }
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({ providerSnapshot: saved, providerStatus: "ready" })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+    await chooseSelectOption("快速推理强度", "低")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
+    await flush()
+    expect(post).toHaveBeenCalledWith("/bamboo/config", expect.objectContaining({
+      defaults: expect.objectContaining({
+        chat: current.defaults.chat,
+        fast: saved.defaults.fast,
+        work_review: review,
+        subagent_models: current.defaults.subagent_models,
+      }),
+    }))
+  })
+
+  it("offers an optional Work review purpose with its own model and effort", async () => {
+    setStore({})
+    const container = await mount(<DefaultsEditor />)
+    expect(roleByName("combobox", "工作审查提供方", container)).toBeDefined()
+    expect(roleByName("combobox", "工作审查模型", container)).toBeDefined()
+    expect(roleByName("combobox", "工作审查推理强度", container)).toBeDefined()
+    expect(container.textContent).toContain("只回退到已配置的快速模型")
+  })
+
+  it("saves and reads back an explicit Work review route without changing other purposes", async () => {
+    const current = {
+      ...snapshot(),
+      defaults: {
+        ...snapshot().defaults!,
+        fast: { provider: instance.id, model: "gpt-5.6-luna", reasoning_effort: "max" as const },
+        subagent_models: { worker: { provider: instance.id, model: "gpt-5.6-sol" } },
+      },
+    }
+    const review = { provider: instance.id, model: "new-review", reasoning_effort: "none" as const }
+    const saved = { ...current, defaults: { ...current.defaults, work_review: review } }
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({ providerSnapshot: saved, providerStatus: "ready" })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+    await chooseSelectOption("工作审查提供方", "Primary OpenAI")
+    await changeInput(roleByName("combobox", "工作审查模型", container) as HTMLInputElement, "new-review")
+    await chooseSelectOption("工作审查推理强度", "关闭")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
+    await flush()
+    expect(post).toHaveBeenCalledWith("/bamboo/config", expect.objectContaining({
+      defaults: expect.objectContaining({ ...current.defaults, work_review: review }),
+    }))
+    expect(loadProviderInstances).toHaveBeenCalledOnce()
+    expect((roleByName("combobox", "工作审查模型", container) as HTMLInputElement).value).toBe("new-review")
+    expect(roleByName("combobox", "工作审查推理强度", container).textContent).toBe("关闭")
+    expect(container.querySelector(".text-emerald-500")?.textContent).toBe("已保存")
+  })
+
+  it("unsets only the Work review override after authoritative readback", async () => {
+    const saved = { ...snapshot(), defaults: { ...snapshot().defaults!, fast: { provider: instance.id, model: "gpt-5.6-luna" } } }
+    const current = { ...saved, defaults: { ...saved.defaults, work_review: { provider: instance.id, model: "new-review" } } }
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({ providerSnapshot: saved, providerStatus: "ready" })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+    await chooseSelectOption("工作审查提供方", "未设置")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
+    await flush()
+    expect(post).toHaveBeenCalledWith("/bamboo/config", expect.objectContaining({
+      defaults: expect.objectContaining({ ...saved.defaults, work_review: null }),
+    }))
+    expect(container.querySelector(".text-emerald-500")?.textContent).toBe("已保存")
+  })
+
   it("shows the four everyday Bodhi roles with guidance and keeps specialist routes collapsed", async () => {
     setStore({})
 
@@ -895,7 +993,8 @@ describe("Provider defaults authoritative refresh", () => {
     expect(primary?.textContent).toContain("快速")
     expect(primary?.textContent).toContain("视觉")
     expect(primary?.textContent).toContain("子代理")
-    expect(primary?.textContent).toContain("用于主对话，也是其他未设置用途的最终回退模型。")
+    expect(primary?.textContent).toContain("用于主对话，也是除工作审查外其他未设置用途的最终回退模型。")
+    expect(container.textContent).toContain("工作审查未设置时只回退到已配置的快速模型")
     expect(primary?.textContent).toContain("用于标题生成、Mermaid 修复等轻量任务")
     expect(primary?.textContent).toContain("视觉回退；未设置时依次回退到快速、对话模型")
     expect(roleByName("combobox", "对话(必填)推理强度", container)).toBeDefined()

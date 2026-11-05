@@ -15,6 +15,7 @@ export interface DefaultsConfig {
   planning?: ProviderModelRef;
   search?: ProviderModelRef;
   code_review?: ProviderModelRef;
+  work_review?: ProviderModelRef;
   sub_agent?: ProviderModelRef;
   subagent_models?: Record<string, ProviderModelRef>;
 }
@@ -28,6 +29,7 @@ export const PROVIDER_DEFAULT_MODEL_REF_KEYS = [
   "planning",
   "search",
   "code_review",
+  "work_review",
   "sub_agent",
 ] as const;
 

@@ -1034,17 +1034,18 @@ export function ChatPane({
           return
         }
         if (result.kind !== "accepted") return
+        // A section-scoped creation intent applies to exactly this new session;
+        // the callback owns clearing it, so later sends never re-apply it. An
+        // accepted result already proves the session exists, so this durable
+        // metadata outlives navigation: the guard below abandons this composer's
+        // UI updates, not the session the acknowledgement already created.
+        if (!currentSessionId && snapshot.projectId && onNewSessionInProjectSection) {
+          onNewSessionInProjectSection(result.sessionId)
+        }
         if (prepareWorktree && (!mountedRef.current
           || getNavigationVersion?.() !== originNavigationVersion
           || (!result.navigated && !isOriginCurrent()))) return
         if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
-        // A section-scoped creation intent applies to exactly this new session;
-        // the callback owns clearing it, so later sends never re-apply it. Even
-        // a send whose navigation was interrupted still created the session.
-        if (!currentSessionId && snapshot.projectId && onNewSessionInProjectSection) {
-          onNewSessionInProjectSection(result.sessionId)
-        }
-
         // Commit only fields that still have the exact mutation revision captured
         // by this submission. A late acknowledgement must never erase edits or a
         // same-value re-selection made while the request was in flight.
