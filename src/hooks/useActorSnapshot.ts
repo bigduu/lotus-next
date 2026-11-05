@@ -116,9 +116,9 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
       }
       // Transport failures leave the last confirmed tree usable. A conflict
       // outside gap recovery can change the authority behind that tree.
-      const snapshot = retryable && !(isApiError(error) && error.status === 409) ? snapshotRef.current : null
-      snapshotRef.current = snapshot
-      setState((previous) => ({ rootId: id, snapshot, loading: false, error: failureMessage(error), retryable,
+      const lastConfirmed = retryable && !(isApiError(error) && error.status === 409) ? snapshotRef.current : null
+      snapshotRef.current = lastConfirmed
+      setState((previous) => ({ rootId: id, snapshot: lastConfirmed, loading: false, error: failureMessage(error), retryable,
         gapReason: previous.rootId === id ? previous.gapReason : null,
         gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     } finally {
