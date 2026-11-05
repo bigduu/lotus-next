@@ -884,6 +884,51 @@ describe("Editable provider model combobox", () => {
 })
 
 describe("Provider defaults authoritative refresh", () => {
+  it("preserves a saved Work review route when another purpose is edited", async () => {
+    const review = { provider: instance.id, model: "new-review", reasoning_effort: "none" as const }
+    const current = {
+      ...snapshot(),
+      defaults: {
+        ...snapshot().defaults!,
+        fast: { provider: instance.id, model: "gpt-5.6-luna" },
+        work_review: review,
+        subagent_models: { worker: { provider: instance.id, model: "gpt-5.6-sol" } },
+      },
+    }
+    const saved = {
+      ...current,
+      defaults: { ...current.defaults, fast: { ...current.defaults.fast, reasoning_effort: "low" as const } },
+    }
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({ providerSnapshot: saved, providerStatus: "ready" })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+    await chooseSelectOption("快速推理强度", "低")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
+    await flush()
+    expect(post).toHaveBeenCalledWith("/bamboo/config", expect.objectContaining({
+      defaults: expect.objectContaining({
+        chat: current.defaults.chat,
+        fast: saved.defaults.fast,
+        work_review: review,
+        subagent_models: current.defaults.subagent_models,
+      }),
+    }))
+  })
+
+  it("offers an optional Work review purpose with its own model and effort", async () => {
+    setStore({})
+    const container = await mount(<DefaultsEditor />)
+    expect(roleByName("combobox", "工作审查提供方", container)).toBeDefined()
+    expect(roleByName("combobox", "工作审查模型", container)).toBeDefined()
+    expect(roleByName("combobox", "工作审查推理强度", container)).toBeDefined()
+    expect(container.textContent).toContain("只回退到已配置的快速模型")
+  })
+
   it("shows the four everyday Bodhi roles with guidance and keeps specialist routes collapsed", async () => {
     setStore({})
 
