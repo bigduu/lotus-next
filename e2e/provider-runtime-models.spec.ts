@@ -15,6 +15,80 @@ const openProviders = async (page: Page) => {
 }
 
 // Stateful HTTP fixtures verify the UI contract; backend admission has separate Rust coverage.
+test("Work review purpose survives unrelated edits and can be explicitly unset", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const provider = "fixture-provider"
+  const review = { provider, model: "work-review", reasoning_effort: "none" }
+  const chat = { provider, model: "fixture-model" }
+  const worker = { worker: { provider, model: "worker-model" } }
+  let defaults: Record<string, unknown> = {
+    chat, fast: { provider, model: "fixture-fast", reasoning_effort: "max" },
+    work_review: review, subagent_models: worker,
+  }
+  const writes: Array<Record<string, unknown>> = []
+  const models = ["fixture-model", "fixture-fast", "work-review", "worker-model"]
+  await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
+    default_provider_instance_id: provider,
+    instances: [{ id: provider, type: "openai", label: "Configured provider", enabled: true,
+      config: { model: "fixture-model", runtime_models: models } }],
+    defaults, features: { provider_model_ref: true },
+  } }))
+  await page.route("**/api/v1/bamboo/provider-catalog", (route) => route.fulfill({ json: {
+    providers: [], models: models.map((model) => ({
+      reference: { provider, model }, display_name: model, provider_display_name: "Configured provider",
+      capabilities: { supports_tools: true, supports_vision: false, supports_reasoning: true },
+    })),
+  } }))
+  await page.route("**/api/v1/bamboo/config", async (route) => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON() as Record<string, unknown>
+      writes.push(body)
+      defaults = Object.fromEntries(Object.entries(body.defaults as Record<string, unknown>).filter(([, value]) => value !== null))
+    }
+    await route.fulfill({ json: { model_limits: {} } })
+  })
+  const expandPurposes = () => page.locator("details > summary").filter({ hasText: "高级模型路由" }).click()
+  await page.goto(standaloneScenario.entryUrl)
+  await openProviders(page)
+  await expandPurposes()
+  await expect(page.getByRole("combobox", { name: "工作审查模型", exact: true })).toHaveValue("work-review")
+  await expect(page.getByRole("combobox", { name: "工作审查推理强度", exact: true })).toHaveText("关闭")
+  await page.getByRole("combobox", { name: "快速推理强度", exact: true }).click()
+  await page.getByRole("option", { name: "低", exact: true }).click()
+  await page.getByRole("button", { name: "保存偏好", exact: true }).click()
+  await expect.poll(() => writes.length).toBe(1)
+  expect(writes[0]).toMatchObject({ defaults: {
+    chat, fast: { provider, model: "fixture-fast", reasoning_effort: "low" },
+    work_review: review, subagent_models: worker,
+  } })
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+  await page.reload()
+  await openProviders(page)
+  await expandPurposes()
+  await expect(page.getByRole("combobox", { name: "工作审查模型", exact: true })).toHaveValue("work-review")
+  await expect(page.getByRole("combobox", { name: "快速推理强度", exact: true })).toHaveText("低")
+  const screenshot = testInfo.outputPath(`work-review-purpose-${testInfo.project.name}.png`)
+  await page.getByRole("combobox", { name: "工作审查提供方", exact: true })
+    .locator('xpath=ancestor::div[contains(@class,"rounded-md") and contains(@class,"border")][1]')
+    .screenshot({ path: screenshot, animations: "disabled" })
+  await testInfo.attach("work-review-purpose-controlled-ui", { path: screenshot, contentType: "image/png" })
+  await page.getByRole("combobox", { name: "工作审查提供方", exact: true }).click()
+  await page.getByRole("option", { name: "未设置", exact: true }).click()
+  await page.getByRole("button", { name: "保存偏好", exact: true }).click()
+  await expect.poll(() => writes.length).toBe(2)
+  expect(writes[1]).toMatchObject({ defaults: {
+    chat, fast: { provider, model: "fixture-fast", reasoning_effort: "low" },
+    work_review: null, subagent_models: worker,
+  } })
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+  expect(defaults.work_review).toBeUndefined()
+  expect(observation.pageErrors).toEqual([])
+})
+
 test("discovery requires explicit admission and preserves custom models after reload", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")

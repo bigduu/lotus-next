@@ -26,6 +26,23 @@ const validPayload = () => ({
 });
 
 describe("runtime model admission", () => {
+  it("admits a Work review model only for its exact saved account", () => {
+    const payload = validPayload();
+    const review = { provider: "work", model: "work-review-only", reasoning_effort: "none" };
+    const snapshot = parseProviderInstancesConfig({
+      ...payload,
+      defaults: { ...payload.defaults, work_review: review },
+    });
+    expect(getRuntimeModelIds(snapshot.instances[0], snapshot.defaults)).toContain("work-review-only");
+    const alias = parseProviderInstancesConfig({
+      ...payload,
+      defaults: { ...payload.defaults, work_review: { ...review, provider: "openai" } },
+    });
+    expect(getRuntimeModelIds(alias.instances[0], alias.defaults)).not.toContain("work-review-only");
+    snapshot.instances[0].config.runtime_models = [];
+    expect(getRuntimeModelIds(snapshot.instances[0], snapshot.defaults)).toEqual([]);
+  });
+
   it("seeds legacy admission only from configured models and matching defaults", () => {
     const snapshot = parseProviderInstancesConfig({
       ...validPayload(),
@@ -89,6 +106,25 @@ describe("runtime model admission", () => {
 });
 
 describe("parseProviderInstancesConfig", () => {
+  it("validates a saved Work review reference instead of treating it as unknown data", () => {
+    const payload = validPayload();
+    expect(() => parseProviderInstancesConfig({
+      ...payload,
+      defaults: { ...payload.defaults, work_review: { provider: "work", model: "" } },
+    })).toThrow(ProviderSnapshotValidationError);
+  });
+
+  it("keeps an unavailable Work review account visible for repair", () => {
+    const payload = validPayload();
+    const parsed = parseProviderInstancesConfig({
+      ...payload,
+      defaults: { ...payload.defaults, work_review: { provider: "deleted-review", model: "review" } },
+    });
+    expect(findProviderSnapshotRelationIssues(parsed)).toContainEqual({
+      kind: "default_model_ref", path: "defaults.work_review", provider: "deleted-review", role: "work_review",
+    });
+  });
+
   it("accepts and normalizes an instance-native snapshot", () => {
     expect(parseProviderInstancesConfig(validPayload())).toEqual(validPayload());
   });
