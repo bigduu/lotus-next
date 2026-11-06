@@ -882,7 +882,7 @@ export const uiZhCn = {
   "work_execution_session": "工作执行会话",
   "work_execution_record": "最近快照中的执行状态",
   "work_execution_unconfirmed": "执行会话信息尚未确认。",
-  "work_execution_none": "尚未记录执行会话。",
+    "work_execution_none": "当前没有执行会话。",
   "work_execution_planned": "已规划",
   "work_execution_dispatch_pending": "等待派发确认",
   "work_execution_admitted": "已受理",
