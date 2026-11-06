@@ -884,7 +884,7 @@ export const uiEnUs = {
   "work_execution_session": "Work execution session",
   "work_execution_record": "Execution status at the recorded snapshot",
   "work_execution_unconfirmed": "Execution session information is not confirmed.",
-  "work_execution_none": "No execution session has been recorded.",
+    "work_execution_none": "No current execution session.",
   "work_execution_planned": "Planned",
   "work_execution_dispatch_pending": "Waiting for dispatch confirmation",
   "work_execution_admitted": "Admitted",
