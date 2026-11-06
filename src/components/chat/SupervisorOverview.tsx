@@ -54,10 +54,10 @@ export function SupervisorOverview({ controller, running, onSelectWork }: {
       {!controller.connected ? <p role="status" className="mt-2 text-xs text-muted-foreground">{uiText("ticket_the_connection_is_not_confirmed_answers_and_a_aaac8c0d")}</p> : null}
       {controller.error ? <p role="alert" className="mt-2 break-words text-xs text-destructive">{uiText("supervisor_work_status_attention")}</p> : null}
       <h2 className="mb-1 mt-5 text-xs font-medium text-muted-foreground">{uiText("supervisor_overview_recent")}</h2>
-      {works.length ? works.slice(0, 5).map(({ ticket }) => <button type="button" key={ticket.id} onClick={() => select(ticket.id)}
+      {works.length ? works.slice(0, 5).map((view) => <button type="button" key={view.ticket.id} onClick={() => select(view.ticket.id)}
         className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <MessageCircle className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate" title={ticket.contract.title}>{ticket.contract.title}</span>
+        <span className="min-w-0 flex-1 truncate" title={view.ticket.contract.title}>{view.ticket.contract.title}</span>
         <span className="shrink-0 text-xs text-muted-foreground">{ticketWorkStatusLabel(view)}</span>
       </button>) : <p className="px-2 py-2 text-xs text-muted-foreground">{uiText(state.current.complete && controller.connected ? "supervisor_overview_empty" : "supervisor_overview_pending")}</p>}
       <h2 className="mb-1 mt-4 text-xs font-medium text-muted-foreground">{uiText("supervisor_overview_outputs")}</h2>
