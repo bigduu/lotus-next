@@ -8,7 +8,7 @@ import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
 import { scopeAvailability, TicketScopeUnavailableError } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
 import { initializableTicketScope, readyTicketScopeV1, ticketSnapshot } from "@services/tickets/testFixtures"
-import type { ResponseCommand, TicketSnapshot } from "@services/tickets/types"
+import type { Assignment, ResponseCommand, TicketSnapshot } from "@services/tickets/types"
 import { ApiError } from "@services/api"
 import { changeLocale } from "@shared/i18n"
 
@@ -55,6 +55,62 @@ afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMock
 const mount = async (session = "root", ownerAccess = true, authorityKey = "", authorityBlocked = false, deferRead = false) => {
   await act(async () => root.render(<OwnerAccessContext value={ownerAccess}><Harness session={session} authorityKey={authorityKey} authorityBlocked={authorityBlocked} deferRead={deferRead} /></OwnerAccessContext>))
 }
+
+it("shows an active Work with no admitted Runtime as waiting for dispatch confirmation", async () => {
+  await changeLocale("zh-CN")
+  const view = snapshot.views[0]
+  view.ticket.state = "active"
+  view.ticket.blocked = null
+  view.requests = []
+  view.sections = ["assignments", "requests", "submissions"]
+  view.assignments = [{ id: "assignment-A", work_id: "A", generation: 1, contract_revision: 1,
+    state: "dispatch_pending", runtime: null }]
+  await mount()
+  const title = [...container.querySelectorAll("strong")].find((node) => node.textContent === view.ticket.contract.title)!
+  expect(title.parentElement!.querySelector("span")?.textContent).toBe("等待派发确认")
+  expect(title.parentElement!.textContent).not.toContain("执行中")
+  expect(ticketClient.respond).not.toHaveBeenCalled()
+})
+
+it.each<[string, Partial<Assignment>, string]>([
+  ["saved running receipt", { state: "running" }, "进行中"],
+  ["admitted receipt", { state: "admitted" }, "已受理"],
+  ["missing running receipt", { state: "running", runtime: null }, "执行会话信息尚未确认。"],
+  ["missing Run identity", { state: "running", runtime: { session_id: "worker-A", run_id: " " } }, "执行会话信息尚未确认。"],
+  ["pending intent even with receipt fields", { state: "dispatch_pending" }, "等待派发确认"],
+  ["unknown outcome", { state: "outcome_unknown" }, "结果尚未确认"],
+  ["stop requested", { state: "cancelling" }, "已请求停止"],
+  ["confirmed stopped process", { state: "running", process_stopped: true }, "执行进程已确认结束"],
+])("keeps the %s distinct from live execution", async (_description, assignment, label) => {
+  await changeLocale("zh-CN")
+  const view = snapshot.views[0]
+  view.ticket.state = "active"; view.ticket.blocked = null; view.requests = []
+  view.sections = ["assignments", "requests", "submissions"]
+  view.assignments = [{ id: "assignment-A", work_id: "A", generation: 1, contract_revision: 1,
+    state: "running", runtime: { session_id: "worker-A", run_id: "run-A" }, ...assignment }]
+  await mount()
+  const title = [...container.querySelectorAll("strong")].find((node) => node.textContent === view.ticket.contract.title)!
+  expect(title.parentElement!.querySelector("span")?.textContent).toBe(label)
+  expect(title.parentElement!.textContent).not.toContain("执行中")
+  expect(container.textContent).toContain("最近快照中的执行状态")
+  expect(ticketClient.respond).not.toHaveBeenCalled()
+})
+
+it("uses the configured English locale for a pending Work badge", async () => {
+  await changeLocale("en-US")
+  try {
+    const view = snapshot.views[0]
+    view.ticket.state = "active"; view.ticket.blocked = null; view.requests = []
+    view.sections = ["assignments", "requests", "submissions"]
+    view.assignments = [{ id: "assignment-A", work_id: "A", generation: 1, contract_revision: 1,
+      state: "dispatch_pending", runtime: null }]
+    await mount()
+    const title = [...container.querySelectorAll("strong")].find((node) => node.textContent === view.ticket.contract.title)!
+    expect(title.parentElement!.querySelector("span")?.textContent).toBe("Waiting for dispatch confirmation")
+  } finally {
+    await act(async () => changeLocale("zh-CN"))
+  }
+})
 
 it("rebases one known pre-commit question conflict only while its exact identity remains open", async () => {
   await mount()
@@ -762,15 +818,18 @@ it("shows the scoped execution session, objective and recorded status without cr
   expect(container.textContent).not.toContain("worker-session-A")
 })
 
-it.each(["work", "generation", "contract", "sections"])("does not present a %s mismatch as a managed execution", async (mismatch) => {
+it.each(["work", "generation", "contract", "sections", "assignment"])("does not present a %s mismatch as a managed execution", async (mismatch) => {
   const work = snapshot.views[0]
+  work.ticket.state = "active"; work.ticket.blocked = null
   work.sections = mismatch === "sections" ? ["requests", "submissions"] : ["assignments", "requests", "submissions"]
-  work.assignments = [{ id: work.ticket.active_assignment!, work_id: mismatch === "work" ? "other" : work.ticket.id,
+  work.assignments = [{ id: mismatch === "assignment" ? "previous-assignment" : work.ticket.active_assignment!, work_id: mismatch === "work" ? "other" : work.ticket.id,
     generation: mismatch === "generation" ? 0 : 1, contract_revision: mismatch === "contract" ? 2 : 1,
     state: "running", runtime: { session_id: "unrelated-session", run_id: "old-run" } }]
   await mount()
   expect(container.textContent).not.toContain("unrelated-session")
   expect(container.textContent).toContain("执行会话信息尚未确认")
+  const title = [...container.querySelectorAll("strong")].find((node) => node.textContent === work.ticket.contract.title)!
+  expect(title.parentElement!.querySelector("span")?.textContent).toBe("执行会话信息尚未确认。")
 })
 
 it("shows an accepted result's execution record after its active assignment has cleared", async () => {

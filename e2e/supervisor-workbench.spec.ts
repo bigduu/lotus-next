@@ -197,4 +197,42 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   await expect(page.locator("[data-composer-region] [data-composer-editor]").first()).toBeFocused()
   await openAll()
   await expect(input).toHaveValue("蓝色")
+
+  // A committed Start is an intent. Refreshing the same Work must not imply
+  // that a Child or Run exists, or automatically attempt another dispatch.
+  question.ticket.state = "active"; question.ticket.blocked = null; question.requests = []
+  question.assignments![0].state = "dispatch_pending"; question.assignments![0].runtime = null
+  const refresh = async () => {
+    stamp.seq += 1; stamp.commit = `fixture-${stamp.seq}`
+    snapshot.scope.overview.index_seq = stamp.seq
+    await overview.getByRole("button", { name: "刷新", exact: true }).click()
+  }
+  const heading = overview.getByTestId("ticket-work-A").getByText("报告A", { exact: true }).locator("..")
+  await refresh()
+  await expect(heading).toContainText("等待派发确认")
+  await expect(heading).not.toContainText("执行中")
+  await expect(overview).not.toContainText("work-session-A")
+  await expect(overview).toContainText("执行会话信息尚未确认")
+  await page.screenshot({ path: testInfo.outputPath("supervisor-work-dispatch-pending.png") })
+  await status.click()
+  await expect(popover).toContainText("等待派发确认")
+  await expect(popover).not.toContainText("正在处理工作")
+  await page.keyboard.press("Escape")
+
+  question.assignments![0].state = "admitted"
+  question.assignments![0].runtime = { session_id: "work-session-A", run_id: "run-A" }
+  await refresh()
+  await expect(heading).toContainText("已受理")
+  await expect(overview).toContainText("work-session-A")
+  question.assignments![0].state = "running"
+  await refresh()
+  await expect(heading).toContainText("进行中")
+  await expect(overview).toContainText("最近快照中的执行状态")
+  question.assignments![0].process_stopped = true
+  await refresh()
+  await expect(heading).toContainText("执行进程已确认结束")
+  await expect(overview.getByText("已验收", { exact: true })).toBeVisible()
+  expect(decisions).toHaveLength(1)
+  expect(observation.httpRequests.filter((request) => request.method === "POST"
+    && /\/tickets\/(dispatch|update)$|\/execute\//.test(request.url))).toHaveLength(0)
 })
