@@ -274,6 +274,30 @@ async function mount(
   const textarea = container.querySelector<HTMLTextAreaElement>("textarea"); if (!textarea) throw new Error("textarea did not render")
   return textarea
 }
+
+it.each([
+  ["suspended", 1, false, true],
+  ["suspended", 0, false, false],
+  ["suspended", 1, true, false],
+  [null, 1, false, false],
+  ["completed", 1, false, false],
+  ["cancelled", 1, false, false],
+  ["error", 1, false, false],
+] as const)("presents child wait only for confirmed suspension (%s, children=%s, running=%s)", async (status, children, running, expected) => {
+  const chat = createChat(vi.fn<Send>(), "parent-wait", status)
+  Object.assign(chat.currentChat!, { runningChildCount: children, isRunning: running })
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container)
+  roots.push(root)
+  await act(async () => {
+    root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+  })
+  expect(runtime.messageList?.delegationWaiting).toBe(expected)
+  expect(runtime.composer?.sending).toBe(running)
+})
+
 it("shows a refresh-and-reselect alert only for a stale managed session", async () => {
   runtime.state.managedHistoryBindings = { "managed": { status: "active" } }
   await mount(vi.fn<Send>(), "managed")

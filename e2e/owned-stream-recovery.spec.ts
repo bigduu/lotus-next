@@ -79,6 +79,11 @@ for (const outcome of ["interrupted", "suspended", "resumed"] as const) {
     await expect(stop).toBeHidden({ timeout: 15_000 })
     if (outcome === "interrupted") await expect(page.getByRole("alert")).toContainText("消息已发送，但生成中断")
     else await expect(page.getByRole("alert")).toHaveCount(0)
+    const childWait = page.getByRole("status").filter({ hasText: "等待子会话完成" })
+    if (outcome !== "interrupted") {
+      await expect(childWait).toBeVisible()
+      await expect(page.locator("[data-process-shimmer]")).toHaveCount(0)
+    } else await expect(childWait).toHaveCount(0)
     await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeVisible()
     await expect(page.getByText("检查工作树状态", { exact: true })).toBeVisible()
     await expect(page.locator('[data-assistant-typewriter-caret-target="true"]')).toHaveCount(0)
@@ -89,6 +94,12 @@ for (const outcome of ["interrupted", "suspended", "resumed"] as const) {
     })
 
     if (outcome === "suspended") {
+      await page.reload({ waitUntil: "domcontentloaded" })
+      await expect(input).toBeVisible()
+      await expect(childWait).toBeVisible()
+      await expect(page.locator("[data-process-shimmer]")).toHaveCount(0)
+      expect(admissions).toBe(1)
+      expect(executions).toBe(1)
       await input.fill("进展如何？")
       await page.getByRole("button", { name: "发送消息", exact: true }).click()
       await expect.poll(() => admissions).toBe(2)
@@ -101,6 +112,7 @@ for (const outcome of ["interrupted", "suspended", "resumed"] as const) {
         event: { type: "execution_started", run_id: "background-resume", session_id: session.id },
       } }))
       await expect.poll(() => subscriptions).toBe(2)
+      await expect(childWait).toHaveCount(0)
       socket!.send(JSON.stringify({ ch: `agent.${session.id}`, seq: ++sequence,
         event: { type: "token", content: "后台代理已返回，继续处理结果。" } }))
       await expect(page.locator(".assistant-streamdown").last()).toContainText("后台代理已返回，继续处理结果。")
