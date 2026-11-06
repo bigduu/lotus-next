@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from "react"
 import { ticketClient } from "@services/tickets/client"
 import { artifactDownloadName } from "@services/tickets/artifactDownload"
 import { effectiveStatus, type TicketState } from "@services/tickets/state"
-import type { Assignment, AssignmentState, PendingRequest, WorkView } from "@services/tickets/types"
+import type { AssignmentState, PendingRequest, WorkView } from "@services/tickets/types"
 import type { useTicketWork } from "@/hooks/useTicketWork"
-import { ticketWorkLabels } from "./ticketWorkLabels"
+import { ticketWorkStatusLabel, workExecutionRecord } from "./ticketWorkLabels"
 
 const requestLabels = { get open() { return uiText("ticket_pending_999a459c") }, get answered() { return uiText("ticket_answered_474c9878") }, get approved() { return uiText("ticket_approved_b42cb548") }, get denied() { return uiText("ticket_denied_f098218a") }, get superseded() { return uiText("ticket_superseded_30474a79") }, get expired() { return uiText("ticket_expired_2fe0e333") }, get consumed() { return uiText("ticket_authorization_used_c8eb44e4") } }
 type Controller = ReturnType<typeof useTicketWork>
@@ -55,14 +55,7 @@ const executionLabels = {
 } as const satisfies Record<AssignmentState, string>
 
 function ExecutionRecord({ view }: { view: WorkView }) {
-  const work = view.ticket
-  const matchesWork = (item: Pick<Assignment, "work_id" | "generation" | "contract_revision">) => item.work_id === work.id
-    && item.generation === work.generation && item.contract_revision === work.contract_revision
-  const result = view.submissions.find((submission) => !submission.stale && matchesWork(submission)
-    && submission.id === (work.accepted_submission ?? work.current_submission))
-  const id = work.active_assignment ?? result?.assignment_id
-  const included = view.sections?.includes("assignments") === true && Array.isArray(view.assignments)
-  const assignment = included ? view.assignments?.find((item) => item.id === id && matchesWork(item)) : undefined
+  const { id, included, assignment } = workExecutionRecord(view)
   const session = typeof assignment?.runtime?.session_id === "string" ? assignment.runtime.session_id.trim() : ""
   return <dl className="my-2 text-xs text-muted-foreground">
     <dt>{uiText("work_execution_session")}</dt>
@@ -103,8 +96,8 @@ export function TicketWorkPanel({ controller, onReference, selectedWorkId, onSho
     {state.current.complete && controller.connected && overview.ticket_count === 0 && visibleWorks.length === 0 ? <p role="status" className="my-2 text-sm text-muted-foreground">{uiText("supervisor_work_empty")}</p> : null}
     {controller.error ? <p role="alert" className="my-2 text-sm text-destructive">{controller.error}</p> : null}
     <div className="grid gap-3">
-      {visibleWorks.map((view) => <section key={view.ticket.id} hidden={!!selected && selected.id !== view.ticket.id} className="rounded-xl border bg-background p-3 text-sm">
-        <div className="flex justify-between gap-2"><strong className="min-w-0 break-words">{view.ticket.contract.title}</strong><span className="shrink-0 text-xs text-muted-foreground">{ticketWorkLabels[view.ticket.state]}</span></div>
+      {visibleWorks.map((view) => <section key={view.ticket.id} data-testid={`ticket-work-${view.ticket.id}`} hidden={!!selected && selected.id !== view.ticket.id} className="rounded-xl border bg-background p-3 text-sm">
+        <div className="flex justify-between gap-2"><strong className="min-w-0 break-words">{view.ticket.contract.title}</strong><span className="shrink-0 text-xs text-muted-foreground">{ticketWorkStatusLabel(view)}</span></div>
         <p className="mt-1 whitespace-pre-wrap break-words">{view.ticket.contract.objective}</p>
         <ExecutionRecord view={view} />
         {view.ticket.blocked ? <p className="mt-1 text-muted-foreground">{view.ticket.blocked.reason}</p> : null}
