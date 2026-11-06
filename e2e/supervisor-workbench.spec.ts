@@ -214,10 +214,13 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   await expect(overview).not.toContainText("work-session-A")
   await expect(overview).toContainText("执行会话信息尚未确认")
   await page.screenshot({ path: testInfo.outputPath("supervisor-work-dispatch-pending.png") })
+  await workbench.getByRole("button", { name: "收起工作面板", exact: true }).click()
+  await expect(workbench).toBeHidden()
   await status.click()
   await expect(popover).toContainText("等待派发确认")
   await expect(popover).not.toContainText("正在处理工作")
-  await page.keyboard.press("Escape")
+  await popover.getByRole("button", { name: "查看全部工作", exact: true }).click()
+  await expect(overview).toBeVisible()
 
   question.assignments![0].state = "admitted"
   question.assignments![0].runtime = { session_id: "work-session-A", run_id: "run-A" }
