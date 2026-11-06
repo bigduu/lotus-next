@@ -201,6 +201,35 @@ it("renders message-only previews without transcript actions", () => {
 })
 
 describe("MessageList assistant streaming ownership", () => {
+  it("shows a yielded parent's child wait without thinking and restores real model activity on resume", () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    mountedRoots.push(root)
+    const props: Parameters<typeof MessageList>[0] & { delegationWaiting?: boolean } = {
+      scrollRef: createRef<HTMLDivElement>(), contentRef: createRef<HTMLDivElement>(),
+      onScroll: vi.fn(), messages: [], mergedSubAgents: {}, sending: true,
+      latestRunFinished: false, streaming: "", streamingActive: false,
+      streamingReasoning: null, liveSegments: [], streamStatus: null,
+      pendingUserText: null, forking: false, delegationWaiting: true,
+      onSelectSubAgent: vi.fn(), onPreviewImage: vi.fn(), onRegenerate: vi.fn(),
+      onFork: vi.fn(), onDelete: vi.fn(), onEditMessage: vi.fn(),
+    }
+    const render = (updates: Partial<typeof props> = {}) => act(() => {
+      root.render(<MessageList {...props} {...updates} />)
+    })
+    render()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(uiText("process_waiting_for_subagents"))
+    expect(container.querySelector("[data-process-shimmer]")).toBeNull()
+    expect(container.querySelector("[data-process-toggle]")).toBeNull()
+
+    render({ delegationWaiting: false, streamingActive: true })
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(uiText("thinking_64088d8c"))
+    expect(container.querySelector("[data-process-shimmer]")).not.toBeNull()
+
+    render({ delegationWaiting: false, sending: false, streaming: null, latestRunFinished: true })
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
+
   it("keeps the optimistic user visible while admission has no inspectable activity", () => {
     const container = document.createElement("div")
     document.body.appendChild(container)

@@ -542,6 +542,7 @@ export function MessageList({
   liveSegments,
   streamStatus,
   backgroundExecWaiting = false,
+  delegationWaiting = false,
   pendingUserText,
   pendingUserImages = [],
   pendingUserMessages,
@@ -574,6 +575,8 @@ export function MessageList({
   /** Execution-gated background-wait state from the chat pane: true only while
    *  the run is actually suspended waiting on a monitored background command. */
   backgroundExecWaiting?: boolean
+  /** A confirmed suspended parent with executing children, supplied by the pane. */
+  delegationWaiting?: boolean
   pendingUserText: string | null
   pendingUserImages?: readonly { url?: string; base64?: string; type?: string }[]
   pendingUserMessages?: readonly PendingUserMessageView[]
@@ -598,9 +601,10 @@ export function MessageList({
     ? [{ operationId: 0, text: pendingUserText ?? "", images: pendingUserImages }] : [])
   const hasPendingUser = pendingUsers.length > 0
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
+  const activityStatus = delegationWaiting ? uiText("process_waiting_for_subagents") : streamStatus
   const liveItems = useMemo(
-    () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, streamStatus),
-    [liveSegments, sending, streamStatus, streaming, streamingActive, streamingReasoning],
+    () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, activityStatus),
+    [activityStatus, liveSegments, sending, streaming, streamingActive, streamingReasoning],
   )
   // The turn still being streamed stays fully visible; every finished turn with
   // a recorded conclusion folds its middle into one divider.

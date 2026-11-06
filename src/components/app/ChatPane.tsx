@@ -1359,6 +1359,8 @@ export function ChatPane({
           liveSegments={liveSegments}
           streamStatus={streamStatus}
           backgroundExecWaiting={backgroundExecWaiting}
+          delegationWaiting={delegationWaiting && currentChat?.lastRunStatus === "suspended"
+            && !pendingQuestion && !pendingApproval && !backgroundExecWaiting}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}
