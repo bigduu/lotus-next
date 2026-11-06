@@ -200,8 +200,14 @@ test("Supervisor floating overview opens focused Work details and preserves draf
 
   // A committed Start is an intent. Refreshing the same Work must not imply
   // that a Child or Run exists, or automatically attempt another dispatch.
-  question.ticket.state = "active"; question.ticket.blocked = null; question.requests = []
-  question.assignments![0].state = "dispatch_pending"; question.assignments![0].runtime = null
+  question.ticket.state = "active"; question.ticket.blocked = null
+  question.ticket.generation = 2; question.ticket.active_assignment = "assignment-A-current"
+  question.requests[0].status = "superseded"
+  question.requests[0].updated_seq = stamp.seq + 1
+  question.assignments!.unshift({ id: "assignment-A-current", work_id: "A", generation: 2,
+    contract_revision: 1, state: "dispatch_pending", runtime: null })
+  snapshot.scope.overview.data.open_questions = 0
+  snapshot.scope.overview.data.states = { active: 1, blocked: 1, accepted: 1 }
   const refresh = async () => {
     stamp.seq += 1; stamp.commit = `fixture-${stamp.seq}`
     snapshot.scope.overview.index_seq = stamp.seq
