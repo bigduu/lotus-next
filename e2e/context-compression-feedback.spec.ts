@@ -140,6 +140,74 @@ async function prepare(page: Page, info: TestInfo, split = false) {
 }
 
 type Fixture = Awaited<ReturnType<typeof prepare>>
+
+test("Inspector keeps a saved Task status when an older live update arrives", async ({ page }, info) => {
+  test.skip(info.project.name === "phone-chromium", "Exercises the desktop workbench Inspector")
+  const f = await prepare(page, info)
+  const task = { id: "verify", description: "Verify source evidence", status: "completed", depends_on: [], notes: "" }
+  await page.route(`**/api/v1/task/${primary}`, (route) => route.fulfill({ json: {
+    session_id: primary, title: "Saved plan", items: [task], version: 48,
+    created_at: at, updated_at: at, progress: { completed: 1, total: 1, percentage: 100 },
+  } }))
+  await page.getByRole("button", { name: "Open side panel", exact: true }).click()
+  await page.getByRole("button", { name: "Inspector View current session", exact: true }).click()
+  const item = page.getByRole("tabpanel", { name: "Inspector", exact: true })
+    .getByRole("listitem").filter({ hasText: task.description })
+  await expect(item).toHaveText(/^✓\s*Verify source evidence$/)
+  await expect.poll(() => f.channels.has(`agent.${primary}`)).toBe(true)
+
+  const progress = (version: number) => f.emit({
+    type: "task_list_item_progress", session_id: primary, item_id: task.id,
+    status: "in_progress", tool_calls_count: 2, version,
+  })
+  progress(47)
+  await f.barrier()
+  await expect(item).toHaveText(/^✓\s*Verify source evidence$/)
+  await capture(f, "inspector-rejected-stale-task-progress")
+
+  progress(49)
+  await expect(item).toHaveText(/^◐\s*Verify source evidence$/)
+  await verifyIsolation(f)
+})
+
+test("Inspector recovers a committed Task plan when live progress overtakes the read", async ({ page }, info) => {
+  test.skip(info.project.name === "phone-chromium", "Exercises the desktop workbench Inspector")
+  const f = await prepare(page, info)
+  const read = { id: "read", description: "Read the source", status: "pending", depends_on: [], notes: "" }
+  const report = { ...read, id: "report", description: "Record the new evidence" }
+  const baseline = { session_id: primary, title: "Saved plan", items: [read], created_at: at, updated_at: at }
+  const committed = { ...baseline, items: [{ ...read, status: "completed" }, report], version: 3 }
+  f.emit({ type: "task_list_updated", task_list: baseline, version: 2 })
+  await f.barrier()
+
+  let release!: () => void
+  const firstReply = new Promise<void>((resolve) => { release = resolve })
+  let requests = 0
+  await page.route(`**/api/v1/task/${primary}`, async (route) => {
+    requests += 1
+    if (requests === 1) await firstReply
+    await route.fulfill({ json: committed })
+  })
+  await page.getByRole("button", { name: "Open side panel", exact: true }).click()
+  await page.getByRole("button", { name: "Inspector View current session", exact: true }).click()
+  const panel = page.getByRole("tabpanel", { name: "Inspector", exact: true })
+  const reading = panel.getByRole("listitem").filter({ hasText: read.description })
+  await expect.poll(() => requests).toBe(1)
+  f.emit({
+    type: "task_list_item_progress", session_id: primary, item_id: read.id,
+    status: "in_progress", tool_calls_count: 2, version: 4,
+  })
+  await expect(reading).toHaveText(/^◐\s*Read the source$/)
+  await expect(panel.getByText(report.description, { exact: true })).toHaveCount(0)
+  release()
+
+  await expect(panel.getByText(report.description, { exact: true })).toBeVisible()
+  await expect(reading).toHaveText(/^✓\s*Read the source$/)
+  expect(requests).toBe(2)
+  await capture(f, "inspector-recovered-missed-committed-plan")
+  await verifyIsolation(f)
+})
+
 async function expectUsage(f: Fixture, percent: number, within: Page | Locator = f.page) {
   const usage = within.getByRole("button", { name: f.phone ? "上下文用量" : "Context usage", exact: true })
   await expect(usage).toHaveAttribute("title", new RegExp(`\\(${percent}%\\)`))

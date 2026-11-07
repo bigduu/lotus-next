@@ -91,26 +91,59 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
   activeItems: {},
   evaluationStates: {},
 
-  // Set full task list (from TaskListUpdated event)
+  // A newer full list can supersede provisional progress from a tool run.
   setTaskList: (sessionId, taskList) =>
-    set((state) => ({
-      taskLists: {
-        ...state.taskLists,
-        [sessionId]: taskList,
-      },
-      taskListVersions: {
-        ...state.taskListVersions,
-        [sessionId]: taskList.version || 0,
-      },
-    })),
+    set((state) => {
+      const version = taskList.version ?? 0;
+      const previousSnapshotVersion = state.taskLists[sessionId]?.version;
+      const observedVersion = state.taskListVersions[sessionId] ?? 0;
+      if (previousSnapshotVersion !== undefined && (
+        version < previousSnapshotVersion ||
+        (version === previousSnapshotVersion && version < observedVersion)
+      )) {
+        return state;
+      }
+      return {
+        taskLists: {
+          ...state.taskLists,
+          [sessionId]: taskList,
+        },
+        taskListVersions: {
+          ...state.taskListVersions,
+          [sessionId]: version,
+        },
+      };
+    }),
 
   loadTaskList: async (sessionId) => {
-    const taskList = await agentClient.getTaskList(sessionId);
-    if (!taskList) {
-      return null;
+    let latest: TaskList | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { taskLists: listsAtRequest, taskListVersions: versionsAtRequest } = get();
+      const request = agentClient.getTaskList(sessionId);
+      const taskList = await (attempt === 0 ? request : request.catch(() => null));
+      if (!taskList) break;
+      latest = taskList;
+      const owner = taskList.session_id || sessionId;
+      const state = get();
+      const version = taskList.version;
+      const previous = listsAtRequest[owner];
+      const current = state.taskLists[owner];
+      const observed = state.getTaskListVersion(owner);
+      // Compare immutable lists because a commit can reset the progress version.
+      const progressedDuringRequest = current !== previous;
+      const committedAtRequest = previous?.version;
+      const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
+        current?.version === committedAtRequest &&
+        version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
+      if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
+        state.setTaskList(owner, taskList);
+        break;
+      }
+      // An overtaken response can still reveal a missed commit. Recheck once
+      // from the new baseline; never replace newer live progress on this reply.
+      if (current?.version === undefined || version <= current.version) break;
     }
-    get().setTaskList(taskList.session_id || sessionId, taskList);
-    return taskList;
+    return latest;
   },
 
   // Update from delta (from TaskListItemProgress event)
