@@ -30,6 +30,7 @@ export type ExecutionReason =
   | "optimistic:openSession.forceSubscribe"
   | "summary:is_running"
   | "summary:children_running"
+  | "summary:yielded_activity"
   | "summary:terminal"
   | "sse:token"
   | "sse:tool_start"

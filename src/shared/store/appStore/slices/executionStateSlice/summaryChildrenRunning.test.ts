@@ -63,6 +63,52 @@ describe("summary reconciliation while children execute", () => {
     expect(next["root-1"].phase).toBe("running_children");
   });
 
+  it("honours the server's activity label for a shell wait", () => {
+    // A background shell keeps executing after the runner yields. No child is
+    // counted and the local entry may already look idle, so only `activity` can
+    // keep the session observed — otherwise its outcome never arrives.
+    const next = applyExecutionEvent(
+      withPhase("idle"),
+      {
+        type: "applySessionSummary",
+        sessionId: "root-1",
+        summary: summary({ is_running: false, activity: "waiting_bash" }),
+      },
+      () => NOW,
+    );
+    expect(next["root-1"].phase).toBe("running_tools");
+    expect(selectShouldObserve("root-1")({ executionBySession: next })).toBe(true);
+  });
+
+  it("covers the resume gap after the last child stops", () => {
+    // No running child to count, but the Root has not resumed yet.
+    const next = applyExecutionEvent(
+      withPhase("completed"),
+      {
+        type: "applySessionSummary",
+        sessionId: "root-1",
+        summary: summary({ is_running: false, activity: "waiting_children" }),
+      },
+      () => NOW,
+    );
+    expect(next["root-1"].phase).toBe("running_children");
+    expect(selectShouldObserve("root-1")({ executionBySession: next })).toBe(true);
+  });
+
+  it("lets the server's terminal label settle a stale wait", () => {
+    const next = applyExecutionEvent(
+      withPhase("running_children"),
+      {
+        type: "applySessionSummary",
+        sessionId: "root-1",
+        summary: summary({ is_running: false, activity: "terminal", last_run_status: "completed" }),
+      },
+      () => NOW,
+    );
+    expect(next["root-1"].phase).toBe("completed");
+    expect(selectShouldObserve("root-1")({ executionBySession: next })).toBe(false);
+  });
+
   it("never overrides a question this session is waiting on", () => {
     const next = applyExecutionEvent(
       withPhase("waiting_user_answer"),

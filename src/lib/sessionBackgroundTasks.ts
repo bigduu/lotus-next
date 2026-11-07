@@ -1,6 +1,16 @@
 import type { Message } from "@shared/types/chatMessages"
 import { isBusyPhase, type SessionExecutionState } from "@shared/store/appStore/slices/executionStateSlice"
 
+/** The subset of the backend `SessionActivity` labels this module reads. */
+type SessionActivityLabel = import("@services/chat/AgentService").SessionActivity
+
+/**
+ * Labels that mean work is still in flight. `waiting_user` is deliberately
+ * excluded: the run is parked on a person, so it should read as blocked rather
+ * than busy. `terminal` and `idle` are obviously not work.
+ */
+const LIVE_ACTIVITY: ReadonlySet<SessionActivityLabel> = new Set(["running", "waiting_children", "waiting_bash"])
+
 /**
  * Background shell (bash) launch detection for sidebar activity indicators.
  *
@@ -99,11 +109,20 @@ export function sessionHasLiveWork(
      * entry this is also known for a session this client never opened.
      */
     runningChildCount?: number
+    /**
+     * The server's own answer for "what is this session doing now?" A
+     * `waiting_children` or `waiting_bash` label is live work even though no
+     * runner is executing, which covers both waits *and* the gap between the last
+     * child finishing and this Root resuming — neither is expressible with
+     * `isRunning` or a child count alone.
+     */
+    activity?: SessionActivityLabel
   },
   execution: SessionExecutionState | undefined,
   backgroundBash: Readonly<Record<string, unknown>>,
 ): boolean {
   if (session.isRunning) return true
+  if (session.activity && LIVE_ACTIVITY.has(session.activity)) return true
   if ((session.runningChildCount ?? 0) > 0) return true
   if (execution) {
     if (isBusyPhase(execution.phase)) return true

@@ -114,6 +114,7 @@ export const canReuseSessionListChat = (prev: ChatItem, next: ChatItem): boolean
     prev.subagentType === next.subagentType &&
     prev.subagentCount === next.subagentCount &&
     prev.runningChildCount === next.runningChildCount &&
+    prev.activity === next.activity &&
     prev.placement?.kind === next.placement?.kind &&
     prev.placement?.host === next.placement?.host &&
     prev.title === next.title &&

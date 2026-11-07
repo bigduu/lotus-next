@@ -753,32 +753,42 @@ const applySummaryInner = (
     "settling",
   ]);
 
-  // `is_running` is the runner's own liveness, and a Root yields to its children:
-  // while that delegation wait is persisted, a summary read can report
-  // `is_running: false` even though every child is still executing. Settling to
-  // a terminal phase here would also drop the live subscription
-  // (`selectShouldObserve`), freezing the open transcript on its last tool row —
-  // which reads to the user as a hang. Stay busy while the server still counts a
-  // running child.
+  // `is_running` is the runner's own liveness, and a Root yields while it waits:
+  // on delegated children, or on a background shell whose result resumes the run.
+  // During those windows a summary read reports `is_running: false` even though
+  // real work is in flight. Settling to a terminal phase here would also drop the
+  // live subscription (`selectShouldObserve`), freezing the open transcript on its
+  // last tool row — which reads to the user as a hang.
+  //
+  // The backend's `activity` label is the authoritative form of this: it already
+  // applies the precedence below and also covers the gap between the last child
+  // finishing and this Root resuming. The local signals stay as a fallback for
+  // backends that predate the field.
   //
   // Only an otherwise-ambiguous summary (`last_run_status` carries no terminal
   // verdict) qualifies: a real completion, error or cancellation always wins, so
-  // a lingering child count can never keep a finished session pulsing. A question
-  // this session is waiting on keeps its own phase too.
+  // a lingering wait can never keep a finished session pulsing. A question this
+  // session is waiting on keeps its own phase too.
+  const yieldedActivity = summary.activity === "waiting_children" || summary.activity === "waiting_bash";
   const childrenStillRunning = (runningChildCount ?? 0) > 0;
   if (
-    childrenStillRunning &&
+    (yieldedActivity || childrenStillRunning) &&
     lastRunStatus === null &&
     hasPendingQuestion !== true &&
     entry.phase !== "waiting_user_answer"
   ) {
     return {
       ...merged,
-      phase: "running_children",
+      // A shell wait is a tool still executing out of process; a child wait is a
+      // delegated run. Both are busy, and which one it is only affects the label.
+      phase: summary.activity === "waiting_bash" ? "running_tools" : "running_children",
       confidence: "summary",
       timestamps: { ...merged.timestamps, settledAt: null, terminalAt: null },
       error: null,
-      activeReasons: appendReason(merged.activeReasons, "summary:children_running"),
+      activeReasons: appendReason(
+        merged.activeReasons,
+        yieldedActivity ? "summary:yielded_activity" : "summary:children_running",
+      ),
     };
   }
 
