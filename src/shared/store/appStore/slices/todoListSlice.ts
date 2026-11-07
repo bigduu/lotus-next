@@ -116,20 +116,27 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
     }),
 
   loadTaskList: async (sessionId) => {
-    const listsAtRequest = get().taskLists;
+    const { taskLists: listsAtRequest, taskListVersions: versionsAtRequest } = get();
     const taskList = await agentClient.getTaskList(sessionId);
     if (!taskList) {
       return null;
     }
     const owner = taskList.session_id || sessionId;
     const state = get();
+    const version = taskList.version;
+    const previous = listsAtRequest[owner];
+    const current = state.taskLists[owner];
     const observed = state.getTaskListVersion(owner);
     // A committed plan may reset the progress version. Compare the immutable
     // list itself so a repeated version still counts as an intervening update.
-    const progressedDuringRequest = state.taskLists[owner] !== listsAtRequest[owner];
-    // Guard a delayed response, but let a fresh read replace already-observed
-    // provisional progress with a newer committed snapshot.
-    if (!progressedDuringRequest || taskList.version === undefined || taskList.version >= observed) {
+    const progressedDuringRequest = current !== previous;
+    // If the response was already behind provisional progress when the read
+    // began, more deltas cannot stale that catch-up unless a plan was replaced.
+    const committedAtRequest = previous?.version;
+    const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
+      current?.version === committedAtRequest &&
+      version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
+    if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
       state.setTaskList(owner, taskList);
     }
     return taskList;
