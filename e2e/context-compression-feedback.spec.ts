@@ -140,6 +140,36 @@ async function prepare(page: Page, info: TestInfo, split = false) {
 }
 
 type Fixture = Awaited<ReturnType<typeof prepare>>
+
+test("Inspector keeps a saved Task status when an older live update arrives", async ({ page }, info) => {
+  test.skip(info.project.name === "phone-chromium", "Exercises the desktop workbench Inspector")
+  const f = await prepare(page, info)
+  const task = { id: "verify", description: "Verify source evidence", status: "completed", depends_on: [], notes: "" }
+  await page.route(`**/api/v1/task/${primary}`, (route) => route.fulfill({ json: {
+    session_id: primary, title: "Saved plan", items: [task], version: 48,
+    created_at: at, updated_at: at, progress: { completed: 1, total: 1, percentage: 100 },
+  } }))
+  await page.getByRole("button", { name: "Open side panel", exact: true }).click()
+  await page.getByRole("button", { name: "Inspector View current session", exact: true }).click()
+  const item = page.getByRole("tabpanel", { name: "Inspector", exact: true })
+    .getByRole("listitem").filter({ hasText: task.description })
+  await expect(item).toHaveText(/^✓\s*Verify source evidence$/)
+  await expect.poll(() => f.channels.has(`agent.${primary}`)).toBe(true)
+
+  const progress = (version: number) => f.emit({
+    type: "task_list_item_progress", session_id: primary, item_id: task.id,
+    status: "in_progress", tool_calls_count: 2, version,
+  })
+  progress(47)
+  await f.barrier()
+  await expect(item).toHaveText(/^✓\s*Verify source evidence$/)
+  await capture(f, "inspector-rejected-stale-task-progress")
+
+  progress(49)
+  await expect(item).toHaveText(/^◐\s*Verify source evidence$/)
+  await verifyIsolation(f)
+})
+
 async function expectUsage(f: Fixture, percent: number, within: Page | Locator = f.page) {
   const usage = within.getByRole("button", { name: f.phone ? "上下文用量" : "Context usage", exact: true })
   await expect(usage).toHaveAttribute("title", new RegExp(`\\(${percent}%\\)`))

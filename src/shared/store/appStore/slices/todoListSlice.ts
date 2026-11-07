@@ -91,25 +91,54 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
   activeItems: {},
   evaluationStates: {},
 
-  // Set full task list (from TaskListUpdated event)
+  // A newer full list can supersede provisional progress from a tool run.
   setTaskList: (sessionId, taskList) =>
-    set((state) => ({
-      taskLists: {
-        ...state.taskLists,
-        [sessionId]: taskList,
-      },
-      taskListVersions: {
-        ...state.taskListVersions,
-        [sessionId]: taskList.version || 0,
-      },
-    })),
+    set((state) => {
+      const version = taskList.version ?? 0;
+      const previousSnapshotVersion = state.taskLists[sessionId]?.version;
+      const observedVersion = state.taskListVersions[sessionId] ?? 0;
+      if (previousSnapshotVersion !== undefined && (
+        version < previousSnapshotVersion ||
+        (version === previousSnapshotVersion && version < observedVersion)
+      )) {
+        return state;
+      }
+      return {
+        taskLists: {
+          ...state.taskLists,
+          [sessionId]: taskList,
+        },
+        taskListVersions: {
+          ...state.taskListVersions,
+          [sessionId]: version,
+        },
+      };
+    }),
 
   loadTaskList: async (sessionId) => {
+    const { taskLists: listsAtRequest, taskListVersions: versionsAtRequest } = get();
     const taskList = await agentClient.getTaskList(sessionId);
     if (!taskList) {
       return null;
     }
-    get().setTaskList(taskList.session_id || sessionId, taskList);
+    const owner = taskList.session_id || sessionId;
+    const state = get();
+    const version = taskList.version;
+    const previous = listsAtRequest[owner];
+    const current = state.taskLists[owner];
+    const observed = state.getTaskListVersion(owner);
+    // A committed plan may reset the progress version. Compare the immutable
+    // list itself so a repeated version still counts as an intervening update.
+    const progressedDuringRequest = current !== previous;
+    // If the response was already behind provisional progress when the read
+    // began, more deltas cannot stale that catch-up unless a plan was replaced.
+    const committedAtRequest = previous?.version;
+    const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
+      current?.version === committedAtRequest &&
+      version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
+    if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
+      state.setTaskList(owner, taskList);
+    }
     return taskList;
   },
 
