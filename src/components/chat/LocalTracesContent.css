@@ -1,0 +1,12 @@
+.local-trace-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1024px) {
+  .local-trace-grid { grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr); }
+}
+
+@media (min-width: 1280px) {
+  .local-span-grid { grid-template-columns: minmax(0, 1fr) minmax(12rem, 16rem); }
+}
