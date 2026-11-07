@@ -120,4 +120,25 @@ describe("Task snapshots and live progress", () => {
     expect(store.getState().taskLists["work-child"]).toEqual(committed)
     expect(store.getState().getTaskListVersion("work-child")).toBe(3)
   })
+
+  it("recovers an already missed Work commit while provisional progress continues", async () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    store.getState().setTaskList("work-child", taskList("work-child", "in_progress", 2))
+    store.getState().updateTaskListDelta("work-child", {
+      session_id: "work-child", item_id: "read", status: "blocked", tool_calls_count: 15, version: 17,
+    })
+    let respond!: (value: TaskList) => void
+    api.get.mockReturnValue(new Promise<TaskList>((resolve) => { respond = resolve }))
+
+    const reload = store.getState().loadTaskList("work-child")
+    store.getState().updateTaskListDelta("work-child", {
+      session_id: "work-child", item_id: "read", status: "in_progress", tool_calls_count: 16, version: 18,
+    })
+    const committed = taskList("work-child", "completed", 3)
+    respond(committed)
+    await reload
+
+    expect(store.getState().taskLists["work-child"]).toEqual(committed)
+    expect(store.getState().getTaskListVersion("work-child")).toBe(3)
+  })
 })
