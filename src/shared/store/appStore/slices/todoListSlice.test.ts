@@ -141,4 +141,27 @@ describe("Task snapshots and live progress", () => {
     expect(store.getState().taskLists["work-child"]).toEqual(committed)
     expect(store.getState().getTaskListVersion("work-child")).toBe(3)
   })
+
+  it("recovers a missed plan even when the first live progress arrives during the read", async () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    store.getState().setTaskList("work-child", taskList("work-child", "pending", 2))
+    const committed = taskList("work-child", "completed", 3)
+    committed.items.push({
+      ...committed.items[0], id: "report", description: "Record evidence", status: "pending",
+    })
+    let respond!: (value: TaskList) => void
+    api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+      .mockResolvedValueOnce(committed)
+
+    const reload = store.getState().loadTaskList("work-child")
+    store.getState().updateTaskListDelta("work-child", {
+      session_id: "work-child", item_id: "read", status: "in_progress", tool_calls_count: 2, version: 4,
+    })
+    respond(committed)
+    await reload
+
+    expect(store.getState().taskLists["work-child"]).toEqual(committed)
+    expect(store.getState().getTaskListVersion("work-child")).toBe(3)
+    expect(api.get).toHaveBeenCalledTimes(2)
+  })
 })
