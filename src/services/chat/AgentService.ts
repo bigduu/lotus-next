@@ -1476,7 +1476,7 @@ export class AgentClient {
    */
   async getTaskList(sessionId: string): Promise<TaskList | null> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    const snapshot = await apiClient.get<TaskListSnapshotResponse>(`task/${encodedSessionId}`);
+    const snapshot = await apiClient.get<TaskListSnapshotResponse>(`task/${encodedSessionId}`, { cache: "no-store" });
 
     const hasTaskList = typeof snapshot.title === "string" || snapshot.items.length > 0;
     if (!hasTaskList) {
