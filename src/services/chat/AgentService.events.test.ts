@@ -39,6 +39,22 @@ describe("AgentClient session event routing", () => {
     )
   })
 
+  it("retains the version on a full Task event for reconnect reconciliation", async () => {
+    const taskList = {
+      session_id: "work-child",
+      title: "Worker handoff",
+      items: [],
+      created_at: "2026-11-07T02:39:39Z",
+      updated_at: "2026-11-07T02:45:11Z",
+    }
+    stream.event = { type: "task_list_updated", task_list: taskList, version: 48 }
+    const onTaskListUpdated = vi.fn()
+
+    await new AgentClient().subscribeToEvents("work-child", { onTaskListUpdated })
+
+    expect(onTaskListUpdated).toHaveBeenCalledExactlyOnceWith({ ...taskList, version: 48 })
+  })
+
   it.each([
     { summary: "compressed context", messages_summarized: 8, tokens_saved: 1024 },
     { summary: "", messages_summarized: 0, tokens_saved: 0 },
