@@ -116,7 +116,7 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
     }),
 
   loadTaskList: async (sessionId) => {
-    const versionsAtRequest = get().taskListVersions;
+    const listsAtRequest = get().taskLists;
     const taskList = await agentClient.getTaskList(sessionId);
     if (!taskList) {
       return null;
@@ -124,7 +124,9 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
     const owner = taskList.session_id || sessionId;
     const state = get();
     const observed = state.getTaskListVersion(owner);
-    const progressedDuringRequest = observed !== (versionsAtRequest[owner] ?? 0);
+    // A committed plan may reset the progress version. Compare the immutable
+    // list itself so a repeated version still counts as an intervening update.
+    const progressedDuringRequest = state.taskLists[owner] !== listsAtRequest[owner];
     // Guard a delayed response, but let a fresh read replace already-observed
     // provisional progress with a newer committed snapshot.
     if (!progressedDuringRequest || taskList.version === undefined || taskList.version >= observed) {
