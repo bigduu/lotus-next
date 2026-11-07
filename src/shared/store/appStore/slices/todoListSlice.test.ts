@@ -56,6 +56,27 @@ describe("Task snapshots and live progress", () => {
     expect(store.getState().getTaskListVersion("work-child")).toBe(49)
   })
 
+  it("keeps live progress when a committed plan resets the version during an HTTP read", async () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    store.getState().setTaskList("work-child", taskList("work-child", "pending", 2))
+    store.getState().updateTaskListDelta("work-child", {
+      session_id: "work-child", item_id: "read", status: "in_progress", tool_calls_count: 3, version: 5,
+    })
+    let respond!: (value: TaskList) => void
+    api.get.mockReturnValue(new Promise<TaskList>((resolve) => { respond = resolve }))
+
+    const reload = store.getState().loadTaskList("work-child")
+    store.getState().setTaskList("work-child", taskList("work-child", "pending", 3))
+    store.getState().updateTaskListDelta("work-child", {
+      session_id: "work-child", item_id: "read", status: "completed", tool_calls_count: 2, version: 5,
+    })
+    respond(taskList("work-child", "in_progress", 4))
+    await reload
+
+    expect(store.getState().taskLists["work-child"].items[0].status).toBe("completed")
+    expect(store.getState().getTaskListVersion("work-child")).toBe(5)
+  })
+
   it("accepts legacy unversioned lists until a versioned update and after an explicit reset", () => {
     const store = createStore<TaskListSlice>()(createTaskListSlice)
     const legacy = taskList("work-child", "pending")
