@@ -37,7 +37,7 @@ describe("Task snapshots and live progress", () => {
   it("keeps a newer Worker update when an older HTTP response or full event arrives", async () => {
     const store = createStore<TaskListSlice>()(createTaskListSlice)
     const root = taskList("supervisor", "blocked", 1491)
-    const child = taskList("work-child", "in_progress", 48)
+    const child = taskList("work-child", "in_progress", 47)
     store.getState().setTaskList("supervisor", root)
     store.getState().setTaskList("work-child", child)
     let respond!: (value: TaskList) => void
@@ -47,7 +47,7 @@ describe("Task snapshots and live progress", () => {
     store.getState().updateTaskListDelta("work-child", {
       session_id: "work-child", item_id: "read", status: "completed", tool_calls_count: 3, version: 49,
     })
-    respond(child)
+    respond(taskList("work-child", "in_progress", 48))
     await reload
     store.getState().setTaskList("work-child", taskList("work-child", "pending", 47))
 
@@ -80,6 +80,21 @@ describe("Task snapshots and live progress", () => {
     const committed = taskList("work-child", "completed", 3)
 
     store.getState().setTaskList("work-child", committed)
+
+    expect(store.getState().taskLists["work-child"]).toEqual(committed)
+    expect(store.getState().getTaskListVersion("work-child")).toBe(3)
+  })
+
+  it("recovers a missed committed Work plan by reading a fresh snapshot", async () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    store.getState().setTaskList("work-child", taskList("work-child", "in_progress", 2))
+    store.getState().updateTaskListDelta("work-child", {
+      session_id: "work-child", item_id: "read", status: "blocked", tool_calls_count: 15, version: 17,
+    })
+    const committed = taskList("work-child", "completed", 3)
+    api.get.mockResolvedValue(committed)
+
+    await store.getState().loadTaskList("work-child")
 
     expect(store.getState().taskLists["work-child"]).toEqual(committed)
     expect(store.getState().getTaskListVersion("work-child")).toBe(3)

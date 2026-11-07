@@ -116,13 +116,18 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
     }),
 
   loadTaskList: async (sessionId) => {
+    const versionsAtRequest = get().taskListVersions;
     const taskList = await agentClient.getTaskList(sessionId);
     if (!taskList) {
       return null;
     }
     const owner = taskList.session_id || sessionId;
     const state = get();
-    if (taskList.version === undefined || taskList.version >= state.getTaskListVersion(owner)) {
+    const observed = state.getTaskListVersion(owner);
+    const progressedDuringRequest = observed !== (versionsAtRequest[owner] ?? 0);
+    // Guard a delayed response, but let a fresh read replace already-observed
+    // provisional progress with a newer committed snapshot.
+    if (!progressedDuringRequest || taskList.version === undefined || taskList.version >= observed) {
       state.setTaskList(owner, taskList);
     }
     return taskList;
