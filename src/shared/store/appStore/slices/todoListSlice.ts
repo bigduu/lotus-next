@@ -91,25 +91,40 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
   activeItems: {},
   evaluationStates: {},
 
-  // Set full task list (from TaskListUpdated event)
+  // A newer full list can supersede provisional progress from a tool run.
   setTaskList: (sessionId, taskList) =>
-    set((state) => ({
-      taskLists: {
-        ...state.taskLists,
-        [sessionId]: taskList,
-      },
-      taskListVersions: {
-        ...state.taskListVersions,
-        [sessionId]: taskList.version || 0,
-      },
-    })),
+    set((state) => {
+      const version = taskList.version ?? 0;
+      const previousSnapshotVersion = state.taskLists[sessionId]?.version;
+      const observedVersion = state.taskListVersions[sessionId] ?? 0;
+      if (previousSnapshotVersion !== undefined && (
+        version < previousSnapshotVersion ||
+        (version === previousSnapshotVersion && version < observedVersion)
+      )) {
+        return state;
+      }
+      return {
+        taskLists: {
+          ...state.taskLists,
+          [sessionId]: taskList,
+        },
+        taskListVersions: {
+          ...state.taskListVersions,
+          [sessionId]: version,
+        },
+      };
+    }),
 
   loadTaskList: async (sessionId) => {
     const taskList = await agentClient.getTaskList(sessionId);
     if (!taskList) {
       return null;
     }
-    get().setTaskList(taskList.session_id || sessionId, taskList);
+    const owner = taskList.session_id || sessionId;
+    const state = get();
+    if (taskList.version === undefined || taskList.version >= state.getTaskListVersion(owner)) {
+      state.setTaskList(owner, taskList);
+    }
     return taskList;
   },
 

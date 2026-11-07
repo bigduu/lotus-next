@@ -70,4 +70,18 @@ describe("Task snapshots and live progress", () => {
     store.getState().setTaskList("work-child", legacy)
     expect(store.getState().taskLists["work-child"]).toEqual(legacy)
   })
+
+  it("replaces provisional tool progress with a newer committed Work plan", () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    store.getState().setTaskList("work-child", taskList("work-child", "in_progress", 2))
+    store.getState().updateTaskListDelta("work-child", {
+      session_id: "work-child", item_id: "read", status: "blocked", tool_calls_count: 15, version: 17,
+    })
+    const committed = taskList("work-child", "completed", 3)
+
+    store.getState().setTaskList("work-child", committed)
+
+    expect(store.getState().taskLists["work-child"]).toEqual(committed)
+    expect(store.getState().getTaskListVersion("work-child")).toBe(3)
+  })
 })

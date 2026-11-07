@@ -243,6 +243,9 @@ interface TaskListSnapshotResponse {
   session_id: string;
   title: string | null;
   items: TaskItem[];
+  version?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
   progress: {
     completed: number;
     total: number;
@@ -1468,7 +1471,7 @@ export class AgentClient {
   /**
    * Get the current shared task list snapshot for a session.
    *
-   * Child sessions resolve to the root/shared task list server-side.
+   * The returned Session identity owns the snapshot, including shared Root lists.
    * Returns null when no task list currently exists.
    */
   async getTaskList(sessionId: string): Promise<TaskList | null> {
@@ -1485,8 +1488,9 @@ export class AgentClient {
       session_id: snapshot.session_id,
       title: snapshot.title ?? "Task List",
       items: snapshot.items,
-      created_at: now,
-      updated_at: now,
+      created_at: snapshot.created_at ?? now,
+      updated_at: snapshot.updated_at ?? now,
+      ...(snapshot.version !== undefined ? { version: snapshot.version } : {}),
     };
   }
 
@@ -1870,7 +1874,9 @@ export class AgentClient {
         break;
       case "task_list_updated":
         if (event.task_list) {
-          handlers.onTaskListUpdated?.(event.task_list);
+          handlers.onTaskListUpdated?.(
+            event.version !== undefined ? { ...event.task_list, version: event.version } : event.task_list,
+          );
         }
         break;
       case "task_list_item_progress":
