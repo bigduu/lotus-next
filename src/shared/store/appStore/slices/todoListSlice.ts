@@ -116,30 +116,34 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
     }),
 
   loadTaskList: async (sessionId) => {
-    const { taskLists: listsAtRequest, taskListVersions: versionsAtRequest } = get();
-    const taskList = await agentClient.getTaskList(sessionId);
-    if (!taskList) {
-      return null;
+    let latest: TaskList | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { taskLists: listsAtRequest, taskListVersions: versionsAtRequest } = get();
+      const request = agentClient.getTaskList(sessionId);
+      const taskList = await (attempt === 0 ? request : request.catch(() => null));
+      if (!taskList) break;
+      latest = taskList;
+      const owner = taskList.session_id || sessionId;
+      const state = get();
+      const version = taskList.version;
+      const previous = listsAtRequest[owner];
+      const current = state.taskLists[owner];
+      const observed = state.getTaskListVersion(owner);
+      // Compare immutable lists because a commit can reset the progress version.
+      const progressedDuringRequest = current !== previous;
+      const committedAtRequest = previous?.version;
+      const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
+        current?.version === committedAtRequest &&
+        version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
+      if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
+        state.setTaskList(owner, taskList);
+        break;
+      }
+      // An overtaken response can still reveal a missed commit. Recheck once
+      // from the new baseline; never replace newer live progress on this reply.
+      if (current?.version === undefined || version <= current.version) break;
     }
-    const owner = taskList.session_id || sessionId;
-    const state = get();
-    const version = taskList.version;
-    const previous = listsAtRequest[owner];
-    const current = state.taskLists[owner];
-    const observed = state.getTaskListVersion(owner);
-    // A committed plan may reset the progress version. Compare the immutable
-    // list itself so a repeated version still counts as an intervening update.
-    const progressedDuringRequest = current !== previous;
-    // If the response was already behind provisional progress when the read
-    // began, more deltas cannot stale that catch-up unless a plan was replaced.
-    const committedAtRequest = previous?.version;
-    const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
-      current?.version === committedAtRequest &&
-      version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
-    if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
-      state.setTaskList(owner, taskList);
-    }
-    return taskList;
+    return latest;
   },
 
   // Update from delta (from TaskListItemProgress event)

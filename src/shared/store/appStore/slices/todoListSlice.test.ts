@@ -41,7 +41,8 @@ describe("Task snapshots and live progress", () => {
     store.getState().setTaskList("supervisor", root)
     store.getState().setTaskList("work-child", child)
     let respond!: (value: TaskList) => void
-    api.get.mockReturnValue(new Promise<TaskList>((resolve) => { respond = resolve }))
+    api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+      .mockRejectedValueOnce(new Error("optional refresh unavailable"))
 
     const reload = store.getState().loadTaskList("work-child")
     store.getState().updateTaskListDelta("work-child", {
@@ -63,7 +64,8 @@ describe("Task snapshots and live progress", () => {
       session_id: "work-child", item_id: "read", status: "in_progress", tool_calls_count: 3, version: 5,
     })
     let respond!: (value: TaskList) => void
-    api.get.mockReturnValue(new Promise<TaskList>((resolve) => { respond = resolve }))
+    api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+      .mockResolvedValueOnce({ session_id: "work-child", items: [] })
 
     const reload = store.getState().loadTaskList("work-child")
     store.getState().setTaskList("work-child", taskList("work-child", "pending", 3))
@@ -162,6 +164,38 @@ describe("Task snapshots and live progress", () => {
 
     expect(store.getState().taskLists["work-child"]).toEqual(committed)
     expect(store.getState().getTaskListVersion("work-child")).toBe(3)
+    expect(api.get).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps live progress when the follow-up read is also overtaken", async () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    store.getState().setTaskList("work-child", taskList("work-child", "pending", 2))
+    let respond!: (value: TaskList) => void
+    let respondAgain!: (value: TaskList) => void
+    let recheckStarted!: () => void
+    const recheck = new Promise<void>((resolve) => { recheckStarted = resolve })
+    api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+      .mockImplementationOnce(() => {
+        recheckStarted()
+        return new Promise<TaskList>((resolve) => { respondAgain = resolve })
+      })
+    const progress = (version: number, status: TaskItemStatus) => {
+      store.getState().updateTaskListDelta("work-child", {
+        session_id: "work-child", item_id: "read", status, tool_calls_count: version, version,
+      })
+    }
+
+    const reload = store.getState().loadTaskList("work-child")
+    progress(4, "in_progress")
+    respond(taskList("work-child", "pending", 3))
+    await recheck
+    expect(store.getState().taskLists["work-child"].items[0].status).toBe("in_progress")
+    progress(6, "completed")
+    respondAgain(taskList("work-child", "pending", 5))
+    await reload
+
+    expect(store.getState().taskLists["work-child"].items[0].status).toBe("completed")
+    expect(store.getState().getTaskListVersion("work-child")).toBe(6)
     expect(api.get).toHaveBeenCalledTimes(2)
   })
 })
