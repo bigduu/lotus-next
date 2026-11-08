@@ -2928,5 +2928,15 @@ export const uiEnUs = {
   "session_migration_confirm_result": "Confirm migration result",
   "session_migration_refresh": "Refresh migration state",
   "work_review_model_purpose": "Work review",
-  "work_review_model_description": "Reviews a Work's purpose, progress and handoff records. Falls back only to configured Fast when unset."
+  "work_review_model_description": "Reviews a Work's purpose, progress and handoff records. Falls back only to configured Fast when unset.",
+  "supervisor_pending_approvals": "Pending approvals",
+  "supervisor_approval_handoff_setting": "Supervisor review of unattended approvals",
+  "supervisor_approval_handoff_description": "After 10 minutes, the Supervisor can allow or deny one routine file edit in a managed workspace. Forced confirmations stay with you.",
+  "supervisor_approval_handoff_on": "Enabled",
+  "supervisor_approval_handoff_off": "Disabled",
+  "supervisor_approval_handoff_at": "Eligible for Supervisor review from {{time}}",
+  "supervisor_approvals_unavailable": "Pending approvals could not be loaded.",
+  "supervisor_approval_refresh_before_retry": "Refresh the request before deciding again.",
+  "supervisor_approval_allowed": "Approved for this request.",
+  "supervisor_approval_denied": "Denied for this request.",
 } as const

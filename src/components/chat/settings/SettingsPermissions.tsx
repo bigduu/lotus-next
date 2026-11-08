@@ -1,8 +1,9 @@
 import { Trans } from "react-i18next"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { settingsService, type SessionPermissionModeValue } from "@services/config/SettingsService"
+import { isApiError } from "@services/api/errors"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
@@ -18,24 +19,27 @@ const MODE_OPTIONS: Array<{
   { value: "auto", label: "Auto", get hint() { return uiText("no_approval_dialogs_hard_deny_policies_still_apply_73c31eb7") }, danger: true },
 ]
 
-function DefaultModeSection() {
+function ApprovalDefaults() {
   useUiLocale()
   const [mode, setMode] = useState<SessionPermissionModeValue>("default")
   const [revision, setRevision] = useState<number | undefined>(undefined)
+  const [handoffEnabled, setHandoffEnabled] = useState<boolean>()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const refreshPolicy = useCallback(async () => {
+    const current = await settingsService.getDefaultSessionPermissionMode()
+    setMode(current.mode)
+    setRevision(current.revision)
+    setHandoffEnabled(current.supervisor_approval_handoff_enabled)
+  }, [])
+
   useEffect(() => {
-    settingsService
-      .getDefaultSessionPermissionMode()
-      .then((res) => {
-        setMode(res.mode)
-        setRevision(res.revision)
-      })
+    void refreshPolicy()
       .catch(() => setError(uiText("could_not_load_default_permission_mode_f3b27a89")))
       .finally(() => setLoading(false))
-  }, [])
+  }, [refreshPolicy])
 
   const save = async (next: SessionPermissionModeValue) => {
     if (next === mode || saving) return
@@ -54,30 +58,65 @@ function DefaultModeSection() {
     }
   }
 
+  const saveHandoff = async () => {
+    if (saving || revision === undefined || handoffEnabled === undefined) return
+    setSaving(true)
+    setError(null)
+    try {
+      const saved = await settingsService.updateSupervisorApprovalHandoff(!handoffEnabled, revision)
+      setHandoffEnabled(saved.supervisor_approval_handoff_enabled)
+      setRevision(saved.revision)
+    } catch (failure) {
+      setError(uiText("could_not_save_please_try_again_f42a1238"))
+      if (isApiError(failure) && failure.status === 409) {
+        try {
+          await refreshPolicy()
+          setError(uiText("the_request_or_permissions_have_changed_confirm_again_u_a1ebae48"))
+        } catch {
+          // Keep the failure visible when the policy readback is unavailable.
+        }
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <section className="space-y-2 rounded-lg border p-3">
-      <div className="text-xs font-medium text-muted-foreground">{uiText("default_permissions_for_new_sessions_5ac6c44c")}</div>
-      <div className="flex gap-2">
-        {MODE_OPTIONS.map((option) => (
-          <Button
-            key={option.value}
-            variant={mode === option.value ? "default" : "secondary"}
-            disabled={loading || saving}
-            onClick={() => void save(option.value)}
-            className={cn(
-              "flex-1",
-              mode === option.value && option.danger && "border-amber-500/60 text-amber-600 dark:text-amber-400",
-            )}
-          >
-            {option.label}
+    <>
+      <section className="space-y-2 rounded-lg border p-3">
+        <div className="text-xs font-medium text-muted-foreground">{uiText("default_permissions_for_new_sessions_5ac6c44c")}</div>
+        <div className="flex gap-2">
+          {MODE_OPTIONS.map((option) => (
+            <Button
+              key={option.value}
+              variant={mode === option.value ? "default" : "secondary"}
+              disabled={loading || saving}
+              onClick={() => void save(option.value)}
+              className={cn(
+                "flex-1",
+                mode === option.value && option.danger && "border-amber-500/60 text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {loading ? uiText("loading_4927a53b") : saving ? uiText("saving_ff509c9b") : MODE_OPTIONS.find((o) => o.value === mode)?.hint}
+          {uiText("only_affects_new_sessions_existing_sessions_keep_their__770c0ec9")}</p>
+      </section>
+      {handoffEnabled === undefined ? null : (
+        <section className="space-y-2 rounded-lg border p-3">
+          <div className="text-xs font-medium text-muted-foreground">{uiText("supervisor_approval_handoff_setting")}</div>
+          <p className="text-xs text-muted-foreground">{uiText("supervisor_approval_handoff_description")}</p>
+          <Button type="button" variant="outline" size="sm" aria-pressed={handoffEnabled}
+            disabled={saving} onClick={() => void saveHandoff()}>
+            {uiText(handoffEnabled ? "supervisor_approval_handoff_on" : "supervisor_approval_handoff_off")}
           </Button>
-        ))}
-      </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        {loading ? uiText("loading_4927a53b") : saving ? uiText("saving_ff509c9b") : MODE_OPTIONS.find((o) => o.value === mode)?.hint}
-        {uiText("only_affects_new_sessions_existing_sessions_keep_their__770c0ec9")}</p>
+        </section>
+      )}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-    </section>
+    </>
   )
 }
 
@@ -114,7 +153,7 @@ export function SettingsPermissions() {
 
   return (
     <div className="space-y-4">
-      <DefaultModeSection />
+      <ApprovalDefaults />
 
       <p className="text-xs text-muted-foreground">
         <Trans i18nKey="ui.approval_rule_example" components={{ code: <code /> }} />

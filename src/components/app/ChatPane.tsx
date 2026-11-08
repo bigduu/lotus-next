@@ -61,6 +61,7 @@ import { useTicketIngress } from "@/hooks/useTicketIngress"
 import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
 import { LazyTicketWorkPanel } from "@/components/chat/LazyTicketWorkPanel"
 import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
+import { SupervisorApprovalCards, type OpenRecordedSession } from "@/components/chat/SupervisorApprovalCards"
 import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
@@ -204,6 +205,7 @@ export function ChatPane({
   onOpenWorkspacePicker,
   onOpenInspector,
   onOpenReview,
+  onOpenRecordedSession,
   workPanelTarget,
   onOpenWork,
   onWorkReference,
@@ -234,6 +236,7 @@ export function ChatPane({
   onOpenWorkspacePicker: () => void
   onOpenInspector: () => void
   onOpenReview?: () => void
+  onOpenRecordedSession?: OpenRecordedSession
   workPanelTarget?: HTMLElement | null
   onOpenWork?: () => void
   onWorkReference?: () => void
@@ -1494,6 +1497,13 @@ export function ChatPane({
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
           <ContextCompressionNotice feedback={contextCompression} />
+          {!secondary && !historyBlocked && pageVisible !== false && currentChat && isDefaultSupervisor(currentChat) ? (
+            <SupervisorApprovalCards onOpenSession={onOpenRecordedSession} onRecorded={(decision, continuationConfirmed) => {
+              showToast(!continuationConfirmed
+                ? uiText("your_response_was_recorded_but_task_continuation_is_unc_844b0635")
+                : uiText(decision === "allow_once" ? "supervisor_approval_allowed" : "supervisor_approval_denied"))
+            }} />
+          ) : null}
           {compacting ? (
             <p role="status" className="mx-4 text-xs text-muted-foreground">{uiText("compact_in_progress")}</p>
           ) : null}

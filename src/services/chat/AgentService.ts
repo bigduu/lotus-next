@@ -548,6 +548,15 @@ export type PermissionDecisionRequest = {
   decision: PermissionOnceDecision;
   expected_policy_revision: number;
 };
+export type SupervisorApprovalCardData = {
+  sessionId: string;
+  createdAt: string;
+  title: string;
+  operation: string;
+  workingDirectory?: string;
+  supervisorHandoffAt?: string;
+  request: PermissionRequest;
+};
 /** A matching receipt confirms the decision independently of continuation. */
 export type PermissionDecisionResult = {
   replayed: boolean;
@@ -697,6 +706,7 @@ export interface HistoryResponse {
     id: string;
     role: "user" | "assistant" | "tool" | "system";
     content: string;
+    phase?: string;
     compressed?: boolean;
     compressed_by_event_id?: string;
     content_parts?: Array<
@@ -1503,6 +1513,38 @@ export class AgentClient {
     const encoded = encodeURIComponent(sessionId);
     const value = await apiClient.get<unknown>(`respond/${encoded}/pending`, { cache: "no-store" });
     return parsePendingQuestion(sessionId, value);
+  }
+
+  async listSupervisorApprovals(signal?: AbortSignal): Promise<SupervisorApprovalCardData[]> {
+    const value = await apiClient.get<unknown>("supervisor/default/approvals", { cache: "no-store", signal });
+    const response = interactionRecord(value);
+    if (!Array.isArray(response?.approvals) || response.approvals.length > 8) {
+      throw new PendingInteractionContractError();
+    }
+    return response.approvals.map((value) => {
+      const card = interactionRecord(value);
+      if (!nonemptyInteractionString(card?.session_id) || !nonemptyInteractionString(card.created_at)
+          || !Number.isFinite(Date.parse(card.created_at)) || typeof card.title !== "string") {
+        throw new PendingInteractionContractError();
+      }
+      const pending = parsePendingQuestion(card.session_id, card.pending);
+      if (!pending.has_pending_question || pending.interaction_kind !== "permission") {
+        throw new PendingInteractionContractError();
+      }
+      const request = pending.permission_request;
+      const args = interactionRecord(interactionRecord(card.pending)?.tool_arguments);
+      const command = request.tool_name === "exec_command" && nonemptyInteractionString(args?.cmd) ? args.cmd : null;
+      const workdir = args?.workdir ?? card.workspace_path;
+      const operation = command ?? request.operation_summary;
+      if (!nonemptyInteractionString(operation)) throw new PendingInteractionContractError();
+      return {
+        sessionId: card.session_id, createdAt: card.created_at, title: card.title,
+        operation, request,
+        workingDirectory: command && nonemptyInteractionString(workdir) ? workdir : undefined,
+        supervisorHandoffAt: typeof card.supervisor_handoff_at === "string"
+          && Number.isFinite(Date.parse(card.supervisor_handoff_at)) ? card.supervisor_handoff_at : undefined,
+      };
+    });
   }
 
   /** One explicit attempt, without implicit replay or ordinary-text fallback. */

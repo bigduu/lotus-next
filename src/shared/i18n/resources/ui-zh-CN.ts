@@ -2926,5 +2926,15 @@ export const uiZhCn = {
   "session_migration_confirm_result": "确认迁移结果",
   "session_migration_refresh": "刷新迁移状态",
   "work_review_model_purpose": "工作审查",
-  "work_review_model_description": "复核 Work 的目的、进度与交接记录；未设置时只回退到已配置的快速模型。"
+  "work_review_model_description": "复核 Work 的目的、进度与交接记录；未设置时只回退到已配置的快速模型。",
+  "supervisor_pending_approvals": "待审批",
+  "supervisor_approval_handoff_setting": "无人处理时交给 Supervisor",
+  "supervisor_approval_handoff_description": "10 分钟后，Supervisor 可以单次批准或拒绝受管工作区内的常规文件编辑。强制确认仍由你决定。",
+  "supervisor_approval_handoff_on": "已开启",
+  "supervisor_approval_handoff_off": "已关闭",
+  "supervisor_approval_handoff_at": "{{time}} 起可交给 Supervisor 处理",
+  "supervisor_approvals_unavailable": "无法读取待审批请求。",
+  "supervisor_approval_refresh_before_retry": "请刷新请求后重新确认。",
+  "supervisor_approval_allowed": "已批准本次操作。",
+  "supervisor_approval_denied": "已拒绝本次操作。",
 } as const

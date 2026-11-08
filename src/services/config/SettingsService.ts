@@ -87,6 +87,7 @@ export type SessionPermissionModeValue = "default" | "bypass" | "auto";
 
 export interface DefaultSessionPermissionMode {
   mode: SessionPermissionModeValue;
+  supervisor_approval_handoff_enabled?: boolean;
   /** Store revision for CAS on update. */
   revision: number;
   loaded_at: string;
@@ -253,7 +254,7 @@ export class SettingsService {
    * ("default" | "bypass" | "auto") from the durable permission policy.
    */
   async getDefaultSessionPermissionMode(): Promise<DefaultSessionPermissionMode> {
-    return apiClient.get<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode");
+    return apiClient.get<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode", { cache: "no-store" });
   }
 
   /**
@@ -266,6 +267,16 @@ export class SettingsService {
   ): Promise<DefaultSessionPermissionMode> {
     return apiClient.put<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode", {
       mode,
+      expected_revision: expectedRevision,
+    });
+  }
+
+  async updateSupervisorApprovalHandoff(
+    enabled: boolean,
+    expectedRevision: number,
+  ): Promise<DefaultSessionPermissionMode> {
+    return apiClient.put<DefaultSessionPermissionMode>("/bamboo/permission/supervisor-handoff", {
+      enabled,
       expected_revision: expectedRevision,
     });
   }

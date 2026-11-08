@@ -261,8 +261,14 @@ function formatElapsedDuration(durationMs: number): string | null {
 
 function isFinalAssistantResponse(item: RenderItem): boolean {
   if (item.kind !== "msg" || item.m.role !== "assistant") return false
+  if (item.m.type === "text" && item.m.phase === "commentary") return false
   const images = (item.m as { images?: unknown[] }).images
   return Boolean(messageText(item.m).trim() || images?.length)
+}
+
+function isRecordedFinal(item: DisplayItem): boolean {
+  return item.kind === "msg" && item.m.role === "assistant" && item.m.type === "text"
+    && item.m.phase === "final_answer"
 }
 
 function buildActionableAssistantIndexes(
@@ -280,11 +286,30 @@ function buildActionableAssistantIndexes(
       continue
     }
     if (item.kind === "collapsedTurn") continue
-    if (isFinalAssistantResponse(item)) candidate = index
+    if (isRecordedFinal(item)) {
+      indexes.add(index)
+      candidate = null
+    } else if (isFinalAssistantResponse(item)) {
+      candidate = index
+    }
   }
 
   if (includeTrailingAssistant && candidate !== null) indexes.add(candidate)
   return indexes
+}
+
+// Regenerate truncates after the latest user message. A turn with several
+// independently recorded answers has no single supported regeneration target.
+function findRegenerableAssistantIndex(items: DisplayItem[]): number {
+  const tailIndex = items.length - 1
+  const tail = items[tailIndex]
+  if (tail?.kind !== "msg" || !isFinalAssistantResponse(tail)) return -1
+  for (let index = tailIndex - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item.kind === "msg" && item.m.role === "user") return tailIndex
+    if (isRecordedFinal(item)) return -1
+  }
+  return -1
 }
 
 /** Fold a completed turn's middle behind one divider. Runs only for turns whose
@@ -294,60 +319,52 @@ function buildDisplayItems(
   items: RenderItem[],
   collapseLastTurn: boolean,
 ): DisplayItem[] {
-  const turns: { start: number; end: number; summary: number | null }[] = []
-  let start = 0
-  const isUserBoundary = (item: RenderItem) => item.kind === "msg" && item.m.role === "user"
+  const collapses = new Map<number, TurnCollapseItem>()
+  let boundary = 0
   for (let index = 0; index <= items.length; index += 1) {
-    // A new user message (or the transcript end) closes the current turn.
-    if (index < items.length && !isUserBoundary(items[index])) continue
-    let summary: number | null = null
-    // The conclusion must be the turn's last item; a trailing process has no
-    // recorded summary yet and the whole turn stays in reading flow.
-    for (let scan = index - 1; scan > start; scan -= 1) {
-      if (isFinalAssistantResponse(items[scan])) { summary = scan; break }
-      if (items[scan].kind === "process") break
-    }
-    turns.push({ start, end: index, summary })
-    start = index
-  }
-  const excluded = new Set<number>()
-  const collapses: TurnCollapseItem[] = []
-  for (let t = 0; t < turns.length; t += 1) {
-    const { start: boundary, end, summary } = turns[t]
-    if (summary == null || summary !== end - 1) continue
-    if (!collapseLastTurn && t === turns.length - 1) continue
+    const next = items[index]
+    const nextIsUser = next?.kind === "msg" && next.m.role === "user"
+    const summary = index - 1
+    const recorded = summary >= 0 && isRecordedFinal(items[summary])
+    if (next && !nextIsUser && !recorded) continue
+
+    const first = boundary + 1
+    boundary = nextIsUser ? index : summary
+    // A committed answer closes its own reply even if an internal wake
+    // started another reply without adding a visible user message.
+    if (summary < first || !isFinalAssistantResponse(items[summary])) continue
+    if (!next && !collapseLastTurn && !recorded) continue
     const indexes: number[] = []
-    for (let index = boundary + 1; index < summary; index += 1) indexes.push(index)
-    if (!indexes.length || !indexes.some((index) => items[index].kind === "process")) continue
+    for (let itemIndex = first; itemIndex < summary; itemIndex += 1) indexes.push(itemIndex)
+    if (!indexes.some((itemIndex) => items[itemIndex].kind === "process")) continue
     const timestamps = indexes.flatMap((index) => {
       const item = items[index]
       return item.kind === "msg" ? [item.m.createdAt] : item.parts.flatMap((part) =>
         part.kind === "tools" ? part.items.map((message) => message.createdAt) : [part.createdAt])
     })
-    const first = timestamps.map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
-    const last = [...timestamps].reverse().map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
-    for (const index of indexes) excluded.add(index)
-    collapses.push({
+    const startedAt = timestamps.map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
+    const finishedAt = [...timestamps].reverse().map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
+    collapses.set(first, {
       kind: "collapsedTurn",
-      key: `collapsed-turn-${items[summary].kind === "msg" ? items[summary].m.id : boundary}`,
+      key: `collapsed-turn-${items[summary].kind === "msg" ? items[summary].m.id : first}`,
       finalId: items[summary].kind === "msg" ? items[summary].m.id : "",
       items: indexes.map((index) => items[index]),
       indexes,
-      toolCalls: toolCallCount(items.slice(boundary + 1, summary)),
-      startedAt: first ?? null,
-      finishedAt: last ?? null,
+      toolCalls: toolCallCount(items.slice(first, summary)),
+      startedAt: startedAt ?? null,
+      finishedAt: finishedAt ?? null,
     })
   }
-  if (!collapses.length) return items
+  if (!collapses.size) return items
   const out: DisplayItem[] = []
   for (let index = 0; index < items.length; index += 1) {
-    const collapse = collapses.find((c) => c.indexes[0] === index)
+    const collapse = collapses.get(index)
     if (collapse) {
       out.push(collapse)
       index = collapse.indexes[collapse.indexes.length - 1]
       continue
     }
-    if (!excluded.has(index)) out.push(items[index])
+    out.push(items[index])
   }
   return out
 }
@@ -434,7 +451,7 @@ function MessageActions({
   forking: boolean
   onEdit: () => void
   executionBlocked: boolean
-  onRegenerate: () => void
+  onRegenerate?: () => void
   onFork: () => void
   onDelete: () => void
 }) {
@@ -511,12 +528,12 @@ function MessageActions({
             <DropdownMenuItem disabled={executionBlocked} onClick={onEdit}>
               <Pencil />
               {uiText("edit_and_resend_f857c444")}</DropdownMenuItem>
-          ) : (
+          ) : onRegenerate ? (
             <DropdownMenuItem disabled={sending || executionBlocked} onClick={onRegenerate}>
               <RotateCcw />
               {uiText("regenerate_3221a042")}</DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
+          ) : null}
+          {isUser || onRegenerate ? <DropdownMenuSeparator /> : null}
           <DropdownMenuItem variant="destructive" onClick={onDelete}>
             <Trash2 />
             {uiText("delete_2f9daa82")}</DropdownMenuItem>
@@ -615,6 +632,10 @@ export function MessageList({
   const actionableAssistantIndexes = useMemo(
     () => buildActionableAssistantIndexes(displayItems, !sending),
     [displayItems, sending],
+  )
+  const regenerableAssistantIndex = useMemo(
+    () => findRegenerableAssistantIndex(displayItems),
+    [displayItems],
   )
   const historyEntries = useMemo(() => buildHistoryEntries(displayItems), [displayItems])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
@@ -971,7 +992,7 @@ export function MessageList({
         sending={sending}
         forking={forking}
         onEdit={() => setEditingMsg({ id: m.id, text })}
-        onRegenerate={onRegenerate}
+        onRegenerate={idx === regenerableAssistantIndex ? onRegenerate : undefined}
         executionBlocked={executionBlocked}
         onFork={() => onFork(m.id)}
         onDelete={() => onDelete(m.id)}
