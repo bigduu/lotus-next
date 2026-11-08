@@ -152,18 +152,21 @@ describe("Supervisor approval working directory", () => {
     ["explicit workdir", "exec_command", { cmd, workdir: "nested" }, workspace, "nested"],
     ["blank workdir", "exec_command", { cmd, workdir: " " }, workspace, undefined],
     ["invalid workdir", "exec_command", { cmd, workdir: 42 }, workspace, undefined],
-    ["missing server workspace", "exec_command", { cmd }, undefined, undefined],
+    ["missing card workspace", "exec_command", { cmd }, undefined, undefined],
+    ["null card workspace", "exec_command", { cmd }, null, undefined],
+    ["invalid card workspace", "exec_command", { cmd }, 42, undefined],
     ["unavailable arguments", "exec_command", null, workspace, undefined],
     ["non-shell operation", "Write", { file_path: "review.md" }, workspace, undefined],
   ])("uses the known directory for %s", async (_case, toolName, args, workspacePath, workingDirectory) => {
     const request = pending();
+    const permissionRequest = {
+      ...request.permission_request, tool_name: toolName, workspace_path: "/workspace/permission-scope",
+    };
     api.get.mockResolvedValue({ approvals: [{
-      session_id: "session/a", created_at: "2026-09-09T00:00:00Z", title: "Review",
-      pending: { ...request, tool_arguments: args, permission_request: {
-        ...request.permission_request, tool_name: toolName, workspace_path: workspacePath,
-      } },
+      session_id: "session/a", created_at: "2026-09-09T00:00:00Z", title: "Review", workspace_path: workspacePath,
+      pending: { ...request, tool_arguments: args, permission_request: permissionRequest },
     }] });
 
-    await expect(agentClient.listSupervisorApprovals()).resolves.toMatchObject([{ workingDirectory }]);
+    await expect(agentClient.listSupervisorApprovals()).resolves.toMatchObject([{ workingDirectory, request: permissionRequest }]);
   });
 });

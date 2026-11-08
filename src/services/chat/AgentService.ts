@@ -520,7 +520,6 @@ export interface ExecuteRequest {
 export type PermissionOnceDecision = "allow_once" | "deny_once";
 export type PermissionRequest = {
   session_id: string;
-  workspace_path?: string;
   request_id: string;
   request_generation: string;
   policy_revision: number;
@@ -1535,7 +1534,7 @@ export class AgentClient {
       const request = pending.permission_request;
       const args = interactionRecord(interactionRecord(card.pending)?.tool_arguments);
       const command = request.tool_name === "exec_command" && nonemptyInteractionString(args?.cmd) ? args.cmd : null;
-      const workdir = args?.workdir ?? request.workspace_path;
+      const workdir = args?.workdir ?? card.workspace_path;
       const operation = command ?? request.operation_summary;
       if (!nonemptyInteractionString(operation)) throw new PendingInteractionContractError();
       return {
