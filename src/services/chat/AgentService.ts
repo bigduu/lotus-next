@@ -697,6 +697,7 @@ export interface HistoryResponse {
     id: string;
     role: "user" | "assistant" | "tool" | "system";
     content: string;
+    phase?: string;
     compressed?: boolean;
     compressed_by_event_id?: string;
     content_parts?: Array<

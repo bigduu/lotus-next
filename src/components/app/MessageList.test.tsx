@@ -156,6 +156,27 @@ it.each([false, true])("keeps completed compressed=%s assistant bodies outside c
     expect(body).not.toBeNull(); expect(body?.closest("[data-process-activity]")).toBeNull()
   }
 })
+it("keeps recorded deliveries in order when their internal wake adds no user bubble", () => {
+  const at = "2026-11-08T06:50:00Z"
+  const raw = [
+    { id: "c-user", role: "user" as const, content: "Dispatch C", created_at: at },
+    { id: "c-dispatch", role: "assistant" as const, phase: "final_answer", content: "C dispatched", created_at: at },
+    { id: "recover-call", role: "assistant" as const, phase: "commentary", content: "Checking why C stopped", created_at: at,
+      tool_calls: [{ id: "inspect-c", type: "function", function: { name: "session_history", arguments: "{}" } }] },
+    { id: "recover-result", role: "tool" as const, content: "C failed on startup", tool_call_id: "inspect-c", created_at: at },
+    { id: "c-recovery", role: "assistant" as const, phase: "final_answer", content: "C restarted", created_at: at },
+    { id: "b-delivery", role: "assistant" as const, phase: "final_answer", content: "B delivered", created_at: at },
+    { id: "a-delivery", role: "assistant" as const, phase: "final_answer", content: "A delivered", created_at: at },
+    { id: "c-delivery", role: "assistant" as const, phase: "final_answer", content: "C delivered", created_at: at },
+  ]
+  const container = renderMessageList(mapHistoryMessagesToUi("supervisor", raw), true)
+  const replies = [...container.querySelectorAll("[data-assistant-content]")]
+    .filter((body) => !body.closest("[data-turn-collapse]"))
+    .map((body) => body.getAttribute("data-assistant-content"))
+  expect(replies).toEqual(["C dispatched", "C restarted", "B delivered", "A delivered", "C delivered"])
+  const recovery = container.querySelector('[data-turn-collapse="collapsed-turn-c-recovery"]')
+  expect(recovery?.querySelector("[data-turn-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+})
 it("renders a completed handoff as body without offering server actions for its local ID", () => {
   const messages = projectCompletedAnswers([{ id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" }], [{
     sessionId: "synthetic", operationId: 1, text: "Synthetic handoff body", acknowledgedMessageId: "synthetic-user",

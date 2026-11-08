@@ -51,6 +51,21 @@ export function projectCompletedAnswers(canonical: Message[], entries: readonly 
     }
     const nextUser = anchor < 0 ? -1 : canonical.findIndex((message, index) => index > anchor && message.role === "user")
     const end = nextUser < 0 ? canonical.length : nextUser
+    // A later asynchronous delivery can already be the tail of this
+    // user turn. An exact, newly persisted final reply still confirms its
+    // own handoff. Phase-less history keeps the stricter tail proof below.
+    const start = Math.max(anchor, baseline)
+    const recorded = start >= 0 ? canonical.find((message, index) =>
+      index > start && index < end && message.role === "assistant" && message.type === "text"
+      && message.phase === "final_answer" && !entry.baselineMessageIds.has(message.id)
+      && !entry.excludedCanonicalIds?.has(message.id) && !claimed.has(message.id)
+      && matchesCompletedAnswer(message.content, entry.text),
+    ) : undefined
+    if (recorded) {
+      claimed.add(recorded.id)
+      onConfirmed?.(entry, recorded.id)
+      continue
+    }
     const tailIndex = canonical.findLastIndex((message, index) => index > anchor && index < end && message.role !== "system")
     const tail = canonical[tailIndex]
     const partialTail = tail?.role === "assistant" && tail.type === "text" && tail.content.trim()
