@@ -520,6 +520,7 @@ export interface ExecuteRequest {
 export type PermissionOnceDecision = "allow_once" | "deny_once";
 export type PermissionRequest = {
   session_id: string;
+  workspace_path?: string;
   request_id: string;
   request_generation: string;
   policy_revision: number;
@@ -1534,12 +1535,13 @@ export class AgentClient {
       const request = pending.permission_request;
       const args = interactionRecord(interactionRecord(card.pending)?.tool_arguments);
       const command = request.tool_name === "exec_command" && nonemptyInteractionString(args?.cmd) ? args.cmd : null;
+      const workdir = args?.workdir ?? request.workspace_path;
       const operation = command ?? request.operation_summary;
       if (!nonemptyInteractionString(operation)) throw new PendingInteractionContractError();
       return {
         sessionId: card.session_id, createdAt: card.created_at, title: card.title,
         operation, request,
-        workingDirectory: command && nonemptyInteractionString(args?.workdir) ? args.workdir : undefined,
+        workingDirectory: command && nonemptyInteractionString(workdir) ? workdir : undefined,
         supervisorHandoffAt: typeof card.supervisor_handoff_at === "string"
           && Number.isFinite(Date.parse(card.supervisor_handoff_at)) ? card.supervisor_handoff_at : undefined,
       };

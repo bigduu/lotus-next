@@ -141,3 +141,29 @@ describe("canonical pending interaction transport", () => {
     expect(api.post).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Supervisor approval working directory", () => {
+  const cmd = "git status --short";
+  const workspace = "/workspace/session";
+
+  it.each([
+    ["omitted workdir", "exec_command", { cmd }, workspace, workspace],
+    ["null workdir", "exec_command", { cmd, workdir: null }, workspace, workspace],
+    ["explicit workdir", "exec_command", { cmd, workdir: "nested" }, workspace, "nested"],
+    ["blank workdir", "exec_command", { cmd, workdir: " " }, workspace, undefined],
+    ["invalid workdir", "exec_command", { cmd, workdir: 42 }, workspace, undefined],
+    ["missing server workspace", "exec_command", { cmd }, undefined, undefined],
+    ["unavailable arguments", "exec_command", null, workspace, undefined],
+    ["non-shell operation", "Write", { file_path: "review.md" }, workspace, undefined],
+  ])("uses the known directory for %s", async (_case, toolName, args, workspacePath, workingDirectory) => {
+    const request = pending();
+    api.get.mockResolvedValue({ approvals: [{
+      session_id: "session/a", created_at: "2026-09-09T00:00:00Z", title: "Review",
+      pending: { ...request, tool_arguments: args, permission_request: {
+        ...request.permission_request, tool_name: toolName, workspace_path: workspacePath,
+      } },
+    }] });
+
+    await expect(agentClient.listSupervisorApprovals()).resolves.toMatchObject([{ workingDirectory }]);
+  });
+});
