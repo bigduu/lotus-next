@@ -156,6 +156,46 @@ it.each([false, true])("keeps completed compressed=%s assistant bodies outside c
     expect(body).not.toBeNull(); expect(body?.closest("[data-process-activity]")).toBeNull()
   }
 })
+it("keeps recorded deliveries visible without offering regeneration of their shared user turn", async () => {
+  const at = "2026-11-08T06:50:00Z"
+  const raw = [
+    { id: "c-user", role: "user" as const, content: "Dispatch C", created_at: at },
+    { id: "c-dispatch", role: "assistant" as const, phase: "final_answer", content: "C dispatched", created_at: at },
+    { id: "recover-call", role: "assistant" as const, phase: "commentary", content: "Checking why C stopped", created_at: at,
+      tool_calls: [{ id: "inspect-c", type: "function", function: { name: "session_history", arguments: "{}" } }] },
+    { id: "recover-result", role: "tool" as const, content: "C failed on startup", tool_call_id: "inspect-c", created_at: at },
+    { id: "c-recovery", role: "assistant" as const, phase: "final_answer", content: "C restarted", created_at: at },
+    { id: "b-delivery", role: "assistant" as const, phase: "final_answer", content: "B delivered", created_at: at },
+    { id: "a-delivery", role: "assistant" as const, phase: "final_answer", content: "A delivered", created_at: at },
+    { id: "c-delivery", role: "assistant" as const, phase: "final_answer", content: "C delivered", created_at: at },
+  ]
+  const container = renderMessageList(mapHistoryMessagesToUi("supervisor", raw), true)
+  const replies = [...container.querySelectorAll("[data-assistant-content]")]
+    .filter((body) => !body.closest("[data-turn-collapse]"))
+    .map((body) => body.getAttribute("data-assistant-content"))
+  expect(replies).toEqual(["C dispatched", "C restarted", "B delivered", "A delivered", "C delivered"])
+  const recovery = container.querySelector('[data-turn-collapse="collapsed-turn-c-recovery"]')
+  expect(recovery?.querySelector("[data-turn-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+  for (const id of ["c-dispatch", "c-delivery"]) {
+    const row = container.querySelector(`[data-message-actions="${id}"]`)!
+    expect(row.querySelector(`[aria-label="${uiText("fork_from_here_28321cb9")}"]`)).not.toBeNull()
+    const trigger = row.querySelector('[aria-haspopup="menu"]')!
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+    const menu = document.querySelector('[role="menu"]')!
+    expect(menu.textContent).toContain(uiText("delete_2f9daa82"))
+    expect(menu.textContent).not.toContain(uiText("regenerate_3221a042"))
+    await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  }
+})
+it("offers regeneration for the ordinary latest reply", async () => {
+  const container = renderMessageList([
+    { id: "user", role: "user", content: "Question", createdAt: "" },
+    { id: "answer", role: "assistant", type: "text", phase: "final_answer", content: "Reply", createdAt: "" },
+  ], true)
+  const trigger = container.querySelector('[data-message-actions="answer"] [aria-haspopup="menu"]')!
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+  expect(document.querySelector('[role="menu"]')?.textContent).toContain(uiText("regenerate_3221a042"))
+})
 it("renders a completed handoff as body without offering server actions for its local ID", () => {
   const messages = projectCompletedAnswers([{ id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" }], [{
     sessionId: "synthetic", operationId: 1, text: "Synthetic handoff body", acknowledgedMessageId: "synthetic-user",

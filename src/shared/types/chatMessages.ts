@@ -107,6 +107,7 @@ export interface AssistantTextMessage extends BaseMessage {
   role: "assistant";
   type: "text";
   content: string;
+  phase?: "commentary" | "final_answer";
   model?: string;
   finishReason?: "stop" | "length" | "error";
   tokenUsage?: { promptTokens: number; completionTokens: number };
