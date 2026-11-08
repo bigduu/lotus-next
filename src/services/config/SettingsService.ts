@@ -254,7 +254,7 @@ export class SettingsService {
    * ("default" | "bypass" | "auto") from the durable permission policy.
    */
   async getDefaultSessionPermissionMode(): Promise<DefaultSessionPermissionMode> {
-    return apiClient.get<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode");
+    return apiClient.get<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode", { cache: "no-store" });
   }
 
   /**

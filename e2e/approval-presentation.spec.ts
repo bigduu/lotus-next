@@ -122,6 +122,7 @@ test("Supervisor shows the actual operation and decides the exact managed reques
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const observation = await installArtifactRuntime(page, standaloneScenario)
   let generation = 0, reads = 0, subscribed = false
+  let workerLinkReads: number | null = null
   let socket: WebSocketRoute | undefined
   const decisions: unknown[] = []
   await page.routeWebSocket(/.*/, (ws) => {
@@ -164,8 +165,16 @@ test("Supervisor shows the actual operation and decides the exact managed reques
       }] : [] } })
     }
     if (path === "/api/v1/sessions/" + supervisorId) return route.fulfill({ json: { session: supervisor } })
+    if (path === "/api/v1/sessions/" + worker.id) {
+      const replaced = workerLinkReads !== null && ++workerLinkReads > 1
+      return route.fulfill({ json: { session: { ...worker, created_at: replaced ? "2026-10-08T00:00:00.000Z" : at } } })
+    }
     if (path === "/api/v1/history/" + supervisorId) return route.fulfill({ json: { session_id: supervisorId, messages: [] } })
+    if (path === "/api/v1/history/" + worker.id) return route.fulfill({ json: {
+      session_id: worker.id, messages: [{ id: "sprint-request", role: "user", content: "Verify the Sprint plan", created_at: at }],
+    } })
     if (path === "/api/v1/respond/" + supervisorId + "/pending") return route.fulfill({ json: { has_pending_question: false } })
+    if (path === "/api/v1/respond/" + worker.id + "/pending") return route.fulfill({ json: { has_pending_question: false } })
     if (path === "/api/v1/sessions/" + worker.id + "/permission-decisions") {
       const decision = route.request().postDataJSON()
       decisions.push(decision)
@@ -183,10 +192,13 @@ test("Supervisor shows the actual operation and decides the exact managed reques
   })
 
   await page.goto(standaloneScenario.entryUrl)
-  if (testInfo.project.name === "phone-chromium") {
-    await page.getByRole("button", { name: "菜单", exact: true }).click()
+  const openSupervisor = async () => {
+    if (testInfo.project.name === "phone-chromium") {
+      await page.getByRole("button", { name: "菜单", exact: true }).click()
+    }
+    await page.locator("aside").first().getByRole("button", { name: "Bodhi", exact: true }).click()
   }
-  await page.locator("aside").first().getByRole("button", { name: "Bodhi", exact: true }).click()
+  await openSupervisor()
   await expect.poll(() => subscribed && reads > 0).toBe(true)
   generation = 1
   socket!.send(JSON.stringify({ ch: "feed", seq: 1, event: {
@@ -197,8 +209,19 @@ test("Supervisor shows the actual operation and decides the exact managed reques
   await expect(card).toContainText("/workspace/bamboo")
   await expect(card).not.toContainText("起可交给 Supervisor 处理")
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+  const workerLink = card.getByRole("button", { name: worker.title, exact: true })
+  await workerLink.click()
+  await expect(page.getByText("Verify the Sprint plan", { exact: true })).toBeVisible()
+  await openSupervisor()
+  await expect(card).toBeVisible()
+  workerLinkReads = 0
+  await workerLink.click()
+  await expect(card.getByRole("alert")).toBeVisible()
+  await expect(page.getByText("Verify the Sprint plan", { exact: true })).toHaveCount(0)
+  expect(workerLinkReads).toBe(2)
+  workerLinkReads = null
   await card.getByRole("button", { name: "仅本次允许", exact: true }).click()
-  await expect(card.getByRole("alert")).toContainText("请刷新请求后重新确认")
+  await expect(card.getByRole("alert").filter({ hasText: "请刷新请求后重新确认" })).toBeVisible()
   await expect(card.getByRole("button", { name: "仅本次允许", exact: true })).toBeDisabled()
   await card.getByRole("button", { name: "刷新请求", exact: true }).click()
   await expect(card).toContainText("/workspace/bamboo/review.md")

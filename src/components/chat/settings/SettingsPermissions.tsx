@@ -1,8 +1,9 @@
 import { Trans } from "react-i18next"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { settingsService, type SessionPermissionModeValue } from "@services/config/SettingsService"
+import { isApiError } from "@services/api/errors"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
@@ -27,17 +28,18 @@ function ApprovalDefaults() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const refreshPolicy = useCallback(async () => {
+    const current = await settingsService.getDefaultSessionPermissionMode()
+    setMode(current.mode)
+    setRevision(current.revision)
+    setHandoffEnabled(current.supervisor_approval_handoff_enabled)
+  }, [])
+
   useEffect(() => {
-    settingsService
-      .getDefaultSessionPermissionMode()
-      .then((res) => {
-        setMode(res.mode)
-        setRevision(res.revision)
-        setHandoffEnabled(res.supervisor_approval_handoff_enabled)
-      })
+    void refreshPolicy()
       .catch(() => setError(uiText("could_not_load_default_permission_mode_f3b27a89")))
       .finally(() => setLoading(false))
-  }, [])
+  }, [refreshPolicy])
 
   const save = async (next: SessionPermissionModeValue) => {
     if (next === mode || saving) return
@@ -64,8 +66,16 @@ function ApprovalDefaults() {
       const saved = await settingsService.updateSupervisorApprovalHandoff(!handoffEnabled, revision)
       setHandoffEnabled(saved.supervisor_approval_handoff_enabled)
       setRevision(saved.revision)
-    } catch {
+    } catch (failure) {
       setError(uiText("could_not_save_please_try_again_f42a1238"))
+      if (isApiError(failure) && failure.status === 409) {
+        try {
+          await refreshPolicy()
+          setError(uiText("the_request_or_permissions_have_changed_confirm_again_u_a1ebae48"))
+        } catch {
+          // Keep the failure visible when the policy readback is unavailable.
+        }
+      }
     } finally {
       setSaving(false)
     }

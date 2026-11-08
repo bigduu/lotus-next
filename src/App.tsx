@@ -58,22 +58,39 @@ function App() {
     setPaletteOpen(false)
     selectSession(id)
   }, [selectSession])
-  const openExistingSession = useCallback(async (id: string, verifyAccess: () => Promise<boolean>) => {
+  const openExistingSession = useCallback(async (id: string, verifyAccess: () => Promise<boolean>, expectedCreatedAt?: string) => {
     const version = ++mainNavigationVersion.current
-    const previousSessionId = useAppStore.getState().currentSessionId
+    const initial = useAppStore.getState()
+    const previousSessionId = initial.currentSessionId
+    const targetRevision = initial.getSessionNavigationRevision([id])
+    const isCurrent = () => {
+      const state = useAppStore.getState()
+      return version === mainNavigationVersion.current && previousSessionId === state.currentSessionId
+        && (!expectedCreatedAt || state.getSessionNavigationRevision([id]) === targetRevision)
+    }
+    const cachedLifetimeMatches = (allowMissing = false) => {
+      const cached = useAppStore.getState().chats.find((item) => item.id === id)
+      return cached ? cached.kind === "root" && cached.createdAtExact === expectedCreatedAt : allowMissing
+    }
     return navigateRecordedSession(id, verifyAccess, {
-      isCurrent: () => version === mainNavigationVersion.current && previousSessionId === useAppStore.getState().currentSessionId,
-      restore: (sessionId) => useAppStore.getState().restoreSession(sessionId),
+      isCurrent,
+      restore: async (sessionId) => {
+        if (expectedCreatedAt && !cachedLifetimeMatches(true)) return false
+        const restored = await useAppStore.getState().restoreSession(sessionId)
+        if (!restored || !expectedCreatedAt) return restored
+        // Restore can await the session tree. Revalidate the lifetime of both
+        // the canonical root and the exact cached entry before selecting it.
+        return isCurrent() && cachedLifetimeMatches() && await verifyAccess() && cachedLifetimeMatches()
+      },
       select,
       notFound: () => new Error(uiText("workflow_run_not_found")),
     })
   }, [select])
-  const openSessionLink = useCallback((id: string, expectedCreatedAt?: string) => {
+  const openSessionLink = useCallback((id: string, expectedCreatedAt: string) => {
     return openExistingSession(id, async () => {
-      if (!expectedCreatedAt) return true
       const { session } = await agentClient.getSession(id)
       return session.id === id && session.kind === "root" && session.created_at === expectedCreatedAt
-    })
+    }, expectedCreatedAt)
   }, [openExistingSession])
   const newChat = useCallback(() => {
     mainNavigationVersion.current += 1

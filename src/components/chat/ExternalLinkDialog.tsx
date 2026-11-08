@@ -22,7 +22,7 @@ import { openExternalLink } from "@shared/utils/openExternalLink"
 type OpenInApp = (url: string) => void | Promise<void>
 
 const OpenInAppContext = createContext<OpenInApp | null>(null)
-type OpenRecordedSession = (id: string, expectedCreatedAt?: string) => Promise<boolean>
+type OpenRecordedSession = (id: string, expectedCreatedAt: string) => Promise<boolean>
 const OpenRecordedSessionContext = createContext<OpenRecordedSession | null>(null)
 
 export function useOpenRecordedSession() {
