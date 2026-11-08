@@ -469,7 +469,7 @@ function App() {
   }
 
   return (
-    <ExternalLinkProvider onOpenInApp={browserEnabled && currentSessionId ? openLinkInApp : undefined} onOpenRecordedSession={openSessionLink}>
+    <ExternalLinkProvider onOpenInApp={browserEnabled && currentSessionId ? openLinkInApp : undefined}>
     <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
     {/* Preserve drafts, streaming subscriptions and workbench state across navigation. */}
     <div
@@ -668,6 +668,7 @@ function App() {
         <ChatPane
           chat={{ ...chat, select, newChat }}
           pageVisible={!settingsOpen}
+          onOpenRecordedSession={openSessionLink}
           pickedWorkspace={pickedWorkspace}
           worktreePath={pickedWorktree?.projectId === pendingProjectId ? pickedWorktree.path : null}
           pendingProjectId={pendingProjectId}

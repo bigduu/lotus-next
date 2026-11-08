@@ -22,12 +22,6 @@ import { openExternalLink } from "@shared/utils/openExternalLink"
 type OpenInApp = (url: string) => void | Promise<void>
 
 const OpenInAppContext = createContext<OpenInApp | null>(null)
-type OpenRecordedSession = (id: string, expectedCreatedAt: string) => Promise<boolean>
-const OpenRecordedSessionContext = createContext<OpenRecordedSession | null>(null)
-
-export function useOpenRecordedSession() {
-  return useContext(OpenRecordedSessionContext)
-}
 
 const isWebUrl = (url: string): boolean => {
   try {
@@ -41,18 +35,14 @@ const isWebUrl = (url: string): boolean => {
 export function ExternalLinkProvider({
   children,
   onOpenInApp,
-  onOpenRecordedSession,
 }: {
   children: ReactNode
   onOpenInApp?: OpenInApp
-  onOpenRecordedSession?: OpenRecordedSession
 }) {
   useUiLocale()
   return (
     <OpenInAppContext.Provider value={onOpenInApp ?? null}>
-      <OpenRecordedSessionContext.Provider value={onOpenRecordedSession ?? null}>
-        {children}
-      </OpenRecordedSessionContext.Provider>
+      {children}
     </OpenInAppContext.Provider>
   )
 }

@@ -5,13 +5,15 @@ import { isApiError } from "@services/api/errors"
 import { agentClient, type PermissionOnceDecision, type SupervisorApprovalCardData } from "@services/chat/AgentService"
 import { useUiText } from "@shared/i18n/ui"
 import { useAppStore } from "@shared/store/appStore"
-import { useOpenRecordedSession } from "./ExternalLinkDialog"
 
+export type OpenRecordedSession = (id: string, expectedCreatedAt: string) => Promise<boolean>
 type ApprovalSnapshot = { key: string; cards: SupervisorApprovalCardData[]; failed: boolean }
 
 export function SupervisorApprovalCards({
+  onOpenSession,
   onRecorded,
 }: {
+  onOpenSession?: OpenRecordedSession
   onRecorded: (decision: PermissionOnceDecision, continuationConfirmed: boolean) => void
 }) {
   const t = useUiText()
@@ -52,21 +54,22 @@ export function SupervisorApprovalCards({
       </div> : null}
       {snapshot.cards.map((card) => (
         <ApprovalCard key={JSON.stringify([card.sessionId, card.createdAt, card.request.request_id, card.request.request_generation])}
-          card={card} readKey={snapshot.key} stale={stale} onRefresh={refresh} onRecorded={onRecorded} />
+          card={card} readKey={snapshot.key} stale={stale} onRefresh={refresh}
+          onOpenSession={onOpenSession} onRecorded={onRecorded} />
       ))}
     </section>
   )
 }
 
-function ApprovalCard({ card, readKey, stale, onRefresh, onRecorded }: {
+function ApprovalCard({ card, readKey, stale, onRefresh, onOpenSession, onRecorded }: {
   card: SupervisorApprovalCardData
   readKey: string
   stale: boolean
   onRefresh: () => void
+  onOpenSession?: OpenRecordedSession
   onRecorded: (decision: PermissionOnceDecision, continuationConfirmed: boolean) => void
 }) {
   const t = useUiText()
-  const openSession = useOpenRecordedSession()
   const inFlight = useRef(false)
   const [attempt, setAttempt] = useState<{ phase: "ready" | "submitting" | "recorded" }
     | { phase: "failed"; readKey: string }>({ phase: "ready" })
@@ -105,10 +108,10 @@ function ApprovalCard({ card, readKey, stale, onRefresh, onRecorded }: {
       }}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 className="text-sm font-semibold">{t("action_approval_required_3bd71c54")}</h2>
-        <button type="button" disabled={!openSession} className="max-w-full break-words text-sm underline underline-offset-2"
+        <button type="button" disabled={!onOpenSession} className="max-w-full break-words text-sm underline underline-offset-2"
           onClick={() => {
             setOpenFailed(false)
-            void openSession?.(card.sessionId, card.createdAt).then((opened) => setOpenFailed(!opened))
+            void onOpenSession?.(card.sessionId, card.createdAt).then((opened) => setOpenFailed(!opened))
               .catch(() => setOpenFailed(true))
           }}>{card.title}</button>
       </div>
