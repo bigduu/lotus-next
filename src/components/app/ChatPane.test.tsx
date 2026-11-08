@@ -126,6 +126,7 @@ vi.mock("@/components/app/NewChatWorktreeControl", () => ({
 vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
   patchSession: vi.fn().mockResolvedValue(undefined),
   getSession: vi.fn(),
+  listSupervisorApprovals: vi.fn().mockResolvedValue([]),
   selectRootMode: vi.fn(),
   recoverRootMode: vi.fn(),
   compactSessionContext: vi.fn(),
