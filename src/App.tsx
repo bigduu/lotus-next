@@ -58,6 +58,23 @@ function App() {
     setPaletteOpen(false)
     selectSession(id)
   }, [selectSession])
+  const openExistingSession = useCallback(async (id: string, verifyAccess: () => Promise<boolean>) => {
+    const version = ++mainNavigationVersion.current
+    const previousSessionId = useAppStore.getState().currentSessionId
+    return navigateRecordedSession(id, verifyAccess, {
+      isCurrent: () => version === mainNavigationVersion.current && previousSessionId === useAppStore.getState().currentSessionId,
+      restore: (sessionId) => useAppStore.getState().restoreSession(sessionId),
+      select,
+      notFound: () => new Error(uiText("workflow_run_not_found")),
+    })
+  }, [select])
+  const openSessionLink = useCallback((id: string, expectedCreatedAt?: string) => {
+    return openExistingSession(id, async () => {
+      if (!expectedCreatedAt) return true
+      const { session } = await agentClient.getSession(id)
+      return session.id === id && session.kind === "root" && session.created_at === expectedCreatedAt
+    })
+  }, [openExistingSession])
   const newChat = useCallback(() => {
     mainNavigationVersion.current += 1
     setNewChatEpoch((epoch) => epoch + 1)
@@ -435,7 +452,7 @@ function App() {
   }
 
   return (
-    <ExternalLinkProvider onOpenInApp={browserEnabled && currentSessionId ? openLinkInApp : undefined}>
+    <ExternalLinkProvider onOpenInApp={browserEnabled && currentSessionId ? openLinkInApp : undefined} onOpenRecordedSession={openSessionLink}>
     <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
     {/* Preserve drafts, streaming subscriptions and workbench state across navigation. */}
     <div
@@ -492,15 +509,7 @@ function App() {
               if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openToolForSession(id, "work")
               select(id)
             }}
-            onOpenExistingSession={async (id, verifyAccess) => {
-              const version = ++mainNavigationVersion.current
-              const previousSessionId = useAppStore.getState().currentSessionId
-              return navigateRecordedSession(id, verifyAccess, {
-                isCurrent: () => version === mainNavigationVersion.current && previousSessionId === useAppStore.getState().currentSessionId,
-                restore: (sessionId) => useAppStore.getState().restoreSession(sessionId), select,
-                notFound: () => new Error(uiText("workflow_run_not_found")),
-              })
-            }}
+            onOpenExistingSession={openExistingSession}
             onRename={(id, title) => persistSessionTitle(id, title)}
             onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
             onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}

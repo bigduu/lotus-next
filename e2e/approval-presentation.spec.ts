@@ -115,6 +115,103 @@ async function prepare(page: Page, target: string, childApproval = false,
   }
 }
 
+test("Supervisor shows the actual operation and decides the exact managed request from the chat card", async ({ page }, testInfo) => {
+  const supervisorId = "bamboo-default-supervisor"
+  const supervisor = { ...session(supervisorId), title: "Bodhi" }
+  const worker = { ...session(sideId), title: "Sprint verification", supervisor_managed: true }
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  let generation = 0, reads = 0, subscribed = false
+  let socket: WebSocketRoute | undefined
+  const decisions: unknown[] = []
+  await page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    ws.onMessage((raw) => {
+      const frame = JSON.parse(String(raw)) as { type?: string; ch?: string }
+      if (frame.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+      if (frame.type === "subscribe" && frame.ch === "feed") subscribed = true
+    })
+  })
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === "/api/v1/sessions") return route.fulfill({ json: {
+      sessions: [supervisor, { ...worker, has_pending_question: generation > 0,
+        last_run_status: generation > 0 ? "suspended" : "completed" }], total: 2, limit: 200, offset: 0,
+    } })
+    if (path === "/api/v1/supervisor/default") return route.fulfill({ json: {
+      session_id: supervisorId, incarnation_id: "550e8400-e29b-41d4-a716-446655440000", created: false,
+    } })
+    if (path === "/api/v1/supervisor/default/approvals") {
+      reads += 1
+      const shell = generation === 1
+      const resource = shell ? "git status --short" : "/workspace/bamboo/review.md"
+      return route.fulfill({ json: { approvals: generation ? [{
+        session_id: worker.id, created_at: at, title: worker.title,
+        supervisor_handoff_at: shell ? null : at,
+        pending: {
+          has_pending_question: true, interaction_kind: "permission", question: "Approve the operation?",
+          options: [], allow_custom: false, tool_call_id: "same-tool-call",
+          tool_arguments: shell ? { cmd: resource, workdir: "/workspace/bamboo" } : { file_path: resource },
+          permission_request: {
+            session_id: worker.id, request_id: "same-tool-call", request_generation: "generation-" + generation,
+            policy_revision: 7, tool_name: shell ? "exec_command" : "Write",
+            permission_type: shell ? "execute_command" : "write_file", resource,
+            operation_summary: (shell ? "Execute command: " : "Write file: ") + resource,
+            allowed_decisions: ["allow_once", "deny_once"],
+          },
+        },
+      }] : [] } })
+    }
+    if (path === "/api/v1/sessions/" + supervisorId) return route.fulfill({ json: { session: supervisor } })
+    if (path === "/api/v1/history/" + supervisorId) return route.fulfill({ json: { session_id: supervisorId, messages: [] } })
+    if (path === "/api/v1/respond/" + supervisorId + "/pending") return route.fulfill({ json: { has_pending_question: false } })
+    if (path === "/api/v1/sessions/" + worker.id + "/permission-decisions") {
+      const decision = route.request().postDataJSON()
+      decisions.push(decision)
+      if (generation === 1) {
+        generation = 2
+        return route.fulfill({ status: 409, json: { error: "Request changed" } })
+      }
+      generation = 0
+      return route.fulfill({ json: { success: true, replayed: false,
+        receipt: { session_id: worker.id, decision }, auto_resume_status: "started",
+        resume: { success: true, auto_resume_status: "started" },
+      } })
+    }
+    return route.fallback()
+  })
+
+  await page.goto(standaloneScenario.entryUrl)
+  if (testInfo.project.name === "phone-chromium") {
+    await page.getByRole("button", { name: "菜单", exact: true }).click()
+  }
+  await page.locator("aside").first().getByRole("button", { name: "Bodhi", exact: true }).click()
+  await expect.poll(() => subscribed && reads > 0).toBe(true)
+  generation = 1
+  socket!.send(JSON.stringify({ ch: "feed", seq: 1, event: {
+    seq: 1, ts: at, session_id: worker.id, event: { type: "need_clarification" },
+  } }))
+  const card = page.getByRole("article", { name: worker.title })
+  await expect(card).toContainText("git status --short")
+  await expect(card).toContainText("/workspace/bamboo")
+  await expect(card).not.toContainText("起可交给 Supervisor 处理")
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+  await card.getByRole("button", { name: "仅本次允许", exact: true }).click()
+  await expect(card.getByRole("alert")).toContainText("请刷新请求后重新确认")
+  await expect(card.getByRole("button", { name: "仅本次允许", exact: true })).toBeDisabled()
+  await card.getByRole("button", { name: "刷新请求", exact: true }).click()
+  await expect(card).toContainText("/workspace/bamboo/review.md")
+  await expect(card).toContainText("起可交给 Supervisor 处理")
+  await card.getByRole("button", { name: "仅本次拒绝", exact: true }).click()
+  await expect(card).toHaveCount(0)
+  expect(decisions).toEqual([
+    { request_id: "same-tool-call", request_generation: "generation-1", expected_policy_revision: 7, decision: "allow_once" },
+    { request_id: "same-tool-call", request_generation: "generation-2", expected_policy_revision: 7, decision: "deny_once" },
+  ])
+  expect(observation.pageErrors).toEqual([])
+})
+
 for (const target of [mainId, sideId]) {
   test(`shared typed approval in ${target === mainId ? "main" : "side"} chat ignores held Enter across requests`, async ({ page }, testInfo) => {
     test.skip(target === sideId && testInfo.project.name !== "desktop-chromium", "desktop interactive side pane")
