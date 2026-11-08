@@ -156,7 +156,7 @@ it.each([false, true])("keeps completed compressed=%s assistant bodies outside c
     expect(body).not.toBeNull(); expect(body?.closest("[data-process-activity]")).toBeNull()
   }
 })
-it("keeps recorded deliveries in order when their internal wake adds no user bubble", () => {
+it("keeps recorded deliveries visible without offering regeneration of their shared user turn", async () => {
   const at = "2026-11-08T06:50:00Z"
   const raw = [
     { id: "c-user", role: "user" as const, content: "Dispatch C", created_at: at },
@@ -176,6 +176,25 @@ it("keeps recorded deliveries in order when their internal wake adds no user bub
   expect(replies).toEqual(["C dispatched", "C restarted", "B delivered", "A delivered", "C delivered"])
   const recovery = container.querySelector('[data-turn-collapse="collapsed-turn-c-recovery"]')
   expect(recovery?.querySelector("[data-turn-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+  for (const id of ["c-dispatch", "c-delivery"]) {
+    const row = container.querySelector(`[data-message-actions="${id}"]`)!
+    expect(row.querySelector(`[aria-label="${uiText("fork_from_here_28321cb9")}"]`)).not.toBeNull()
+    const trigger = row.querySelector('[aria-haspopup="menu"]')!
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+    const menu = document.querySelector('[role="menu"]')!
+    expect(menu.textContent).toContain(uiText("delete_2f9daa82"))
+    expect(menu.textContent).not.toContain(uiText("regenerate_3221a042"))
+    await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  }
+})
+it("offers regeneration for the ordinary latest reply", async () => {
+  const container = renderMessageList([
+    { id: "user", role: "user", content: "Question", createdAt: "" },
+    { id: "answer", role: "assistant", type: "text", phase: "final_answer", content: "Reply", createdAt: "" },
+  ], true)
+  const trigger = container.querySelector('[data-message-actions="answer"] [aria-haspopup="menu"]')!
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+  expect(document.querySelector('[role="menu"]')?.textContent).toContain(uiText("regenerate_3221a042"))
 })
 it("renders a completed handoff as body without offering server actions for its local ID", () => {
   const messages = projectCompletedAnswers([{ id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" }], [{

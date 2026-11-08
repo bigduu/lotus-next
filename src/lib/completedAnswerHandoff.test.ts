@@ -39,6 +39,28 @@ it("keeps a live reply pending when only earlier commentary matches", () => {
   expect(projectCompletedAnswers(canonical, [entry()]).remaining).toHaveLength(1)
 })
 
+it("keeps a matching commentary tail separate from the pending final reply", () => {
+  const canonical: Message[] = [
+    user("user-1"),
+    { id: "commentary", role: "assistant", type: "text", phase: "commentary", content: "Synthetic final", createdAt: "" },
+  ]
+  const confirmed: string[] = []
+  const projected = projectCompletedAnswers(canonical, [entry()], (_, id) => confirmed.push(id))
+  expect(projected.messages.map((message) => message.id)).toEqual(["user-1", "commentary", "completed-answer-handoff-1"])
+  expect(projected.remaining).toHaveLength(1)
+  expect(confirmed).toEqual([])
+})
+
+it("keeps a distinct recorded final whose text prefixes the pending reply", () => {
+  const canonical: Message[] = [
+    user("user-1"),
+    { id: "other-answer", role: "assistant", type: "text", phase: "final_answer", content: "Synthetic", createdAt: "" },
+  ]
+  const projected = projectCompletedAnswers(canonical, [entry()])
+  expect(projected.messages.map((message) => message.id)).toEqual(["user-1", "other-answer", "completed-answer-handoff-1"])
+  expect(projected.remaining).toHaveLength(1)
+})
+
 it("accepts a canonical answer with normalized line endings", () => {
   const canonical = [user("user-1"), assistant("answer-1", "Synthetic\r\nfinal"), user("user-2")]
   expect(projectCompletedAnswers(canonical, [entry({ text: "Synthetic\nfinal" })])).toEqual({ messages: canonical, remaining: [] })

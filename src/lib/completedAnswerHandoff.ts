@@ -68,14 +68,15 @@ export function projectCompletedAnswers(canonical: Message[], entries: readonly 
     }
     const tailIndex = canonical.findLastIndex((message, index) => index > anchor && index < end && message.role !== "system")
     const tail = canonical[tailIndex]
-    const partialTail = tail?.role === "assistant" && tail.type === "text" && tail.content.trim()
-      && entry.text.trim().startsWith(tail.content.trim()) && entry.text.trim() !== tail.content.trim() ? tail : null
+    const answerTail = tail?.role === "assistant" && tail.type === "text" && tail.phase !== "commentary" ? tail : null
+    const partialTail = answerTail && !answerTail.phase && answerTail.content.trim()
+      && entry.text.trim().startsWith(answerTail.content.trim()) && entry.text.trim() !== answerTail.content.trim() ? answerTail : null
     const unchangedBaseline = tail?.id === entry.baselineMessageId && typeof entry.baselineMessageText === "string"
       && matchesCompletedAnswer(entry.baselineMessageText, entry.text)
-    const confirmed = tail?.role === "assistant" && tail.type === "text" && matchesCompletedAnswer(tail.content, entry.text)
-      && (entry.acknowledgedMessageId !== null ? anchor >= 0 : !entry.baselineMessageIds.has(tail.id))
-      && !unchangedBaseline && !entry.excludedCanonicalIds?.has(tail.id) && !claimed.has(tail.id)
-    if (confirmed) { claimed.add(tail.id); onConfirmed?.(entry, tail.id); continue }
+    const confirmed = answerTail && matchesCompletedAnswer(answerTail.content, entry.text)
+      && (entry.acknowledgedMessageId !== null ? anchor >= 0 : !entry.baselineMessageIds.has(answerTail.id))
+      && !unchangedBaseline && !entry.excludedCanonicalIds?.has(answerTail.id) && !claimed.has(answerTail.id)
+    if (confirmed) { claimed.add(answerTail.id); onConfirmed?.(entry, answerTail.id); continue }
     // Only hide a newly observed prefix in the exact acknowledged turn. The
     // canonical history remains unchanged and uncertain older text stays visible.
     const superseded = partialTail && anchor >= 0 && entry.acknowledgedMessageId !== null

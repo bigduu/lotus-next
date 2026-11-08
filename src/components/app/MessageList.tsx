@@ -261,11 +261,12 @@ function formatElapsedDuration(durationMs: number): string | null {
 
 function isFinalAssistantResponse(item: RenderItem): boolean {
   if (item.kind !== "msg" || item.m.role !== "assistant") return false
+  if (item.m.type === "text" && item.m.phase === "commentary") return false
   const images = (item.m as { images?: unknown[] }).images
   return Boolean(messageText(item.m).trim() || images?.length)
 }
 
-function isRecordedFinal(item: RenderItem): boolean {
+function isRecordedFinal(item: DisplayItem): boolean {
   return item.kind === "msg" && item.m.role === "assistant" && item.m.type === "text"
     && item.m.phase === "final_answer"
 }
@@ -295,6 +296,20 @@ function buildActionableAssistantIndexes(
 
   if (includeTrailingAssistant && candidate !== null) indexes.add(candidate)
   return indexes
+}
+
+// Regenerate truncates after the latest user message. A turn with several
+// independently recorded answers has no single supported regeneration target.
+function findRegenerableAssistantIndex(items: DisplayItem[]): number {
+  const tailIndex = items.length - 1
+  const tail = items[tailIndex]
+  if (tail?.kind !== "msg" || !isFinalAssistantResponse(tail)) return -1
+  for (let index = tailIndex - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item.kind === "msg" && item.m.role === "user") return tailIndex
+    if (isRecordedFinal(item)) return -1
+  }
+  return -1
 }
 
 /** Fold a completed turn's middle behind one divider. Runs only for turns whose
@@ -436,7 +451,7 @@ function MessageActions({
   forking: boolean
   onEdit: () => void
   executionBlocked: boolean
-  onRegenerate: () => void
+  onRegenerate?: () => void
   onFork: () => void
   onDelete: () => void
 }) {
@@ -513,12 +528,12 @@ function MessageActions({
             <DropdownMenuItem disabled={executionBlocked} onClick={onEdit}>
               <Pencil />
               {uiText("edit_and_resend_f857c444")}</DropdownMenuItem>
-          ) : (
+          ) : onRegenerate ? (
             <DropdownMenuItem disabled={sending || executionBlocked} onClick={onRegenerate}>
               <RotateCcw />
               {uiText("regenerate_3221a042")}</DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
+          ) : null}
+          {isUser || onRegenerate ? <DropdownMenuSeparator /> : null}
           <DropdownMenuItem variant="destructive" onClick={onDelete}>
             <Trash2 />
             {uiText("delete_2f9daa82")}</DropdownMenuItem>
@@ -617,6 +632,10 @@ export function MessageList({
   const actionableAssistantIndexes = useMemo(
     () => buildActionableAssistantIndexes(displayItems, !sending),
     [displayItems, sending],
+  )
+  const regenerableAssistantIndex = useMemo(
+    () => findRegenerableAssistantIndex(displayItems),
+    [displayItems],
   )
   const historyEntries = useMemo(() => buildHistoryEntries(displayItems), [displayItems])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
@@ -973,7 +992,7 @@ export function MessageList({
         sending={sending}
         forking={forking}
         onEdit={() => setEditingMsg({ id: m.id, text })}
-        onRegenerate={onRegenerate}
+        onRegenerate={idx === regenerableAssistantIndex ? onRegenerate : undefined}
         executionBlocked={executionBlocked}
         onFork={() => onFork(m.id)}
         onDelete={() => onDelete(m.id)}
