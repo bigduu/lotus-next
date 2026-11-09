@@ -2,13 +2,16 @@ import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 import { expectComposerText } from "./support/composer.js"
+import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.js"
 
 const supervisor = "bamboo-default-supervisor"
 const incarnation = "11111111-1111-4111-8111-111111111111"
 const birth = "a".repeat(64)
 const legacyReason = "authority_unavailable: existing Supervisor needs explicit attach/import; no automatic takeover"
 
-async function fixture(page: Page, initial: string) {
+type WorkFlags = { ticket_mutation: boolean; ticket_dispatch: boolean }
+
+async function fixture(page: Page, initial: string, flags?: WorkFlags) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
@@ -44,7 +47,8 @@ async function fixture(page: Page, initial: string) {
     return { ...(readable ? snapshot.scope : {}), available: readable, readable,
       reason: readable ? undefined : "v1 fixture service detail",
       availability: { kind: cause[0], reason_code: cause[1] },
-      mutation_enabled: current !== "v1-disabled" && current !== "v1-read-only", dispatch_enabled: current !== "v1-read-only",
+      mutation_enabled: flags?.ticket_mutation ?? (current !== "v1-disabled" && current !== "v1-read-only"),
+      dispatch_enabled: flags?.ticket_dispatch ?? (current !== "v1-read-only"),
       capabilities: { ...snapshot.scope.capabilities, scope_initialize_v1: current !== "v1-no-capability" },
       ...(readable ? { binding: { ...snapshot.scope.binding, binding_revision: storedRevision } } : {}),
       can_initialize: canInitialize,
@@ -144,6 +148,60 @@ async function openWork(page: Page) {
   await expect(page.getByRole("menu")).toHaveCount(0)
   return workbench
 }
+
+test("System settings save independent Work flags and the Supervisor shows the confirmed state", async ({ page }, testInfo) => {
+  const features = { ticket_mutation: false, ticket_dispatch: false, provider_model_ref: true }
+  await fixture(page, "v1-ready", features)
+  const patches: unknown[] = []
+  await page.route("**/api/v1/bamboo/config", async (route) => {
+    const request = route.request()
+    if (request.method() === "POST") {
+      const patch = request.postDataJSON() as { features: Partial<WorkFlags> }
+      patches.push(patch)
+      // A success response can still fail to confirm the requested setting.
+      if (patches.length > 1) Object.assign(features, patch.features)
+    }
+    return route.fulfill({ json: { features } })
+  })
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click()
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click()
+  const settings = settingsSurface(page)
+  await selectSettingsCategory(settings, "system", "系统")
+  const work = settings.getByRole("region", { name: "工作", exact: true })
+  const mutation = work.getByRole("switch", { name: "允许工作变更", exact: true })
+  const dispatch = work.getByRole("switch", { name: "允许工作派发", exact: true })
+  const save = work.getByRole("button", { name: "保存", exact: true })
+  await expect(mutation).not.toBeChecked()
+  await expect(dispatch).not.toBeChecked()
+  await expect(save).toBeDisabled()
+
+  await mutation.click()
+  await save.click()
+  await expect(work).toContainText("服务未确认请求的工作设置。")
+  await save.click()
+  await expect(work).toContainText("已保存")
+  await expect(dispatch).not.toBeChecked()
+
+  await dispatch.click()
+  await save.click()
+  await expect(work).toContainText("已保存")
+  expect(patches).toEqual([
+    { features: { ticket_mutation: true } },
+    { features: { ticket_mutation: true } },
+    { features: { ticket_dispatch: true } },
+  ])
+  expect(features.provider_model_ref).toBe(true)
+  await work.screenshot({ path: testInfo.outputPath("work-settings.png") })
+  await closeSettings(settings)
+
+  const workbench = await openWork(page)
+  const overview = workbench.getByTestId("ticket-work-overview")
+  await expect(overview).toContainText("此工作范围还没有记录工作")
+  await expect(overview).not.toContainText("此服务已禁用工作变更")
+  await expect(overview).not.toContainText("此服务已禁用工作派发")
+})
 
 for (const [status, message] of [
   ["uninitialized", "此 Supervisor 尚未初始化工作范围"], ["disabled", "此服务尚未启用工作功能"],

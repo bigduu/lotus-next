@@ -523,7 +523,6 @@ function App() {
                 }
                 if (version !== mainNavigationVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
               }
-              if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openToolForSession(id, "work")
               select(id)
             }}
             onOpenExistingSession={openExistingSession}
