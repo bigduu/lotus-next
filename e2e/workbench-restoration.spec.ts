@@ -168,6 +168,7 @@ test("selecting Supervisor restores the Work tab and panel visibility without ch
   await selectSupervisor()
   await expect(inspector).toHaveAttribute("aria-selected", "true")
   await expect(work).toHaveCount(0)
+  await testInfo.attach("supervisor-restored-with-work-closed", { body: await page.screenshot(), contentType: "image/png" })
   expect(observation.pageErrors).toEqual([])
 })
 

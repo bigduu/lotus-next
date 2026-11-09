@@ -91,10 +91,13 @@ test("Supervisor explains its role and supports persistent renaming with retry a
   await expect(dialog.getByRole("button", { name: "保存", exact: true })).toBeDisabled()
   await name.fill("取消的名字")
   if (testInfo.project.name === "desktop-chromium") {
+    const addTab = page.locator("#right-workbench").getByRole("button", {
+      name: "打开工作面板标签页", exact: true, includeHidden: true,
+    })
     await expect.poll(() => workbenchRequested).toBe(true)
-    await expect(page.locator("#right-workbench [role=tablist]")).toHaveCount(0)
+    await expect(addTab).toHaveCount(0)
     releaseWorkbench()
-    await expect(page.locator("#right-workbench [role=tablist]")).toHaveCount(1)
+    await expect(addTab).toBeVisible()
     expect(observation.failedRequests).toEqual([])
     expect(observation.pageErrors).toEqual([])
     await expect(name).toBeFocused()
