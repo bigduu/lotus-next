@@ -1671,7 +1671,9 @@ export function ChatPane({
       {clearTarget ? <ConversationClearDialog key={clearTarget.id} sessionId={clearTarget.id} title={clearTarget.title}
         onClose={() => setClearTarget(null)} /> : null}
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
-        sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
+        sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId}
+        projectId={currentChat?.config?.projectId} projectName={currentProjectName}
+        onClose={() => setWorkflowRunsOpen(false)} /> : null}
 
       <ImageLightbox src={preview} onClose={() => setPreview(null)} />
 
