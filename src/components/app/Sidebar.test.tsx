@@ -425,7 +425,7 @@ describe("Sidebar project grouping", () => {
     expect(props.onNewChat).toHaveBeenCalledWith("p2")
   })
 
-  it("folds a project group's sessions beyond seven behind an expand button", () => {
+  it("remembers an expanded or folded project session preview across remounts", () => {
     render({
       chats: Array.from({ length: 10 }, (_, index) =>
         chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
@@ -436,9 +436,20 @@ describe("Sidebar project grouping", () => {
     expect(container.textContent).toContain("展开 3 个")
     act(() => button("展开 3 个").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(10)
+    act(() => root.unmount())
+    root = createRoot(container)
+    render()
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(10)
+    render({ currentSessionId: "p-session-8" })
     expect(button("收起")).toBeDefined()
     act(() => button("收起").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+    expect(row("p-session-8")).toBeNull()
+    act(() => root.unmount())
+    root = createRoot(container)
+    render()
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+    expect(button("展开 3 个")).toBeDefined()
   })
 
   it("reveals all matching sessions during search in project mode", () => {
