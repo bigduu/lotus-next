@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
+import { ArrowLeft, Plus } from "lucide-react"
 import { uiText } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -6,13 +7,25 @@ import { getErrorMessage } from "@services/api/errors"
 import type { TypedWorkflowDraft } from "@services/command/workflowCatalog"
 import { isWorkflowRunTerminal, prepareWorkflowRun, workflowRunError, workflowRuns, workflowRunUnavailableReason,
   type WorkflowRunSnapshot, type WorkflowStepStatus, type WorkflowRunEvent } from "@services/workflow/workflowRuns"
+import { SKILL_CURATOR_ID, type PublishedWorkflow } from "@services/workflow/workflowProposals"
 import { useWorkflowCatalog } from "./useWorkflowCatalog"
 
+const WorkflowAuthoring = lazy(() => import("./WorkflowAuthoring"))
 const statusLabel = (status: WorkflowStepStatus) => uiText(`workflow_run_status_${status}`)
 
-export default function RunSession({ sessionId }: { sessionId: string }) {
+export default function RunSession({ sessionId, projectId, projectName }: {
+  sessionId: string; projectId?: string | null; projectName?: string
+}) {
   const catalog = useWorkflowCatalog(sessionId, true)
-  const [draft, setDraft] = useState<TypedWorkflowDraft | null>(null)
+  const [manualDraft, setDraft] = useState<TypedWorkflowDraft | null>(null)
+  const [authoring, setAuthoring] = useState<{ runId?: string } | null>(null)
+  const [publication, setPublication] = useState<PublishedWorkflow | null>(null)
+  const entries = catalog.catalog?.entries.filter((entry) =>
+    entry.kind === "orchestration" && entry.id !== SKILL_CURATOR_ID) ?? []
+  const publishedEntry = publication && entries.find((entry) =>
+    entry.source === "project" && entry.id === publication.id && entry.revision === publication.revision
+    && workflowRunUnavailableReason(entry) === null)
+  const draft = manualDraft ?? (publishedEntry ? { entry: publishedEntry, argsText: "{}" } : null)
   const [runs, setRuns] = useState<WorkflowRunSnapshot[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [phase, setPhase] = useState<WorkflowRunEvent["phase"] | null>(null)
@@ -135,14 +148,36 @@ export default function RunSession({ sessionId }: { sessionId: string }) {
   }
   let argsError: string | null = null
   if (draft) { try { prepareWorkflowRun(draft) } catch (error) { argsError = getErrorMessage(error) } }
-  const entries = catalog.catalog?.entries.filter((entry) => entry.kind === "orchestration") ?? []
+  if (authoring) return <div className="min-h-0 space-y-3 overflow-y-auto px-5 py-4">
+    <Button type="button" size="sm" variant="ghost" onClick={() => setAuthoring(null)}>
+      <ArrowLeft aria-hidden="true" className="size-4" />
+      {uiText("workflow_run_title")}
+    </Button>
+    <Suspense fallback={<p role="status" className="text-sm text-muted-foreground">{uiText("workflow_run_loading")}</p>}>
+      <WorkflowAuthoring key={authoring.runId ?? "new"} sessionId={sessionId} projectId={projectId} projectName={projectName}
+        initialRunId={authoring.runId} entries={entries.filter((entry) => entry.source === "project" && entry.winner && entry.status === "valid")}
+        onUse={(saved) => {
+          setDraft(null)
+          setPublication(saved)
+          catalog.refresh()
+          setAuthoring(null)
+        }} />
+    </Suspense>
+  </div>
+
   const selected = runs.find((run) => run.run_id === selectedId)
   return <div className="min-h-0 overflow-y-auto px-5 py-4 text-sm">
-    <div className="mb-4 flex items-center justify-between gap-3">
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <p className="text-xs text-muted-foreground">{uiText("workflow_run_hint")}</p>
-      <Button size="sm" variant="outline" disabled={refreshing || busy !== null} onClick={() => { catalog.refresh(); void sync() }}>
-        {refreshing ? uiText("refreshing_71659de8") : uiText("workflow_run_refresh")}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" disabled={refreshing || busy !== null} onClick={() => { catalog.refresh(); void sync() }}>
+          {refreshing ? uiText("refreshing_71659de8") : uiText("workflow_run_refresh")}
+        </Button>
+        <Button size="sm" onClick={() => setAuthoring({})}>
+          <Plus aria-hidden="true" className="size-4" />
+          {uiText("workflow_authoring_title")}
+        </Button>
+      </div>
     </div>
     <section className="space-y-3 rounded-xl border bg-muted/20 p-3" aria-label={uiText("workflow_run_start_section")}>
       {catalog.error && <p role="alert" className="text-xs text-destructive">{uiText("workflow_run_catalog_unavailable")}</p>}
@@ -152,6 +187,7 @@ export default function RunSession({ sessionId }: { sessionId: string }) {
           value={draft ? `${draft.entry.source}:${draft.entry.id}:${draft.entry.revision}` : ""}
           onChange={(event) => {
             const entry = entries.find((entry) => `${entry.source}:${entry.id}:${entry.revision}` === event.target.value)
+            setPublication(null)
             setDraft(entry ? { entry, argsText: "{}" } : null)
             setActionError(null)
           }}>
@@ -207,6 +243,9 @@ export default function RunSession({ sessionId }: { sessionId: string }) {
                 <span className="break-all">{step.id}</span><span>{statusLabel(step.status)} · {uiText("workflow_run_attempts", { count: step.attempts })}</span>
               </li>)}
             </ul>
+            {run.workflow_id === SKILL_CURATOR_ID ? <Button size="sm" variant="outline" onClick={() => setAuthoring({ runId: run.run_id })}>
+              {uiText("workflow_authoring_review")}
+            </Button> : null}
             {run.can_cancel && !isWorkflowRunTerminal(run) ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void actOnRun(run.run_id)}>
               {busy === run.run_id ? uiText("workflow_run_cancelling") : uiText("workflow_run_cancel")}
             </Button> : null}

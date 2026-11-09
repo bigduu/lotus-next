@@ -3,12 +3,13 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { ErrorBoundary } from "@/components/app/ErrorBoundary"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "@/components/ui/responsive-dialog"
 
-export type WorkflowRunsContentLoader = () => Promise<{ default: ComponentType<{ sessionId: string }> }>
+type WorkflowRunsProps = { sessionId: string; projectId?: string | null; projectName?: string }
+export type WorkflowRunsContentLoader = () => Promise<{ default: ComponentType<WorkflowRunsProps> }>
 const loadWorkflowRunsContent: WorkflowRunsContentLoader = () => import("./WorkflowRunsContent")
 
 /** The synchronous dialog owns focus and dismissal while its session content loads. */
-export function WorkflowRunsDialog({ sessionId, sessionTitle, onClose, loadContent = loadWorkflowRunsContent }: {
-  sessionId: string; sessionTitle: string; onClose: () => void
+export function WorkflowRunsDialog({ sessionId, sessionTitle, projectId, projectName, onClose, loadContent = loadWorkflowRunsContent }: WorkflowRunsProps & {
+  sessionTitle: string; onClose: () => void
   /** Test seam; production uses the canonical content module. */
   loadContent?: WorkflowRunsContentLoader
 }) {
@@ -28,7 +29,7 @@ export function WorkflowRunsDialog({ sessionId, sessionTitle, onClose, loadConte
         <Suspense fallback={<p role="status" aria-live="polite" className="px-5 py-4 text-sm text-muted-foreground">
           {uiText("workflow_run_loading")}
         </p>}>
-          <RunSession sessionId={sessionId} />
+          <RunSession sessionId={sessionId} projectId={projectId} projectName={projectName} />
         </Suspense>
       </ErrorBoundary>
     </ResponsiveDialogContent>
