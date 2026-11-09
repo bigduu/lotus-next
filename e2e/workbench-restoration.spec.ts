@@ -3,20 +3,23 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 
 const sessionA = "all-surface-session"
 const sessionB = "workbench-session-b"
+const supervisorId = "bamboo-default-supervisor"
 const storageKey = (id: string) => `lotus-next.workbench.v1:${encodeURIComponent(`${standaloneScenario.origin}/api/v1`)}:${encodeURIComponent(id)}`
 
-async function installSessions(page: Page) {
-  await page.addInitScript(() => {
+async function installSessions(page: Page, includeSupervisor = false) {
+  await page.addInitScript((initialSession) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     if (!localStorage.getItem("lotus_next_last_session")) {
-      localStorage.setItem("lotus_next_last_session", "all-surface-session")
+      localStorage.setItem("lotus_next_last_session", initialSession)
     }
-  })
+  }, includeSupervisor ? supervisorId : sessionA)
   const observation = await installArtifactRuntime(page, standaloneScenario)
-  const sessions = [
+  const fixtures = [
     { id: sessionA, title: "Session A" },
     { id: sessionB, title: "Session B" },
-  ].map(({ id, title }) => ({
+  ]
+  if (includeSupervisor) fixtures.push({ id: supervisorId, title: "Supervisor" })
+  const sessions = fixtures.map(({ id, title }) => ({
     id, title, kind: "root", root_session_id: id, parent_session_id: null,
     model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
     created_at: "2026-10-17T00:00:00Z", updated_at: "2026-10-17T00:00:00Z",
@@ -26,6 +29,11 @@ async function installSessions(page: Page) {
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname
+    if (includeSupervisor && request.method() === "POST" && path === "/api/v1/supervisor/default") {
+      return route.fulfill({ json: {
+        session_id: supervisorId, incarnation_id: "550e8400-e29b-41d4-a716-446655440000", created: false,
+      } })
+    }
     if (request.method() !== "GET") return route.fallback()
     if (path === "/api/v1/sessions") {
       const listed = url.searchParams.get("kind") === "child" ? [] : sessions
@@ -108,6 +116,58 @@ test("workbench restores each session's tools, order, selected tab, side session
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   await expect.poll(order).toEqual(["Review"])
   await expect(panel.getByRole("tab", { name: "Review", exact: true })).toHaveAttribute("aria-selected", "true")
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("selecting Supervisor restores the Work tab and panel visibility without changing either", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop Supervisor navigation acceptance")
+  const observation = await installSessions(page, true)
+  await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+  const supervisor = page.getByRole("button", { name: "Supervisor", exact: true })
+  const ordinary = page.getByRole("button", { name: "Session A", exact: true })
+  const panel = page.locator("#right-workbench")
+  const work = panel.getByRole("tab", { name: "工作", exact: true })
+  const inspector = panel.getByRole("tab", { name: "检查器", exact: true })
+  const launcher = page.getByRole("button", { name: "打开侧边面板", exact: true })
+  const selectSupervisor = async () => {
+    await supervisor.click()
+    await expect(supervisor).toHaveAttribute("aria-current", "page")
+    await expect(supervisor).toBeEnabled()
+  }
+  const selectOrdinary = async () => {
+    await ordinary.click()
+    await expect(ordinary).toHaveAttribute("aria-current", "page")
+    await expectCollapsedWorkbench(panel)
+  }
+
+  await expect(supervisor).toHaveAttribute("aria-current", "page")
+  await expectCollapsedWorkbench(panel)
+  await launcher.click()
+  await openTool(page, "工作")
+  await expect(work).toHaveAttribute("aria-selected", "true")
+  await selectOrdinary()
+  await selectSupervisor()
+  await expect(work).toHaveAttribute("aria-selected", "true")
+
+  await openTool(page, "检查器")
+  await panel.getByRole("button", { name: "收起工作面板", exact: true }).click()
+  await selectSupervisor()
+  await expectCollapsedWorkbench(panel)
+  await selectOrdinary()
+  await selectSupervisor()
+  await expectCollapsedWorkbench(panel)
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expect(supervisor).toHaveAttribute("aria-current", "page")
+  await expectCollapsedWorkbench(panel)
+
+  await launcher.click()
+  await expect(work).toBeVisible()
+  await expect(inspector).toHaveAttribute("aria-selected", "true")
+  await panel.getByRole("button", { name: "关闭工作标签页", exact: true }).click()
+  await selectOrdinary()
+  await selectSupervisor()
+  await expect(inspector).toHaveAttribute("aria-selected", "true")
+  await expect(work).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])
 })
 

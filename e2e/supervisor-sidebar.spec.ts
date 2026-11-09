@@ -78,6 +78,9 @@ test("Supervisor explains its role and supports persistent renaming with retry a
     await page.getByRole("button", { name: "菜单", exact: true }).click()
     await expect(supervisor).toBeInViewport({ ratio: 1 })
   }
+  if (testInfo.project.name === "desktop-chromium") {
+    await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
+  }
   await expect(sidebar.getByText("按照当前访问规则协调会话，跟进任务与结果。", { exact: true })).toBeVisible()
   await sidebar.getByRole("button", { name: "重命名统筹助手", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "重命名统筹助手" })
