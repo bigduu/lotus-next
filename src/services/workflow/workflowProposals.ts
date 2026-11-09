@@ -22,7 +22,7 @@ export type WorkflowDraftProposal = {
   project_id: string
   description: string
   definition: AuthoredDefinition
-  base: { definition: AuthoredDefinition; content_digest: string; skill_digest: string } | null
+  base: { definition: AuthoredDefinition; description: string; content_digest: string; skill_digest: string } | null
 }
 type ProposalResult = WorkflowDraftProposal | { decision: "clarify"; question: string } | { decision: "no_change" }
 export type WorkflowProposal = { run_id: string; status: WorkflowRunStatus; result?: ProposalResult }
@@ -60,7 +60,8 @@ function result(value: unknown): ProposalResult {
       || proposed.id !== previous.id || proposed.revision !== previous.revision + 1) invalid()
   } else if (proposed.revision !== 1) invalid()
   return { decision: "draft", project_id: text(raw.project_id), description: text(raw.description), definition: proposed,
-    base: base && previous ? { definition: previous, content_digest: text(base.content_digest), skill_digest: text(base.skill_digest) } : null }
+    base: base && previous ? { definition: previous, description: text(base.description),
+      content_digest: text(base.content_digest), skill_digest: text(base.skill_digest) } : null }
 }
 
 function parseProposal(value: unknown, sessionId: string, runId?: string): WorkflowProposal {
@@ -93,11 +94,13 @@ export const workflowProposals = {
       ? await apiClient.putOnce<unknown>(`${route}/${encodeURIComponent(proposal.definition.id)}`, {
         ...body, expected_revision: previous.definition.revision, expected_digest: previous.content_digest,
         expected_skill_digest: previous.skill_digest,
+        ...(proposal.description !== previous.description ? { description: proposal.description } : {}),
       })
       : await apiClient.postOnce<unknown>(route, { ...body, description: proposal.description }))
     const saved = definition(raw.definition)
     if (raw.saved !== true || raw.source !== "project" || typeof raw.catalog_available !== "boolean"
-      || saved.id !== proposal.definition.id || saved.revision !== proposal.definition.revision) invalid()
+      || raw.description !== proposal.description || saved.id !== proposal.definition.id
+      || saved.revision !== proposal.definition.revision) invalid()
     return { id: saved.id, revision: saved.revision, catalogAvailable: raw.catalog_available }
   },
 }

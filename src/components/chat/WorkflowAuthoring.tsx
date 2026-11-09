@@ -54,7 +54,10 @@ function ProposalReview({ proposal, projectName }: { proposal: WorkflowDraftProp
           </span>
         </div>
         <h3 className="break-words text-base font-semibold">{definition.id}</h3>
-        <p className="break-words text-sm text-muted-foreground">{proposal.description}</p>
+        {base && base.description !== proposal.description ? <div className="mt-1 grid gap-1 rounded-md bg-muted p-2 text-sm sm:grid-cols-2">
+          <p className="min-w-0 break-words text-muted-foreground">r{base.definition.revision} · {base.description}</p>
+          <p className="min-w-0 break-words">r{definition.revision} · {proposal.description}</p>
+        </div> : <p className="break-words text-sm text-muted-foreground">{proposal.description}</p>}
       </div>
     </div>
     <ol className="divide-y rounded-lg border bg-background" aria-label={uiText("workflow_authoring_proposed_steps")}>

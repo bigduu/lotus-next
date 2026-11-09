@@ -17,9 +17,10 @@ const revisionTwo = {
   ...revisionOne, revision: 2,
   steps: [{ ...revisionOne.steps[0], args: { file_path: "AGENTS.md" } }],
 }
-const description = "Read the project guidance"
+const description = "Read README.md for project guidance"
+const revisedDescription = "Read AGENTS.md for project guidance"
 const catalogEntry = (revision: number) => ({
-  id: workflowId, name: workflowId, description,
+  id: workflowId, name: workflowId, description: revision === 2 ? revisedDescription : description,
   source: "project", kind: "orchestration", revision, status: "valid", winner: true,
   invocation_policy: { explicit: true, automatic: false }, argument_schema: revisionOne.input_schema,
 })
@@ -57,8 +58,9 @@ test("project workflow teaching previews and saves a revision, then selects the 
       const runId = pathname.split("/").at(-1)
       const editing = runId === "draft-2"
       return route.fulfill({ json: { run_id: runId, session_id: sessionId, status: "succeeded",
-        result: { decision: "draft", project_id: projectId, description, definition: editing ? revisionTwo : revisionOne,
-          base: editing ? { definition: revisionOne, content_digest: definitionDigest, skill_digest: skillDigest } : null },
+        result: { decision: "draft", project_id: projectId, description: editing ? revisedDescription : description,
+          definition: editing ? revisionTwo : revisionOne,
+          base: editing ? { definition: revisionOne, description, content_digest: definitionDigest, skill_digest: skillDigest } : null },
       } })
     }
     if (pathname.startsWith("/api/v1/bamboo/workflow-definitions") && (method === "POST" || method === "PUT")) {
@@ -66,7 +68,7 @@ test("project workflow teaching previews and saves a revision, then selects the 
       writes.push(request)
       saved = request.definition.revision
       return route.fulfill({ status: method === "POST" ? 201 : 200, json: { saved: true, source: "project",
-        catalog_available: true, definition: request.definition } })
+        catalog_available: true, definition: request.definition, description: request.description } })
     }
     const run = { run_id: "published-run", session_id: sessionId, workflow_id: workflowId, workflow_revision: 2,
       status: "succeeded", can_cancel: false, last_sequence: 1, steps: {},
@@ -106,6 +108,8 @@ test("project workflow teaching previews and saves a revision, then selects the 
   await instruction.fill("以后改为读取 AGENTS.md")
   await generate.click()
   await expect(dialog).toContainText("r1 → r2")
+  await expect(dialog.getByText(`r1 · ${description}`, { exact: true })).toBeVisible()
+  await expect(dialog.getByText(`r2 · ${revisedDescription}`, { exact: true })).toBeVisible()
   await expect(dialog.getByRole("list", { name: "提案步骤" })).toContainText("已修改")
   await expect(dialog.getByRole("list", { name: "提案步骤" })).toContainText("README.md")
   await expect(dialog.getByRole("list", { name: "提案步骤" })).toContainText("AGENTS.md")
@@ -120,11 +124,13 @@ test("project workflow teaching previews and saves a revision, then selects the 
   expect(writes).toEqual([
     { target: "project", session_id: sessionId, expected_project_id: projectId, description, definition: revisionOne },
     { target: "project", session_id: sessionId, expected_project_id: projectId, expected_revision: 1,
-      expected_digest: definitionDigest, expected_skill_digest: skillDigest, definition: revisionTwo },
+      expected_digest: definitionDigest, expected_skill_digest: skillDigest, description: revisedDescription, definition: revisionTwo },
   ])
   expect(executions).toEqual([])
   await selectRun.click()
   await expect(dialog.getByRole("combobox")).toHaveValue(`project:${workflowId}:2`)
+  await expect(dialog.getByText(revisedDescription, { exact: true })).toBeVisible()
+  await expect(dialog.getByText(description, { exact: true })).toHaveCount(0)
   await dialog.getByRole("button", { name: "启动运行", exact: true }).click()
   await expect(dialog).toContainText("published-run")
   expect(executions).toEqual([{ workflow_id: workflowId, revision: 2, args: {} }])
