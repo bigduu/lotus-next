@@ -67,15 +67,15 @@ describe("QuestionDialog actual controls", () => {
     expect(props.onRefresh).not.toHaveBeenCalled()
   })
 
-  it("offers a Session grant only when the pending contract advertises the exact operation", async () => {
+  it("offers a Session grant only when the pending contract advertises the exact resource", async () => {
     const q = permission(["allow_once", "allow_session", "allow_global", "deny_once"])
     if (q.interaction_kind !== "permission") throw new Error("Missing permission fixture")
     q.permission_request.suggested_matchers = [{ id: "exact_resource", kind: "exact_resource" }]
     const { props, render } = await mountQuestion({ q })
-    click("本会话允许相同操作")
+    click("本会话临时允许此资源")
     expect(props.onAnswer).toHaveBeenCalledExactlyOnceWith("allow_session")
     await render({ q: permission() })
-    expect(document.body.textContent).not.toContain("本会话允许相同操作")
+    expect(document.body.textContent).not.toContain("本会话临时允许此资源")
   })
 
   it("uses only freshly allowed choices after the same generation's policy narrows", async () => {
