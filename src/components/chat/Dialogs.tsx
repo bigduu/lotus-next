@@ -4,6 +4,7 @@ import type { PendingQuestion, PendingApproval } from "@/hooks/useChat"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { ApprovalPresentation } from "./ApprovalPresentation"
+import { PermissionQuestionCard } from "./PermissionTimeline"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -21,6 +22,7 @@ export function QuestionDialog({
   canRetry = false,
   onRefresh,
   onRetry,
+  workspace,
 }: {
   q: PendingQuestion
   onAnswer: (text: string) => void
@@ -31,40 +33,25 @@ export function QuestionDialog({
   canRetry?: boolean
   onRefresh: () => void
   onRetry: () => void
+  workspace?: string | null
 }) {
   useUiLocale()
-  const permission = q.interaction_kind === "permission" ? q.permission_request : null
-  const identity = JSON.stringify([q.interaction_kind, q.tool_call_id, permission?.request_generation])
+  const identity = `${q.interaction_kind}:${q.tool_call_id}`
   const [draft, setDraft] = useState({ identity, text: "" })
   const custom = draft.identity === identity ? draft.text : ""
   const disabled = loading || submitting || unavailable || canRetry
-  const options = permission
-    ? [{ value: "allow_once", label: uiText("allow_once_390dd1fc") }, { value: "deny_once", label: uiText("deny_once_29b8bbf3") }]
-      .filter((option) => permission.allowed_decisions.includes(option.value))
-    : q.options.map((value) => ({ value, label: value }))
+  if (q.interaction_kind === "permission") return <PermissionQuestionCard question={q} workspace={workspace}
+    controls={{ onAnswer, onRefresh, onRetry, loading, submitting, unavailable, error, canRetry }} />
   const statusAndRefresh = (
     <>
       {submitting || loading ? <p role="status" className="mt-3 text-sm text-muted-foreground">{submitting ? uiText("submitting_26ef00b7") : uiText("refreshing_71659de8")}</p> : null}
       {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
-      {permission && options.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">{uiText("no_action_choices_are_available_for_this_request_refres_7be8bf22")}</p> : null}
       <div className="mt-3 flex gap-2">
         <Button variant="outline" disabled={loading || submitting} onClick={onRefresh}>{uiText("refresh_request_0ab317cc")}</Button>
         {canRetry ? <Button variant="secondary" disabled={loading || submitting} onClick={onRetry}>{uiText("retry_last_submission_2970e28a")}</Button> : null}
       </div>
     </>
   )
-  if (permission) {
-    return (
-      <ApprovalPresentation
-        key={JSON.stringify([permission.session_id, permission.request_id, permission.request_generation, permission.policy_revision])}
-        title={uiText("action_approval_required_3bd71c54")}
-        description={q.question}
-        disabled={disabled}
-        actions={options.map((option) => ({ id: option.value, label: option.label, onSelect: () => onAnswer(option.value) }))}
-        footer={statusAndRefresh}
-      />
-    )
-  }
   return (
     <ResponsiveDialog open>
       <ResponsiveDialogContent
@@ -77,15 +64,15 @@ export function QuestionDialog({
           {q.question}
         </ResponsiveDialogDescription>
         <div className="mt-4 flex flex-col gap-2">
-          {options.map((opt) => (
+          {q.options.map((option) => (
             <Button
-              key={opt.value}
+              key={option}
               variant="secondary"
               className="h-auto justify-start whitespace-normal py-2 text-left"
               disabled={disabled}
-              onClick={() => onAnswer(opt.value)}
+              onClick={() => onAnswer(option)}
             >
-              {opt.label}
+              {option}
             </Button>
           ))}
         </div>
@@ -113,7 +100,7 @@ export function QuestionDialog({
   )
 }
 
-export function ApprovalDialog({
+export function ChildApprovalCard({
   a,
   onRespond,
   submitting = false,

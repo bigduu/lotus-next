@@ -2978,4 +2978,12 @@ export const uiZhCn = {
   "supervisor_approval_refresh_before_retry": "请刷新请求后重新确认。",
   "supervisor_approval_allowed": "已批准本次操作。",
   "supervisor_approval_denied": "已拒绝本次操作。",
+  "permission_allow_exact_for_session": "本会话允许相同操作",
+  "permission_allow_recorded": "已记录批准",
+  "permission_session_allow_recorded": "已允许本会话的相同操作",
+  "permission_session_allow_continued": "已允许本会话的相同操作 · 会话已继续",
+  "permission_deny_recorded": "已记录拒绝",
+  "permission_allowed_and_continued": "已批准 · 会话已继续",
+  "permission_denied_and_continued": "已拒绝 · 会话已继续",
+  "permission_from_managed_session": "其他会话的审批",
 } as const

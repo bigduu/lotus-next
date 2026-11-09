@@ -17,11 +17,13 @@ import { recordUsedModel } from "@shared/utils/usedModels"
 import {
   agentClient,
   type PendingQuestionResponse,
+  type PermissionDecisionChoice,
   type PermissionDecisionRequest,
   type ReasoningEffort,
   type SessionPermissionMode,
   type ExecuteResponse,
 } from "@services/chat/AgentService"
+import { permissionDecisionFor } from "@services/chat/permissionDecision"
 import { apiClient, getBackendStorageScope } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
 import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
@@ -57,6 +59,11 @@ import {
 } from "@shared/utils/reasoningEffort"
 
 export type PendingQuestion = Extract<PendingQuestionResponse, { has_pending_question: true }>
+export type RecordedPermission = {
+  question: Extract<PendingQuestion, { interaction_kind: "permission" }>
+  decision: PermissionDecisionChoice
+  continued: boolean
+}
 type QuestionScope = { sessionId: string | null | undefined; epoch: number }
 type QuestionState = {
   scope: QuestionScope
@@ -67,6 +74,7 @@ type QuestionState = {
   error: string | null
   retry: PermissionDecisionRequest | null
   recordedKey: string | null
+  recordedPermission?: RecordedPermission
 }
 const questionKey = (q: PendingQuestion) => JSON.stringify([
   q.interaction_kind, q.tool_call_id,
@@ -505,7 +513,7 @@ export function useChat(
         const previousKey = current.question ? questionKey(current.question) : current.recordedKey
         const changed = !!question && (questionKey(question) !== previousKey
           || (current.retry && question.interaction_kind === "permission"
-            && !question.permission_request.allowed_decisions.includes(current.retry.decision)))
+            && !permissionDecisionFor(question.permission_request, current.retry.decision)))
         if (changed) questionSubmitRef.current = null
         const retry = changed ? null : current.retry
         const recordedKey = changed ? null : current.recordedKey
@@ -516,7 +524,7 @@ export function useChat(
         // ambiguous permission POST awaiting an explicit exact retry.
         return { scope, question: question ?? (retry || awaitingResponse ? current.question : null),
           loading: false, submitting: changed ? false : current.submitting, unavailable: false,
-          retry, recordedKey,
+          retry, recordedKey, recordedPermission: current.recordedPermission,
           error: preserveError || retry || recordedKey ? current.error : null }
       })
       return question ? "pending" : "absent"
@@ -2544,12 +2552,11 @@ export function useChat(
         const retry = current.retry!
         if (retry.request_id !== request.request_id || retry.request_generation !== request.request_generation
             || retry.expected_policy_revision !== request.policy_revision
-            || !request.allowed_decisions.includes(retry.decision)) return
+            || !permissionDecisionFor(request, retry.decision)) return
         decision = retry
       } else {
-        if ((text !== "allow_once" && text !== "deny_once") || !request.allowed_decisions.includes(text)) return
-        decision = { request_id: request.request_id, request_generation: request.request_generation,
-          expected_policy_revision: request.policy_revision, decision: text }
+        decision = permissionDecisionFor(request, text)
+        if (!decision) return
       }
     } else if (!text.trim() || (!question.allow_custom && !question.options.includes(text))) return
     const token = { scope, key, awaitingResponse: true }
@@ -2576,6 +2583,9 @@ export function useChat(
       if (!ownsSubmission()) return
       ++questionReadSequenceRef.current
       updateQuestionState((state) => ({ ...state, question: null, retry: null, recordedKey: key,
+        recordedPermission: decision && question.interaction_kind === "permission"
+          ? { question, decision: decision.decision, continued: continuationConfirmed && !!status }
+          : state.recordedPermission,
         unavailable: false, loading: false,
         error: continuationConfirmed ? null : uiText("your_response_was_recorded_but_task_continuation_is_unc_844b0635") }))
       await reconcileQuestion(scope, !continuationConfirmed)
@@ -2671,6 +2681,7 @@ export function useChat(
     editMessage,
     sendFailure,
     pendingQuestion,
+    recordedPermission: visibleQuestionState?.recordedPermission,
     questionLoading: visibleQuestionState?.loading ?? false,
     questionSubmitting: visibleQuestionState?.submitting ?? false,
     questionUnavailable: (visibleQuestionState?.unavailable ?? false)

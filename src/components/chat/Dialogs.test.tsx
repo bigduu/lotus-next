@@ -2,7 +2,7 @@ import { act, type ComponentProps } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import type { PendingQuestion } from "@/hooks/useChat"
-import { ApprovalDialog, QuestionDialog } from "./Dialogs"
+import { ChildApprovalCard, QuestionDialog } from "./Dialogs"
 
 type QuestionProps = ComponentProps<typeof QuestionDialog>
 const roots: Root[] = []
@@ -51,19 +51,31 @@ afterEach(() => {
 })
 
 describe("QuestionDialog actual controls", () => {
-  it("shows only typed once choices and never offers custom permission text or remembered grants", async () => {
+  it("shows one-time choices when the Session grant lacks an exact matcher", async () => {
     const { props } = await mountQuestion({ q: permission(["allow_once", "allow_session", "allow_global", "deny_once"]) })
-    const dialog = document.querySelector('[role="dialog"]')
+    const dialog = document.querySelector('[data-approval-presentation]')
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(dialog?.textContent).toContain("需要操作授权")
     expect(dialog?.textContent).toContain("Allow this followup?")
     expect([...dialog!.querySelectorAll("button")].map((element) => element.textContent)).toEqual([
-      "仅本次允许", "仅本次拒绝", "刷新请求",
+      "仅本次拒绝", "仅本次允许", "刷新请求",
     ])
     expect(dialog?.querySelector("textarea")).toBeNull()
     click("仅本次允许"); click("仅本次拒绝")
     expect(props.onAnswer).toHaveBeenNthCalledWith(1, "allow_once")
     expect(props.onAnswer).toHaveBeenNthCalledWith(2, "deny_once")
     expect(props.onRefresh).not.toHaveBeenCalled()
+  })
+
+  it("offers a Session grant only when the pending contract advertises the exact operation", async () => {
+    const q = permission(["allow_once", "allow_session", "allow_global", "deny_once"])
+    if (q.interaction_kind !== "permission") throw new Error("Missing permission fixture")
+    q.permission_request.suggested_matchers = [{ id: "exact_resource", kind: "exact_resource" }]
+    const { props, render } = await mountQuestion({ q })
+    click("本会话允许相同操作")
+    expect(props.onAnswer).toHaveBeenCalledExactlyOnceWith("allow_session")
+    await render({ q: permission() })
+    expect(document.body.textContent).not.toContain("本会话允许相同操作")
   })
 
   it("uses only freshly allowed choices after the same generation's policy narrows", async () => {
@@ -124,16 +136,17 @@ describe("QuestionDialog actual controls", () => {
   })
 
   it("retains a required question when Escape is pressed", async () => {
-    const { props } = await mountQuestion()
+    const { props } = await mountQuestion({ q: clarification() })
     act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
     expect(props.onAnswer).not.toHaveBeenCalled()
   })
 
   it("opens typed approvals without focusing a decision and consumes repeated or composing Enter", async () => {
+    const composer = document.body.appendChild(document.createElement("textarea"))
+    composer.focus()
     const { props, render } = await mountQuestion()
-    const dialog = document.querySelector<HTMLDivElement>("[data-approval-presentation]")!
-    expect(document.activeElement).toBe(dialog)
+    expect(document.activeElement).toBe(composer)
     const allow = button("仅本次允许")
     for (const init of [{ repeat: true }, { isComposing: true }]) {
       const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init })
@@ -144,7 +157,7 @@ describe("QuestionDialog actual controls", () => {
     const next = permission()
     if (next.interaction_kind === "permission") next.permission_request.request_generation = "generation/b"
     await render({ q: next })
-    expect(document.activeElement).toBe(document.querySelector("[data-approval-presentation]"))
+    expect(document.activeElement).toBe(composer)
     click("仅本次允许")
     expect(props.onAnswer).toHaveBeenCalledExactlyOnceWith("allow_once")
   })
@@ -153,30 +166,30 @@ describe("QuestionDialog actual controls", () => {
     const onRespond = vi.fn(), a = { childSessionId: "child/a", requestId: "child/request", toolName: "Write" }
     const root = createRoot(document.body.appendChild(document.createElement("div")))
     roots.push(root)
-    await act(async () => root.render(<ApprovalDialog a={a} onRespond={onRespond} submitting />))
+    await act(async () => root.render(<ChildApprovalCard a={a} onRespond={onRespond} submitting />))
     expect(document.querySelector('[role="status"]')?.textContent).toContain("正在提交")
-    const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-approval-presentation] button')]
     expect(choices).toHaveLength(2)
     expect(choices.every((choice) => choice.disabled)).toBe(true)
     act(() => { choices[0].click(); choices[1].click() })
     expect(onRespond).not.toHaveBeenCalled()
-    await act(async () => root.render(<ApprovalDialog a={a} onRespond={onRespond} error="提交结果尚未确认" />))
+    await act(async () => root.render(<ChildApprovalCard a={a} onRespond={onRespond} error="提交结果尚未确认" />))
     expect(document.querySelector('[role="status"]')).toBeNull()
     expect(document.querySelector('[role="alert"]')?.textContent).toBe("提交结果尚未确认")
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(onRespond).not.toHaveBeenCalled()
-    act(() => document.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click())
+    act(() => document.querySelector<HTMLButtonElement>('[data-approval-presentation] button')!.click())
     expect(onRespond).toHaveBeenCalledExactlyOnceWith(false)
   })
   it("keeps the separate child approval controls and boolean response contract", async () => {
     const onRespond = vi.fn()
     const root = createRoot(document.body.appendChild(document.createElement("div")))
     roots.push(root)
-    await act(async () => root.render(<ApprovalDialog a={{ childSessionId: "child/a", requestId: "child/request",
+    await act(async () => root.render(<ChildApprovalCard a={{ childSessionId: "child/a", requestId: "child/request",
       toolName: "Bash", permission: "execute_command", resource: "echo child" }} onRespond={onRespond} />))
     expect(document.body.textContent).toContain("子代理请求授权")
-    expect(document.activeElement).toBe(document.querySelector("[data-approval-presentation]"))
-    const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-approval-presentation] button')]
     const repeated = new KeyboardEvent("keydown", { key: "Enter", repeat: true, bubbles: true, cancelable: true })
     act(() => choices[1].dispatchEvent(repeated))
     expect(repeated.defaultPrevented).toBe(true)

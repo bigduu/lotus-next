@@ -2980,4 +2980,12 @@ export const uiEnUs = {
   "supervisor_approval_refresh_before_retry": "Refresh the request before deciding again.",
   "supervisor_approval_allowed": "Approved for this request.",
   "supervisor_approval_denied": "Denied for this request.",
+  "permission_allow_exact_for_session": "Allow this exact operation for this session",
+  "permission_allow_recorded": "Approval recorded",
+  "permission_session_allow_recorded": "Approval recorded for this exact operation in this session",
+  "permission_session_allow_continued": "Allowed this exact operation for this session · Session continued",
+  "permission_deny_recorded": "Denial recorded",
+  "permission_allowed_and_continued": "Approved · Session continued",
+  "permission_denied_and_continued": "Denied · Session continued",
+  "permission_from_managed_session": "Approval in another session",
 } as const

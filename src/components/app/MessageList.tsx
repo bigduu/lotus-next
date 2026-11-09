@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from "react"
 import {
@@ -128,12 +129,62 @@ type TurnCollapseItem = {
 type RenderItem = { kind: "msg"; m: Message; streaming?: boolean } | ProcessItem
 type DisplayItem = RenderItem | TurnCollapseItem
 
-type HistoryEntry = {
+type MessageHistoryEntry = {
   key: string
   item: DisplayItem
   itemIndex: number
 }
+type HistoryEntry = MessageHistoryEntry | { key: string; attachment: TimelineAttachment; item?: never }
 
+export type TimelineAttachment = {
+  key: string
+  afterMessageId?: string | null
+  node: ReactNode
+}
+
+function placeTimelineAttachments(history: MessageHistoryEntry[], attachments: readonly TimelineAttachment[]): {
+  entries: HistoryEntry[]
+  tail: TimelineAttachment[]
+} {
+  const byMessage = new Map<string, string>()
+  if (attachments.some((attachment) => typeof attachment.afterMessageId === "string")) {
+    for (const { key, item } of history) {
+      const members = item.kind === "collapsedTurn" ? item.items : [item]
+      for (const member of members) {
+        if (member.kind === "msg") byMessage.set(member.m.id, key)
+        else for (const part of member.parts) {
+          if (part.kind === "tools") for (const message of part.items) byMessage.set(message.id, key)
+        }
+      }
+    }
+  }
+  const after = new Map<string, TimelineAttachment[]>()
+  const tail: TimelineAttachment[] = []
+  for (const attachment of attachments) {
+    const id = attachment.afterMessageId
+    const key = id ? byMessage.get(id) : undefined
+    if (key) {
+      const group = after.get(key) ?? []
+      group.push(attachment)
+      after.set(key, group)
+    } else {
+      tail.push(attachment)
+    }
+  }
+  // An attachment has its own measured virtual row. Growing a message row
+  // underneath the cached history offsets can make later rows cover the card.
+  const entries = after.size ? history.flatMap<HistoryEntry>((entry) => [
+    entry,
+    ...(after.get(entry.key) ?? []).map((attachment) => ({ key: `timeline-${attachment.key}`, attachment })),
+  ]) : history
+  return { entries, tail }
+}
+
+function renderTimelineAttachments(attachments: readonly TimelineAttachment[]) {
+  return attachments.map(({ key, node }) => <Fragment key={key}>{node}</Fragment>)
+}
+
+const EMPTY_TIMELINE_ATTACHMENTS: readonly TimelineAttachment[] = []
 const HISTORY_ROW_GAP = 8
 const INITIAL_VIRTUAL_RECT = { width: 1024, height: 720 }
 
@@ -387,7 +438,7 @@ function renderItemKey(item: RenderItem, index: number): string {
   return item.key || `activity-${index}`
 }
 
-function buildHistoryEntries(items: DisplayItem[]): HistoryEntry[] {
+function buildHistoryEntries(items: DisplayItem[]): MessageHistoryEntry[] {
   return items.map((item, itemIndex) => {
     if (item.kind === "collapsedTurn") return { key: item.key, item, itemIndex }
     return { key: renderItemKey(item, itemIndex), item, itemIndex }
@@ -401,6 +452,7 @@ function estimateHistoryEntrySize(
   turnOpen: boolean,
 ): number {
   if (!entry) return 120
+  if ("attachment" in entry) return 172
   if (entry.item.kind === "collapsedTurn") return turnOpen ? 96 + entry.item.items.length * 40 : 24
   if (entry.item.kind === "process") return processOpen ? 96 + entry.item.parts.length * (toolOpen ? 160 : 40) : 36
   return entry.item.m.role === "user" ? 112 : 220
@@ -548,6 +600,7 @@ export function MessageList({
   contentRef,
   onScroll,
   messages,
+  timelineAttachments = EMPTY_TIMELINE_ATTACHMENTS,
   mergedSubAgents,
   subAgentError,
   onRefreshSubAgents,
@@ -578,6 +631,7 @@ export function MessageList({
   contentRef: Ref<HTMLDivElement>
   onScroll: () => void
   messages: Message[]
+  timelineAttachments?: readonly TimelineAttachment[]
   mergedSubAgents: Record<string, ChildProgress>
   subAgentError?: string | null
   onRefreshSubAgents?: () => void
@@ -637,7 +691,9 @@ export function MessageList({
     () => findRegenerableAssistantIndex(displayItems),
     [displayItems],
   )
-  const historyEntries = useMemo(() => buildHistoryEntries(displayItems), [displayItems])
+  const messageEntries = useMemo(() => buildHistoryEntries(displayItems), [displayItems])
+  const { entries: historyEntries, tail: timelineTail } = useMemo(
+    () => placeTimelineAttachments(messageEntries, timelineAttachments), [messageEntries, timelineAttachments])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
   const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
   // A finished turn's divider key → expanded. Expanded turns stay expanded while
@@ -671,7 +727,7 @@ export function MessageList({
     return estimateHistoryEntrySize(
       entry,
       Boolean(entry && openProcessKeysRef.current.has(entry.key)),
-      entry?.item.kind === "process" && entry.item.parts.some((part) =>
+      entry?.item?.kind === "process" && entry.item.parts.some((part) =>
         part.kind === "tools" && openToolKeysRef.current.has(`tools-${part.items[0]?.id}`),
       ),
       Boolean(entry && openTurnKeysRef.current.has(entry.key)),
@@ -1032,7 +1088,8 @@ export function MessageList({
     )
   }
 
-  const renderHistoryEntry = (entry: HistoryEntry) => renderItem(entry.item, entry.itemIndex)
+  const renderHistoryEntry = (entry: HistoryEntry) => "attachment" in entry
+    ? entry.attachment.node : renderItem(entry.item, entry.itemIndex)
 
   const virtualItems = virtualizer.getVirtualItems()
 
@@ -1101,7 +1158,7 @@ export function MessageList({
                   className={cn(
                     "absolute left-0 top-0 w-full",
                     virtualItem.index > 0 &&
-                      entry.item.kind === "msg" &&
+                      entry.item?.kind === "msg" &&
                       entry.item.m.role === "user" &&
                       "pt-2",
                   )}
@@ -1129,6 +1186,7 @@ export function MessageList({
             {renderItem(item, index, { live: true })}
           </Fragment>
         ))}
+        {renderTimelineAttachments(timelineTail)}
 
         {/* While the chat pane confirms a live background-exec wait (suspended
             run + wait notice still latest), keep a visible running hint instead

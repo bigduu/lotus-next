@@ -9,6 +9,7 @@ import {
   MessageImage,
 } from "@shared/types/chat";
 import { parseSessionPermissionMode, type SessionSummary } from "@services/chat/AgentService";
+import { permissionHistoryFromMetadata } from "@services/chat/permissionDecision";
 import { apiClient } from "@services/api";
 import { getDefaultSystemPrompts } from "@shared/utils/defaultSystemPrompts";
 import i18n from "@shared/i18n";
@@ -377,6 +378,7 @@ export const mapHistoryMessagesToUi = (
           type: "image/*",
         });
       }
+      const permissionHistory = permissionHistoryFromMetadata(sessionId, toolCallId, msg.metadata);
       const toolResult: AssistantToolResultMessage = {
         role: "assistant",
         type: "tool_result",
@@ -390,6 +392,7 @@ export const mapHistoryMessagesToUi = (
           display_preference: "Default",
         },
         isError: inferredError,
+        ...(permissionHistory ? { permissionHistory } : {}),
         images: toolImages.length ? toolImages : undefined,
         isCompressed: Boolean(msg.compressed),
         compressedEventId: msg.compressed_by_event_id,
