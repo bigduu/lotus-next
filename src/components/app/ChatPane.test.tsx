@@ -139,8 +139,8 @@ vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
 vi.mock("@/components/chat/Dialogs", () => ({
   QuestionDialog: ({ q, onAnswer }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["QuestionDialog"]>) =>
     <div data-parent-question>{q.question}<button onClick={() => onAnswer("main answer")}>Answer parent</button></div>,
-  ApprovalDialog: ({ a, onRespond, submitting, error }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ApprovalDialog"]>) =>
-    <div role="dialog" data-child-approval={a.childSessionId}>
+  ChildApprovalCard: ({ a, onRespond, submitting, error }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ChildApprovalCard"]>) =>
+    <div data-child-approval={a.childSessionId}>
       {error ? <p role="alert">{error}</p> : null}
       <button disabled={submitting} onClick={() => onRespond(true)}>Approve child</button>
       <button disabled={submitting} onClick={() => onRespond(false)}>Deny child</button>
@@ -156,7 +156,7 @@ vi.mock("@/components/app/HomeDashboard", () => ({
 vi.mock("@/components/app/MessageList", () => ({
   MessageList: (props: MessageListProps) => {
     runtime.messageList = props
-    return null
+    return <>{props.timelineAttachments?.map((entry) => <div key={entry.key}>{entry.node}</div>)}</>
   },
 }))
 vi.mock("@/components/app/Toasts", () => ({ Toasts: (props: ComponentProps<(typeof import("./Toasts"))["Toasts"]>) => { runtime.toastProps = props; return null } }))

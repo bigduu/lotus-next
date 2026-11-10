@@ -26,7 +26,7 @@ import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { workspaceService } from "@services/workspace"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
-import { QuestionDialog, ApprovalDialog } from "@/components/chat/Dialogs"
+import { QuestionDialog, ChildApprovalCard } from "@/components/chat/Dialogs"
 import { downloadMarkdown } from "@/lib/exportMarkdown"
 import { downloadPdf } from "@/lib/exportPdf"
 import type { useChat } from "@/hooks/useChat"
@@ -61,7 +61,8 @@ import { useTicketIngress } from "@/hooks/useTicketIngress"
 import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
 import { LazyTicketWorkPanel } from "@/components/chat/LazyTicketWorkPanel"
 import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
-import { SupervisorApprovalCards, type OpenRecordedSession } from "@/components/chat/SupervisorApprovalCards"
+import type { OpenRecordedSession } from "@/components/chat/SupervisorApprovalCards"
+import { usePermissionTimeline, useSupervisorApprovalTimeline } from "@/hooks/useApprovalTimeline"
 import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
@@ -298,6 +299,21 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const executionBlocked = chat.executionCompatibility?.blocked === true
+  const permissionTimeline = usePermissionTimeline(messages,
+    !executionBlocked && pendingQuestion?.interaction_kind === "permission" ? pendingQuestion : null,
+    chat.recordedPermission, currentChat?.config?.workspacePath, {
+      onAnswer: (choice) => void answerQuestion(choice),
+      onRefresh: () => void refreshQuestion(),
+      onRetry: () => void retryQuestion(),
+      loading: questionLoading,
+      submitting: questionSubmitting,
+      unavailable: questionUnavailable,
+      error: questionError,
+      canRetry: questionCanRetry,
+    })
+  const supervisorApprovalTimeline = useSupervisorApprovalTimeline(
+    !secondary && !historyBlocked && pageVisible !== false && !!currentChat && isDefaultSupervisor(currentChat),
+    messages.at(-1)?.id ?? null, onOpenRecordedSession)
   // A background-exec wait keeps the run live from the user's perspective: the
   // runtime suspended the session while the monitored command still executes,
   // and its result returns automatically. Keep the running presentation until
@@ -1346,6 +1362,14 @@ export function ChatPane({
           contentRef={contentRef}
           onScroll={handleScroll}
           messages={messages}
+          timelineAttachments={[
+            ...permissionTimeline, ...supervisorApprovalTimeline,
+            ...(pendingApproval && !chat.approvalCompatibility?.blocked ? [{
+              key: JSON.stringify(["child-approval", pendingApproval.childSessionId, pendingApproval.requestId]),
+              node: <ChildApprovalCard a={pendingApproval} onRespond={(ok) => void respondApproval(ok)}
+                submitting={chat.approvalSubmitting} error={chat.approvalError} />,
+            }] : []),
+          ]}
           mergedSubAgents={mergedSubAgents}
           subAgentError={subAgentView.error}
           onRefreshSubAgents={() => { void subAgentView.refresh() }}
@@ -1497,13 +1521,6 @@ export function ChatPane({
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
           <ContextCompressionNotice feedback={contextCompression} />
-          {!secondary && !historyBlocked && pageVisible !== false && currentChat && isDefaultSupervisor(currentChat) ? (
-            <SupervisorApprovalCards onOpenSession={onOpenRecordedSession} onRecorded={(decision, continuationConfirmed) => {
-              showToast(!continuationConfirmed
-                ? uiText("your_response_was_recorded_but_task_continuation_is_unc_844b0635")
-                : uiText(decision === "allow_once" ? "supervisor_approval_allowed" : "supervisor_approval_denied"))
-            }} />
-          ) : null}
           {compacting ? (
             <p role="status" className="mx-4 text-xs text-muted-foreground">{uiText("compact_in_progress")}</p>
           ) : null}
@@ -1686,10 +1703,8 @@ export function ChatPane({
         </div>
       ) : null}
 
-      {pendingApproval && !chat.approvalCompatibility?.blocked ? (
-        <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)}
-          submitting={chat.approvalSubmitting} error={chat.approvalError} />
-      ) : !executionBlocked && pendingQuestion ? (
+      {!executionBlocked && pendingQuestion?.interaction_kind === "clarification"
+          && (!pendingApproval || chat.approvalCompatibility?.blocked) ? (
         <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)}
           loading={questionLoading} submitting={questionSubmitting} unavailable={questionUnavailable}
           error={questionError} canRetry={questionCanRetry}
