@@ -154,6 +154,13 @@ export interface AssistantToolResultMessage extends BaseMessage {
   toolCallId: string;
   result: ToolExecutionResult;
   isError: boolean;
+  permissionHistory?: {
+    requestId: string;
+    generation: string;
+    operation: string;
+    workingDirectory?: string;
+    decision?: "allow_once" | "allow_session" | "allow_workspace" | "allow_global" | "deny_once" | "deny_session";
+  };
   /** Images returned by the tool (e.g. an MCP screenshot), for inline preview. */
   images?: MessageImage[];
 }

@@ -518,6 +518,7 @@ export interface ExecuteRequest {
 }
 
 export type PermissionOnceDecision = "allow_once" | "deny_once";
+export type PermissionDecisionChoice = PermissionOnceDecision | "allow_session";
 export type PermissionRequest = {
   session_id: string;
   request_id: string;
@@ -528,6 +529,7 @@ export type PermissionRequest = {
   resource: string;
   operation_summary: string;
   allowed_decisions: string[];
+  suggested_matchers?: { id: string; kind: string }[];
 };
 type PendingQuestionFields = {
   has_pending_question: true;
@@ -540,14 +542,14 @@ type PendingQuestionFields = {
 export type PendingQuestionResponse =
   | { has_pending_question: false; tool_call_id?: never }
   | (PendingQuestionFields & { interaction_kind: "clarification"; permission_request?: null })
-  | (PendingQuestionFields & { interaction_kind: "permission"; permission_request: PermissionRequest });
+  | (PendingQuestionFields & { interaction_kind: "permission"; permission_request: PermissionRequest; tool_arguments?: unknown });
 
 export type PermissionDecisionRequest = {
   request_id: string;
   request_generation: string;
-  decision: PermissionOnceDecision;
   expected_policy_revision: number;
-};
+} & ({ decision: PermissionOnceDecision; matcher_id?: never }
+  | { decision: "allow_session"; matcher_id: "exact_resource" });
 export type SupervisorApprovalCardData = {
   sessionId: string;
   createdAt: string;
@@ -1551,7 +1553,8 @@ export class AgentClient {
   async submitPermissionDecision(sessionId: string, request: PermissionDecisionRequest): Promise<PermissionDecisionResult> {
     if (!nonemptyInteractionString(request.request_id) || !nonemptyInteractionString(request.request_generation)
         || !safePolicyRevision(request.expected_policy_revision)
-        || (request.decision !== "allow_once" && request.decision !== "deny_once")) {
+        || (request.decision === "allow_session" ? request.matcher_id !== "exact_resource"
+          : (request.decision !== "allow_once" && request.decision !== "deny_once") || request.matcher_id != null)) {
       throw new PendingInteractionContractError();
     }
     const data = interactionRecord(await apiClient.post<unknown>(
@@ -1561,7 +1564,7 @@ export class AgentClient {
     const recorded = interactionRecord(receipt?.decision);
     if (data?.success !== true || typeof data.replayed !== "boolean" || receipt?.session_id !== sessionId
         || recorded?.request_id !== request.request_id || recorded?.request_generation !== request.request_generation
-        || recorded?.decision !== request.decision || recorded?.matcher_id != null
+        || recorded?.decision !== request.decision || (recorded?.matcher_id ?? null) !== (request.matcher_id ?? null)
         || (recorded?.expected_policy_revision != null && !safePolicyRevision(recorded.expected_policy_revision))
         || (recorded?.confirm_global != null && recorded.confirm_global !== false)) {
       throw new PendingInteractionContractError();

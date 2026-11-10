@@ -75,7 +75,7 @@ const mount = async (bound?: string | null) => {
   await act(async () => root.render(<Pane bound={bound} />))
 }
 const chat = () => values.get("pane")!
-const dialog = () => document.querySelector('[role="dialog"]')
+const dialog = () => document.querySelector('[data-approval-presentation]')
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
   .find((element) => element.textContent?.trim() === label)
 const click = async (label: string) => {
