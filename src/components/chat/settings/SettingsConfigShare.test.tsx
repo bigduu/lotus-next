@@ -98,7 +98,7 @@ beforeEach(async () => {
   vi.spyOn(configShareService, "apply").mockImplementation(async (request) => ({ operation_id: request.operation_id, state: "committed", revisions: committedRevisions }))
   vi.spyOn(configShareService, "operation")
   useProviderStore.setState({ ...initialProviderState, providerSnapshot: savedSnapshot("old-model", "old-provider"), providerStatus: "ready" }, true)
-  useAppStore.setState({ models: ["old-model"], selectedModel: "old-model", modelsError: null })
+  useAppStore.setState({ models: ["old-model"], selectedModel: { provider: "old", model: "old-model" }, modelsError: null })
   vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue(savedSnapshot())
   vi.spyOn(settingsService, "getProviderCatalog").mockResolvedValue({ providers: [], models: [] })
   vi.spyOn(settingsService, "fetchCatalogModels")

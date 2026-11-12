@@ -2,6 +2,7 @@ import { ChatItem, Message } from "@shared/types/chat";
 import type { HistoryResponse, ReasoningEffort, SessionSummary } from "@services/chat/AgentService";
 import type { ConversationClearFailure } from "@services/chat/conversationClear";
 import type { ManagedSessionSelection } from "@services/supervisorScope/managedSessions";
+import type { ProviderModelRef } from "@shared/types/providerModelRef";
 
 export interface ConversationClearState {
   busy: boolean;
@@ -58,7 +59,7 @@ export interface ChatSlice {
     options?: { skipBackendPatch?: boolean },
   ) => void;
   /** Persist a model choice before showing it as the session's active model. */
-  changeSessionModel: (sessionId: string, model: string) => Promise<void>;
+  changeSessionModel: (sessionId: string, model: ProviderModelRef) => Promise<void>;
   /** Persist a session reasoning override; null restores inherited/Auto mode. */
   changeSessionReasoningEffort: (
     sessionId: string,

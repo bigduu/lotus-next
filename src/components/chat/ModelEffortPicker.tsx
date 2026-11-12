@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react"
 import { Check, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, Search, Sparkles, X } from "lucide-react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 import type { ThinkingMode } from "@services/chat/AgentService"
 import type { ThinkingPickerSelection } from "@/hooks/useRootThinkingMode"
@@ -27,14 +28,21 @@ const accents: Record<ThinkingPickerSelection, string> = {
   medium: "#428cff", high: "#3b82f6", xhigh: "#818cf8", max: "#a78bfa", ultra: "#bd8bfa",
 }
 
+interface ModelGroup {
+  provider: string
+  label: string
+  models: string[]
+}
+
 /** A controlled model/effort surface; persistence remains with ChatPane's handlers. */
 export function ModelEffortPicker({
-  models, model, onModelChange, modelDisabled = false, value, onChange, disabled = false,
+  modelGroups, model, modelProvider, onModelChange, modelDisabled = false, value, onChange, disabled = false,
   allowUltra = false, thinkingMode, menuPlacement = "up", menuAlign = "right",
 }: {
-  models: string[]
+  modelGroups: ModelGroup[]
   model: string
-  onModelChange: (model: string) => void
+  modelProvider?: string
+  onModelChange: (model: ProviderModelRef) => void
   modelDisabled?: boolean
   value: ReasoningEffortSelection
   onChange: (effort: ThinkingPickerSelection) => void
@@ -59,7 +67,7 @@ export function ModelEffortPicker({
   const selected: ThinkingPickerSelection = allowUltra && thinkingMode === "ultra" ? "ultra" : value
   const unconfirmed = allowUltra && thinkingMode === null
   const effortDisabled = disabled || unconfirmed
-  const unavailableModels = modelDisabled || models.length === 0
+  const unavailableModels = modelDisabled || modelGroups.length === 0
   const triggerDisabled = effortDisabled && unavailableModels
   const index = efforts.indexOf(selected)
   const displayIndex = effortDisabled ? index : preview ?? index
@@ -68,7 +76,12 @@ export function ModelEffortPicker({
   const currentLabel = unconfirmed ? uiText("unconfirmed_c098e854") : text[selected]
   const accent = accents[displayed]
   const normalized = query.trim().toLowerCase()
-  const filtered = normalized ? models.filter((item) => item.toLowerCase().includes(normalized)) : models
+  const filtered = normalized ? modelGroups.flatMap((group) => {
+    if (`${group.label} ${group.provider}`.toLowerCase().includes(normalized)) return [group]
+    const models = group.models.filter((item) => item.toLowerCase().includes(normalized))
+    return models.length > 0 ? [{ ...group, models }] : []
+  }) : modelGroups
+  const providerLabel = modelGroups.find((group) => group.provider === modelProvider)?.label ?? modelProvider
 
   useEffect(() => {
     if (!open) return
@@ -98,7 +111,10 @@ export function ModelEffortPicker({
           title={`${model || uiText("select_a_model_1afed6a8")} · ${currentLabel}`}
           disabled={triggerDisabled}
           className={cn("model-effort-trigger", composerControlClassName)}>
-          <span id={`${pickerId}-model`} className="min-w-0 truncate text-left">{model || uiText("select_a_model_1afed6a8")}</span>
+          <span id={`${pickerId}-model`} className="min-w-0 truncate text-left">
+            {model || uiText("select_a_model_1afed6a8")}
+            {model && providerLabel ? <span className="sr-only">{` · ${providerLabel}`}</span> : null}
+          </span>
           <span id={`${pickerId}-effort`} className="effort-trigger-label shrink-0 truncate">{currentLabel}</span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden />
         </button>
@@ -123,7 +139,10 @@ export function ModelEffortPicker({
                 <button ref={modelButtonRef} type="button" data-testid="model-picker-model" disabled={unavailableModels} title={model || uiText("select_a_model_1afed6a8")}
                   onClick={() => { if (!unavailableModels) { setPage("models"); setPreview(null) } }}
                   className="mx-auto flex min-h-8 max-w-full items-center gap-0.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground outline-none hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
-                  <span className="truncate">{model || uiText("select_a_model_1afed6a8")}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate">{model || uiText("select_a_model_1afed6a8")}</span>
+                    {model && providerLabel ? <span className="block truncate text-[10px]">{providerLabel}</span> : null}
+                  </span>
                   <ChevronRight className="size-3 shrink-0" aria-hidden />
                 </button>
               </div>
@@ -191,12 +210,22 @@ export function ModelEffortPicker({
               </button> : null}
             </div>
             <div className="max-h-60 overflow-y-auto" aria-label={uiText("model_list_ea4bf042")}>
-              {filtered.map((item) => <button key={item} type="button" data-model-option="" aria-pressed={item === model} title={item}
-                disabled={unavailableModels} onClick={() => { if (!unavailableModels) { onModelChange(item); changeOpen(false) } }}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
-                <span className="min-w-0 flex-1 truncate">{item}</span>
-                <Check className={cn("size-4 shrink-0 text-primary", item !== model && "opacity-0")} aria-hidden />
-              </button>)}
+              {filtered.map(({ provider, label, models }) => (
+                <div key={provider} role="group" aria-label={label}>
+                  <div className="truncate px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground" title={label} aria-hidden>{label}</div>
+                  {models.map((item) => {
+                    const isSelected = provider === modelProvider && item === model
+                    return (
+                      <button key={item} type="button" data-model-option="" aria-pressed={isSelected} title={item}
+                        disabled={unavailableModels} onClick={() => { onModelChange({ provider, model: item }); changeOpen(false) }}
+                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
+                        <span className="min-w-0 flex-1 truncate">{item}</span>
+                        <Check className={cn("size-4 shrink-0 text-primary", !isSelected && "opacity-0")} aria-hidden />
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
               {filtered.length === 0 ? <p role="status" className="px-3 py-6 text-center text-xs text-muted-foreground">{uiText("no_matching_models_4b5e0ae1")}</p> : null}
             </div>
           </>

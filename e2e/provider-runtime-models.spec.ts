@@ -214,7 +214,7 @@ test("discovery requires explicit admission and preserves custom models after re
   await expect(page.locator("[data-model-option]").filter({ hasText: chosen })).toBeVisible()
   await expect(page.locator("[data-model-option]").filter({ hasText: custom })).toBeVisible()
   await expect(page.locator("[data-model-option]").filter({ hasText: excluded })).toHaveCount(0)
-  await expect(page.locator("[data-model-option]").filter({ hasText: otherOnly })).toHaveCount(0)
+  await expect(page.getByRole("group", { name: "Other provider" }).getByRole("button", { name: otherOnly, exact: true })).toBeVisible()
   await page.keyboard.press("Escape")
   await page.reload()
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
@@ -235,16 +235,20 @@ test("discovery requires explicit admission and preserves custom models after re
 })
 
 for (const typedDefault of [true, false]) {
-  test(`a fresh chat sends its saved custom model with ${typedDefault ? "a Chat preference" : "instance-only defaults"}`, async ({ page }, testInfo) => {
+  test(`a fresh chat sends a second provider's model with ${typedDefault ? "a Chat preference" : "instance-only defaults"}`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop-chromium", "desktop new-chat submission contract")
     await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
     const custom = "relay-custom/offline-alias"
     const observation = await installArtifactRuntime(page, standaloneScenario, [], {
       providerInstancesResponse: {
         default_provider_instance_id: "fixture-provider",
-        instances: [{ id: "fixture-provider", type: "openai", label: "Relay provider", enabled: true,
-          config: { model: "fixture-model", runtime_models: ["fixture-model", custom] } }],
-        defaults: typedDefault ? { chat: { provider: "fixture-provider", model: "fixture-model" } } : null,
+        instances: [
+          { id: "fixture-provider", type: "openai", label: "Default relay", enabled: true,
+            config: { model: custom, runtime_models: [custom] } },
+          { id: "second-provider", type: "openai", label: "Alternate relay", enabled: true,
+            config: { runtime_models: [custom] } },
+        ],
+        defaults: typedDefault ? { chat: { provider: "fixture-provider", model: custom } } : null,
         features: { provider_model_ref: typedDefault },
       },
     })
@@ -265,7 +269,12 @@ for (const typedDefault of [true, false]) {
     await expect(page.getByRole("heading", { name: "开始新任务", exact: true })).toBeVisible()
     await page.getByTestId("model-effort-picker").click()
     await page.getByTestId("model-picker-model").click()
-    await page.locator("[data-model-option]").filter({ hasText: custom }).click()
+    const firstOption = page.getByRole("group", { name: "Default relay" }).getByRole("button", { name: custom, exact: true })
+    const secondOption = page.getByRole("group", { name: "Alternate relay" }).getByRole("button", { name: custom, exact: true })
+    await expect(firstOption).toHaveAttribute("aria-pressed", "true")
+    await expect(secondOption).toHaveAttribute("aria-pressed", "false")
+    await secondOption.click()
+    await expect(page.getByTestId("model-effort-picker")).toContainText("Alternate relay")
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("Use my selected custom relay model")
     await page.getByRole("button", { name: "发送消息", exact: true }).click()
     await expect.poll(() => chatRequests.length).toBe(1)
@@ -273,7 +282,7 @@ for (const typedDefault of [true, false]) {
     expect(chatRequests[0].session_id).toBeUndefined()
     for (const request of [chatRequests[0], executeRequests[0]]) {
       expect(request).toMatchObject({
-        model: custom, model_ref: { provider: "fixture-provider", model: custom },
+        model: custom, model_ref: { provider: "second-provider", model: custom },
       })
     }
     expect(observation.httpRequests.some((request) => request.url.endsWith("/provider-catalog/fetch-models"))).toBe(false)

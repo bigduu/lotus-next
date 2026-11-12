@@ -29,8 +29,9 @@ function renderPicker(overrides: Partial<PickerProps> = {}) {
   const root = createRoot(container)
   roots.push(root)
   let props: PickerProps = {
-    models: ["gpt-6-sol", "glm-5.3", "gpt-5.6-sol"],
+    modelGroups: [{ provider: "fixture", label: "Fixture", models: ["gpt-6-sol", "glm-5.3", "gpt-5.6-sol"] }],
     model: "gpt-6-sol",
+    modelProvider: "fixture",
     onModelChange: vi.fn(),
     value: "high",
     onChange: vi.fn(),
@@ -100,30 +101,33 @@ async function openModels() {
 }
 
 describe("ModelEffortPicker effort", () => {
-  it("describes the authoritative model and effort through existing readable spans", () => {
+  it("describes the authoritative model, provider, and effort", () => {
     const picker = renderPicker()
     const descriptionIds = picker.trigger().getAttribute("aria-describedby")?.split(/\s+/) ?? []
     expect(descriptionIds).toHaveLength(2)
     const descriptions = descriptionIds.map((id) => document.getElementById(id))
     expect(descriptions.every((element) => element?.tagName === "SPAN")).toBe(true)
-    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-6-sol", "高"])
+    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-6-sol · Fixture", "高"])
 
     picker.rerender({ model: "gpt-5.6-sol", value: "max" })
-    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-5.6-sol", "最大"])
+    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-5.6-sol · Fixture", "最大"])
   })
 
   it("keeps complete long model and mode names in the trigger description and tooltip", () => {
     const model = "synthetic-provider.analysis-model-with-a-long-responsive-name"
-    const picker = renderPicker({ model, models: [model], value: "max", allowUltra: true, thinkingMode: "standard" })
+    const picker = renderPicker({
+      model, modelGroups: [{ provider: "fixture", label: "Fixture", models: [model] }],
+      value: "max", allowUltra: true, thinkingMode: "standard",
+    })
     const descriptions = () => picker.trigger().getAttribute("aria-describedby")!.split(/\s+/)
       .map((id) => document.getElementById(id)!.textContent)
-    expect(descriptions()).toEqual([model, "最大"])
+    expect(descriptions()).toEqual([`${model} · Fixture`, "最大"])
     expect(picker.trigger().title).toBe(`${model} · 最大`)
     picker.rerender({ thinkingMode: "ultra" })
-    expect(descriptions()).toEqual([model, "Ultra"])
+    expect(descriptions()).toEqual([`${model} · Fixture`, "Ultra"])
     expect(picker.trigger().title).toBe(`${model} · Ultra`)
     picker.rerender({ thinkingMode: null })
-    expect(descriptions()).toEqual([model, "未确认"])
+    expect(descriptions()).toEqual([`${model} · Fixture`, "未确认"])
     expect(picker.trigger().title).toBe(`${model} · 未确认`)
   })
 
@@ -285,7 +289,7 @@ describe("ModelEffortPicker models", () => {
     expect(visibleModels()).toEqual(["gpt-6-sol", "gpt-5.6-sol"])
     act(() => search().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })))
     act(() => modelOption("gpt-5.6-sol").click())
-    expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith("gpt-5.6-sol")
+    expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith({ provider: "fixture", model: "gpt-5.6-sol" })
   })
 
   it("searches case-insensitively and waits for model props after selecting an option", async () => {
@@ -305,7 +309,7 @@ describe("ModelEffortPicker models", () => {
     const option = document.querySelector<HTMLButtonElement>("[data-model-option]")!
     expect(option.getAttribute("aria-pressed")).toBe("false")
     act(() => option.click())
-    expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith("gpt-5.6-sol")
+    expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith({ provider: "fixture", model: "gpt-5.6-sol" })
     expect(search()).toBeNull()
     expect(range()).toBeNull()
     expect(picker.trigger().textContent).toContain("gpt-6-sol")
@@ -343,7 +347,7 @@ describe("ModelEffortPicker models", () => {
   })
 
   it("keeps effort available without models and disables the model subpage", () => {
-    const picker = renderPicker({ models: [], model: "" })
+    const picker = renderPicker({ modelGroups: [], model: "" })
     expect(picker.trigger().disabled).toBe(false)
     open(picker.trigger())
     expect(modelButton().disabled).toBe(true)
@@ -387,7 +391,7 @@ describe("ModelEffortPicker availability", () => {
     await openModels()
     const option = modelOption("glm-5.3")
     act(() => option.click())
-    expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith("glm-5.3")
+    expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith({ provider: "fixture", model: "glm-5.3" })
   })
 
   it("keeps root effort unconfirmed until thinking-mode authority arrives while models remain available", () => {
@@ -408,8 +412,8 @@ describe("ModelEffortPicker availability", () => {
   })
 
   it.each([
-    { modelDisabled: true, models: ["gpt-6-sol"] },
-    { modelDisabled: false, models: [] },
+    { modelDisabled: true, modelGroups: [{ provider: "fixture", label: "Fixture", models: ["gpt-6-sol"] }] },
+    { modelDisabled: false, modelGroups: [] },
   ])("keeps the picker closed when both controls are unavailable: %o", (availability) => {
     const picker = renderPicker({ ...availability, disabled: true })
     expect(picker.trigger().disabled).toBe(true)
