@@ -45,6 +45,7 @@ import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { useSubAgentView } from "@/hooks/useSubAgentView"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getRuntimeModelIds, resolveNewChatModelRef } from "@shared/types/providerConfig"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
@@ -564,18 +565,25 @@ export function ChatPane({
   const mergedSubAgents = subAgentView.agents
   const providerSnapshot = useProviderStore((s) => s.providerSnapshot)
   const providerStatus = useProviderStore((s) => s.providerStatus)
-  const modelProviderId = currentChat?.config?.model_ref?.provider
-    ?? providerSnapshot?.defaults?.chat.provider ?? providerSnapshot?.default_provider_instance_id
-  const modelProvider = providerSnapshot?.instances.find((instance) => instance.id === modelProviderId)
-  const models = useMemo(() =>
-    providerStatus === "ready" && modelProvider?.enabled
-      ? getRuntimeModelIds(modelProvider, providerSnapshot?.defaults)
-      : [],
-  [providerStatus, modelProvider, providerSnapshot?.defaults])
+  const modelGroups = useMemo(() => {
+    if (providerStatus !== "ready" || !providerSnapshot) return []
+    const groups = providerSnapshot.instances.filter((instance) => instance.enabled)
+      .map((instance) => ({
+        provider: instance.id,
+        label: instance.label || instance.id,
+        models: getRuntimeModelIds(instance, providerSnapshot.defaults),
+      }))
+      .filter((group) => group.models.length > 0)
+    return groups.map((group) =>
+      groups.some((other) => other.provider !== group.provider && other.label === group.label)
+        ? { ...group, label: `${group.label} (${group.provider})` }
+        : group,
+    )
+  }, [providerSnapshot, providerStatus])
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
   const changeSessionModel = useAppStore((s) => s.changeSessionModel)
-  const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
+  const defaultChatRef = providerSnapshot?.defaults?.chat
   const chatReasoningEffort = useProviderStore(
     (s) => s.providerSnapshot?.defaults?.chat?.reasoning_effort,
   )
@@ -602,14 +610,16 @@ export function ChatPane({
     : null
   // Existing sessions display their durable model. The global selection is
   // only a draft for a new session and cannot relabel a running session.
-  const activeModel = currentSessionId
-    ? currentChat?.config?.model_ref?.model || currentChat?.config?.model || defaultChatModel || ""
-    : resolveNewChatModelRef(providerSnapshot, selectedModel)?.model || ""
+  const legacyModel = currentSessionId ? currentChat?.config?.model : undefined
+  const activeModelRef = currentSessionId
+    ? currentChat?.config?.model_ref ?? (legacyModel ? undefined : defaultChatRef)
+    : resolveNewChatModelRef(providerSnapshot, selectedModel)
+  const activeModel = activeModelRef?.model || legacyModel || ""
   const [modelSaving, setModelSaving] = useState(false)
   const modelControlDisabled = modelSaving || compacting || currentlyRunning || submissionPending
     || queue.busy || queue.hasUnconfirmed
-  const handleModelChange = async (model: string) => {
-    if (modelControlDisabled || model === activeModel) return
+  const handleModelChange = async (model: ProviderModelRef) => {
+    if (modelControlDisabled || (model.provider === activeModelRef?.provider && model.model === activeModel)) return
     if (!currentSessionId) {
       setSelectedModel(model)
       return
@@ -1606,8 +1616,9 @@ export function ChatPane({
                 />
               ) : null}
               <ModelEffortPicker
-                models={models}
+                modelGroups={modelGroups}
                 model={activeModel}
+                modelProvider={activeModelRef?.provider}
                 onModelChange={(model) => void handleModelChange(model)}
                 modelDisabled={modelControlDisabled}
                 value={rootMode.ordinaryValue}

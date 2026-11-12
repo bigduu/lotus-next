@@ -1,6 +1,7 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { AgentEvent, ContextSummaryInfo, PermissionDecisionResult, ReasoningEffort, TokenBudgetUsage } from "@services/chat/AgentService"
 import type { TokenUsage } from "@shared/types/tokenBudget"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
@@ -33,7 +34,7 @@ const mocks = vi.hoisted(() => {
     currentSessionId: null as string | null,
     sessionIndexRevision: 0,
     executionBySession: {},
-    selectedModel: "test-model" as string | undefined,
+    selectedModel: undefined as ProviderModelRef | undefined,
     inputStates: {} as Record<string, { reasoningEffort?: string }>,
     lastSelectedPromptId: null as string | null,
     systemPrompts: [] as Array<{ id: string; content?: string; isDefault?: boolean }>,
@@ -294,7 +295,7 @@ beforeEach(() => {
   mocks.appState.chats = []
   mocks.appState.currentSessionId = null
   mocks.appState.sessionIndexRevision = 0
-  mocks.appState.selectedModel = "test-model"
+  mocks.appState.selectedModel = { provider: "test-provider", model: "test-model" }
   mocks.appState.inputStates = {}
   mocks.appState.lastSelectedPromptId = null
   mocks.appState.systemPrompts = []
@@ -367,10 +368,13 @@ afterEach(() => {
 describe("useChat two-phase send lifecycle", () => {
   const fenceRoot = (enabled = false) => beginRootModeOperation("root-session", 0, "a".repeat(64), enabled)
 
-  it("submits and executes a saved custom model with its provider before catalog metadata loads", async () => {
-    const customRef = { provider: "test-provider", model: "vendor:custom-name" }
-    mocks.providerState.providerSnapshot!.instances[0].config.runtime_models!.push(customRef.model)
-    mocks.appState.selectedModel = customRef.model
+  it("submits and executes a non-default provider's custom model before catalog metadata loads", async () => {
+    const customRef = { provider: "other-provider", model: "vendor:custom-name" }
+    mocks.providerState.providerSnapshot!.instances.push({
+      id: customRef.provider, type: "openai", label: "Other", enabled: true,
+      config: { runtime_models: [customRef.model] },
+    })
+    mocks.appState.selectedModel = customRef
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "custom-session" })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
     const hook = await mountUseChat({ mode: "bound", sessionId: null })
@@ -388,7 +392,7 @@ describe("useChat two-phase send lifecycle", () => {
     snapshot.features = { provider_model_ref: false }
     snapshot.instances[0].config.model = "test-model"
     snapshot.instances[0].config.runtime_models = ["test-model", "custom-model"]
-    mocks.appState.selectedModel = selected
+    mocks.appState.selectedModel = { provider: "test-provider", model: selected }
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "instance-only-session" })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
     const hook = await mountUseChat({ mode: "bound", sessionId: null })
@@ -398,7 +402,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.execute).toHaveBeenCalledWith("instance-only-session", expectedModel, undefined, undefined, expectedRef)
   })
 
-  it("resolves a cached new-chat submission against the current provider and freezes that ref for execute", async () => {
+  it("revalidates a disabled draft provider at submission and freezes the fallback for execute", async () => {
     const snapshot = mocks.providerState.providerSnapshot!
     snapshot.instances.push({ id: "second-provider", type: "openai", label: "Second", enabled: true, config: { runtime_models: ["second-default"] } })
     const response = deferred<{ session_id: string }>()
@@ -406,7 +410,7 @@ describe("useChat two-phase send lifecycle", () => {
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
     const hook = await mountUseChat({ mode: "bound", sessionId: null })
     const cachedSend = hook.current.send
-    // The global cached choice still belongs to the previous provider.
+    snapshot.instances[0].enabled = false
     snapshot.defaults = { chat: { provider: "second-provider", model: "second-default" } }
     let sending!: Promise<SendSubmissionResult>
     act(() => { sending = cachedSend("use the newly configured provider") })
@@ -414,6 +418,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ model: expectedRef.model, model_ref: expectedRef }))
 
     // A later preference change must not reroute the acknowledged session.
+    snapshot.instances[0].enabled = true
     snapshot.defaults = { chat: { provider: "test-provider", model: "test-model" } }
     await hook.rerender({ mode: "bound", sessionId: null })
     await act(async () => { response.resolve({ session_id: "switched-session" }); await sending })
@@ -1211,7 +1216,7 @@ describe("useChat two-phase send lifecycle", () => {
   it("keeps an existing child session bound to its own provider and model", async () => {
     const sessionId = "child-session"
     // A draft selected in another pane must not override this bound session.
-    mocks.appState.selectedModel = "grok-4.7"
+    mocks.appState.selectedModel = { provider: "test-provider", model: "grok-4.7" }
     mocks.appState.chats = [{
       id: sessionId,
       messages: [],
@@ -1602,7 +1607,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
   })
   it("continues with the session's saved model instead of another pane's draft choice", async () => {
-    mocks.appState.selectedModel = "gpt-6-sol"
+    mocks.appState.selectedModel = { provider: "test-provider", model: "gpt-6-sol" }
     mocks.appState.chats = [{
       id: "resumed-session",
       messages: [],

@@ -78,7 +78,8 @@ describe("provider instance authority", () => {
     expect(state.providerSnapshot?.defaults).toBeUndefined();
     expect(state.providerRepairIssues).toEqual([]);
     expect(state.catalog).toBeNull();
-    expect(resolveNewChatModelRef(state.providerSnapshot, "vendor:custom-name")).toEqual({ provider: "work", model: "vendor:custom-name" });
+    const selected = { provider: "work", model: "vendor:custom-name" };
+    expect(resolveNewChatModelRef(state.providerSnapshot, selected)).toEqual(selected);
     expect(state.getProviderType("openai")).toBeUndefined();
     expect(state.isProviderModelRefEnabled()).toBe(false);
   });

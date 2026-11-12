@@ -2118,8 +2118,8 @@ export function useChat(
       if (activeSendRef.current) return { kind: "busy" }
 
       const startSid = sid
-      // Re-read admission at submission: a cached composer callback must not
-      // carry a draft model across a saved Chat-provider change.
+      // Re-read saved admission at submission so a cached callback cannot
+      // submit a removed model or a disabled provider.
       const providerState = useProviderStore.getState()
       const submittedModelRef = startSid ? effectiveModelRef : resolveNewChatModelRef(
         providerState.providerSnapshot,

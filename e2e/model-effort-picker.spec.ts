@@ -245,7 +245,7 @@ for (const width of [390, 820, 1440]) {
     const max = english ? "Max" : "最大"
     const ultra = "Ultra"
     await expect(picker).toHaveAttribute("title", `${alternateModel} · ${max}`)
-    await expect(picker).toHaveAccessibleDescription(`${alternateModel} ${max}`)
+    await expect(picker).toHaveAccessibleDescription(`${alternateModel} · Fixture provider ${max}`)
     await expect(usage).toHaveAttribute("title", /62%/)
     await expect(usage).toHaveAttribute("title", /100%/)
     await input.fill("Synthetic compact picker draft")
@@ -290,7 +290,7 @@ for (const width of [390, 820, 1440]) {
     const operationsBeforeUltra = operations.length
     await slider.press("End")
     await expect(picker).toHaveAttribute("title", `${alternateModel} · ${ultra}`)
-    await expect(picker).toHaveAccessibleDescription(`${alternateModel} ${ultra}`)
+    await expect(picker).toHaveAccessibleDescription(`${alternateModel} · Fixture provider ${ultra}`)
     await expect(slider).toHaveAttribute("aria-valuetext", ultra)
     expect(main.reasoning_effort).toBe("max")
     expect(operations).toHaveLength(operationsBeforeUltra + 1)
@@ -304,7 +304,7 @@ for (const width of [390, 820, 1440]) {
     await page.keyboard.press("Enter")
     const search = page.getByRole("searchbox")
     await expect(search).toBeFocused()
-    await search.fill("fixture")
+    await search.fill("fixture-model")
     const beforeComposition = patches.length
     await search.dispatchEvent("compositionstart")
     await search.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true })
