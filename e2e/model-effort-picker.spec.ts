@@ -187,9 +187,9 @@ test("short model and effort labels align with the composer toolbar without a sp
     const composer = trigger.closest("[data-composer-surface]")!
     const permission = composer.querySelector('[role="combobox"]')!
     const send = composer.querySelector('button[aria-label="发送消息"]')!
-    const [model, effort] = [...trigger.querySelectorAll(":scope > span")]
+    const [model, effort] = [...trigger.querySelectorAll("span")]
     const text = trigger.ownerDocument.createRange()
-    text.selectNodeContents(model.firstChild!)
+    text.selectNodeContents(model)
     const center = (element: { getBoundingClientRect(): { y: number; height: number } }) => {
       const rect = element.getBoundingClientRect()
       return rect.y + rect.height / 2

@@ -104,13 +104,13 @@ describe("ModelEffortPicker effort", () => {
   it("describes the authoritative model, provider, and effort", () => {
     const picker = renderPicker()
     const descriptionIds = picker.trigger().getAttribute("aria-describedby")?.split(/\s+/) ?? []
-    expect(descriptionIds).toHaveLength(2)
+    expect(descriptionIds).toHaveLength(3)
     const descriptions = descriptionIds.map((id) => document.getElementById(id))
     expect(descriptions.every((element) => element?.tagName === "SPAN")).toBe(true)
-    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-6-sol · Fixture", "高"])
+    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-6-sol", " · Fixture", "高"])
 
     picker.rerender({ model: "gpt-5.6-sol", value: "max" })
-    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-5.6-sol · Fixture", "最大"])
+    expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-5.6-sol", " · Fixture", "最大"])
   })
 
   it("keeps complete long model and mode names in the trigger description and tooltip", () => {
@@ -121,13 +121,13 @@ describe("ModelEffortPicker effort", () => {
     })
     const descriptions = () => picker.trigger().getAttribute("aria-describedby")!.split(/\s+/)
       .map((id) => document.getElementById(id)!.textContent)
-    expect(descriptions()).toEqual([`${model} · Fixture`, "最大"])
+    expect(descriptions()).toEqual([model, " · Fixture", "最大"])
     expect(picker.trigger().title).toBe(`${model} · 最大`)
     picker.rerender({ thinkingMode: "ultra" })
-    expect(descriptions()).toEqual([`${model} · Fixture`, "Ultra"])
+    expect(descriptions()).toEqual([model, " · Fixture", "Ultra"])
     expect(picker.trigger().title).toBe(`${model} · Ultra`)
     picker.rerender({ thinkingMode: null })
-    expect(descriptions()).toEqual([`${model} · Fixture`, "未确认"])
+    expect(descriptions()).toEqual([model, " · Fixture", "未确认"])
     expect(picker.trigger().title).toBe(`${model} · 未确认`)
   })
 

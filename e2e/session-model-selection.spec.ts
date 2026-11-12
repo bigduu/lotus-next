@@ -87,7 +87,7 @@ test("an existing session saves a different provider before the next request", a
       model: "grok-4.7", provider: "other-provider",
       model_ref: { provider: "other-provider", model: "grok-4.7" },
     })
-    await expect(currentModel).toContainText("fixture-model")
+    await expect(currentModel.getByText("fixture-model", { exact: true })).toBeVisible()
     await currentModel.click()
     await expect(page.getByTestId("model-picker-model")).toBeDisabled()
     await page.keyboard.press("Escape")
@@ -95,7 +95,7 @@ test("an existing session saves a different provider before the next request", a
 
     releasePatch()
     await expect(currentModel).toBeEnabled()
-    await expect(currentModel).toContainText("grok-4.7")
+    await expect(currentModel.getByText("grok-4.7", { exact: true })).toBeVisible()
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("Continue with the selected model")
     await page.getByRole("button", { name: "发送消息", exact: true }).click()
     await expect.poll(() => chatRequests.length).toBe(1)

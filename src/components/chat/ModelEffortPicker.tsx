@@ -82,6 +82,7 @@ export function ModelEffortPicker({
     return models.length > 0 ? [{ ...group, models }] : []
   }) : modelGroups
   const providerLabel = modelGroups.find((group) => group.provider === modelProvider)?.label ?? modelProvider
+  const providerDescription = model && providerLabel ? ` · ${providerLabel}` : ""
 
   useEffect(() => {
     if (!open) return
@@ -107,15 +108,13 @@ export function ModelEffortPicker({
     <Popover open={open && !triggerDisabled} onOpenChange={changeOpen}>
       <PopoverTrigger asChild>
         <button type="button" data-testid="model-effort-picker" aria-label={uiText("model_and_reasoning_effort")}
-          aria-describedby={`${pickerId}-model ${pickerId}-effort`}
+          aria-describedby={`${pickerId}-model${providerDescription ? ` ${pickerId}-provider` : ""} ${pickerId}-effort`}
           title={`${model || uiText("select_a_model_1afed6a8")} · ${currentLabel}`}
           disabled={triggerDisabled}
           className={cn("model-effort-trigger", composerControlClassName)}>
-          <span id={`${pickerId}-model`} className="min-w-0 truncate text-left">
-            {model || uiText("select_a_model_1afed6a8")}
-            {model && providerLabel ? <span className="sr-only">{` · ${providerLabel}`}</span> : null}
-          </span>
+          <span id={`${pickerId}-model`} className="min-w-0 truncate text-left">{model || uiText("select_a_model_1afed6a8")}</span>
           <span id={`${pickerId}-effort`} className="effort-trigger-label shrink-0 truncate">{currentLabel}</span>
+          {providerDescription ? <span id={`${pickerId}-provider`} className="sr-only">{providerDescription}</span> : null}
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
