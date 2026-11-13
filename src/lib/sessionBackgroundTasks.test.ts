@@ -97,6 +97,20 @@ describe("sidebar live-work predicate", () => {
     expect(sessionHasLiveWork({ isRunning: false, runningChildCount: 0 }, undefined, {})).toBe(false)
   })
 
+  it("counts the server's activity label, including waits no local signal can see", () => {
+    // `waiting_bash` and the post-child resume gap are invisible to `isRunning`
+    // and to a child count; only the server's label carries them.
+    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_bash" }, undefined, {})).toBe(true)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_children" }, undefined, {})).toBe(true)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "running" }, undefined, {})).toBe(true)
+    // Parked on a person reads as blocked, not busy.
+    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_user" }, undefined, {})).toBe(false)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "terminal" }, undefined, {})).toBe(false)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "idle" }, undefined, {})).toBe(false)
+    // Older backends omit the field entirely; the local derivation must still run.
+    expect(sessionHasLiveWork({ isRunning: false, runningChildCount: 1 }, undefined, {})).toBe(true)
+  })
+
   it("does not classify a session this client never engaged with", () => {
     // No execution entry: nothing has been observed for it, so a transcript
     // launch alone must not pulse forever (BashCompleted replays on observe).

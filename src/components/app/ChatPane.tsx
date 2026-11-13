@@ -325,24 +325,30 @@ export function ChatPane({
     && backgroundExecWaitActive(
       (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
     )
-  // Delegation keeps the run live from the user's perspective for the same
-  // reason: the Root yields while its children execute, so `is_running` can read
-  // `false` during the hand-off. `runningChildCount` is the server's own count of
-  // executing children, so the transcript keeps its running presentation (active
-  // process row, no false "finished" reading) and agrees with the sidebar dot,
-  // which already treats this as live work.
+  // A yielded run stays live from the user's perspective: the runtime suspended
+  // the session while delegated children or a monitored command still execute,
+  // and the result returns automatically. `is_running` cannot see that, so prefer
+  // the server's own `activity` label, which also covers the gap between the last
+  // child finishing and this Root resuming.
+  //
+  // The local signals are kept as a fallback for backends that predate `activity`,
+  // and `backgroundExecWaitActive` still carries the transcript-notice case where
+  // no wait was ever persisted.
   //
   // Deliberately narrower than `currentlyRunning`: Stop and the composer input
   // lock stay tied to `currentlyRunning`, because a yielded Root has no runner to
   // cancel — offering Stop there would only fail.
-  //
-  // A terminal status always wins, exactly as `applySummaryInner` decides it: a
-  // lingering child count must never keep a finished parent presented (and
-  // controlled) as an active run, which would suppress its error/diagnostic
-  // surface and route ordinary submissions into the queue.
-  const delegationWaiting = (currentChat?.runningChildCount ?? 0) > 0
-    && currentChat?.isRunning !== true
+  const yieldedActivity = currentChat?.activity === "waiting_children"
+    || currentChat?.activity === "waiting_bash"
+  // A terminal verdict always wins, exactly as `applySummaryInner` decides it: a
+  // lingering wait or child count must never keep a finished parent presented
+  // (and controlled) as an active run, which would suppress its
+  // error/diagnostic surface and route ordinary submissions into the queue.
+  // The server already applies that precedence to `activity`, so this only
+  // guards the local fallbacks.
+  const delegationWaiting = currentChat?.isRunning !== true
     && !isTerminalRunStatus(currentChat?.lastRunStatus)
+    && (yieldedActivity || (currentChat?.runningChildCount ?? 0) > 0)
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
   const managedHistoryStatus = useAppStore((state) => currentSessionId
     ? state.managedHistoryBindings?.[currentSessionId]?.status : undefined)
