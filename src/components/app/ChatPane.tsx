@@ -39,7 +39,7 @@ import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
-import { getErrorMessage, isApiError } from "@services/api/errors"
+import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
 import { tokenBudgetRevision } from "@shared/store/appStore/slices/tokenBudgetSlice"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { useSubAgentView } from "@/hooks/useSubAgentView"
@@ -863,7 +863,12 @@ export function ChatPane({
       catch { /* The command receipt already confirms the durable compaction. */ }
     }, (error) => {
       observeSessionExecutionConflict(sessionId, error)
-      if (mountedRef.current) showToast(uiText(isApiError(error) && error.status === 404
+      if (!mountedRef.current) return
+      if (isApiError(error) && error.status === 422 && getApiErrorCode(error) === "context_summary_empty") {
+        showToast(uiText("context_compression_notice_empty_summary"), "error")
+        return
+      }
+      showToast(uiText(isApiError(error) && error.status === 404
         ? "compact_context_not_found" : "compact_context_unconfirmed"), "error", getErrorMessage(error))
     }).finally(() => setCompactionPending(sessionId, false))
   }

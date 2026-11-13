@@ -2,7 +2,7 @@
 export type ContextCompressionFeedback =
   | { status: "running" }
   | { status: "completed"; awaitingUsage: boolean }
-  | { status: "failed"; reason: "candidate_plan" | "postcondition" | "other" }
+  | { status: "failed"; reason: "candidate_plan" | "empty_summary" | "postcondition" | "other" }
   | { status: "deferred"; reason: "tool_protocol" | "other" }
   | { status: "skipped"; reason: "no_model" | "other" }
   | { status: "cancelled" }
@@ -26,6 +26,7 @@ export function compressionFeedbackFromStatus(
   if (status === "completed") return summaryFeedback(previous)
   if (tagged(status, "cancelled") || tagged(status, "canceled")) return { status: "cancelled" }
   if (tagged(status, "failed_candidate_plan")) return { status: "failed", reason: "candidate_plan" }
+  if (status === "failed_empty_summary") return { status: "failed", reason: "empty_summary" }
   if (tagged(status, "failed_postcondition")) return { status: "failed", reason: "postcondition" }
   if (tagged(status, "failed") || status.startsWith("failed_")) return { status: "failed", reason: "other" }
   if (tagged(status, "deferred_tool_protocol")) return { status: "deferred", reason: "tool_protocol" }
