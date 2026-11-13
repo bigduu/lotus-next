@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { CommandItem } from "@services/command"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { ReasoningEffort } from "@services/chat/AgentService"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 
@@ -13,7 +14,7 @@ type MessageListProps = ComponentProps<(typeof import("./MessageList"))["Message
 type ModelEffortPickerProps = ComponentProps<
   (typeof import("@/components/chat/ModelEffortPicker"))["ModelEffortPicker"]
 >
-type ModelPickerProps = Pick<ModelEffortPickerProps, "models" | "menuPlacement" | "menuAlign"> & {
+type ModelPickerProps = Pick<ModelEffortPickerProps, "modelGroups" | "modelProvider" | "menuPlacement" | "menuAlign"> & {
   value: string
   onChange: ModelEffortPickerProps["onModelChange"]
   disabled?: boolean
@@ -33,12 +34,12 @@ type State = {
   getInputState(id: string): State["inputStates"][string]
   setInputThinkingMode(id: string, mode: "standard" | "ultra"): boolean
   tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort?: ReasoningEffortSelection; thinkingMode?: "standard" | "ultra"; thinkingModeRevision?: number }>
-  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string | undefined
+  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: ProviderModelRef | undefined
   setInputContent(id: string, content: string): void
   setInputContentIfRevision(id: string, revision: number, content: string): boolean
   moveInputContentIfRevision(source: string, revision: number, target: string): boolean
-  setSelectedModel(model: string): void
-  changeSessionModel(id: string, model: string): Promise<void>
+  setSelectedModel(model: ProviderModelRef): void
+  changeSessionModel(id: string, model: ProviderModelRef): Promise<void>
   setInputReasoningEffort(id: string, effort: ReasoningEffortSelection): void
   clearInputReasoningEffort(id: string): void
   clearInputThinkingModeIfRevision(id: string, revision: number): boolean
@@ -168,7 +169,7 @@ vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <s
 vi.mock("@/components/chat/ModelEffortPicker", () => ({
   ModelEffortPicker: (props: ModelEffortPickerProps) => {
     runtime.modelPicker = {
-      models: props.models, value: props.model, onChange: props.onModelChange,
+      modelGroups: props.modelGroups, modelProvider: props.modelProvider, value: props.model, onChange: props.onModelChange,
       disabled: props.modelDisabled, menuPlacement: props.menuPlacement, menuAlign: props.menuAlign,
     }
     runtime.reasoningPicker = {
@@ -396,7 +397,7 @@ beforeEach(() => {
     chats: [], getInputState: (id) => runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 },
     setInputThinkingMode: (id, thinkingMode) => { runtime.state.inputStates = { ...runtime.state.inputStates, [id]: { ...runtime.state.getInputState(id), thinkingMode, thinkingModeRevision: ++runtime.revision } }; notify(); return true },
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
-    selectedModel: "test-model",
+    selectedModel: { provider: "easycli", model: "test-model" },
     refreshChatsNow: vi.fn().mockResolvedValue(undefined),
     loadChatHistory: vi.fn().mockResolvedValue(undefined),
     updateTokenUsage: vi.fn(), setTruncationInfo: vi.fn(),
@@ -973,38 +974,43 @@ describe("ChatPane composer acknowledgement", () => {
     expect(runtime.modelPicker?.value).toBe("gpt-5.6-luna")
   })
 
-  it("saves an idle session's model before showing the new selection", async () => {
+  it("saves an idle session's provider switch even when the model name matches", async () => {
     const pending = deferred<void>()
     runtime.state.changeSessionModel = vi.fn().mockReturnValue(pending.promise)
     runtime.state.models = ["gpt-6-sol", "grok-4.7"]
     runtime.providerState.providerSnapshot = {
       default_provider_instance_id: "easycli",
-      instances: [{ id: "easycli", type: "openai", label: "Easycli", enabled: true, config: { runtime_models: ["gpt-6-sol", "grok-4.7"] } }],
+      instances: [
+        { id: "easycli", type: "openai", label: "Easycli", enabled: true, config: { runtime_models: ["gpt-6-sol"] } },
+        { id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["gpt-6-sol"] } },
+      ],
       defaults: { chat: { provider: "easycli", model: "gpt-6-sol" } },
       features: { provider_model_ref: true },
     }
     await mount(vi.fn<Send>(), "session-1")
     expect(runtime.modelPicker?.value).toBe("gpt-6-sol")
 
-    act(() => runtime.modelPicker?.onChange("grok-4.7"))
-    expect(runtime.state.changeSessionModel).toHaveBeenCalledExactlyOnceWith("session-1", "grok-4.7")
+    const next = { provider: "other", model: "gpt-6-sol" }
+    act(() => runtime.modelPicker?.onChange(next))
+    expect(runtime.state.changeSessionModel).toHaveBeenCalledExactlyOnceWith("session-1", next)
     expect(runtime.modelPicker?.value).toBe("gpt-6-sol")
     expect(runtime.modelPicker?.disabled).toBe(true)
     expect(composer().submissionPending).toBe(true)
-    expect(runtime.state.selectedModel).toBe("test-model")
+    expect(runtime.state.selectedModel).toEqual({ provider: "easycli", model: "test-model" })
 
     await act(async () => { pending.resolve(); await pending.promise })
     expect(runtime.modelPicker?.disabled).toBe(false)
     expect(composer().submissionPending).toBe(false)
   })
 
-  it("uses this session provider's saved admission and excludes other providers and historical ids", async () => {
+  it("lists saved models from enabled providers and excludes historical ids", async () => {
     runtime.state.models = ["old-global", "other-only"]
     runtime.providerState.providerSnapshot = {
       default_provider_instance_id: "other",
       instances: [
         { id: "work", type: "openai", label: "Work", enabled: true, config: { runtime_models: ["newly-added", "vendor:custom-name"] } },
         { id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["other-only"] } },
+        { id: "off", type: "openai", label: "Disabled", enabled: false, config: { runtime_models: ["disabled-model"] } },
       ],
       defaults: { chat: { provider: "other", model: "other-only" } },
     }
@@ -1016,22 +1022,27 @@ describe("ChatPane composer acknowledgement", () => {
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
-    expect(runtime.modelPicker?.models).toEqual(["newly-added", "vendor:custom-name"])
+    expect(runtime.modelPicker?.modelGroups).toEqual([
+      { provider: "work", label: "Work", models: ["newly-added", "vendor:custom-name"] },
+      { provider: "other", label: "Other", models: ["other-only"] },
+    ])
     expect(runtime.modelPicker?.value).toBe("historical-removed")
+    expect(runtime.modelPicker?.modelProvider).toBe("work")
   })
 
-  it("shows the new Chat default after a provider switch leaves a cached choice from the previous provider", async () => {
+  it("shows the new Chat default after the selected provider is disabled", async () => {
     const snapshot = runtime.providerState.providerSnapshot!
     snapshot.instances.push({ id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["other-default", "other-custom"] } })
     await mount(vi.fn<Send>(), null)
     expect(runtime.modelPicker?.value).toBe("test-model")
+    snapshot.instances[0].enabled = false
     runtime.providerState.providerSnapshot = { ...snapshot, defaults: { chat: { provider: "other", model: "other-default" } } }
     await act(async () => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
-    expect(runtime.state.selectedModel).toBe("test-model")
-    expect(runtime.modelPicker?.models).toEqual(["other-default", "other-custom"])
+    expect(runtime.state.selectedModel).toEqual({ provider: "easycli", model: "test-model" })
+    expect(runtime.modelPicker?.modelGroups).toEqual([{ provider: "other", label: "Other", models: ["other-default", "other-custom"] }])
     expect(runtime.modelPicker?.value).toBe("other-default")
   })
 
@@ -1039,7 +1050,9 @@ describe("ChatPane composer acknowledgement", () => {
     runtime.providerState.providerSnapshot!.defaults = undefined
     runtime.providerState.providerSnapshot!.instances[0].config.model = "test-model"
     await mount(vi.fn<Send>(), null)
-    expect(runtime.modelPicker?.models).toEqual(["test-model", "gpt-6-sol", "grok-4.7"])
+    expect(runtime.modelPicker?.modelGroups).toEqual([
+      { provider: "easycli", label: "Easycli", models: ["test-model", "gpt-6-sol", "grok-4.7"] },
+    ])
     expect(runtime.modelPicker?.value).toBe("test-model")
   })
 
@@ -1048,16 +1061,16 @@ describe("ChatPane composer acknowledgement", () => {
     runtime.providerState.providerSnapshot!.instances[0].config.runtime_models = []
     if (mode === "unavailable") runtime.providerState.providerStatus = "unavailable"
     await mount(vi.fn<Send>(), null)
-    expect(runtime.modelPicker?.models).toEqual([])
+    expect(runtime.modelPicker?.modelGroups).toEqual([])
   })
 
   it("does not accept a model change during a live run", async () => {
     runtime.state.models = ["gpt-6-sol", "grok-4.7"]
     await mount(vi.fn<Send>(), "session-1", true)
     expect(runtime.modelPicker?.disabled).toBe(true)
-    act(() => runtime.modelPicker?.onChange("grok-4.7"))
+    act(() => runtime.modelPicker?.onChange({ provider: "easycli", model: "grok-4.7" }))
     expect(runtime.state.changeSessionModel).not.toHaveBeenCalled()
-    expect(runtime.state.selectedModel).toBe("test-model")
+    expect(runtime.state.selectedModel).toEqual({ provider: "easycli", model: "test-model" })
   })
 
   it("puts the next-session permission selector in a blank composer", async () => {
@@ -2484,7 +2497,7 @@ describe("scoped notifications", () => {
     const pending = new Promise<void>((_, fail) => { reject = fail })
     runtime.state.changeSessionModel = vi.fn().mockReturnValue(pending)
     await mount(vi.fn<Send>(), "session-1")
-    act(() => { void runtime.modelPicker!.onChange("different-model") })
+    act(() => { void runtime.modelPicker!.onChange({ provider: "easycli", model: "grok-4.7" }) })
     const renderSession = async (id: string) => act(async () => roots.at(-1)!.render(
       <ChatPane chat={createChat(vi.fn<Send>(), id)} pickedWorkspace="/picked"
         onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}

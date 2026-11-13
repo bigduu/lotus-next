@@ -17,6 +17,7 @@ import { applyExecutionEvent } from "./executionStateSlice";
 import { applyReplayableSessionEventToList, isSessionMetadataEvent } from "./sessionMetadataSlice";
 import i18n from "@shared/i18n";
 import { isReasoningEffort } from "@shared/utils/reasoningEffort";
+import { resolveAdmittedModelRef } from "@shared/types/providerConfig";
 import { debugLog } from "@shared/utils/debugFlags";
 import {
   DEFAULT_BASE_SYSTEM_PROMPT,
@@ -365,27 +366,21 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   },
 
   changeSessionModel: async (sessionId, model) => {
-    const nextModel = model.trim();
     const chat = get().chats.find((item) => item.id === sessionId);
-    if (!nextModel || !chat || chat.isRunning) {
+    const { providerSnapshot, providerStatus } = useProviderStore.getState();
+    const nextRef = providerStatus === "ready"
+      ? resolveAdmittedModelRef(providerSnapshot, model)
+      : undefined;
+    if (!nextRef || !chat || chat.isRunning) {
       throw new Error("Cannot change this session's model");
     }
-
-    const providerState = useProviderStore.getState();
-    // Keep the session's provider. A global Chat default can belong to a
-    // different instance, especially for child or older sessions.
-    const provider = chat.config.model_ref?.provider?.trim();
-    const nextRef = provider &&
-      (chat.config.model_ref || providerState.isProviderModelRefEnabled())
-      ? { provider, model: nextModel }
-      : null;
 
     // /execute prefers the saved session model over its request payload. Wait
     // for this write before updating the picker or admitting the next send.
     await agentClient.patchSession(sessionId, {
-      model: nextModel,
-      ...(provider ? { provider } : {}),
-      ...(nextRef ? { model_ref: nextRef } : {}),
+      model: nextRef.model,
+      provider: nextRef.provider,
+      model_ref: nextRef,
     });
     const committedAt = new Date().toISOString();
     set((state) => ({
@@ -395,7 +390,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           ? {
               ...item,
               updatedAt: committedAt,
-              config: { ...item.config, model: nextModel, model_ref: nextRef },
+              config: { ...item.config, model: nextRef.model, model_ref: nextRef },
             }
           : item,
       ),

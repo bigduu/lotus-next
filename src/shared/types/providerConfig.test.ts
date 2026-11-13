@@ -68,17 +68,21 @@ describe("runtime model admission", () => {
     expect(getRuntimeModelIds(snapshot.instances[0], snapshot.defaults)).toEqual([]);
   });
 
-  it("resolves literal custom ids only within the current Chat provider's admission", () => {
+  it("resolves the selected provider's saved model even when the model ID is shared", () => {
     const snapshot = parseProviderInstancesConfig(validPayload());
     snapshot.instances[0].config.runtime_models = ["gpt-5.6-sol", "vendor:custom-name"];
-    expect(resolveNewChatModelRef(snapshot, " vendor:custom-name ")).toEqual({ provider: "work", model: "vendor:custom-name" });
-    expect(resolveNewChatModelRef(snapshot, "other-provider-only")).toEqual({ provider: "work", model: "gpt-5.6-sol" });
+    const other = { ...snapshot.instances[0], id: "other", config: { runtime_models: ["vendor:custom-name"] } };
+    snapshot.instances.push(other);
+    const selected = { provider: "other", model: " vendor:custom-name " };
+    expect(resolveNewChatModelRef(snapshot, selected)).toEqual({ provider: "other", model: "vendor:custom-name" });
+    other.enabled = false;
+    expect(resolveNewChatModelRef(snapshot, selected)).toEqual({ provider: "work", model: "gpt-5.6-sol" });
     snapshot.instances[0].config.runtime_models = [];
-    expect(resolveNewChatModelRef(snapshot, "gpt-5.6-sol")).toBeUndefined();
+    expect(resolveNewChatModelRef(snapshot, selected)).toBeUndefined();
     snapshot.instances[0].config.runtime_models = ["gpt-5.6-sol"];
     snapshot.instances[0].enabled = false;
-    expect(resolveNewChatModelRef(snapshot, "gpt-5.6-sol")).toBeUndefined();
-    expect(resolveNewChatModelRef(null, "gpt-5.6-sol")).toBeUndefined();
+    expect(resolveNewChatModelRef(snapshot)).toBeUndefined();
+    expect(resolveNewChatModelRef(null, selected)).toBeUndefined();
   });
 
   it("uses exact compatibility instance admission only while Chat defaults are absent", () => {
@@ -86,16 +90,17 @@ describe("runtime model admission", () => {
     snapshot.defaults = undefined;
     snapshot.instances[0].config.model = "instance-default";
     snapshot.instances[0].config.runtime_models = ["instance-default", "instance-custom"];
-    expect(resolveNewChatModelRef(snapshot, "instance-custom")).toEqual({ provider: "work", model: "instance-custom" });
-    expect(resolveNewChatModelRef(snapshot, "foreign-cached")).toEqual({ provider: "work", model: "instance-default" });
+    expect(resolveNewChatModelRef(snapshot)).toEqual({ provider: "work", model: "instance-default" });
+    expect(resolveNewChatModelRef(snapshot, { provider: "work", model: "instance-custom" })).toEqual({ provider: "work", model: "instance-custom" });
+    expect(resolveNewChatModelRef(snapshot, { provider: "foreign", model: "instance-custom" })).toEqual({ provider: "work", model: "instance-default" });
     snapshot.defaults = { chat: { provider: "deleted", model: "instance-default" } };
-    expect(resolveNewChatModelRef(snapshot, "instance-custom")).toBeUndefined();
+    expect(resolveNewChatModelRef(snapshot)).toBeUndefined();
     snapshot.defaults = undefined;
     snapshot.instances[0].config.runtime_models = [];
-    expect(resolveNewChatModelRef(snapshot, "instance-default")).toBeUndefined();
+    expect(resolveNewChatModelRef(snapshot, { provider: "work", model: "instance-default" })).toBeUndefined();
     snapshot.default_provider_instance_id = null;
     snapshot.instances[0].config.runtime_models = ["instance-default"];
-    expect(resolveNewChatModelRef(snapshot, "instance-default")).toBeUndefined();
+    expect(resolveNewChatModelRef(snapshot)).toBeUndefined();
   });
 
   it.each([null, "all", [""], [42]])("rejects invalid admission lists %#", (runtime_models) => {
@@ -153,8 +158,8 @@ describe("parseProviderInstancesConfig", () => {
     });
     expect(parsed.defaults).toBeUndefined();
     expect(findProviderSnapshotRelationIssues(parsed)).toEqual([]);
-    expect(resolveNewChatModelRef(parsed, "vendor:custom-name")).toEqual({ provider: "work", model: "vendor:custom-name" });
-    expect(resolveNewChatModelRef(parsed, "stale-other-provider")).toEqual({ provider: "work", model: "instance-default" });
+    expect(resolveNewChatModelRef(parsed, { provider: "work", model: "vendor:custom-name" })).toEqual({ provider: "work", model: "vendor:custom-name" });
+    expect(resolveNewChatModelRef(parsed, { provider: "other", model: "vendor:custom-name" })).toEqual({ provider: "work", model: "instance-default" });
   });
 
   it.each([

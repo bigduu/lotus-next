@@ -181,24 +181,36 @@ export interface ProviderInstancesConfig {
   };
 }
 
-/** A new chat can choose models only from its saved, enabled Chat provider. */
+/** Resolve a provider-qualified selection against saved runtime admission. */
+export const resolveAdmittedModelRef = (
+  snapshot: ProviderInstancesConfig | null | undefined,
+  ref: ProviderModelRef,
+): ProviderModelRef | undefined => {
+  const instance = snapshot?.instances.find((candidate) => candidate.id === ref.provider);
+  const model = ref.model.trim();
+  return instance?.enabled && getRuntimeModelIds(instance, snapshot?.defaults).includes(model)
+    ? { provider: instance.id, model }
+    : undefined;
+};
+
+/** Use the explicit draft choice while it remains admitted, otherwise use the saved default. */
 export const resolveNewChatModelRef = (
   snapshot: ProviderInstancesConfig | null | undefined,
-  selectedModel?: string,
+  selectedModel?: ProviderModelRef,
 ): ProviderModelRef | undefined => {
+  if (selectedModel) {
+    const admitted = resolveAdmittedModelRef(snapshot, selectedModel);
+    if (admitted) return admitted;
+  }
   const chat = snapshot?.defaults?.chat;
+  if (chat) return resolveAdmittedModelRef(snapshot, chat);
+
   // First-provider and legacy snapshots may not have role defaults yet.
-  // An explicit Chat ref always takes precedence over the compatibility id.
-  const providerId = chat?.provider ?? snapshot?.default_provider_instance_id;
-  const instance = snapshot?.instances.find((candidate) => candidate.id === providerId);
-  if (!instance?.enabled) return undefined;
-  const admitted = getRuntimeModelIds(instance, snapshot?.defaults);
-  const selected = selectedModel?.trim();
-  const fallback = chat?.model.trim() ?? (typeof instance.config.model === "string" ? instance.config.model.trim() : undefined);
-  const model = selected && admitted.includes(selected)
-    ? selected
-    : fallback && admitted.includes(fallback) ? fallback : undefined;
-  return model ? { provider: instance.id, model } : undefined;
+  const instance = snapshot?.instances.find((candidate) => candidate.id === snapshot.default_provider_instance_id);
+  const model = instance?.config.model;
+  return instance && typeof model === "string"
+    ? resolveAdmittedModelRef(snapshot, { provider: instance.id, model })
+    : undefined;
 };
 
 export class ProviderSnapshotValidationError extends Error {

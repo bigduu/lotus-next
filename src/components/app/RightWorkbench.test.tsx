@@ -523,8 +523,9 @@ it("keeps the real model popover usable across breakpoint changes and repeated f
   const close = vi.fn()
   const render = (docked: boolean) => act(() => root.render(<RightWorkbench docked={docked}
     activeTab="session" openToolTabs={["session"]} onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close}
-    inspector={null} review={null} browser={null} session={<ModelEffortPicker models={["Model A", "Model B"]}
-      model="Model A" onModelChange={vi.fn()} value="medium" onChange={vi.fn()} />} />))
+    inspector={null} review={null} browser={null} session={<ModelEffortPicker
+      modelGroups={[{ provider: "fixture", label: "Fixture", models: ["Model A", "Model B"] }]}
+      model="Model A" modelProvider="fixture" onModelChange={vi.fn()} value="medium" onChange={vi.fn()} />} />))
   render(true)
   const picker = host.querySelector<HTMLButtonElement>('[data-testid="model-effort-picker"]')!
   await act(async () => picker.click())
