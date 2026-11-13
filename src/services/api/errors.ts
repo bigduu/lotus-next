@@ -58,6 +58,18 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+/** Read the code from Bamboo's JSON error envelope. */
+export function getApiErrorCode(error: ApiError): string | undefined {
+  if (!error.body) return undefined;
+  try {
+    const body = JSON.parse(error.body) as { error?: { code?: unknown } } | null;
+    const code = body?.error?.code;
+    return typeof code === "string" ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Check for every typed failure emitted by the HTTP request boundary. */
 export function isRequestError(error: unknown): error is RequestError {
   return (

@@ -369,6 +369,7 @@ export const uiZhCn = {
   "context_compression_notice_completed_waiting": "上下文压缩已完成，等待下一次提示词用量估算后更新用量。",
   "context_compression_notice_completed": "上下文压缩已完成，用量仍包含指令、工具和近期消息。",
   "context_compression_notice_failed_candidate": "上下文压缩未能安全选择可摘要的消息。",
+  "context_compression_notice_empty_summary": "模型未返回摘要。请在「默认模型偏好」中调低本次压缩所用模型的推理强度，再重试。",
   "context_compression_notice_failed_postcondition": "上下文摘要未通过检查，未采用。",
   "context_compression_notice_failed": "上下文压缩未能成功完成。",
   "context_compression_notice_deferred_tool": "上下文压缩正在等待工具对话的安全时点。",

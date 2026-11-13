@@ -369,6 +369,7 @@ export const uiEnUs = {
   "context_compression_notice_completed_waiting": "Context compression finished. Waiting for the next prompt estimate to update usage.",
   "context_compression_notice_completed": "Context compression finished. Usage still includes instructions, tools, and recent messages.",
   "context_compression_notice_failed_candidate": "Context compression could not safely select messages to summarize.",
+  "context_compression_notice_empty_summary": "The model returned no summary. In Default Model Preferences, lower the reasoning effort for the model used for compression and try again.",
   "context_compression_notice_failed_postcondition": "The context summary failed its checks and was not used.",
   "context_compression_notice_failed": "Context compression could not be completed.",
   "context_compression_notice_deferred_tool": "Context compression is waiting for a safe point in the tool conversation.",
