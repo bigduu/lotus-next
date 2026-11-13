@@ -1186,7 +1186,7 @@ export interface AgentEventHandlers {
     summary?: string,
     error?: string,
   ) => void;
-  onMessageAppended?: (sessionId: string, messageId?: string) => void;
+  onMessageAppended?: (sessionId: string, messageId: string | undefined, interjection: boolean) => void;
   onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
@@ -2117,7 +2117,11 @@ export class AgentClient {
         break;
       case "message_appended":
         if (event.session_id) {
-          handlers.onMessageAppended?.(event.session_id, event.message_id);
+          handlers.onMessageAppended?.(
+            event.session_id,
+            event.message_id,
+            event.role === "user" && event.correlation_id === "session-guidance",
+          );
         }
         break;
       case "session_history_committed":
