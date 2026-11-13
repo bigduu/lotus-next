@@ -185,6 +185,8 @@ export type LiveSegment =
   | { kind: "text"; text: string; reasoning: string | null }
   | { kind: "tools"; calls: LiveToolCall[] }
 
+type BufferedLiveSegment = LiveSegment | { kind: "interjection"; messageId: string }
+
 export type StreamPhase = "streaming" | "finalizing" | null
 
 type ScopedCompressionFeedback = {
@@ -470,7 +472,7 @@ export function useChat(
   const streamOperationRef = useRef<number | null>(null)
   const streamBaselineMessageIdRef = useRef<string | null>(null)
   const streamBaselineToolResultIdsRef = useRef<ReadonlySet<string>>(new Set())
-  const streamAcknowledgedMessageIdRef = useRef<string | null>(null)
+  const streamUserMessageIdRef = useRef<string | null>(null)
   const subscriptionRef = useRef<{ operationId: number; sessionId: string } | null>(null)
   const navigationRef = useRef({ sessionId: sid, epoch: 0 })
   if (navigationRef.current.sessionId !== sid) {
@@ -552,8 +554,8 @@ export function useChat(
   const childBufRef = useRef<Record<string, string>>({})
   // The current run's frozen live timeline (finished text rounds + tool groups).
   // Mutations happen on the ref; a RAF flush clones into state ≤1×/frame.
-  const [liveSegmentsState, setLiveSegmentsState] = useState<LiveSegment[]>([])
-  const liveSegRef = useRef<LiveSegment[]>([])
+  const [liveSegmentsState, setLiveSegmentsState] = useState<BufferedLiveSegment[]>([])
+  const liveSegRef = useRef<BufferedLiveSegment[]>([])
   const segRafRef = useRef<number | null>(null)
   const toolCallsByIdRef = useRef<Map<string, LiveToolCall>>(new Map())
   // One-line "what is the agent doing" status (tool running / compacting…),
@@ -597,17 +599,22 @@ export function useChat(
   const answerLeaseValid = answerLeaseRef.current?.valid !== false
   const streaming = streamSid === sid && !retainedTerminalIsHydrated && !cachedSameRun && answerLeaseValid ? streamingText : null
   const streamingReasoning = streamSid === sid && answerLeaseValid ? streamingReasoningText : null
-  const liveSegments = useMemo(() => {
+  const uncommittedSegments = useMemo(() => {
     if (streamSid !== sid || !answerLeaseValid) return EMPTY_SEGMENTS
-    if (streamPhaseState !== null) return liveSegmentsState
+    // The admitted user message confirms the transcript prefix through the
+    // interjection. The next round can already be streaming when history lands.
+    const checkpoint = liveSegmentsState.findLastIndex((segment) => segment.kind === "interjection"
+      && canonicalMessages.some((message) => message.role === "user" && message.id === segment.messageId))
+    const segments = checkpoint < 0 ? liveSegmentsState : liveSegmentsState.slice(checkpoint + 1)
+    if (streamPhaseState !== null) return segments
     // Failed history reads retain terminal tool evidence without keeping a run
-    // active. Only results after this operation's acknowledged user can confirm
+    // active. Only results after this stream's latest acknowledged user can confirm
     // it. Earlier results may hydrate late or reuse the same tool invocation id.
     // Legacy ACKs without a message id cannot prove that boundary.
-    const acknowledgedMessageId = streamAcknowledgedMessageIdRef.current
+    const acknowledgedMessageId = streamUserMessageIdRef.current
     const userIndex = acknowledgedMessageId === null ? -1
       : messages.findIndex((message) => message.role === "user" && message.id === acknowledgedMessageId)
-    // A later user may be another turn or queued guidance; neither confirms this result.
+    // A later user may belong to another turn.
     const nextUserIndex = userIndex < 0 ? -1
       : messages.findIndex((message, index) => index > userIndex && message.role === "user")
     const candidates = userIndex < 0 ? [] : messages.slice(userIndex + 1, nextUserIndex < 0 ? undefined : nextUserIndex)
@@ -615,14 +622,17 @@ export function useChat(
       "type" in message && message.type === "tool_result" && !streamBaselineToolResultIdsRef.current.has(message.id)
         ? [message.toolCallId] : []))
     let hydrated = false
-    const remaining = liveSegmentsState.flatMap<LiveSegment>((segment) => {
+    const remaining = segments.flatMap<BufferedLiveSegment>((segment) => {
       if (segment.kind !== "tools") return [segment]
       const calls = segment.calls.filter((call) => !persistedToolIds.has(call.toolCallId))
       hydrated ||= calls.length !== segment.calls.length
       return calls.length ? [{ ...segment, calls }] : []
     })
-    return hydrated ? remaining : liveSegmentsState
-  }, [answerLeaseValid, liveSegmentsState, messages, sid, streamPhaseState, streamSid])
+    return hydrated ? remaining : segments
+  }, [answerLeaseValid, canonicalMessages, liveSegmentsState, messages, sid, streamPhaseState, streamSid])
+  const liveSegments = useMemo(() => uncommittedSegments.length
+    ? uncommittedSegments.filter((segment) => segment.kind !== "interjection") : EMPTY_SEGMENTS,
+  [uncommittedSegments])
   const streamStatus = streamSid === sid && answerLeaseValid ? streamStatusState : null
   const contextCompression = compressionState?.sessionId === sid ? compressionState.value : null
   const streamPhase = streamSid === sid && answerLeaseValid ? streamPhaseState : null
@@ -710,9 +720,12 @@ export function useChat(
     setCompressionState(value)
   }, [])
 
-  const flushSegments = useCallback(() => {
-    if (segRafRef.current != null) return
-    segRafRef.current = requestAnimationFrame(() => {
+  const flushSegments = useCallback((immediate = false) => {
+    if (segRafRef.current != null) {
+      if (!immediate) return
+      cancelAnimationFrame(segRafRef.current)
+    }
+    const publish = () => {
       segRafRef.current = null
       // Clone (segments + calls) so React sees new references for mutated rows.
       setLiveSegmentsState(
@@ -720,7 +733,9 @@ export function useChat(
           s.kind === "tools" ? { ...s, calls: s.calls.map((c) => ({ ...c })) } : s,
         ),
       )
-    })
+    }
+    if (immediate) publish()
+    else segRafRef.current = requestAnimationFrame(publish)
   }, [])
 
   // Freeze the currently-buffered assistant text/reasoning into a `text`
@@ -776,8 +791,9 @@ export function useChat(
   const stopStream = useCallback(
     (final: string | null, operationId?: number, retainToolResults = false) => {
       if (operationId !== undefined && streamOperationRef.current !== operationId) return
-      const retainedSegments = retainToolResults ? liveSegRef.current.flatMap<LiveSegment>((segment) => {
-        if (segment.kind !== "tools") return []
+      const retainedSegments = retainToolResults ? liveSegRef.current.flatMap<BufferedLiveSegment>((segment) => {
+        if (segment.kind === "interjection") return [segment]
+        if (segment.kind === "text") return []
         const calls = segment.calls.filter((call) => call.status !== "running").map((call) => ({ ...call }))
         return calls.length ? [{ ...segment, calls }] : []
       }) : EMPTY_SEGMENTS
@@ -815,7 +831,7 @@ export function useChat(
         answerLeaseRef.current = null
         retainedTerminalRef.current = null
         setStreamPhaseState(null)
-        if (!retainedSegments.length) setStreamSid(null)
+        if (!retainedSegments.some((segment) => segment.kind === "tools")) setStreamSid(null)
       } else {
         setStreamPhaseState("finalizing")
       }
@@ -842,12 +858,12 @@ export function useChat(
 
   useEffect(() => {
     if (streamSid !== sid || streamPhaseState !== null || streamOperationRef.current !== null
-        || liveSegments === liveSegmentsState) return
+        || uncommittedSegments === liveSegmentsState) return
     // Retire hydrated tool snapshots permanently, including after history edits.
-    liveSegRef.current = liveSegments
-    setLiveSegmentsState(liveSegments)
+    liveSegRef.current = uncommittedSegments
+    setLiveSegmentsState(uncommittedSegments)
     if (!liveSegments.length) setStreamSid(null)
-  }, [liveSegments, liveSegmentsState, sid, streamPhaseState, streamSid])
+  }, [liveSegments.length, liveSegmentsState, sid, streamPhaseState, streamSid, uncommittedSegments])
 
   const LAST_SESSION_KEY = "lotus_next_last_session"
 
@@ -1063,7 +1079,8 @@ export function useChat(
       streamBaselineMessageIdRef.current = baselineMessages.findLast((message) => message.role !== "system")?.id ?? null
       streamBaselineToolResultIdsRef.current = new Set(baselineMessages.flatMap((message) =>
         "type" in message && message.type === "tool_result" ? [message.id] : []))
-      streamAcknowledgedMessageIdRef.current = opts?.acknowledgedMessageId ?? null
+      streamUserMessageIdRef.current = opts?.acknowledgedMessageId ?? null
+      const interjections = new Set<string>()
       const ownsStream = () => streamOperationRef.current === operationId && answerLease.valid
       const terminal = { settlement: null as Promise<void> | null, pendingRead: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
@@ -1223,6 +1240,7 @@ export function useChat(
             rafRef.current = null
           }
           const finalText = streamBufRef.current
+          const acknowledgedMessageId = streamUserMessageIdRef.current
           if (finalText) setStreamingText(finalText)
           const observed = useAppStore.getState().chats.find((chat) => chat.id === runSid)?.messages ?? []
           if (finalText.trim() && answerLease.valid) {
@@ -1232,9 +1250,9 @@ export function useChat(
               text: finalText, baselineMessageId: streamBaselineMessageIdRef.current,
               baselineMessageText: baseline?.role === "assistant" && baseline.type === "text" ? baseline.content : null,
               excludedCanonicalIds: new Set(answerLease.excludedCanonicalIds),
-              acknowledgedMessageId: opts?.acknowledgedMessageId ?? null,
+              acknowledgedMessageId,
               baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
-              anchorSeen: opts?.acknowledgedMessageId != null && observed.some((message) => message.role === "user" && message.id === opts.acknowledgedMessageId),
+              anchorSeen: acknowledgedMessageId !== null && observed.some((message) => message.role === "user" && message.id === acknowledgedMessageId),
             }
             const retained = { ...handoff, lease: answerLease }
             retainedTerminalRef.current = retained
@@ -1273,7 +1291,7 @@ export function useChat(
           // reconciliation retires it once history catches up.
           const retained = retainedTerminalRef.current
           if (retained) {
-            retained.anchorSeen ||= opts?.acknowledgedMessageId != null && persistedMessages.some((message) => message.role === "user" && message.id === opts.acknowledgedMessageId)
+            retained.anchorSeen ||= acknowledgedMessageId !== null && persistedMessages.some((message) => message.role === "user" && message.id === acknowledgedMessageId)
             answerLease.handoff = retained
           }
           stopStream(finalText, operationId)
@@ -1571,8 +1589,16 @@ export function useChat(
               }
             })()
           },
-          onMessageAppended: (appendedSessionId) => {
+          onMessageAppended: (appendedSessionId, messageId, interjection) => {
             if (appendedSessionId !== runSid) return
+            if (ownsRunEvent() && interjection && messageId && !interjections.has(messageId)
+                && !baselineMessages.some((message) => message.id === messageId)) {
+              interjections.add(messageId)
+              streamUserMessageIdRef.current = messageId
+              freezeTextSegment()
+              liveSegRef.current.push({ kind: "interjection", messageId })
+              flushSegments(true)
+            }
             // Queued guidance is checkpointed before this event is published.
             // Re-read immediately from the session stream so every visible
             // pane (including a bound split pane) renders the admitted user
@@ -1690,7 +1716,7 @@ export function useChat(
             baselineMessageText: baseline?.role === "assistant" && baseline.type === "text" ? baseline.content : null,
             baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
             excludedCanonicalIds: new Set(answerLease.excludedCanonicalIds),
-            acknowledgedMessageId: opts?.acknowledgedMessageId ?? null, anchorSeen: false,
+            acknowledgedMessageId: streamUserMessageIdRef.current, anchorSeen: false,
           }
           if (finalText.trim() && projectCompletedAnswers(persistedMessages, [candidate]).remaining.length === 0) {
             settleCompleted(historyReady)

@@ -23,12 +23,19 @@ describe("AgentClient session event routing", () => {
       session_id: "session-1",
       message_id: "queued-user",
       role: "user",
+      correlation_id: "session-guidance",
       content: "apply this next",
       created_at: "2026-09-21T00:00:00Z",
     }
   })
 
-  it("routes an admitted queued message instead of treating it as unknown", async () => {
+  it.each([
+    { role: "user", correlationId: "session-guidance", interjection: true },
+    { role: "user", correlationId: "session-guidance-after-run:run-1", interjection: false },
+    { role: "user", correlationId: undefined, interjection: false },
+    { role: "assistant", correlationId: "session-guidance", interjection: false },
+  ])("routes $role appends with correlation $correlationId", async ({ role, correlationId, interjection }) => {
+    stream.event = { ...stream.event, role, correlation_id: correlationId }
     const onMessageAppended = vi.fn()
 
     await new AgentClient().subscribeToEvents("session-1", { onMessageAppended })
@@ -36,6 +43,7 @@ describe("AgentClient session event routing", () => {
     expect(onMessageAppended).toHaveBeenCalledExactlyOnceWith(
       "session-1",
       "queued-user",
+      interjection,
     )
   })
 
