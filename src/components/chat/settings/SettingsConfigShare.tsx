@@ -346,7 +346,7 @@ export function SettingsConfigShare() {
             </dl>}
             {row.provider?.rename_allowed === false
               ? <p className="text-xs text-muted-foreground">{uiText("share_existing_bodhi_only")}</p>
-              : row.provider?.replace_allowed === false && <p className="text-xs text-muted-foreground">{uiText("share_provider_type_mismatch")}</p>}
+              : row.provider?.replace_allowed === false && <p className="text-xs text-muted-foreground">{uiText(row.provider.retired_id ? "share_retired_provider_id" : "share_provider_type_mismatch")}</p>}
             <label className="flex items-center gap-2 text-xs">{uiText("share_action")}
               <select aria-label={`${uiText("share_action")} ${row.group}:${row.id}`} className="settings-select" value={choice.action} disabled={locked} onChange={(event) => updateChoice(event.target.value === "rename" ? { action: "rename", target: "" } : { action: event.target.value as "skip" | "replace" })}>
                 <option value="skip">{uiText("share_skip")}</option>

@@ -39,6 +39,8 @@ export interface ShareProviderPreview {
   replace_allowed: boolean
   /** Older Bamboo servers leave this unset. */
   rename_allowed?: boolean
+  /** This ID is reserved for a retired provider. */
+  retired_id?: boolean
   /** Canonical HTTP(S) origins only; never full URLs or secret-bearing values. */
   source_origin?: string
   target_origin?: string

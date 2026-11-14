@@ -415,6 +415,7 @@ export const uiZhCn = {
   "share_current_origin": "当前 origin",
   "share_imported_provider_type": "导入的提供商类型",
   "share_provider_type_mismatch": "提供商类型不同，请跳过此条目或使用新名称导入。",
+  "share_retired_provider_id": "此 ID 属于已停用的提供方，请跳过此条目或使用新名称导入。",
   "share_existing_bodhi_only": "此条目只能更新 ID 相同的现有 Bodhi 实例。",
   "share_origin_provider_default": "未包含，使用提供商默认值",
   "share_origin_keep_current": "未包含，保留当前设置",

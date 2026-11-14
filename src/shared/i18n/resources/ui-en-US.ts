@@ -415,6 +415,7 @@ export const uiEnUs = {
   "share_current_origin": "Current origin",
   "share_imported_provider_type": "Imported provider type",
   "share_provider_type_mismatch": "Provider types differ. Skip this entry or import it with a new name.",
+  "share_retired_provider_id": "This ID belongs to a retired provider. Skip this entry or import it with a new name.",
   "share_existing_bodhi_only": "This entry can only update an existing Bodhi instance with the same ID.",
   "share_origin_provider_default": "Not included; provider default",
   "share_origin_keep_current": "Not included; keep current",

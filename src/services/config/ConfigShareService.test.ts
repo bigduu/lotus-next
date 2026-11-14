@@ -154,6 +154,22 @@ describe("ConfigShareService", () => {
     })
   })
 
+  it("accepts a retired ID preview without a destination credential risk", async () => {
+    const response = preview()
+    const provider = {
+      ...response.preview.providers[0], conflict: true, replace_allowed: false,
+      rename_allowed: true, retired_id: true, target_origin: undefined, credential_origin_risk: false,
+    }
+    const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({
+      ...response, preview: { ...response.preview, providers: [provider] },
+    })
+    expect((await service.preview({ share_string: shareString })).preview.providers[0]).toMatchObject({
+      retired_id: true, replace_allowed: false, rename_allowed: true, credential_origin_risk: false,
+    })
+    post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...provider, replace_allowed: true }] } })
+    await expect(service.preview({ share_string: shareString })).rejects.toMatchObject({ kind: "unavailable" })
+  })
+
   it("requires an explicit secret choice and passphrase before export", async () => {
     const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({ share_string: shareString })
     const selection = { ...emptyShareSelection(), providers: ["sample"], provider_api_keys: ["sample"] }
