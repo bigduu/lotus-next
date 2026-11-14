@@ -693,7 +693,7 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     expect(document.querySelector<HTMLSelectElement>('[aria-label="Import action env:Token"]')?.value).toBe("skip")
     expect(document.body.textContent).toContain("credential storage has not been initialized")
-    expect(document.body.textContent).not.toContain("Import could trigger an explicit provider configuration")
+    expect(document.body.textContent).not.toContain("Import requires an explicit provider configuration without a runtime override.")
     await check("I reviewed the entries and conflict choices")
     expect(button("Save imported settings").disabled).toBe(true)
     await click("Save imported settings")

@@ -170,22 +170,27 @@ export class ConfigShareService {
       const snapshot = parseProviderInstancesConfig(rawProviders)
       // Match Bamboo's configured_provider_routing_key: exact id, selected
       // default of that type, then the lexical first enabled instance.
-      const routingId = (provider: string): string => {
+      const instancesById = new Map(snapshot.instances.map((instance) => [instance.id, instance]))
+      const selected = instancesById.get(snapshot.default_provider_instance_id ?? "")
+      const routingId = (provider: string): string | undefined => {
         const normalized = provider.trim()
-        if (snapshot.instances.some((candidate) => candidate.id === normalized)) return normalized
-        const selected = snapshot.instances.find((candidate) => candidate.id === snapshot.default_provider_instance_id)
+        if (instancesById.has(normalized)) return normalized
         if (selected?.type === normalized) return selected.id
         return snapshot.instances.filter((candidate) => candidate.enabled && candidate.type === normalized)
-          .map((candidate) => candidate.id).sort()[0] ?? normalized
+          .map((candidate) => candidate.id).sort()[0]
       }
       // Store only display metadata. Existing GETs never supply API keys.
       return {
         providers: snapshot.instances.map(({ id, label, type }) => ({ id, label, type })),
         scenarios: SHARE_MODEL_REF_KEYS.flatMap((name) => {
           const ref = snapshot.defaults?.[name]
-          return ref ? [{ name, provider: routingId(ref.provider), model: ref.model }] : []
+          const provider = ref && routingId(ref.provider)
+          return ref && provider ? [{ name, provider, model: ref.model }] : []
         }),
-        subagent_models: Object.entries(snapshot.defaults?.subagent_models ?? {}).map(([name, ref]) => ({ name, provider: routingId(ref.provider), model: ref.model })),
+        subagent_models: Object.entries(snapshot.defaults?.subagent_models ?? {}).flatMap(([name, ref]) => {
+          const provider = routingId(ref.provider)
+          return provider ? [{ name, provider, model: ref.model }] : []
+        }),
         env: env.entries.map(({ name, secret, has_value }) => ({ name, secret, has_value })),
       }
     } catch { throw new ConfigShareError("unavailable") }

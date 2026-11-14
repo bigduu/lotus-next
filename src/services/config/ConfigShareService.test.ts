@@ -115,6 +115,28 @@ describe("ConfigShareService", () => {
     expect(JSON.stringify(result)).not.toContain("PRIVATE_MARKER")
   })
 
+  it.each(["legacy", "migrated"])("excludes retired provider references from a %s export inventory", async (state) => {
+    const relay = { id: "relay", type: "openai", label: "Relay", enabled: true, config: {} }
+    const retired = { id: "oauth-work", type: "copilot", label: "GitHub Copilot", enabled: true, config: {} }
+    const chat = { provider: retired.id, model: "old-chat" }
+    const fast = { provider: "openai", model: "supported-fast" }
+    const helper = { provider: relay.id, model: "supported-child" }
+    vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue({
+      default_provider_instance_id: state === "legacy" ? retired.id : null,
+      instances: state === "legacy" ? [relay, retired] : [relay],
+      defaults: { chat, fast, subagent_models: { retired: chat, helper } },
+    })
+    vi.spyOn(settingsService, "getEnvVars").mockResolvedValue({
+      revision: 1, entries: [{ name: "APP_MODE", secret: false, has_value: true, value: "fixture" }],
+    })
+    await expect(service.inventory()).resolves.toEqual({
+      providers: [{ id: relay.id, label: relay.label, type: relay.type }],
+      scenarios: [{ name: "fast", provider: relay.id, model: fast.model }],
+      subagent_models: [{ name: "helper", ...helper }],
+      env: [{ name: "APP_MODE", secret: false, has_value: true }],
+    })
+  })
+
   it("requires an explicit secret choice and passphrase before export", async () => {
     const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({ share_string: shareString })
     const selection = { ...emptyShareSelection(), providers: ["sample"], provider_api_keys: ["sample"] }
