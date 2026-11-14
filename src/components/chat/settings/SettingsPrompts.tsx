@@ -2,7 +2,6 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { Pencil, Plus, Trash2 } from "lucide-react"
 import { useAppStore } from "@shared/store/appStore"
-import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { UserSystemPrompt } from "@shared/types/chat"
 import {
   getSystemPromptEnhancement,
@@ -16,10 +15,6 @@ import {
   isTaskEnhancementEnabled,
   setTaskEnhancementEnabled,
 } from "@shared/utils/taskEnhancementUtils"
-import {
-  isCopilotConclusionWithOptionsEnhancementEnabled,
-  setCopilotConclusionWithOptionsEnhancementEnabled,
-} from "@shared/utils/copilotConclusionWithOptionsEnhancementUtils"
 import { getErrorMessage } from "@services/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -69,11 +64,6 @@ export function SettingsPrompts() {
   const addSystemPrompt = useAppStore((state) => state.addSystemPrompt)
   const updateSystemPrompt = useAppStore((state) => state.updateSystemPrompt)
   const deleteSystemPrompt = useAppStore((state) => state.deleteSystemPrompt)
-
-  const showCopilotToggle = useProviderStore((state) => {
-    const chatProvider = state.providerSnapshot?.defaults?.chat.provider
-    return chatProvider ? state.getProviderType(chatProvider) === "copilot" : false
-  })
 
   // ── preset editor dialog ──────────────────────────────────────
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -140,9 +130,6 @@ export function SettingsPrompts() {
   // ── enhancement toggles ───────────────────────────────────────
   const [mermaidEnabled, setMermaidEnabled] = useState(() => isMermaidEnhancementEnabled())
   const [taskEnabled, setTaskEnabled] = useState(() => isTaskEnhancementEnabled())
-  const [copilotEnabled, setCopilotEnabled] = useState(() =>
-    isCopilotConclusionWithOptionsEnhancementEnabled(),
-  )
 
   return (
     <div className="space-y-4">
@@ -236,17 +223,6 @@ export function SettingsPrompts() {
               setTaskEnhancementEnabled(checked)
             }}
           />
-          {showCopilotToggle ? (
-            <ToggleRow
-              label={uiText("copilot_completion_confirmation_735f51ca")}
-              description={uiText("require_copilot_to_call_conclusion_with_options_for_you_c22f3eda")}
-              checked={copilotEnabled}
-              onCheckedChange={(checked) => {
-                setCopilotEnabled(checked)
-                setCopilotConclusionWithOptionsEnhancementEnabled(checked)
-              }}
-            />
-          ) : null}
         </div>
       </section>
 

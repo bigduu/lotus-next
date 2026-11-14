@@ -409,7 +409,6 @@ export interface ChatRequest {
   project_id?: string;
   system_prompt?: string;
   enhance_prompt?: string;
-  copilot_conclusion_with_options_enhancement_enabled?: boolean;
   workspace_path?: string;
   selected_skill_ids?: string[];
   workflow_selection?: import("../command/workflowCatalog").WorkflowSelection;

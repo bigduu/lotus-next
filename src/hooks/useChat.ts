@@ -35,7 +35,6 @@ import {
   summaryFeedback, type ContextCompressionFeedback,
 } from "@/lib/contextCompression"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
-import { isCopilotConclusionWithOptionsEnhancementEnabled } from "@shared/utils/copilotConclusionWithOptionsEnhancementUtils"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import {
   acknowledgePendingTemplatePrompt,
@@ -418,11 +417,6 @@ export function useChat(
   const effectiveProviderReasoningEffort = useProviderStore((s) =>
     getReasoningEffortForProvider(s.providerSnapshot, effectiveProviderId),
   )
-  // Provider type of the effective model drives provider-specific prompt
-  // enhancement segments (e.g. the Copilot conclusion-with-options contract).
-  const providerType = useProviderStore((s) => {
-    return effectiveProviderId ? s.getProviderType(effectiveProviderId) : undefined
-  })
   const inputReasoningSelection = useAppStore(
     (s) => s.inputStates[sid ?? ""]?.reasoningEffort,
   )
@@ -2153,8 +2147,6 @@ export function useChat(
       )
       const submittedModel = startSid ? effectiveModel : submittedModelRef?.model || ""
       if (!startSid && !submittedModelRef) return { kind: "blocked" }
-      const submittedProviderType = startSid ? providerType
-        : submittedModelRef ? providerState.getProviderType(submittedModelRef.provider) : undefined
       if (startSid && getRootModeFenceState(startSid) !== "clear") return { kind: "blocked" }
       // Existing Root mode changes use a separate, recoverable operation.
       if (startSid && typeof opts?.rootOrchestrationOnly === "boolean") return { kind: "blocked" }
@@ -2193,7 +2185,7 @@ export function useChat(
       try {
         // Client-side prompt enhancement (OS info + operational guidance + the
         // user's own enhancement text), recomputed per send like lotus does.
-        const enhancePrompt = getSystemPromptEnhancementText(submittedProviderType).trim()
+        const enhancePrompt = getSystemPromptEnhancementText().trim()
         // New sessions keep the selected/default system-prompt preset as their
         // durable base. A just-picked home-dashboard template is appended as a
         // task-mode block instead of replacing that base prompt. Existing
@@ -2216,8 +2208,6 @@ export function useChat(
           model_ref: submittedModelRef,
           reasoning_effort: !startSid ? submittedReasoningEffort : undefined,
           enhance_prompt: enhancePrompt || undefined,
-          copilot_conclusion_with_options_enhancement_enabled:
-            submittedProviderType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
           system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
           ...(opts?.workflowSelection ? { workflow_selection: opts.workflowSelection } : {}),
@@ -2416,7 +2406,6 @@ export function useChat(
       onSessionCreated,
       effectiveModel,
       effectiveModelRef,
-      providerType,
       reasoningEffort,
       runStream,
       stopStream,
