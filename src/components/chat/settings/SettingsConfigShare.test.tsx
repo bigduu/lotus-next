@@ -605,6 +605,24 @@ describe("SettingsConfigShare", () => {
     expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.providers).toEqual({ sample: { action: "rename", target: "anthropic-shared" } })
   })
 
+  it("skips a legacy Bodhi entry without a matching instance and saves other selections", async () => {
+    const response = preview()
+    response.preview.providers[0] = {
+      ...response.preview.providers[0], provider_type: "bodhi", conflict: false,
+      replace_allowed: false, rename_allowed: false, target_origin: undefined, credential_origin_risk: false,
+    }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+    expect(action.value).toBe("skip")
+    expect(action.querySelector<HTMLOptionElement>('option[value="replace"]')?.disabled).toBe(true)
+    expect(action.querySelector('option[value="rename"]')).toBeNull()
+    expect(document.body.textContent).toContain("This entry can only update an existing Bodhi instance with the same ID.")
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.providers).toEqual({ sample: { action: "skip" } })
+  })
+
   it("shows the provider-default URL fallback for a new provider with no imported origin", async () => {
     const response = preview()
     response.preview.providers[0] = { ...response.preview.providers[0], conflict: false, replace_allowed: true, has_base_url: false, source_origin: undefined, target_origin: undefined, credential_origin_risk: false }

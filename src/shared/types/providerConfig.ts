@@ -177,6 +177,8 @@ export interface ProviderInstancesConfig {
   /** Bamboo's internal compatibility route. It is not a user-facing preference. */
   default_provider_instance_id: string | null;
   instances: ProviderInstance[];
+  /** Former exact instance IDs that must remain unresolved. */
+  retired_provider_aliases?: string[];
   defaults?: DefaultsConfig;
   features?: {
     provider_model_ref?: boolean;
@@ -315,11 +317,22 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
 
   // Older Bamboo servers can still send retired Copilot entries. Leave their
   // references visible to the settings repair UI and exclude them from routing.
-  const instances = value.instances.flatMap((entry, index) =>
-    isRecord(entry) && entry.type === "copilot"
-      ? []
-      : [parseProviderInstance(entry, `Provider instance at index ${index}`)],
-  );
+  const retiredAliases = new Set<string>();
+  const savedRetiredAliases = value.retired_provider_aliases;
+  if (savedRetiredAliases !== undefined) {
+    if (!Array.isArray(savedRetiredAliases) ||
+      !savedRetiredAliases.every((id) => typeof id === "string" && id.trim())) {
+      throw new ProviderSnapshotValidationError("Retired provider aliases are invalid");
+    }
+    for (const id of savedRetiredAliases) retiredAliases.add(id);
+  }
+  const instances = value.instances.flatMap((entry, index) => {
+    if (isRecord(entry) && entry.type === "copilot") {
+      if (typeof entry.id === "string") retiredAliases.add(entry.id);
+      return [];
+    }
+    return [parseProviderInstance(entry, `Provider instance at index ${index}`)];
+  });
 
   const instanceIds = new Set(value.instances.map((entry) => isRecord(entry) ? entry.id : undefined));
   if (instanceIds.size !== value.instances.length) {
@@ -347,6 +360,7 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
   return {
     default_provider_instance_id: defaultId,
     instances,
+    ...(retiredAliases.size ? { retired_provider_aliases: [...retiredAliases] } : {}),
     defaults: assertDefaults(value.defaults),
     features,
   };

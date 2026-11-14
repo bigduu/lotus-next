@@ -137,6 +137,23 @@ describe("ConfigShareService", () => {
     })
   })
 
+  it.each(["legacy", "migrated"])("never exports a retired exact id through a type alias on a %s server", async (state) => {
+    const relay = { id: "relay", type: "openai", label: "Relay", enabled: true, config: {} }
+    const retired = { id: "openai", type: "copilot", label: "GitHub Copilot", enabled: true, config: {} }
+    const chat = { provider: retired.id, model: "shared-model" }
+    const fast = { provider: relay.id, model: "shared-model" }
+    vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue({
+      ...(state === "migrated" ? { retired_provider_aliases: [retired.id] } : {}),
+      instances: state === "legacy" ? [relay, retired] : [relay],
+      defaults: { chat, fast, subagent_models: { retired: chat, helper: fast } },
+    })
+    vi.spyOn(settingsService, "getEnvVars").mockResolvedValue({ revision: 1, entries: [] })
+    await expect(service.inventory()).resolves.toMatchObject({
+      scenarios: [{ name: "fast", ...fast }],
+      subagent_models: [{ name: "helper", ...fast }],
+    })
+  })
+
   it("requires an explicit secret choice and passphrase before export", async () => {
     const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({ share_string: shareString })
     const selection = { ...emptyShareSelection(), providers: ["sample"], provider_api_keys: ["sample"] }

@@ -26,7 +26,9 @@ const toggle = (values: string[], value: string, checked: boolean) =>
 const checkedRows = (preview: SharePreviewResponse): ShareDecisions => {
   const decisions = emptyShareDecisions()
   for (const row of rowsFor(preview)) {
-    if (row.conflict) (decisions[row.group] as Record<string, ShareChoice>)[row.id] = { action: "skip" }
+    if (row.conflict || row.provider?.replace_allowed === false) {
+      (decisions[row.group] as Record<string, ShareChoice>)[row.id] = { action: "skip" }
+    }
   }
   return decisions
 }
@@ -206,7 +208,7 @@ export function SettingsConfigShare() {
   }
   const invalidRename = preview && rowsFor(preview).some((row) => {
     const choice = rowChoice(decisions, row)
-    return choice?.action === "rename" && (!choice.target.trim() || (
+    return choice?.action === "rename" && (row.provider?.rename_allowed === false || !choice.target.trim() || (
       row.group === "env" ? asciiCaseFold(choice.target) === asciiCaseFold(row.id) : choice.target === row.id
     ))
   })
@@ -342,12 +344,14 @@ export function SettingsConfigShare() {
               <div><dt className="inline">{uiText("share_imported_origin")}: </dt><dd className="inline break-all font-mono">{row.provider.source_origin ?? uiText(choice.action === "rename" || !row.conflict ? "share_origin_provider_default" : "share_origin_keep_current")}</dd></div>
               <div><dt className="inline">{uiText("share_current_origin")}: </dt><dd className="inline break-all font-mono">{row.provider.target_origin ?? uiText("share_origin_unknown")}</dd></div>
             </dl>}
-            {row.provider?.replace_allowed === false && <p className="text-xs text-muted-foreground">{uiText("share_provider_type_mismatch")}</p>}
+            {row.provider?.rename_allowed === false
+              ? <p className="text-xs text-muted-foreground">{uiText("share_existing_bodhi_only")}</p>
+              : row.provider?.replace_allowed === false && <p className="text-xs text-muted-foreground">{uiText("share_provider_type_mismatch")}</p>}
             <label className="flex items-center gap-2 text-xs">{uiText("share_action")}
               <select aria-label={`${uiText("share_action")} ${row.group}:${row.id}`} className="settings-select" value={choice.action} disabled={locked} onChange={(event) => updateChoice(event.target.value === "rename" ? { action: "rename", target: "" } : { action: event.target.value as "skip" | "replace" })}>
                 <option value="skip">{uiText("share_skip")}</option>
                 <option value="replace" disabled={row.provider?.replace_allowed === false}>{row.conflict ? uiText("share_replace") : uiText("share_import_item")}</option>
-                {row.group !== "scenarios" && <option value="rename">{uiText("share_rename")}</option>}
+                {row.group !== "scenarios" && row.provider?.rename_allowed !== false && <option value="rename">{uiText("share_rename")}</option>}
               </select>
             </label>
             {row.provider?.replace_allowed && row.provider.credential_origin_risk && choice.action === "replace" && <p role="alert" className="break-words text-xs text-destructive">{uiText("share_retained_key_origin_warning", { origin: row.provider.source_origin })}</p>}

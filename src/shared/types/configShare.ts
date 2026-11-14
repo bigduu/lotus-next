@@ -35,8 +35,10 @@ export interface ShareProviderPreview {
   has_api_key: boolean
   has_base_url: boolean
   conflict: boolean
-  /** Same-ID providers of a different type can only be skipped or renamed. */
+  /** Whether import can write to the same instance ID. */
   replace_allowed: boolean
+  /** Older Bamboo servers leave this unset. */
+  rename_allowed?: boolean
   /** Canonical HTTP(S) origins only; never full URLs or secret-bearing values. */
   source_origin?: string
   target_origin?: string

@@ -64,7 +64,9 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
   for (const row of p.providers as Record<string, unknown>[]) {
     if (!boundedString(row.id) || !boundedString(row.provider_type) || (row.label !== undefined && !boundedString(row.label)) ||
       typeof row.has_api_key !== "boolean" || typeof row.has_base_url !== "boolean" ||
-      typeof row.replace_allowed !== "boolean" || (!row.conflict && !row.replace_allowed) ||
+      typeof row.replace_allowed !== "boolean" ||
+      (row.rename_allowed !== undefined && typeof row.rename_allowed !== "boolean") ||
+      (!row.conflict && !row.replace_allowed && row.rename_allowed !== false) ||
       typeof row.retains_existing_api_key !== "boolean" || typeof row.credential_origin_risk !== "boolean" ||
       (row.source_origin !== undefined && !validOrigin(row.source_origin)) ||
       (row.target_origin !== undefined && !validOrigin(row.target_origin)) ||
@@ -96,8 +98,9 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
     expected_revisions: { providers: typed.expected_revisions.providers, env: typed.expected_revisions.env, credentials: typed.expected_revisions.credentials },
     preview: {
       contains_secrets: typed.preview.contains_secrets,
-      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict, replace_allowed, source_origin, target_origin, retains_existing_api_key, credential_origin_risk }) => ({
+      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict, replace_allowed, rename_allowed, source_origin, target_origin, retains_existing_api_key, credential_origin_risk }) => ({
         id, provider_type, ...(label ? { label } : {}), has_api_key, has_base_url, conflict, replace_allowed,
+        ...(rename_allowed === undefined ? {} : { rename_allowed }),
         ...(source_origin ? { source_origin } : {}), ...(target_origin ? { target_origin } : {}),
         retains_existing_api_key, credential_origin_risk,
       })),
@@ -171,10 +174,12 @@ export class ConfigShareService {
       // Match Bamboo's configured_provider_routing_key: exact id, selected
       // default of that type, then the lexical first enabled instance.
       const instancesById = new Map(snapshot.instances.map((instance) => [instance.id, instance]))
+      const retiredAliases = new Set(snapshot.retired_provider_aliases)
       const selected = instancesById.get(snapshot.default_provider_instance_id ?? "")
       const routingId = (provider: string): string | undefined => {
         const normalized = provider.trim()
         if (instancesById.has(normalized)) return normalized
+        if (retiredAliases.has(normalized)) return undefined
         if (selected?.type === normalized) return selected.id
         return snapshot.instances.filter((candidate) => candidate.enabled && candidate.type === normalized)
           .map((candidate) => candidate.id).sort()[0]
