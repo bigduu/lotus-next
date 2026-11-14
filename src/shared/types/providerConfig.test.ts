@@ -130,6 +130,27 @@ describe("parseProviderInstancesConfig", () => {
     });
   });
 
+  it("omits retired Copilot instances while keeping their default references repairable", () => {
+    const payload = validPayload();
+    const retired = { id: "old-copilot", type: "copilot", label: "Copilot", enabled: true, config: {} };
+    const gateway = { ...payload.instances[0], id: "gateway", type: "bodhi" };
+    const parsed = parseProviderInstancesConfig({
+      ...payload,
+      instances: [...payload.instances, retired, gateway],
+      default_provider_instance_id: retired.id,
+      defaults: { ...payload.defaults, chat: { provider: retired.id, model: "gpt-4o" } },
+    });
+
+    expect(parsed.instances.map(({ id }) => id)).toEqual(["work", "gateway"]);
+    expect(resolveNewChatModelRef(parsed)).toBeUndefined();
+    expect(findProviderSnapshotRelationIssues(parsed).map(({ path }) => path)).toEqual([
+      "default_provider_instance_id", "defaults.chat",
+    ]);
+    expect(() => parseProviderInstancesConfig({
+      ...payload, instances: [...payload.instances, { ...retired, id: "work" }],
+    })).toThrow(ProviderSnapshotValidationError);
+  });
+
   it("accepts and normalizes an instance-native snapshot", () => {
     expect(parseProviderInstancesConfig(validPayload())).toEqual(validPayload());
   });

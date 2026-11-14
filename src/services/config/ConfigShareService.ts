@@ -64,13 +64,17 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
   for (const row of p.providers as Record<string, unknown>[]) {
     if (!boundedString(row.id) || !boundedString(row.provider_type) || (row.label !== undefined && !boundedString(row.label)) ||
       typeof row.has_api_key !== "boolean" || typeof row.has_base_url !== "boolean" ||
-      typeof row.replace_allowed !== "boolean" || (!row.conflict && !row.replace_allowed) ||
+      typeof row.replace_allowed !== "boolean" ||
+      (row.rename_allowed !== undefined && typeof row.rename_allowed !== "boolean") ||
+      (row.retired_id !== undefined && typeof row.retired_id !== "boolean") ||
+      (!row.conflict && !row.replace_allowed && row.rename_allowed !== false) ||
       typeof row.retains_existing_api_key !== "boolean" || typeof row.credential_origin_risk !== "boolean" ||
       (row.source_origin !== undefined && !validOrigin(row.source_origin)) ||
       (row.target_origin !== undefined && !validOrigin(row.target_origin)) ||
       row.has_base_url !== (row.source_origin !== undefined) ||
       (row.retains_existing_api_key && !row.conflict) ||
-      row.credential_origin_risk !== (row.conflict && row.has_base_url && row.source_origin !== row.target_origin)) {
+      (row.retired_id === true && (!row.conflict || row.replace_allowed || row.target_origin !== undefined || row.retains_existing_api_key)) ||
+      row.credential_origin_risk !== (row.conflict && row.retired_id !== true && row.has_base_url && row.source_origin !== row.target_origin)) {
       throw new ConfigShareError("unavailable")
     }
   }
@@ -96,8 +100,10 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
     expected_revisions: { providers: typed.expected_revisions.providers, env: typed.expected_revisions.env, credentials: typed.expected_revisions.credentials },
     preview: {
       contains_secrets: typed.preview.contains_secrets,
-      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict, replace_allowed, source_origin, target_origin, retains_existing_api_key, credential_origin_risk }) => ({
+      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict, replace_allowed, rename_allowed, retired_id, source_origin, target_origin, retains_existing_api_key, credential_origin_risk }) => ({
         id, provider_type, ...(label ? { label } : {}), has_api_key, has_base_url, conflict, replace_allowed,
+        ...(rename_allowed === undefined ? {} : { rename_allowed }),
+        ...(retired_id ? { retired_id } : {}),
         ...(source_origin ? { source_origin } : {}), ...(target_origin ? { target_origin } : {}),
         retains_existing_api_key, credential_origin_risk,
       })),
@@ -170,22 +176,29 @@ export class ConfigShareService {
       const snapshot = parseProviderInstancesConfig(rawProviders)
       // Match Bamboo's configured_provider_routing_key: exact id, selected
       // default of that type, then the lexical first enabled instance.
-      const routingId = (provider: string): string => {
+      const instancesById = new Map(snapshot.instances.map((instance) => [instance.id, instance]))
+      const retiredAliases = new Set(snapshot.retired_provider_aliases)
+      const selected = instancesById.get(snapshot.default_provider_instance_id ?? "")
+      const routingId = (provider: string): string | undefined => {
         const normalized = provider.trim()
-        if (snapshot.instances.some((candidate) => candidate.id === normalized)) return normalized
-        const selected = snapshot.instances.find((candidate) => candidate.id === snapshot.default_provider_instance_id)
+        if (instancesById.has(normalized)) return normalized
+        if (retiredAliases.has(normalized)) return undefined
         if (selected?.type === normalized) return selected.id
         return snapshot.instances.filter((candidate) => candidate.enabled && candidate.type === normalized)
-          .map((candidate) => candidate.id).sort()[0] ?? normalized
+          .map((candidate) => candidate.id).sort()[0]
       }
       // Store only display metadata. Existing GETs never supply API keys.
       return {
         providers: snapshot.instances.map(({ id, label, type }) => ({ id, label, type })),
         scenarios: SHARE_MODEL_REF_KEYS.flatMap((name) => {
           const ref = snapshot.defaults?.[name]
-          return ref ? [{ name, provider: routingId(ref.provider), model: ref.model }] : []
+          const provider = ref && routingId(ref.provider)
+          return ref && provider ? [{ name, provider, model: ref.model }] : []
         }),
-        subagent_models: Object.entries(snapshot.defaults?.subagent_models ?? {}).map(([name, ref]) => ({ name, provider: routingId(ref.provider), model: ref.model })),
+        subagent_models: Object.entries(snapshot.defaults?.subagent_models ?? {}).flatMap(([name, ref]) => {
+          const provider = routingId(ref.provider)
+          return provider ? [{ name, provider, model: ref.model }] : []
+        }),
         env: env.entries.map(({ name, secret, has_value }) => ({ name, secret, has_value })),
       }
     } catch { throw new ConfigShareError("unavailable") }

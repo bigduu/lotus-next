@@ -80,12 +80,14 @@ export type TemplateExpr =
       template: string;
     };
 
-export const PROVIDER_KINDS = ["copilot", "openai", "anthropic", "gemini", "bodhi"] as const;
+export const PROVIDER_KINDS = ["anthropic", "openai", "gemini"] as const;
+export type NewProviderKind = (typeof PROVIDER_KINDS)[number];
 
-export type ProviderKind = (typeof PROVIDER_KINDS)[number];
+const CONFIGURED_PROVIDER_KINDS = [...PROVIDER_KINDS, "bodhi"] as const;
+
+export type ProviderKind = (typeof CONFIGURED_PROVIDER_KINDS)[number];
 
 export const PROVIDER_LABELS: Record<ProviderKind, string> = {
-  copilot: "GitHub Copilot",
   openai: "OpenAI",
   anthropic: "Anthropic",
   gemini: "Google Gemini",
@@ -112,7 +114,7 @@ export type ProviderInstanceConfig = Record<string, unknown> & {
  * A single configured provider instance.
  *
  * - `id` is the stable unique identifier used as the `provider` field in ProviderModelRef.
- * - `type` is the provider kind (openai, anthropic, gemini, copilot, bodhi).
+ * - `type` is the provider kind (openai, anthropic, gemini, or the legacy Bodhi gateway).
  * - `label` is the user-visible display name.
  */
 export interface ProviderInstance {
@@ -127,7 +129,7 @@ export interface ProviderInstance {
  * Request body for creating a new provider instance.
  */
 export interface CreateProviderInstanceRequest {
-  type: ProviderKind;
+  type: NewProviderKind;
   label?: string;
   enabled?: boolean;
   config: ProviderInstanceConfig;
@@ -175,6 +177,8 @@ export interface ProviderInstancesConfig {
   /** Bamboo's internal compatibility route. It is not a user-facing preference. */
   default_provider_instance_id: string | null;
   instances: ProviderInstance[];
+  /** Former exact instance IDs that must remain unresolved. */
+  retired_provider_aliases?: string[];
   defaults?: DefaultsConfig;
   features?: {
     provider_model_ref?: boolean;
@@ -263,7 +267,7 @@ export const parseProviderInstance = (
     !isRecord(value) ||
     typeof value.id !== "string" ||
     value.id.trim().length === 0 ||
-    !PROVIDER_KINDS.includes(value.type as ProviderKind) ||
+    !CONFIGURED_PROVIDER_KINDS.includes(value.type as ProviderKind) ||
     typeof value.label !== "string" ||
     typeof value.enabled !== "boolean" ||
     !isRecord(value.config) ||
@@ -311,12 +315,27 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
     throw new ProviderSnapshotValidationError("Provider instances payload is invalid");
   }
 
-  const instances: ProviderInstance[] = value.instances.map((entry, index) =>
-    parseProviderInstance(entry, `Provider instance at index ${index}`),
-  );
+  // Older Bamboo servers can still send retired Copilot entries. Leave their
+  // references visible to the settings repair UI and exclude them from routing.
+  const retiredAliases = new Set<string>();
+  const savedRetiredAliases = value.retired_provider_aliases;
+  if (savedRetiredAliases !== undefined) {
+    if (!Array.isArray(savedRetiredAliases) ||
+      !savedRetiredAliases.every((id) => typeof id === "string" && id.trim())) {
+      throw new ProviderSnapshotValidationError("Retired provider aliases are invalid");
+    }
+    for (const id of savedRetiredAliases) retiredAliases.add(id);
+  }
+  const instances = value.instances.flatMap((entry, index) => {
+    if (isRecord(entry) && entry.type === "copilot") {
+      if (typeof entry.id === "string") retiredAliases.add(entry.id);
+      return [];
+    }
+    return [parseProviderInstance(entry, `Provider instance at index ${index}`)];
+  });
 
-  const instanceIds = new Set(instances.map((instance) => instance.id));
-  if (instanceIds.size !== instances.length) {
+  const instanceIds = new Set(value.instances.map((entry) => isRecord(entry) ? entry.id : undefined));
+  if (instanceIds.size !== value.instances.length) {
     throw new ProviderSnapshotValidationError("Provider instance ids must be unique");
   }
 
@@ -341,6 +360,7 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
   return {
     default_provider_instance_id: defaultId,
     instances,
+    ...(retiredAliases.size ? { retired_provider_aliases: [...retiredAliases] } : {}),
     defaults: assertDefaults(value.defaults),
     features,
   };
@@ -416,10 +436,4 @@ export const GEMINI_MODELS = [
   { value: "gemini-pro-vision", label: "Gemini Pro Vision" },
   { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
   { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-] as const;
-
-// Fallback list used when backend model discovery isn't available yet.
-export const COPILOT_MODELS = [
-  { value: "gpt-4o", label: "GPT-4o" },
-  { value: "gpt-4o-mini", label: "GPT-4o Mini" },
 ] as const;

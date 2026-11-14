@@ -1,6 +1,6 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
+import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { AgentEvent, ContextSummaryInfo, PermissionDecisionResult, ReasoningEffort, TokenBudgetUsage } from "@services/chat/AgentService"
 import type { TokenUsage } from "@shared/types/tokenBudget"
@@ -70,11 +70,9 @@ const mocks = vi.hoisted(() => {
     providerState: {
       providerSnapshot: null,
       catalog: null,
-      getProviderType: vi.fn<(instanceId: string) => ProviderKind | undefined>(() => undefined),
     } as {
       providerSnapshot: ProviderInstancesConfig | null
       catalog: unknown
-      getProviderType: ReturnType<typeof vi.fn<(instanceId: string) => ProviderKind | undefined>>
     },
   }
 })
@@ -127,9 +125,6 @@ vi.mock("@/lib/taskTemplates", () => ({
 vi.mock("@/lib/notify", () => ({ notify: vi.fn() }))
 vi.mock("@shared/utils/systemPromptEnhancement", () => ({
   getSystemPromptEnhancementText: () => "",
-}))
-vi.mock("@shared/utils/copilotConclusionWithOptionsEnhancementUtils", () => ({
-  isCopilotConclusionWithOptionsEnhancementEnabled: () => false,
 }))
 import { useChat, type GenerationFailure, type SendSubmissionResult } from "./useChat"
 import { invalidateCompletedAnswers, resetCompletedAnswerHandoffsForTest } from "@/lib/completedAnswerHandoffRegistry"
@@ -305,8 +300,6 @@ beforeEach(() => {
     defaults: { chat: { provider: "test-provider", model: "test-model" } },
   }
   mocks.providerState.catalog = null
-  mocks.providerState.getProviderType.mockReset()
-  mocks.providerState.getProviderType.mockReturnValue(undefined)
   for (const mock of [
     mocks.appState.selectSession,
     mocks.appState.loadSubagentSessions,
@@ -1183,7 +1176,6 @@ describe("useChat two-phase send lifecycle", () => {
       },
       features: { provider_model_ref: true },
     }
-    mocks.providerState.getProviderType.mockReturnValue("openai")
     mocks.appState.chats = [{
       id: "provider-session",
       messages: [],
@@ -1211,7 +1203,6 @@ describe("useChat two-phase send lifecycle", () => {
       undefined,
       { provider: "instance-openai", model: "gpt-authoritative" },
     )
-    expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("instance-openai")
   })
   it("keeps an existing child session bound to its own provider and model", async () => {
     const sessionId = "child-session"
@@ -1239,7 +1230,6 @@ describe("useChat two-phase send lifecycle", () => {
       },
       features: { provider_model_ref: true },
     }
-    mocks.providerState.getProviderType.mockReturnValue("openai")
     mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
 
@@ -1262,7 +1252,6 @@ describe("useChat two-phase send lifecycle", () => {
       undefined,
       { provider: "easycli", model: "gpt-5.6-luna" },
     )
-    expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("easycli")
   })
   it.each(["complete", "error"] as const)(
     "waits for %s terminal settlement after the transport closes",
