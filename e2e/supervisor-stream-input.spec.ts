@@ -2,7 +2,7 @@ import { expect, test, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { expectComposerText } from "./support/composer.js"
 
-type Probe = { enable(): void; reset(): void; read(): Record<string, number> }
+type Probe = { read(): Record<string, number> }
 
 test("draft edits and live text reuse the long Supervisor transcript", async ({ page }) => {
   const sessionId = "bamboo-default-supervisor"
@@ -21,6 +21,7 @@ test("draft edits and live text reuse the long Supervisor transcript", async ({ 
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
+    localStorage.setItem("zenith_render_probe", "1")
   }, sessionId)
   await installArtifactRuntime(page, standaloneScenario, messages, { sessionId })
   await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ json: {
@@ -31,6 +32,7 @@ test("draft edits and live text reuse the long Supervisor transcript", async ({ 
   await page.route("**/api/v1/runs/active", (route) => route.fulfill({ json: {
     sessions: [{ session_id: sessionId, is_running: true, status: "running" }],
   } }))
+  await page.route("**/api/v1/supervisor/default/approvals", (route) => route.fulfill({ json: { approvals: [] } }))
   const channel = `agent.${sessionId}`
   let subscribed: WebSocketRoute | undefined
   let sequence = 0
@@ -53,18 +55,26 @@ test("draft edits and live text reuse the long Supervisor transcript", async ({ 
   emit("Beginning the live report. ")
   const live = page.locator(".assistant-streamdown").filter({ hasText: "Beginning the live report." })
   await expect(live).toBeVisible()
-  await page.evaluate(() => {
-    const probe = (globalThis as unknown as { __renderProbe: Probe }).__renderProbe
-    probe.enable()
-    probe.reset()
-  })
+  await composer.focus()
   const counts = () => page.evaluate(() =>
     (globalThis as unknown as { __renderProbe: Probe }).__renderProbe.read())
+
+  // The first streamed block and editor focus can leave virtual-scroll renders
+  // pending. Wait for the list to settle before counting draft-induced renders.
+  let previousRenders = 0
+  await expect.poll(async () => {
+    const renders = (await counts())["app.MessageList"] ?? 0
+    const settled = renders > 0 && renders === previousRenders
+    previousRenders = renders
+    return settled
+  }, { intervals: [300] }).toBe(true)
+  const beforeTyping = await counts()
+  expect(beforeTyping["subagent.origins.history"]).toBeGreaterThan(0)
 
   await composer.pressSequentially("typing during run")
   await expectComposerText(composer, "typing during run")
   const typing = await counts()
-  expect(typing["app.MessageList"] ?? 0).toBe(0)
+  expect(typing["app.MessageList"]).toBe(beforeTyping["app.MessageList"])
 
   for (const text of ["First fragment. ", "Second fragment. ", "Final fragment."]) {
     emit(text)
@@ -72,6 +82,6 @@ test("draft edits and live text reuse the long Supervisor transcript", async ({ 
   }
   await expectComposerText(composer, "typing during run")
   const streaming = await counts()
-  expect(streaming["app.MessageList"]).toBeGreaterThan(0)
-  expect(streaming["subagent.origins.history"] ?? 0).toBe(0)
+  expect(streaming["app.MessageList"]).toBeGreaterThan(typing["app.MessageList"])
+  expect(streaming["subagent.origins.history"]).toBe(beforeTyping["subagent.origins.history"])
 })
