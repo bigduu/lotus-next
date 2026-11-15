@@ -2785,6 +2785,7 @@ export const uiEnUs = {
   "ticket_request_2f7794e6": "request",
   "ticket_clear_reference_b2e538a2": "Clear reference",
   "ticket_the_previous_message_is_not_confirmed_retry_w_7369504e": "The previous message is not confirmed. Retry with the original text and attachments.",
+  "ticket_starting": "Starting…",
   "ticket_retry_start_47d5cd3e": "Retry start",
   "ticket_referenced_request__7209ca36": "Referenced request:",
   "ticket_draft_2a2fd29b": "Draft",
