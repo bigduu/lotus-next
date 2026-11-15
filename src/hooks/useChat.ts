@@ -593,12 +593,15 @@ export function useChat(
   const answerLeaseValid = answerLeaseRef.current?.valid !== false
   const streaming = streamSid === sid && !retainedTerminalIsHydrated && !cachedSameRun && answerLeaseValid ? streamingText : null
   const streamingReasoning = streamSid === sid && answerLeaseValid ? streamingReasoningText : null
+  const canonicalUserIds = useMemo(() => new Set(
+    canonicalMessages.flatMap((message) => message.role === "user" ? [message.id] : []),
+  ), [canonicalMessages])
   const uncommittedSegments = useMemo(() => {
     if (streamSid !== sid || !answerLeaseValid) return EMPTY_SEGMENTS
     // The admitted user message confirms the transcript prefix through the
     // interjection. The next round can already be streaming when history lands.
     const checkpoint = liveSegmentsState.findLastIndex((segment) => segment.kind === "interjection"
-      && canonicalMessages.some((message) => message.role === "user" && message.id === segment.messageId))
+      && canonicalUserIds.has(segment.messageId))
     const segments = checkpoint < 0 ? liveSegmentsState : liveSegmentsState.slice(checkpoint + 1)
     if (streamPhaseState !== null) return segments
     // Failed history reads retain terminal tool evidence without keeping a run
@@ -623,7 +626,7 @@ export function useChat(
       return calls.length ? [{ ...segment, calls }] : []
     })
     return hydrated ? remaining : segments
-  }, [answerLeaseValid, canonicalMessages, liveSegmentsState, messages, sid, streamPhaseState, streamSid])
+  }, [answerLeaseValid, canonicalUserIds, liveSegmentsState, messages, sid, streamPhaseState, streamSid])
   const liveSegments = useMemo(() => uncommittedSegments.length
     ? uncommittedSegments.filter((segment) => segment.kind !== "interjection") : EMPTY_SEGMENTS,
   [uncommittedSegments])

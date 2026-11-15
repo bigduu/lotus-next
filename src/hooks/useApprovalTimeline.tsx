@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import type { TimelineAttachment } from "@/components/app/MessageList"
 import { ApprovalReceipt, type QuestionControls } from "@/components/chat/PermissionTimeline"
 import { QuestionDialog } from "@/components/chat/Dialogs"
@@ -21,31 +21,37 @@ function permissionEntryKey(requestId: string, generation: string) {
 
 export function usePermissionTimeline(messages: Message[], pending: PermissionQuestion | null,
   recorded: RecordedPermission | undefined, workspace: string | null | undefined, controls: QuestionControls) {
-  const history = useMemo(() => messages.flatMap((message) =>
-    message.role === "assistant" && message.type === "tool_result" && message.permissionHistory
-      ? [{ anchor: message.id, record: message.permissionHistory }] : []), [messages])
-  const entries = new Map<string, TimelineAttachment>()
-  const anchors = new Map<string, string>()
-  for (const { anchor, record } of history) {
-    const key = permissionEntryKey(record.requestId, record.generation)
-    anchors.set(key, anchor)
-    if (record.decision) entries.set(key, { key, afterMessageId: anchor,
-      node: <ApprovalReceipt operation={record.operation} workingDirectory={record.workingDirectory} decision={record.decision} /> })
-  }
-  if (recorded) {
-    const { request_id, request_generation } = recorded.question.permission_request
-    const key = permissionEntryKey(request_id, request_generation)
-    entries.set(key, { key, afterMessageId: anchors.get(key),
-      node: <ApprovalReceipt {...permissionOperation(recorded.question.permission_request, recorded.question.tool_arguments, workspace)}
-        decision={recorded.decision} continued={recorded.continued} /> })
-  }
-  if (pending) {
-    const { request_id, request_generation } = pending.permission_request
-    const key = permissionEntryKey(request_id, request_generation)
-    if (!entries.has(key)) entries.set(key, { key, afterMessageId: anchors.get(key),
-      node: <QuestionDialog q={pending} workspace={workspace} {...controls} /> })
-  }
-  return [...entries.values()]
+  const history = useMemo(() => {
+    const entries = new Map<string, TimelineAttachment>()
+    const anchors = new Map<string, string>()
+    for (const message of messages) {
+      if (message.role !== "assistant" || message.type !== "tool_result" || !message.permissionHistory) continue
+      const record = message.permissionHistory
+      const key = permissionEntryKey(record.requestId, record.generation)
+      anchors.set(key, message.id)
+      if (record.decision) entries.set(key, { key, afterMessageId: message.id,
+        node: <ApprovalReceipt operation={record.operation} workingDirectory={record.workingDirectory} decision={record.decision} /> })
+    }
+    return { entries, anchors }
+  }, [messages])
+
+  return useMemo(() => {
+    const entries = new Map(history.entries)
+    if (recorded) {
+      const { request_id, request_generation } = recorded.question.permission_request
+      const key = permissionEntryKey(request_id, request_generation)
+      entries.set(key, { key, afterMessageId: history.anchors.get(key),
+        node: <ApprovalReceipt {...permissionOperation(recorded.question.permission_request, recorded.question.tool_arguments, workspace)}
+          decision={recorded.decision} continued={recorded.continued} /> })
+    }
+    if (pending) {
+      const { request_id, request_generation } = pending.permission_request
+      const key = permissionEntryKey(request_id, request_generation)
+      if (!entries.has(key)) entries.set(key, { key, afterMessageId: history.anchors.get(key),
+        node: <QuestionDialog q={pending} workspace={workspace} {...controls} /> })
+    }
+    return [...entries.values()]
+  }, [controls, history, pending, recorded, workspace])
 }
 
 type ObservedApproval = { key: string; order: number; card: SupervisorApprovalCardData; afterMessageId: string | null }
@@ -115,13 +121,7 @@ export function useSupervisorApprovalTimeline(active: boolean, anchor: string | 
       : previous)
   }, [active, anchor])
 
-  if (!active) return []
-  const entries: (TimelineAttachment & { order: number })[] = recorded.map((entry) => ({
-    key: entry.key, order: entry.order, afterMessageId: entry.afterMessageId,
-    node: <SupervisorApprovalCard card={entry.card} stale={false} receipt={entry}
-      onOpenSession={onOpenSession} onRefresh={refresh} />,
-  }))
-  const decide = async (observed: ObservedApproval, choice: PermissionDecisionChoice) => {
+  const decide = useCallback(async (observed: ObservedApproval, choice: PermissionDecisionChoice) => {
     const { card, key } = observed
     const decision = permissionDecisionFor(card.request, choice)
     if (!decision || !snapshot || snapshot.failed || snapshot.key !== readKey
@@ -139,31 +139,39 @@ export function useSupervisorApprovalTimeline(active: boolean, anchor: string | 
     } finally {
       inFlight.current.delete(key)
     }
-  }
-  if (snapshot) {
-    const stale = snapshot.key !== readKey || snapshot.failed
-    for (const observed of snapshot.cards) {
-      if (recorded.some((entry) => entry.key === observed.key)) continue
-      entries.push({
-        key: observed.key, order: observed.order, afterMessageId: observed.afterMessageId,
-        node: <SupervisorApprovalCard card={observed.card} stale={stale}
-          submitting={inFlight.current.has(observed.key)}
-          failed={attempts[observed.key]?.phase === "failed" && attempts[observed.key]?.readKey === snapshot.key}
-          onOpenSession={onOpenSession} onRefresh={refresh} onDecide={(choice) => void decide(observed, choice)} />,
-      })
+  }, [attempts, readKey, snapshot])
+  return useMemo(() => {
+    if (!active) return []
+    const entries: (TimelineAttachment & { order: number })[] = recorded.map((entry) => ({
+      key: entry.key, order: entry.order, afterMessageId: entry.afterMessageId,
+      node: <SupervisorApprovalCard card={entry.card} stale={false} receipt={entry}
+        onOpenSession={onOpenSession} onRefresh={refresh} />,
+    }))
+    if (snapshot) {
+      const stale = snapshot.key !== readKey || snapshot.failed
+      for (const observed of snapshot.cards) {
+        if (recorded.some((entry) => entry.key === observed.key)) continue
+        entries.push({
+          key: observed.key, order: observed.order, afterMessageId: observed.afterMessageId,
+          node: <SupervisorApprovalCard card={observed.card} stale={stale}
+            submitting={inFlight.current.has(observed.key)}
+            failed={attempts[observed.key]?.phase === "failed" && attempts[observed.key]?.readKey === snapshot.key}
+            onOpenSession={onOpenSession} onRefresh={refresh} onDecide={(choice) => void decide(observed, choice)} />,
+        })
+      }
+      if (snapshot.failed && (snapshot.cards.length || pendingRevision !== "[]")) {
+        entries.push({
+          key: "supervisor-approvals-error",
+          order: Number.MAX_SAFE_INTEGER,
+          node: <div role="alert" className="flex items-center justify-between gap-2 rounded-lg border p-3 text-sm">
+            <span>{t("supervisor_approvals_unavailable")}</span>
+            <Button type="button" variant="outline" size="sm" disabled={snapshot.key !== readKey} onClick={refresh}>
+              {t("refresh_request_0ab317cc")}
+            </Button>
+          </div>,
+        })
+      }
     }
-    if (snapshot.failed && (snapshot.cards.length || pendingRevision !== "[]")) {
-      entries.push({
-        key: "supervisor-approvals-error",
-        order: Number.MAX_SAFE_INTEGER,
-        node: <div role="alert" className="flex items-center justify-between gap-2 rounded-lg border p-3 text-sm">
-          <span>{t("supervisor_approvals_unavailable")}</span>
-          <Button type="button" variant="outline" size="sm" disabled={snapshot.key !== readKey} onClick={refresh}>
-            {t("refresh_request_0ab317cc")}
-          </Button>
-        </div>,
-      })
-    }
-  }
-  return entries.sort((left, right) => left.order - right.order)
+    return entries.sort((left, right) => left.order - right.order)
+  }, [active, attempts, decide, onOpenSession, pendingRevision, readKey, recorded, snapshot, t])
 }

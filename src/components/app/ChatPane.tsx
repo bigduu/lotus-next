@@ -185,6 +185,7 @@ function fileToAttachment(file: File): Promise<Attachment> {
 }
 
 type ChatState = ReturnType<typeof useChat>
+const EMPTY_PENDING_USER_IMAGES = [] as const
 
 /**
  * A self-contained chat column: header + messages + composer + this pane's
@@ -271,7 +272,7 @@ export function ChatPane({
     contextCompression,
     outputRate,
     pendingUserText,
-    pendingUserImages = [],
+    pendingUserImages = EMPTY_PENDING_USER_IMAGES,
     pendingUserMessages,
     sending,
     submissionPending,
@@ -300,21 +301,34 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const executionBlocked = chat.executionCompatibility?.blocked === true
+  const questionControls = useMemo(() => ({
+    onAnswer: answerQuestion,
+    onRefresh: refreshQuestion,
+    onRetry: retryQuestion,
+    loading: questionLoading,
+    submitting: questionSubmitting,
+    unavailable: questionUnavailable,
+    error: questionError,
+    canRetry: questionCanRetry,
+  }), [answerQuestion, refreshQuestion, retryQuestion, questionLoading, questionSubmitting,
+    questionUnavailable, questionError, questionCanRetry])
   const permissionTimeline = usePermissionTimeline(messages,
     !executionBlocked && pendingQuestion?.interaction_kind === "permission" ? pendingQuestion : null,
-    chat.recordedPermission, currentChat?.config?.workspacePath, {
-      onAnswer: (choice) => void answerQuestion(choice),
-      onRefresh: () => void refreshQuestion(),
-      onRetry: () => void retryQuestion(),
-      loading: questionLoading,
-      submitting: questionSubmitting,
-      unavailable: questionUnavailable,
-      error: questionError,
-      canRetry: questionCanRetry,
-    })
+    chat.recordedPermission, currentChat?.config?.workspacePath, questionControls)
   const supervisorApprovalTimeline = useSupervisorApprovalTimeline(
     !secondary && !historyBlocked && pageVisible !== false && !!currentChat && isDefaultSupervisor(currentChat),
     messages.at(-1)?.id ?? null, onOpenRecordedSession)
+  const actionableApproval = chat.approvalCompatibility?.blocked ? null : pendingApproval
+  const { approvalSubmitting, approvalError } = chat
+  const timelineAttachments = useMemo(() => {
+    const entries = [...permissionTimeline, ...supervisorApprovalTimeline]
+    if (actionableApproval) entries.push({
+      key: JSON.stringify(["child-approval", actionableApproval.childSessionId, actionableApproval.requestId]),
+      node: <ChildApprovalCard a={actionableApproval} onRespond={respondApproval}
+        submitting={approvalSubmitting} error={approvalError} />,
+    })
+    return entries
+  }, [permissionTimeline, supervisorApprovalTimeline, actionableApproval, respondApproval, approvalSubmitting, approvalError])
   // A background-exec wait keeps the run live from the user's perspective: the
   // runtime suspended the session while the monitored command still executes,
   // and its result returns automatically. Keep the running presentation until
@@ -539,9 +553,9 @@ export function ChatPane({
   toastScopeRef.current = toastScope
   useEffect(() => { setToast(null); setForking(false) }, [currentSessionId])
   const toastId = useRef(0)
-  const showToast = (message: string, kind: ToastNotice["kind"] = "info", details?: string) => {
+  const showToast = useCallback((message: string, kind: ToastNotice["kind"] = "info", details?: string) => {
     if (toastScopeRef.current === toastScope) setToast({ id: ++toastId.current, message, kind, details })
-  }
+  }, [toastScope])
 
   // NOTE: the background-shell completion NOTIFICATION is no longer fired here.
   // It arrives as a backend `notification` event (deduped + preference-gated,
@@ -603,8 +617,9 @@ export function ChatPane({
     sessionId: currentSessionId, draftKey, ordinarySelection: reasoningSelection, root: rootAuthority,
     disabled: submissionPending || compacting || currentlyRunning || queue.busy || queue.hasUnconfirmed,
   })
-  const rootSessionUnsafe = () => rootMode.busy || rootMode.blocked
-    || Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
+  const rootSessionUnsafe = useCallback(() => rootMode.busy || rootMode.blocked
+    || Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear"),
+  [currentSessionId, rootMode.busy, rootMode.blocked])
   const skillModeConflict = selectedSkill && rootMode.selected === true && !rootMode.child
     ? uiText("the_selected_skill_is_incompatible_with_ultra_orchestra_fd2e7fa6")
     : null
@@ -1151,7 +1166,7 @@ export function ChatPane({
       })
   }
 
-  const handleFork = (id: string) => {
+  const handleFork = useCallback((id: string) => {
     if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_forking_is_un_ca51f044")); return }
     const draftKey = currentDraftKeyRef.current
     setForking(true)
@@ -1170,7 +1185,19 @@ export function ChatPane({
       if (toastScopeRef.current === toastScope) setForking(false)
       showToast(uiText("operation_failed_0c3b4cf7"), "error", getErrorMessage(error))
     })
-  }
+  }, [fork, rootSessionUnsafe, showToast, toastScope])
+  const handleRegenerate = useCallback(() => {
+    if (executionBlocked) return
+    if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_regeneration__134c0a98")); return }
+    if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
+    void regenerate()
+  }, [executionBlocked, modelSaving, regenerate, rootSessionUnsafe, showToast])
+  const handleEditMessage = useCallback((id: string, text: string) => {
+    if (executionBlocked) return
+    if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_editing_and_r_45b99ff9")); return }
+    if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
+    void editMessage(id, text)
+  }, [editMessage, executionBlocked, modelSaving, rootSessionUnsafe, showToast])
 
   const launchWorkbench = (action: () => void) => {
     action()
@@ -1377,17 +1404,10 @@ export function ChatPane({
           contentRef={contentRef}
           onScroll={handleScroll}
           messages={messages}
-          timelineAttachments={[
-            ...permissionTimeline, ...supervisorApprovalTimeline,
-            ...(pendingApproval && !chat.approvalCompatibility?.blocked ? [{
-              key: JSON.stringify(["child-approval", pendingApproval.childSessionId, pendingApproval.requestId]),
-              node: <ChildApprovalCard a={pendingApproval} onRespond={(ok) => void respondApproval(ok)}
-                submitting={chat.approvalSubmitting} error={chat.approvalError} />,
-            }] : []),
-          ]}
+          timelineAttachments={timelineAttachments}
           mergedSubAgents={mergedSubAgents}
           subAgentError={subAgentView.error}
-          onRefreshSubAgents={() => { void subAgentView.refresh() }}
+          onRefreshSubAgents={subAgentView.refresh}
           sending={currentlyRunning || delegationWaiting}
           latestRunFinished={
             !currentlyRunning &&
@@ -1408,24 +1428,12 @@ export function ChatPane({
           pendingUserMessages={pendingUserMessages}
           forking={forking}
           executionBlocked={executionBlocked}
-          onSelectSubAgent={(childId) => {
-            selectSubAgentInPane(childId)
-          }}
+          onSelectSubAgent={selectSubAgentInPane}
           onPreviewImage={setPreview}
-          onRegenerate={() => {
-            if (executionBlocked) return
-            if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_regeneration__134c0a98")); return }
-            if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
-            void regenerate()
-          }}
+          onRegenerate={handleRegenerate}
           onFork={handleFork}
-          onDelete={(id) => void deleteMessage(id)}
-          onEditMessage={(id, text) => {
-            if (executionBlocked) return
-            if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_editing_and_r_45b99ff9")); return }
-            if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
-            void editMessage(id, text)
-          }}
+          onDelete={deleteMessage}
+          onEditMessage={handleEditMessage}
         />
         )}
 
