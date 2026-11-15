@@ -1515,8 +1515,11 @@ export function ChatPane({
           <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? uiText("supervisor_work_tab") })}</span>
           <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>{uiText("ticket_clear_reference_b2e538a2")}</button>
         </div> : null}
-        {semanticComposer && (ticketIngress.error || pendingTicketMessage) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? uiText("ticket_the_previous_message_is_not_confirmed_retry_w_7369504e")}
-          {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>{uiText("ticket_retry_start_47d5cd3e")}</button> : null}
+        {semanticComposer && ticketIngress.starting ? <p role="status" className="mx-4 mb-2 text-xs text-muted-foreground">
+          {uiText("ticket_starting")}
+        </p> : null}
+        {semanticComposer && !ticketIngress.starting && (ticketIngress.error || pendingTicketMessage && !ticketIngress.busy) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? uiText("ticket_the_previous_message_is_not_confirmed_retry_w_7369504e")}
+          {ticketIngress.canRetryStart ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>{uiText("ticket_retry_start_47d5cd3e")}</button> : null}
         </div> : null}
         <div data-composer-region className="relative shrink-0">
           {/* Keep the jump control centered on the available chat column. */}

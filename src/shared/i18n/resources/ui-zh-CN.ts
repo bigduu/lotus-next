@@ -2783,6 +2783,7 @@ export const uiZhCn = {
   "ticket_request_2f7794e6": "的请求",
   "ticket_clear_reference_b2e538a2": "清除引用",
   "ticket_the_previous_message_is_not_confirmed_retry_w_7369504e": "上次消息尚未确认，请用原文和原附件重试。",
+  "ticket_starting": "正在启动",
   "ticket_retry_start_47d5cd3e": "重试启动",
   "ticket_referenced_request__7209ca36": "引用请求：",
   "ticket_draft_2a2fd29b": "草稿",
