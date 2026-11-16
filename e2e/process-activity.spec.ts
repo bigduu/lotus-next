@@ -604,7 +604,7 @@ test("completed history merges tools and reasoning while preserving each assista
   expect(observation.consoleErrors).toEqual([])
 })
 
-test("saved background progress stays visible on reload until the final answer", async ({ page }) => {
+test("saved background progress stays visible on reload until the final answer", async ({ page }, testInfo) => {
   const progressBody = "The artifact is building in the background."
   const finalBody = "The artifact passed verification."
   const history = [
@@ -642,6 +642,10 @@ test("saved background progress stays visible on reload until the final answer",
   await expect(notice).toBeVisible()
   await expect(progress).toBeVisible()
   await expect(divider).toHaveCount(0)
+  await testInfo.attach("Progress visible after reload", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
 
   history.push({
     id: "background-final", role: "assistant", phase: "final_answer",
@@ -654,6 +658,10 @@ test("saved background progress stays visible on reload until the final answer",
   await expect(divider).toHaveAttribute("aria-expanded", "false")
   await expect(fold.locator('[data-message-row="background-progress"]')).toHaveCount(1)
   await expect(transcript.getByText(finalBody, { exact: true })).toBeVisible()
+  await testInfo.attach("Progress folded after the final reply", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
   await divider.click()
   await expect(progress).toBeVisible()
   expect(observation.pageErrors).toEqual([])
