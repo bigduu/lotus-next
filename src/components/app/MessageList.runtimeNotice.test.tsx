@@ -52,6 +52,7 @@ afterEach(() => {
 const noticeHistoryMessage = {
   id: "runtime-wait-notice",
   role: "assistant" as const,
+  phase: "final_answer" as const,
   content: "Moved command `e9511561-7f99-4389-a7de-0c9e7a39ffe7` to background monitoring. You can continue this conversation; its result will return automatically.",
   created_at: "2026-10-30T16:00:00Z",
   metadata: {
@@ -60,6 +61,22 @@ const noticeHistoryMessage = {
     exec_session_id: "e9511561-7f99-4389-a7de-0c9e7a39ffe7",
   },
 }
+
+const progressHistory = [
+  { id: "build-user", role: "user" as const, content: "Build and check the artifact.", created_at: "2026-10-30T15:59:00Z" },
+  {
+    id: "build-progress", role: "assistant" as const, phase: "commentary" as const,
+    content: "The build has started.", created_at: "2026-10-30T15:59:10Z",
+  },
+  {
+    id: "read-command", role: "assistant" as const, content: "", created_at: "2026-10-30T15:59:20Z",
+    tool_calls: [{ id: "read-output", type: "function", function: { name: "write_stdin", arguments: "{}" } }],
+  },
+  {
+    id: "read-result", role: "tool" as const, tool_call_id: "read-output",
+    content: "running", created_at: "2026-10-30T15:59:21Z",
+  },
+]
 
 function renderMessageList(messages: Message[], liveSegments: LiveSegment[] = [], backgroundExecWaiting = false) {
   const container = document.createElement("div")
@@ -74,7 +91,7 @@ function renderMessageList(messages: Message[], liveSegments: LiveSegment[] = []
         onScroll={vi.fn()}
         messages={messages}
         mergedSubAgents={{}}
-        sending={liveSegments.length > 0}
+        sending={backgroundExecWaiting || liveSegments.length > 0}
         latestRunFinished={false}
         streaming={null}
         streamingActive={false}
@@ -153,5 +170,58 @@ describe("runtime background-exec wait notices", () => {
     expect(container.textContent).not.toContain(uiText("runtime_notice_background_exec_running_93d0e2c1"))
     // The earlier notice still renders as a card.
     expect(container.querySelector('[data-runtime-notice="background_exec_wait"]')).not.toBeNull()
+  })
+
+  it("keeps progress in the transcript while a background notice marked final is active", () => {
+    const messages = mapHistoryMessagesToUi("runtime-notice-session", [...progressHistory, noticeHistoryMessage])
+    const container = renderMessageList(messages, [], true)
+
+    expect(container.querySelector("[data-turn-collapse]")).toBeNull()
+    expect(container.querySelector('[data-message-row="build-progress"]')?.textContent).toContain("The build has started.")
+    expect(container.textContent).toContain(uiText("runtime_notice_background_exec_running_93d0e2c1"))
+  })
+
+  it("keeps progress visible when history restores an unphased background notice", () => {
+    const messages = mapHistoryMessagesToUi("runtime-notice-session", [
+      ...progressHistory,
+      { ...noticeHistoryMessage, phase: undefined },
+    ])
+    const container = renderMessageList(messages)
+
+    expect(container.querySelector("[data-turn-collapse]")).toBeNull()
+    expect(container.querySelector('[data-message-row="build-progress"]')?.textContent).toContain("The build has started.")
+  })
+
+  it("keeps previous progress visible after an interjection when only the notice text was retained", () => {
+    const messages = mapHistoryMessagesToUi("runtime-notice-session", [
+      ...progressHistory,
+      { ...noticeHistoryMessage, phase: undefined, metadata: undefined },
+      { id: "interjection", role: "user" as const, content: "What are you waiting for?", created_at: "2026-10-30T16:01:00Z" },
+    ])
+    const container = renderMessageList(messages)
+
+    expect(container.querySelector("[data-turn-collapse]")).toBeNull()
+    expect(container.querySelector('[data-message-row="build-progress"]')?.textContent).toContain("The build has started.")
+    expect(container.querySelector('[data-message-row="interjection"]')?.textContent).toContain("What are you waiting for?")
+  })
+
+  it("folds the process once the recorded final answer arrives", () => {
+    const messages = mapHistoryMessagesToUi("runtime-notice-session", [
+      ...progressHistory,
+      noticeHistoryMessage,
+      {
+        id: "build-final", role: "assistant" as const, phase: "final_answer" as const,
+        content: "The artifact passed verification.", created_at: "2026-10-30T16:05:00Z",
+      },
+    ])
+    const container = renderMessageList(messages)
+    const fold = container.querySelector('[data-turn-collapse="collapsed-turn-build-final"]')
+
+    expect(container.querySelectorAll("[data-turn-collapse]")).toHaveLength(1)
+    expect(fold?.querySelector('[data-message-row="build-progress"]')?.textContent).toContain("The build has started.")
+    expect(fold?.querySelector("[data-turn-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+    const final = container.querySelector('[data-message-row="build-final"]')
+    expect(final?.textContent).toContain("The artifact passed verification.")
+    expect(final?.closest("[data-turn-collapse]")).toBeNull()
   })
 })
