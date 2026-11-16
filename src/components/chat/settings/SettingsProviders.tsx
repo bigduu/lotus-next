@@ -65,6 +65,7 @@ export function SettingsProviders() {
   }, [canManage, catalog, loadCatalog])
 
   const createInstance = async (v: InstanceSavePayload) => {
+    if (v.type === "bodhi") return
     const result = await createProviderInstance({
       type: v.type,
       label: v.label,

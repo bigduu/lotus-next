@@ -12,6 +12,7 @@ function compressionMessage(feedback?: ContextCompressionFeedback | null): strin
     case "failed":
       switch (feedback.reason) {
         case "candidate_plan": return uiText("context_compression_notice_failed_candidate")
+        case "empty_summary": return uiText("context_compression_notice_empty_summary")
         case "postcondition": return uiText("context_compression_notice_failed_postcondition")
         case "other": return uiText("context_compression_notice_failed")
         default: return null

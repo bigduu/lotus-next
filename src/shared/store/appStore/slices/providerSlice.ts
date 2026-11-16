@@ -11,7 +11,6 @@ import {
   type CreateProviderInstanceRequest,
   type ProviderInstance,
   type ProviderInstancesConfig,
-  type ProviderKind,
   type ProviderSnapshotRelationIssue,
   type UpdateProviderInstanceRequest,
 } from "@shared/types/providerConfig";
@@ -115,7 +114,6 @@ export interface ProviderState {
   getModelsForProvider: (instanceId: string) => ProviderModelDescriptor[];
   getProviderInstance: (instanceId: string) => ProviderInstance | undefined;
   getProviderDisplayLabel: (instanceId: string) => string;
-  getProviderType: (instanceId: string) => ProviderKind | undefined;
 }
 
 let providerLoadRevision = 0;
@@ -382,8 +380,5 @@ export const useProviderStore = create<ProviderState>((set, get) => {
       const instance = snapshot?.instances.find((item) => item.id === instanceId);
       return instance?.label || instance?.type || instanceId;
     },
-
-    getProviderType: (instanceId) =>
-      get().providerSnapshot?.instances.find((instance) => instance.id === instanceId)?.type,
   };
 });

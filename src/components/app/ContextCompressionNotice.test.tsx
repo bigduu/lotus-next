@@ -26,6 +26,7 @@ const cases: { feedback: ContextCompressionFeedback; key: Parameters<typeof uiTe
   { feedback: { status: "completed", awaitingUsage: true }, key: "context_compression_notice_completed_waiting" },
   { feedback: { status: "completed", awaitingUsage: false }, key: "context_compression_notice_completed" },
   { feedback: { status: "failed", reason: "candidate_plan" }, key: "context_compression_notice_failed_candidate" },
+  { feedback: { status: "failed", reason: "empty_summary" }, key: "context_compression_notice_empty_summary" },
   { feedback: { status: "failed", reason: "postcondition" }, key: "context_compression_notice_failed_postcondition" },
   { feedback: { status: "failed", reason: "other" }, key: "context_compression_notice_failed" },
   { feedback: { status: "deferred", reason: "tool_protocol" }, key: "context_compression_notice_deferred_tool" },
@@ -50,6 +51,7 @@ it.each(["en-US", "zh-CN"] as const)("announces distinct safe outcome messages i
     messages.push(notice.textContent!)
   }
   expect(new Set(messages).size).toBe(cases.length)
+  expect(uiText("context_compression_notice_empty_summary")).toContain(locale === "zh-CN" ? "推理强度" : "lower the reasoning effort")
   expect(uiText("context_compression_notice_failed_postcondition")).toContain(locale === "zh-CN" ? "未采用" : "not used")
   expect(uiText("context_compression_notice_completed_waiting")).toContain(locale === "zh-CN" ? "下一次提示词" : "next prompt")
   expect(uiText("context_compression_notice_completed")).toContain(locale === "zh-CN" ? "指令、工具和近期消息" : "instructions, tools, and recent messages")

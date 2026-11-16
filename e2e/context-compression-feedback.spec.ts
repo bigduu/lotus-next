@@ -291,6 +291,17 @@ test("started progress and completion wait for actual whole-prompt budget", asyn
   await verifyIsolation(f)
 })
 
+test("an empty summary tells the user to lower reasoning effort", async ({ page }, info) => {
+  const f = await prepare(page, info)
+  f.status("started")
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_running"))
+  f.status("failed_empty_summary")
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_empty_summary"))
+  await expect(f.notice.locator("svg")).toHaveCount(0)
+  await capture(f, "empty-summary-reasoning-guidance")
+  await verifyIsolation(f)
+})
+
 test("producer cancellation is distinct from a successful summary", async ({ page }, info) => {
   const f = await prepare(page, info)
   f.budget(90)

@@ -58,32 +58,49 @@ export interface SubAgentOrigin {
   id: string
 }
 
-/**
- * Placement evidence only: a matched create call/result, never arbitrary
- * message text. Depends on the transcript alone, so a child's status churn
- * never re-scans or re-parses history.
- */
-export function collectSubAgentOrigins(
-  groups: { key: string; messages: Message[] }[],
-): SubAgentOrigin[] {
-  renderProbe.count("subagent.origins.collect")
-  const creates = new Map<string, { key: string; field: CreationField }>()
+type ToolGroup = { key: string; messages: readonly Message[] }
+type Creation = { key: string; field: CreationField }
+
+interface SubAgentOriginIndex {
+  creates: ReadonlyMap<string, Creation>
+  candidates: SubAgentOrigin[]
+}
+
+/** Index matched create calls and results. A result in the live tail may
+ * complete an earlier call even before the canonical history catches up. */
+function scanSubAgentOrigins(groups: readonly ToolGroup[], earlier?: ReadonlyMap<string, Creation>): SubAgentOriginIndex {
+  const creates = new Map<string, Creation>()
   const candidates: SubAgentOrigin[] = []
   for (const group of groups) for (const message of group.messages) {
     if (!("type" in message)) continue
     if (message.role === "assistant" && message.type === "tool_call") for (const call of message.toolCalls) {
       const field = subAgentTool(call.toolName) ? creationField(call.parameters) : null
-      if (field && !creates.has(call.toolCallId)) creates.set(call.toolCallId, { key: group.key, field })
+      if (field && !earlier?.has(call.toolCallId) && !creates.has(call.toolCallId)) {
+        creates.set(call.toolCallId, { key: group.key, field })
+      }
     }
     if (message.type !== "tool_result" || message.isError) continue
-    const origin = creates.get(message.toolCallId)
+    const origin = earlier?.get(message.toolCallId) ?? creates.get(message.toolCallId)
     if (!origin) continue
     const row = parseResultRow(message)
     if (!row || row.reused === true) continue
     const id = row[origin.field]
     if (typeof id === "string") candidates.push({ key: origin.key, id })
   }
-  return candidates
+  return { creates, candidates }
+}
+
+export function indexSubAgentOrigins(groups: readonly ToolGroup[]): SubAgentOriginIndex {
+  renderProbe.count("subagent.origins.history")
+  return scanSubAgentOrigins(groups)
+}
+
+export function collectSubAgentOrigins(groups: readonly ToolGroup[], history?: SubAgentOriginIndex): SubAgentOrigin[] {
+  renderProbe.count("subagent.origins.collect")
+  if (history && groups.length === 0) return history.candidates
+  const { candidates } = scanSubAgentOrigins(groups, history?.creates)
+  if (!history) return candidates
+  return candidates.length ? [...history.candidates, ...candidates] : history.candidates
 }
 
 /**

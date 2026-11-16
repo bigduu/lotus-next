@@ -7,6 +7,8 @@ import {
 describe("safe context compression feedback", () => {
   it.each([
     ["failed_candidate_plan:/private/token=secret", { status: "failed", reason: "candidate_plan" }],
+    ["failed_empty_summary", { status: "failed", reason: "empty_summary" }],
+    ["failed_empty_summary:private diagnostic", { status: "failed", reason: "other" }],
     ["failed_postcondition:raw summary", { status: "failed", reason: "postcondition" }],
     ["failed:provider message", { status: "failed", reason: "other" }],
     ["failed_future_status:sensitive", { status: "failed", reason: "other" }],

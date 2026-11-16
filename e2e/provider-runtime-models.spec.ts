@@ -14,6 +14,22 @@ const openProviders = async (page: Page) => {
   else await page.getByRole("button", { name: "提供方", exact: true }).click()
 }
 
+test("new provider offers only the three general provider types", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  await page.goto(standaloneScenario.entryUrl)
+  await openProviders(page)
+
+  await page.getByRole("button", { name: "新增", exact: true }).click()
+  await page.getByRole("combobox", { name: "提供方类型", exact: true }).click()
+  await expect(page.getByRole("option")).toHaveText(["Anthropic", "OpenAI", "Google Gemini"])
+  await testInfo.attach("provider-types", { body: await page.screenshot(), contentType: "image/png" })
+  expect(observation.pageErrors).toEqual([])
+})
+
 // Stateful HTTP fixtures verify the UI contract; backend admission has separate Rust coverage.
 test("Work review purpose survives unrelated edits and can be explicitly unset", async ({ page }, testInfo) => {
   await page.addInitScript(() => {

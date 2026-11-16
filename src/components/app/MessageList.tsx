@@ -2,6 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import i18n from "@shared/i18n"
 import {
   Fragment,
+  memo,
   useCallback,
   useLayoutEffect,
   useMemo,
@@ -37,7 +38,7 @@ import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
 import { RuntimeNoticeCard, BackgroundExecWaitHint } from "@/components/chat/RuntimeNoticeCard"
 import { runtimeNoticeFromMetadata } from "@/components/chat/runtimeNotices"
-import { collectSubAgentOrigins, placeSubAgents } from "./subAgentGroups"
+import { collectSubAgentOrigins, indexSubAgentOrigins, placeSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
@@ -93,6 +94,11 @@ function messageText(m: Message): string {
   return ""
 }
 
+function messageRuntimeNotice(m: Message, text = messageText(m)) {
+  if (m.role !== "assistant") return null
+  return runtimeNoticeFromMetadata("metadata" in m ? m.metadata : undefined, text)
+}
+
 function isToolMessage(m: Message): boolean {
   const t = (m as { type?: string }).type
   return t === "tool_call" || t === "tool_result"
@@ -128,6 +134,14 @@ type TurnCollapseItem = {
 }
 type RenderItem = { kind: "msg"; m: Message; streaming?: boolean } | ProcessItem
 type DisplayItem = RenderItem | TurnCollapseItem
+
+function subAgentToolGroups(items: readonly RenderItem[]) {
+  return items.flatMap((item) => {
+    if (item.kind !== "process") return []
+    const messages = item.parts.flatMap((part) => part.kind === "tools" ? part.items : [])
+    return messages.length ? [{ key: item.key, messages }] : []
+  })
+}
 
 type MessageHistoryEntry = {
   key: string
@@ -376,14 +390,17 @@ function buildDisplayItems(
     const next = items[index]
     const nextIsUser = next?.kind === "msg" && next.m.role === "user"
     const summary = index - 1
-    const recorded = summary >= 0 && isRecordedFinal(items[summary])
+    const conclusion = items[summary]
+    // Background wait notices can carry a final phase in persisted history.
+    const runtimeNotice = conclusion?.kind === "msg" && messageRuntimeNotice(conclusion.m)
+    const recorded = summary >= 0 && !runtimeNotice && isRecordedFinal(conclusion)
     if (next && !nextIsUser && !recorded) continue
 
     const first = boundary + 1
     boundary = nextIsUser ? index : summary
     // A committed answer closes its own reply even if an internal wake
     // started another reply without adding a visible user message.
-    if (summary < first || !isFinalAssistantResponse(items[summary])) continue
+    if (summary < first || runtimeNotice || !isFinalAssistantResponse(conclusion)) continue
     if (!next && !collapseLastTurn && !recorded) continue
     const indexes: number[] = []
     for (let itemIndex = first; itemIndex < summary; itemIndex += 1) indexes.push(itemIndex)
@@ -595,7 +612,7 @@ function MessageActions({
   )
 }
 
-export function MessageList({
+export const MessageList = memo(function MessageList({
   scrollRef,
   contentRef,
   onScroll,
@@ -679,10 +696,8 @@ export function MessageList({
   )
   // The turn still being streamed stays fully visible; every finished turn with
   // a recorded conclusion folds its middle into one divider.
-  const displayItems = useMemo(
-    () => buildDisplayItems(renderItems, !(sending || liveItems.length > 0)),
-    [renderItems, sending, liveItems.length],
-  )
+  const foldLatestTurn = !sending && liveItems.length === 0
+  const displayItems = useMemo(() => buildDisplayItems(renderItems, foldLatestTurn), [renderItems, foldLatestTurn])
   const actionableAssistantIndexes = useMemo(
     () => buildActionableAssistantIndexes(displayItems, !sending),
     [displayItems, sending],
@@ -763,13 +778,12 @@ export function MessageList({
   // a 724px report now renders and every later row lands inside it. Whenever
   // the entry sequence changes in any way (identity at a position, or count),
   // re-measure every mounted row.
-  const previousEntryKeysRef = useRef(historyEntries.map((entry) => entry.key))
+  const previousEntryKeysRef = useRef<string[] | null>(null)
   useLayoutEffect(() => {
     const previous = previousEntryKeysRef.current
     previousEntryKeysRef.current = historyEntries.map((entry) => entry.key)
-    const changed = previous.length !== historyEntries.length
-      || previous.some((key, index) => key !== historyEntries[index]?.key)
-    if (!changed) return
+    if (!previous || previous.length === historyEntries.length
+      && previous.every((key, index) => key === historyEntries[index]?.key)) return
     const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>("[data-history-entry-key]")
     for (const row of rows ?? []) {
       const index = virtualizer.indexFromElement(row)
@@ -828,13 +842,11 @@ export function MessageList({
     return ref
   }
 
-  const subAgentCandidates = useMemo(() => {
-    renderProbe.count("subagent.origins.memo")
-    return collectSubAgentOrigins([...renderItems, ...liveItems]
-      .flatMap((item) => item.kind === "process" ? [{ key: item.key,
-        messages: item.parts.flatMap((part) => part.kind === "tools" ? part.items : []),
-      }] : []))
-  }, [renderItems, liveItems])
+  const historyOrigins = useMemo(() => indexSubAgentOrigins(subAgentToolGroups(renderItems)), [renderItems])
+  const subAgentCandidates = useMemo(
+    () => collectSubAgentOrigins(subAgentToolGroups(liveItems), historyOrigins),
+    [liveItems, historyOrigins],
+  )
   // Placement is a cheap step over the transcript-derived candidates, so child
   // status churn re-associates cards without re-scanning or re-parsing history.
   const subAgentGroups = useMemo(() => {
@@ -846,8 +858,8 @@ export function MessageList({
   // streaming, pending user or live segments there is no visible body at all.
   // Unplaced children then lose every provenance match, so fold them behind a
   // single history entry line instead of stacking the cards above the fold.
-  const transcriptCleared = messages.every((message) => message.role === "system")
-    && !streaming && !hasPendingUser && liveSegments.length === 0
+  const onlySystemMessages = useMemo(() => messages.every((message) => message.role === "system"), [messages])
+  const transcriptCleared = onlySystemMessages && !streaming && !hasPendingUser && liveSegments.length === 0
 
   const renderImages = (imgs: readonly { url?: string; base64?: string; type?: string }[] | undefined) => imgs?.length ? (
     <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -999,9 +1011,7 @@ export function MessageList({
     const isUser = m.role === "user"
     // Runtime-authored notices (e.g. background exec wait) render as a
     // localized status card instead of their raw English machine text.
-    const runtimeNotice = !isUser
-      ? runtimeNoticeFromMetadata((m as { metadata?: Record<string, unknown> }).metadata, text)
-      : null
+    const runtimeNotice = messageRuntimeNotice(m, text)
     const showMessageActions = !readOnly && !options?.live && !isCompletedAnswerHandoff(m) && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length) return null
@@ -1198,4 +1208,4 @@ export function MessageList({
       </div>
     </div>
   )
-}
+})

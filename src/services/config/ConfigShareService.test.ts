@@ -115,6 +115,61 @@ describe("ConfigShareService", () => {
     expect(JSON.stringify(result)).not.toContain("PRIVATE_MARKER")
   })
 
+  it.each(["legacy", "migrated"])("excludes retired provider references from a %s export inventory", async (state) => {
+    const relay = { id: "relay", type: "openai", label: "Relay", enabled: true, config: {} }
+    const retired = { id: "oauth-work", type: "copilot", label: "GitHub Copilot", enabled: true, config: {} }
+    const chat = { provider: retired.id, model: "old-chat" }
+    const fast = { provider: "openai", model: "supported-fast" }
+    const helper = { provider: relay.id, model: "supported-child" }
+    vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue({
+      default_provider_instance_id: state === "legacy" ? retired.id : null,
+      instances: state === "legacy" ? [relay, retired] : [relay],
+      defaults: { chat, fast, subagent_models: { retired: chat, helper } },
+    })
+    vi.spyOn(settingsService, "getEnvVars").mockResolvedValue({
+      revision: 1, entries: [{ name: "APP_MODE", secret: false, has_value: true, value: "fixture" }],
+    })
+    await expect(service.inventory()).resolves.toEqual({
+      providers: [{ id: relay.id, label: relay.label, type: relay.type }],
+      scenarios: [{ name: "fast", provider: relay.id, model: fast.model }],
+      subagent_models: [{ name: "helper", ...helper }],
+      env: [{ name: "APP_MODE", secret: false, has_value: true }],
+    })
+  })
+
+  it.each(["legacy", "migrated"])("never exports a retired exact id through a type alias on a %s server", async (state) => {
+    const relay = { id: "relay", type: "openai", label: "Relay", enabled: true, config: {} }
+    const retired = { id: "openai", type: "copilot", label: "GitHub Copilot", enabled: true, config: {} }
+    const chat = { provider: retired.id, model: "shared-model" }
+    const fast = { provider: relay.id, model: "shared-model" }
+    vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue({
+      ...(state === "migrated" ? { retired_provider_aliases: [retired.id] } : {}),
+      instances: state === "legacy" ? [relay, retired] : [relay],
+      defaults: { chat, fast, subagent_models: { retired: chat, helper: fast } },
+    })
+    vi.spyOn(settingsService, "getEnvVars").mockResolvedValue({ revision: 1, entries: [] })
+    await expect(service.inventory()).resolves.toMatchObject({
+      scenarios: [{ name: "fast", ...fast }],
+      subagent_models: [{ name: "helper", ...fast }],
+    })
+  })
+
+  it("accepts a retired ID preview without a destination credential risk", async () => {
+    const response = preview()
+    const provider = {
+      ...response.preview.providers[0], conflict: true, replace_allowed: false,
+      rename_allowed: true, retired_id: true, target_origin: undefined, credential_origin_risk: false,
+    }
+    const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({
+      ...response, preview: { ...response.preview, providers: [provider] },
+    })
+    expect((await service.preview({ share_string: shareString })).preview.providers[0]).toMatchObject({
+      retired_id: true, replace_allowed: false, rename_allowed: true, credential_origin_risk: false,
+    })
+    post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...provider, replace_allowed: true }] } })
+    await expect(service.preview({ share_string: shareString })).rejects.toMatchObject({ kind: "unavailable" })
+  })
+
   it("requires an explicit secret choice and passphrase before export", async () => {
     const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({ share_string: shareString })
     const selection = { ...emptyShareSelection(), providers: ["sample"], provider_api_keys: ["sample"] }

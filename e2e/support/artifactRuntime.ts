@@ -43,6 +43,7 @@ export interface ArtifactRuntimeOptions {
   /** Override only the canonical provider snapshot for failure-path acceptance. */
   readonly providerInstancesResponse?: unknown
   readonly bootstrapRequestState?: "local_bypass" | "authenticated" | "unauthenticated"
+  readonly sessionId?: string
 }
 
 export const standaloneScenario: ArtifactScenario = {
@@ -156,7 +157,7 @@ const fixtureModel = {
   source: "static",
 }
 
-const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
+const apiResponse = (method: string, pathnameWithSearch: string, session: typeof fixtureSession): unknown => {
   const migrationRead = /^\/api\/v1\/sessions\/([^/]+)\/version-migration$/.exec(pathnameWithSearch)
   if (method === "GET" && migrationRead) {
     // Shared surface fixtures model current, idle sessions, including IDs
@@ -173,8 +174,8 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
       blockers: [{ code: "already_current", message: "This Session already uses the current behavior version." }],
     }
   }
-  if (method === "GET" && pathnameWithSearch === `/api/v1/actors/${FIXTURE_SESSION_ID}/snapshot?subtree_id=${FIXTURE_SESSION_ID}`) {
-    return actorSnapshotFixture(FIXTURE_SESSION_ID, 0)
+  if (method === "GET" && pathnameWithSearch === `/api/v1/actors/${session.id}/snapshot?subtree_id=${session.id}`) {
+    return actorSnapshotFixture(session.id, 0)
   }
   if (method === "GET" && /^\/api\/v1\/sessions\/[^/]+\/guidance$/.test(pathnameWithSearch)) return { messages: [] }
   if (method === "GET" && /^\/api\/v1\/bamboo\/workflow-catalog(?:\?.*)?$/.test(pathnameWithSearch)) {
@@ -188,7 +189,7 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
   }
   if (method === "GET" && /^\/api\/v1\/sessions(?:\?.*)?$/.test(pathnameWithSearch)) {
     const url = new URL(pathnameWithSearch, "http://fixture.invalid")
-    const sessions = url.searchParams.get("kind") === "child" ? [] : [fixtureSession]
+    const sessions = url.searchParams.get("kind") === "child" ? [] : [session]
     return { sessions, total: sessions.length, limit: 200, offset: 0 }
   }
   switch (`${method} ${pathnameWithSearch}`) {
@@ -228,13 +229,13 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
         },
         features: { provider_model_ref: true },
       }
-    case `GET /api/v1/sessions/${FIXTURE_SESSION_ID}`:
-      return { session: fixtureSession }
+    case `GET /api/v1/sessions/${session.id}`:
+      return { session }
     case "GET /api/v1/runs/active":
       return { sessions: [] }
-    case `GET /api/v1/history/${FIXTURE_SESSION_ID}`:
-      return { session_id: FIXTURE_SESSION_ID, messages: [] }
-    case `GET /api/v1/respond/${FIXTURE_SESSION_ID}/pending`:
+    case `GET /api/v1/history/${session.id}`:
+      return { session_id: session.id, messages: [] }
+    case `GET /api/v1/respond/${session.id}/pending`:
       return { has_pending_question: false }
     case "GET /api/v1/health":
       return { status: "ok" }
@@ -376,6 +377,8 @@ export const installArtifactRuntime = async (
   historyMessages: readonly unknown[] = [],
   options: ArtifactRuntimeOptions = {},
 ): Promise<RuntimeObservation> => {
+  const sessionId = options.sessionId ?? FIXTURE_SESSION_ID
+  const session = { ...fixtureSession, id: sessionId, root_session_id: sessionId }
   const observation: RuntimeObservation = {
     scenario: scenario.name,
     httpRequests: [],
@@ -463,7 +466,7 @@ export const installArtifactRuntime = async (
       observation.apiUrls.push(url.href)
       if (
         request.method() === "PATCH" &&
-        `${url.pathname}${url.search}` === `/api/v1/sessions/${FIXTURE_SESSION_ID}`
+        `${url.pathname}${url.search}` === `/api/v1/sessions/${sessionId}`
       ) {
         await route.fulfill({ status: 200, json: {} })
         return
@@ -506,9 +509,9 @@ export const installArtifactRuntime = async (
                   },
                 }
               })()
-            : request.method() === "GET" && url.pathname === `/api/v1/history/${FIXTURE_SESSION_ID}`
-            ? { session_id: FIXTURE_SESSION_ID, messages: historyMessages }
-            : apiResponse(request.method(), `${url.pathname}${url.search}`)
+            : request.method() === "GET" && url.pathname === `/api/v1/history/${sessionId}`
+            ? { session_id: sessionId, messages: historyMessages }
+            : apiResponse(request.method(), `${url.pathname}${url.search}`, session)
       if (response === undefined) {
         await route.fulfill({
           status: 501,
@@ -522,7 +525,7 @@ export const installArtifactRuntime = async (
       await route.fulfill({
         status: 200,
         json: response,
-        ...(request.method() === "GET" && url.pathname === `/api/v1/sessions/${FIXTURE_SESSION_ID}`
+        ...(request.method() === "GET" && url.pathname === `/api/v1/sessions/${sessionId}`
           ? { headers: { ETag: '"1"' } }
           : {}),
       })

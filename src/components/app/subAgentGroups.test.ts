@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from "vitest"
 import type { Message } from "@shared/types/chatMessages"
 import { renderProbe } from "@/lib/renderProbe"
-import { collectSubAgentOrigins, groupSubAgents, placeSubAgents } from "./subAgentGroups"
+import { collectSubAgentOrigins, groupSubAgents, indexSubAgentOrigins, placeSubAgents } from "./subAgentGroups"
 const call = (id: string, toolName = "sub_agent", action = "create"): Message => ({
   id, role: "assistant", type: "tool_call", createdAt: "", toolCalls: [{ toolCallId: id, toolName, parameters: { action } }],
 })
@@ -108,4 +108,24 @@ it("derives candidates from the transcript alone and lets agents decide placemen
   // An id the index does not know yet stays out of every group.
   expect(placeSubAgents(candidates, {}).byOrigin.size).toBe(0)
   expect(placeSubAgents(candidates, {})).toEqual(groupSubAgents(groups, {}))
+})
+
+it("reuses the historical index for live results, preserving the original call and row", () => {
+  renderProbe.enable()
+  renderProbe.reset()
+  const history = indexSubAgentOrigins([{ key: "history-row", messages: [
+    call("old"), result("old", "older-child"), compactCall("crossing"),
+  ] }])
+  const first = collectSubAgentOrigins([], history)
+  expect(collectSubAgentOrigins([], history)).toBe(first)
+  expect(collectSubAgentOrigins([{ key: "live-row", messages: [
+    call("crossing"), actorResult("crossing", "new-child"), actorResult("unmatched"),
+    call("live"), result("live", "live-child"),
+  ] }], history)).toEqual([
+    { key: "history-row", id: "older-child" },
+    { key: "history-row", id: "new-child" },
+    { key: "live-row", id: "live-child" },
+  ])
+  expect(collectSubAgentOrigins([], history)).toBe(first)
+  expect(renderProbe.read()["subagent.origins.history"]).toBe(1)
 })

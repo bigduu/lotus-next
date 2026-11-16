@@ -17,8 +17,15 @@ test("compacts from the composer without posting a turn and preserves failed dra
   let confirm: () => void = () => {}
   const confirmation = new Promise<void>((resolve) => { confirm = resolve })
   await page.route(`**${endpoint}`, async (route) => {
-    if (++compactCalls === 1) {
+    compactCalls += 1
+    if (compactCalls === 1) {
       await route.fulfill({ status: 404, json: { error: "Not found" } })
+      return
+    }
+    if (compactCalls === 2) {
+      await route.fulfill({ status: 422, json: { error: {
+        code: "context_summary_empty", type: "api_error", message: "The model returned no summary.",
+      } } })
       return
     }
     await confirmation
@@ -48,6 +55,13 @@ test("compacts from the composer without posting a turn and preserves failed dra
   expect(posts).toEqual([endpoint])
   await error.locator("../..").getByRole("button", { name: "关闭", exact: true }).click()
 
+  await input.press("Enter")
+  const emptySummary = page.getByRole("alert").filter({ hasText: "调低本次压缩所用模型的推理强度" })
+  await expect(emptySummary).toBeVisible()
+  await expectComposerText(input, "/compact")
+  expect(posts).toEqual([endpoint, endpoint])
+  await emptySummary.locator("../..").getByRole("button", { name: "关闭", exact: true }).click()
+
   // Enter retries the dedicated operation with the preserved command.
   try {
     await input.press("Enter")
@@ -60,7 +74,10 @@ test("compacts from the composer without posting a turn and preserves failed dra
   await expect(page.getByText("已压缩上下文，估算占用从 73.2% 降至 24%。")).toBeVisible()
   await expect(page.getByRole("button", { name: "上下文用量", exact: true })).toHaveAttribute("title", /24%/)
   await expect(input).toHaveAttribute("aria-busy", "false")
-  expect(posts).toEqual([endpoint, endpoint])
+  expect(posts).toEqual([endpoint, endpoint, endpoint])
   expect(observation.pageErrors).toEqual([])
-  expect(observation.errorResponses).toEqual([`404 ${standaloneScenario.origin}${endpoint}`])
+  expect(observation.errorResponses).toEqual([
+    `404 ${standaloneScenario.origin}${endpoint}`,
+    `422 ${standaloneScenario.origin}${endpoint}`,
+  ])
 })

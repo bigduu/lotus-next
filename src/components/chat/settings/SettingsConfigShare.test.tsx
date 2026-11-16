@@ -415,19 +415,6 @@ describe("SettingsConfigShare", () => {
     }, false, "界".repeat(4), expect.any(AbortSignal))
   })
 
-  it("keeps Copilot sign-in credentials unavailable while permitting its non-secret configuration selection", async () => {
-    vi.mocked(configShareService.inventory).mockResolvedValue({ ...inventory(), providers: [{ id: "sample", label: "Sample", type: "copilot" }] })
-    await mount()
-    await check("Sample (sample)")
-    await check("Allow the selected API keys and environment values in this export")
-    const apiKey = [...document.querySelectorAll<HTMLLabelElement>("label")].find((item) => item.textContent?.trim() === "Include API key")!.querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    expect(apiKey.disabled).toBe(true)
-    expect(apiKey.checked).toBe(false)
-    expect(document.body.textContent).toContain("Copilot sign-in credentials cannot be shared")
-    await click("Generate sharing string")
-    expect(configShareService.export).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ providers: ["sample"], provider_api_keys: [] }), true, undefined, expect.any(AbortSignal))
-  })
-
   it("previews on explicit request, defaults conflicts to skip and submits one stable CAS operation on double click", async () => {
     const pending = deferred<ShareOperation>()
     vi.mocked(configShareService.apply).mockReturnValue(pending.promise)
@@ -618,6 +605,24 @@ describe("SettingsConfigShare", () => {
     expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.providers).toEqual({ sample: { action: "rename", target: "anthropic-shared" } })
   })
 
+  it("skips a legacy Bodhi entry without a matching instance and saves other selections", async () => {
+    const response = preview()
+    response.preview.providers[0] = {
+      ...response.preview.providers[0], provider_type: "bodhi", conflict: false,
+      replace_allowed: false, rename_allowed: false, target_origin: undefined, credential_origin_risk: false,
+    }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+    expect(action.value).toBe("skip")
+    expect(action.querySelector<HTMLOptionElement>('option[value="replace"]')?.disabled).toBe(true)
+    expect(action.querySelector('option[value="rename"]')).toBeNull()
+    expect(document.body.textContent).toContain("This entry can only update an existing Bodhi instance with the same ID.")
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.providers).toEqual({ sample: { action: "skip" } })
+  })
+
   it("shows the provider-default URL fallback for a new provider with no imported origin", async () => {
     const response = preview()
     response.preview.providers[0] = { ...response.preview.providers[0], conflict: false, replace_allowed: true, has_base_url: false, source_origin: undefined, target_origin: undefined, credential_origin_risk: false }
@@ -646,12 +651,12 @@ describe("SettingsConfigShare", () => {
     expect(document.body.textContent).not.toContain("Imported settings are saved")
   })
 
-  it("blocks importing a target with automatic provider authentication or an uninitialized credential key", async () => {
+  it("blocks importing an incompatible provider configuration or an uninitialized credential key", async () => {
     vi.mocked(configShareService.preview).mockResolvedValue({ ...preview(), apply_blocked: true, warnings: ["automatic_provider_authentication_blocked", "credential_key_uninitialized"] })
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     expect(button("Save imported settings").disabled).toBe(true)
-    expect(document.body.textContent).toContain("automatic sign-in")
+    expect(document.body.textContent).toContain("an explicit provider configuration")
     expect(document.body.textContent).toContain("credential storage has not been initialized")
     expect(configShareService.apply).not.toHaveBeenCalled()
   })
@@ -706,7 +711,7 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     expect(document.querySelector<HTMLSelectElement>('[aria-label="Import action env:Token"]')?.value).toBe("skip")
     expect(document.body.textContent).toContain("credential storage has not been initialized")
-    expect(document.body.textContent).not.toContain("Import could trigger automatic sign-in for Copilot")
+    expect(document.body.textContent).not.toContain("Import requires an explicit provider configuration without a runtime override.")
     await check("I reviewed the entries and conflict choices")
     expect(button("Save imported settings").disabled).toBe(true)
     await click("Save imported settings")
