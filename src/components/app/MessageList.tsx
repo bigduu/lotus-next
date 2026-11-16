@@ -94,6 +94,11 @@ function messageText(m: Message): string {
   return ""
 }
 
+function messageRuntimeNotice(m: Message, text = messageText(m)) {
+  if (m.role !== "assistant") return null
+  return runtimeNoticeFromMetadata("metadata" in m ? m.metadata : undefined, text)
+}
+
 function isToolMessage(m: Message): boolean {
   const t = (m as { type?: string }).type
   return t === "tool_call" || t === "tool_result"
@@ -385,14 +390,17 @@ function buildDisplayItems(
     const next = items[index]
     const nextIsUser = next?.kind === "msg" && next.m.role === "user"
     const summary = index - 1
-    const recorded = summary >= 0 && isRecordedFinal(items[summary])
+    const conclusion = items[summary]
+    // Background wait notices can carry a final phase in persisted history.
+    const runtimeNotice = conclusion?.kind === "msg" && messageRuntimeNotice(conclusion.m)
+    const recorded = summary >= 0 && !runtimeNotice && isRecordedFinal(conclusion)
     if (next && !nextIsUser && !recorded) continue
 
     const first = boundary + 1
     boundary = nextIsUser ? index : summary
     // A committed answer closes its own reply even if an internal wake
     // started another reply without adding a visible user message.
-    if (summary < first || !isFinalAssistantResponse(items[summary])) continue
+    if (summary < first || runtimeNotice || !isFinalAssistantResponse(conclusion)) continue
     if (!next && !collapseLastTurn && !recorded) continue
     const indexes: number[] = []
     for (let itemIndex = first; itemIndex < summary; itemIndex += 1) indexes.push(itemIndex)
@@ -1003,9 +1011,7 @@ export const MessageList = memo(function MessageList({
     const isUser = m.role === "user"
     // Runtime-authored notices (e.g. background exec wait) render as a
     // localized status card instead of their raw English machine text.
-    const runtimeNotice = !isUser
-      ? runtimeNoticeFromMetadata((m as { metadata?: Record<string, unknown> }).metadata, text)
-      : null
+    const runtimeNotice = messageRuntimeNotice(m, text)
     const showMessageActions = !readOnly && !options?.live && !isCompletedAnswerHandoff(m) && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length) return null
