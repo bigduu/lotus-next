@@ -1,9 +1,11 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { afterEach, beforeEach, expect, it } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { changeLocale } from "@shared/i18n"
 import { uiText } from "@shared/i18n/ui"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
+import { resetBackendFeatures, setBackendFeatures } from "@/lib/backendFeatures"
+import { agentClient } from "@services/chat/AgentService"
 import { ContextCompressionNotice } from "./ContextCompressionNotice"
 
 let root: Root
@@ -16,10 +18,12 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   host.remove()
+  resetBackendFeatures()
+  vi.restoreAllMocks()
   Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 })
-const render = async (feedback?: ContextCompressionFeedback | null) => {
-  await act(async () => root.render(<ContextCompressionNotice feedback={feedback} />))
+const render = async (feedback?: ContextCompressionFeedback | null, sessionId?: string) => {
+  await act(async () => root.render(<ContextCompressionNotice feedback={feedback} sessionId={sessionId} />))
 }
 const cases: { feedback: ContextCompressionFeedback; key: Parameters<typeof uiText>[0] }[] = [
   { feedback: { status: "running" }, key: "context_compression_notice_running" },
@@ -112,4 +116,23 @@ it("never includes diagnostic suffixes, summary bodies, model names or paths fro
     for (const value of Object.values(extra)) expect(host.textContent).not.toContain(value)
     expect(host.querySelector("script")).toBeNull()
   }
+})
+
+it("uses durable readback to clear a stale running event without promoting the configured strategy", async () => {
+  await changeLocale("en-US")
+  setBackendFeatures(["session_compaction_status"])
+  vi.spyOn(agentClient, "getSessionCompactionStatus").mockResolvedValue({
+    session_id: "chat",
+    configured_strategy: "message_summary",
+    active: null,
+    applied: { id: "previous", strategy: "summary" },
+  })
+  await render({ status: "running" }, "chat")
+  expect(host.querySelector("svg")).toBeNull()
+  expect(host.textContent).toContain(uiText("compact_status_applied", {
+    strategy: uiText("context_full_summary_label"),
+  }))
+  expect(host.textContent).toContain(uiText("compact_status_pending_strategy", {
+    strategy: uiText("context_message_summary_label"),
+  }))
 })

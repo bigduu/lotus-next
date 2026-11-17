@@ -81,3 +81,58 @@ test("compacts from the composer without posting a turn and preserves failed dra
     `422 ${standaloneScenario.origin}${endpoint}`,
   ])
 })
+
+test("recovers live compression and only shows an applied strategy from a saved result", async ({ page }, testInfo) => {
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], {
+    sessionFeatures: ["session_compaction_status"],
+  })
+
+  const sessionId = "all-surface-session"
+  const previous = { id: "previous", strategy: "summary" }
+  const saved = { id: "attempt", strategy: "message_summary" }
+  const progress = {
+    id: "attempt", strategy: "message_summary", phase: "summarizing", part: 2, total: 4, elapsed_ms: 38000,
+  }
+  let active: typeof progress | null = progress
+  let applied = previous
+  await page.route(`**/api/v1/sessions/${sessionId}/compact`, async (route) => {
+    expect(route.request().method()).toBe("GET")
+    await route.fulfill({ json: { session_id: sessionId, configured_strategy: "message_summary", active, applied } })
+  })
+  const notice = page.getByTestId("context-compression-notice")
+  const oldStrategy = "上次压缩采用完整对话摘要"
+  const newStrategy = "上次压缩采用消息正文摘要"
+
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(notice).toContainText("正在生成摘要，第 2/4 段")
+  await expect(notice).toContainText("已等待 38 秒")
+  await expect(notice).toContainText(oldStrategy)
+  await expect(notice).toContainText("本次压缩采用消息正文摘要")
+  await expect(notice).not.toContainText(newStrategy)
+  if (testInfo.project.name === "desktop-chromium") {
+    const path = testInfo.outputPath("compression-progress.png")
+    await page.screenshot({ path })
+    await testInfo.attach("compression-progress", { path, contentType: "image/png" })
+  }
+
+  active = null
+  await page.reload()
+  await expect(notice).toContainText(oldStrategy)
+  await expect(notice).not.toContainText("正在生成摘要")
+  await expect(notice).toContainText("下次压缩将使用消息正文摘要")
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toHaveAttribute("aria-busy", "false")
+
+  active = progress
+  await page.reload()
+  await expect(notice).toContainText("正在生成摘要，第 2/4 段")
+  active = null
+  applied = saved
+  await expect(notice).toContainText(newStrategy)
+  await expect(notice).not.toContainText("下次压缩将使用")
+
+  await page.reload()
+  await expect(notice).toContainText(newStrategy)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.errorResponses).toEqual([])
+})
