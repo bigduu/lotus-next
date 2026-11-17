@@ -39,6 +39,7 @@ function compressionMessage(feedback?: ContextCompressionFeedback | null): strin
 }
 
 const supportsCompactionStatus = () => backendSupports("session_compaction_status")
+const compactionDiscoveryRetryLimit = 2
 
 const strategyLabels = {
   summary: "context_full_summary_label",
@@ -75,6 +76,7 @@ export function ContextCompressionNotice({ feedback, sessionId, manualPending = 
     const controller = new AbortController()
     let timer: number | undefined
     let reading = false
+    let consecutiveReadFailures = 0
     // An automatic attempt can be replaced while the same chat turn is active.
     const awaitingAttempt = manualPending || (runActive && streamRunning)
     let shouldPoll = awaitingAttempt
@@ -87,13 +89,18 @@ export function ContextCompressionNotice({ feedback, sessionId, manualPending = 
         const value = await agentClient.getSessionCompactionStatus(observedSession, controller.signal)
         if (controller.signal.aborted) return
         shouldPoll = awaitingAttempt || value.active !== null
+        consecutiveReadFailures = 0
         setObservation(value)
         setUncertainSession(null)
       } catch {
-        if (!controller.signal.aborted) setUncertainSession(observedSession)
+        if (!controller.signal.aborted) {
+          consecutiveReadFailures += 1
+          setUncertainSession(observedSession)
+        }
       } finally {
         reading = false
-        if (!controller.signal.aborted && shouldPoll) {
+        const retryDiscovery = consecutiveReadFailures > 0 && consecutiveReadFailures <= compactionDiscoveryRetryLimit
+        if (!controller.signal.aborted && (shouldPoll || retryDiscovery)) {
           timer = window.setTimeout(refresh, 2_000)
         }
       }

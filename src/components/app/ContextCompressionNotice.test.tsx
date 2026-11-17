@@ -19,6 +19,7 @@ afterEach(() => {
   act(() => root.unmount())
   host.remove()
   resetBackendFeatures()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 })
@@ -133,6 +134,50 @@ it("uses durable readback to clear a stale running event without promoting the c
     strategy: uiText("context_full_summary_label"),
   }))
   expect(host.textContent).toContain(uiText("compact_status_pending_strategy", {
+    strategy: uiText("context_message_summary_label"),
+  }))
+})
+
+it("rediscovers a running compaction after transient errors on reopen", async () => {
+  await changeLocale("en-US")
+  vi.useFakeTimers()
+  setBackendFeatures(["session_compaction_status"])
+  const readback = vi.spyOn(agentClient, "getSessionCompactionStatus")
+    .mockRejectedValueOnce(new Error("temporary failure"))
+    .mockRejectedValueOnce(new Error("temporary failure"))
+    .mockResolvedValue({
+      session_id: "chat",
+      configured_strategy: "message_summary",
+      active: { id: "attempt", strategy: "message_summary", phase: "summarizing", part: 2, total: 3, elapsed_ms: 8000 },
+      applied: null,
+    })
+
+  await render(undefined, "chat")
+  expect(readback).toHaveBeenCalledTimes(1)
+  expect(host.textContent).toBe("")
+
+  await act(async () => vi.advanceTimersByTimeAsync(4_000))
+  expect(readback).toHaveBeenCalledTimes(3)
+  expect(host.textContent).toContain(uiText("compact_status_summarizing", { part: 2, total: 3 }))
+})
+
+it("bounds background discovery retries and reads again on focus", async () => {
+  vi.useFakeTimers()
+  setBackendFeatures(["session_compaction_status"])
+  const readback = vi.spyOn(agentClient, "getSessionCompactionStatus").mockRejectedValue(new Error("offline"))
+
+  await render(undefined, "chat")
+  await act(async () => vi.advanceTimersByTimeAsync(20_000))
+  expect(readback).toHaveBeenCalledTimes(3)
+
+  readback.mockResolvedValue({
+    session_id: "chat",
+    configured_strategy: "message_summary",
+    active: null,
+    applied: { id: "attempt", strategy: "message_summary" },
+  })
+  await act(async () => { window.dispatchEvent(new Event("focus")) })
+  expect(host.textContent).toContain(uiText("compact_status_applied", {
     strategy: uiText("context_message_summary_label"),
   }))
 })
