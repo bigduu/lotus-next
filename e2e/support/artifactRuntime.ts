@@ -249,6 +249,8 @@ const apiResponse = (
       return { available: false, mutation_enabled: false, dispatch_enabled: false }
     case "GET /api/v1/bamboo/config":
       return { proxy_auth_mode: "auto" }
+    case "GET /api/v1/bamboo/tailscale":
+      return { state: "not_installed", enabled: false, tailnet: null, url: null, action_url: null }
     case "GET /api/v1/bamboo/tools":
       return { tools: [] }
     case "GET /api/v1/bamboo/access/status":

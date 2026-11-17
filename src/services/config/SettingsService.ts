@@ -12,6 +12,18 @@ import type {
 } from "@shared/types/providerConfig";
 import type { ProviderCatalog, ProviderModelDescriptor } from "@shared/types/providerModelRef";
 
+export interface TailscaleAccessStatus {
+  state: "not_installed" | "unavailable" | "disconnected" | "login_required"
+    | "device_approval_required" | "password_required" | "https_required" | "ready"
+    | "starting" | "active" | "port_in_use" | "tailnet_changed" | "serve_failed";
+  enabled: boolean;
+  tailnet: string | null;
+  url: string | null;
+  action_url: string | null;
+}
+
+export type TailscaleAccessAction = "connect" | "enable" | "disable";
+
 // ── Fetch Models response types ─────────────────────────────────
 
 export interface ProviderFetchResult {
@@ -194,6 +206,14 @@ export interface ClusterUpsertRequest {
  * Handles all settings-related API calls to the backend.
  */
 export class SettingsService {
+  getTailscaleAccess(signal?: AbortSignal): Promise<TailscaleAccessStatus> {
+    return apiClient.getOnce("/bamboo/tailscale", { signal });
+  }
+
+  setTailscaleAccess(action: TailscaleAccessAction): Promise<TailscaleAccessStatus> {
+    return apiClient.postOnce("/bamboo/tailscale", { action }, { logicalTimeoutMs: 25_000 });
+  }
+
   /**
    * Reload configuration (apply changes)
    */
