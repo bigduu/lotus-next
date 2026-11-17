@@ -69,6 +69,95 @@ function key(container: HTMLElement, value: string) {
 }
 
 describe("ActorTree", () => {
+  const actorOrder = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+    .map((item) => item.dataset.actorId)
+
+  it("places running siblings first without changing either group's relative order or the source tree", () => {
+    const topology = snapshot([
+      row("root", null),
+      row("failed", "root", { lifecycle: "failed" }),
+      row("running-b", "root"),
+      row("completed", "root", { lifecycle: "completed" }),
+      row("running-a", "root"),
+      row("queued", "root", { lifecycle: "queued" }),
+    ])
+    const originalOrder = [...topology.childrenById.root]
+    const { container } = renderTree({ topology })
+
+    expect(actorOrder(container)).toEqual(["root", "running-b", "running-a", "failed", "completed", "queued"])
+    expect(treeItem(container, "running-b")?.getAttribute("aria-posinset")).toBe("1")
+    expect(treeItem(container, "failed")?.getAttribute("aria-posinset")).toBe("3")
+    expect(treeItem(container, "failed")?.getAttribute("aria-setsize")).toBe("5")
+    expect(topology.childrenById.root).toEqual(originalOrder)
+  })
+
+  it("preserves running-first display order across refreshes and appends newly running siblings after existing ones", () => {
+    const actors = [
+      row("root", null),
+      row("a", "root", { lifecycle: "completed" }),
+      row("b", "root"),
+      row("c", "root", { lifecycle: "queued" }),
+      row("d", "root"),
+    ]
+    const onSelectActor = vi.fn()
+    const { container, rerender } = renderTree({ topology: snapshot(actors), selectedActorId: "b", onSelectActor })
+    const tree = container.querySelector<HTMLElement>('[role="tree"]')!
+    expect(actorOrder(container)).toEqual(["root", "b", "d", "a", "c"])
+
+    const started = actors.map((actor) => actor.actorId === "a" ? { ...actor, lifecycle: "running" as const, activationAttempt: 2 } : actor)
+    rerender({ topology: snapshot(started, 2), selectedActorId: "b", onSelectActor })
+    expect(actorOrder(container)).toEqual(["root", "b", "d", "a", "c"])
+
+    // Snapshot wire order and metadata updates must not reshuffle running rows.
+    rerender({ topology: snapshot([...started].reverse().map((actor) => ({ ...actor, title: `${actor.actorId} refreshed` })), 3), selectedActorId: "b", onSelectActor })
+    expect(actorOrder(container)).toEqual(["root", "b", "d", "a", "c"])
+
+    rerender({ topology: snapshot(started.map((actor) => actor.actorId === "b" ? { ...actor, lifecycle: "completed" as const } : actor), 4), selectedActorId: "b", onSelectActor })
+    expect(actorOrder(container)).toEqual(["root", "d", "a", "b", "c"])
+    expect(treeItem(container, "b")?.getAttribute("aria-selected")).toBe("true")
+    expect(tree.getAttribute("aria-activedescendant")).toBe(treeItem(container, "b")?.id)
+    expect(onSelectActor).not.toHaveBeenCalled()
+
+    key(container, "Home")
+    key(container, "ArrowDown")
+    key(container, "Enter")
+    expect(onSelectActor).toHaveBeenLastCalledWith("d")
+  })
+
+  it("prioritizes branches displaying a running descendant while retaining hierarchy and collapsed ordering", () => {
+    const topology = snapshot([
+      row("root", null, { lifecycle: "cold" }),
+      row("done", "root", { lifecycle: "completed" }),
+      row("branch", "root", { lifecycle: "cold" }),
+      row("nested-done", "branch", { lifecycle: "completed" }),
+      row("nested-running", "branch"),
+      row("failed", "root", { lifecycle: "failed" }),
+      row("running-under-failed", "failed"),
+    ])
+    const { container } = renderTree({ topology })
+    expect(actorOrder(container)).toEqual(["root", "branch", "done", "failed"])
+
+    act(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    expect(actorOrder(container)).toEqual(["root", "branch", "nested-running", "nested-done", "done", "failed"])
+    expect(treeItem(container, "nested-running")?.getAttribute("aria-level")).toBe("3")
+    expect(treeItem(container, "nested-running")?.getAttribute("aria-posinset")).toBe("1")
+
+    act(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    act(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    expect(actorOrder(container)).toEqual(["root", "branch", "nested-running", "nested-done", "done", "failed"])
+  })
+
+  it("leaves sibling order unchanged when none are running", () => {
+    const topology = snapshot([
+      row("root", null, { lifecycle: "cold" }),
+      row("completed", "root", { lifecycle: "completed" }),
+      row("failed", "root", { lifecycle: "failed" }),
+      row("queued", "root", { lifecycle: "queued" }),
+    ])
+    const { container } = renderTree({ topology })
+    expect(actorOrder(container)).toEqual(["root", "completed", "failed", "queued"])
+  })
+
   it("explains missing execution placement without treating native tasks or session identity as Local", () => {
     const source = actorSnapshotV2Fixture()
     const { container, rerender } = renderTree({ topology: actorSnapshotTree(parseActorSnapshot(source, "root")) })
