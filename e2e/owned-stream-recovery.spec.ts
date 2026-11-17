@@ -1,8 +1,8 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
-for (const outcome of ["interrupted", "suspended", "resumed"] as const) {
-  test(`an owned run recovers without terminal frames (${outcome})`, async ({ page }, testInfo) => {
+for (const outcome of ["interrupted", "suspended", "suspended-after-complete", "resumed"] as const) {
+  test(`an owned run recovers without a terminal control (${outcome})`, async ({ page }, testInfo) => {
     await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
     const observation = await installArtifactRuntime(page, standaloneScenario)
     let socket: WebSocketRoute | undefined
@@ -69,12 +69,18 @@ for (const outcome of ["interrupted", "suspended", "resumed"] as const) {
       event: { type: "token", content: "正在检查，尚未完成。" } }))
     await expect(page.locator(".assistant-streamdown")).toContainText("尚未完成")
 
-    // Neither scenario publishes a semantic terminal or a terminal control.
+    // The agent channel can remain open while the parent waits.
     session.is_running = false
     if (outcome !== "interrupted") {
       session.last_run_status = "suspended"
       session.running_child_count = 1
       history.push({ id: "waiting-reply", role: "assistant", content: "正在检查，尚未完成。", created_at: session.updated_at })
+    }
+    if (outcome === "suspended-after-complete") {
+      socket!.send(JSON.stringify({ ch: `agent.${session.id}`, seq: ++sequence, event: { type: "complete" } }))
+      socket!.send(JSON.stringify({ ch: "feed", seq: 1, event: {
+        seq: 1, ts: session.updated_at, session_id: session.id, event: { type: "complete" },
+      } }))
     }
     await expect(stop).toBeHidden({ timeout: 15_000 })
     if (outcome === "interrupted") await expect(page.getByRole("alert")).toContainText("消息已发送，但生成中断")
@@ -98,12 +104,15 @@ for (const outcome of ["interrupted", "suspended", "resumed"] as const) {
       await expect(input).toBeVisible()
       await expect(childWait).toBeVisible()
       await expect(page.locator("[data-process-shimmer]")).toHaveCount(0)
+    }
+    if (outcome === "suspended" || outcome === "suspended-after-complete") {
       expect(admissions).toBe(1)
       expect(executions).toBe(1)
       await input.fill("进展如何？")
       await page.getByRole("button", { name: "发送消息", exact: true }).click()
       await expect.poll(() => admissions).toBe(2)
       await expect.poll(() => executions).toBe(2)
+      await expect(page.getByText("进展如何？", { exact: true })).toBeVisible()
       await expect(stop).toBeVisible()
     } else if (outcome === "resumed") {
       session.is_running = true
