@@ -104,6 +104,30 @@ function actorsWithRunningDescendant(topology: ActorTreeData): ReadonlySet<strin
   return withRunningDescendant
 }
 
+function showsRunning(node: ActorTreeNode | undefined, runningSubtrees: ReadonlySet<string>): boolean {
+  return !!node && (node.lifecycle === "running"
+    || INHERITS_RUNNING.has(node.lifecycle) && runningSubtrees.has(node.actorId))
+}
+
+/** Keep existing running siblings ahead of newly running ones, within each parent. */
+function prioritizeRunningSiblings(
+  topology: ActorTreeData,
+  runningSubtrees: ReadonlySet<string>,
+  previous?: ActorTreeData,
+): ActorTreeData {
+  const prior = previous?.rootActorId === topology.rootActorId ? previous : undefined
+  const childrenById: Record<string, readonly string[]> = Object.create(null)
+  for (const [parentId, childIds] of Object.entries(topology.childrenById)) {
+    const remaining = new Set(childIds)
+    const stableIds = (prior?.childrenById[parentId] ?? []).filter((id) => remaining.delete(id))
+    stableIds.push(...remaining)
+    childrenById[parentId] = stableIds.sort((left, right) =>
+      Number(showsRunning(topology.byId[right], runningSubtrees))
+      - Number(showsRunning(topology.byId[left], runningSubtrees)))
+  }
+  return { ...topology, childrenById }
+}
+
 interface VisibleActorRow {
   node: ActorTreeNode
   parentActorId: string | null
@@ -195,11 +219,17 @@ export function ActorTree({
   const selectedActorIdRef = useRef(selectedActorId)
   selectedActorIdRef.current = selectedActorId
   const previousSelectedActorId = useRef<string | null>(null)
-  const rows = useMemo(
-    () => visibleActorRows(topology, expandedActorIds),
-    [topology, expandedActorIds],
-  )
   const runningSubtrees = useMemo(() => actorsWithRunningDescendant(topology), [topology])
+  const previousOrder = useRef<ActorTreeData | undefined>(undefined)
+  const orderedTopology = useMemo(
+    () => prioritizeRunningSiblings(topology, runningSubtrees, previousOrder.current),
+    [topology, runningSubtrees],
+  )
+  useEffect(() => { previousOrder.current = orderedTopology }, [orderedTopology])
+  const rows = useMemo(
+    () => visibleActorRows(orderedTopology, expandedActorIds),
+    [orderedTopology, expandedActorIds],
+  )
   const rowsRef = useRef(rows)
   rowsRef.current = rows
   const getItemKey = useCallback((index: number) => rowsRef.current[index]?.node.actorId ?? index, [])
@@ -342,7 +372,7 @@ export function ActorTree({
                   : "actor_placement_missing")
                 : undefined
               const health = node.health === null ? uiText("health_unknown_d7b6f7ae") : HEALTH_LABEL[node.health]
-              const inheritsRunning = INHERITS_RUNNING.has(node.lifecycle) && runningSubtrees.has(node.actorId)
+              const inheritsRunning = node.lifecycle !== "running" && showsRunning(node, runningSubtrees)
               const statusIcon = inheritsRunning ? LIFECYCLE_ICON.running : LIFECYCLE_ICON[node.lifecycle]
               const statusTitle = inheritsRunning ? LIFECYCLE_LABEL.running : lifecycle
               return (
