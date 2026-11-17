@@ -119,12 +119,15 @@ export interface AccessStatusResponse {
   password_enabled: boolean;
   local_bypass: boolean;
   requires_password: boolean;
+  revision?: number;
 }
 
-export interface UpdateAccessPasswordRequest {
+export type UpdateAccessPasswordRequest = {
   current_password?: string;
-  new_password: string;
-}
+} & (
+  | { expected_revision?: number; new_password: string }
+  | { expected_revision: number; action: "clear" }
+);
 
 export interface UpdateAccessPasswordResponse {
   success: boolean;
@@ -385,7 +388,7 @@ class HttpUtilityService implements UtilityService {
   async updateAccessPassword(
     payload: UpdateAccessPasswordRequest,
   ): Promise<UpdateAccessPasswordResponse> {
-    return apiClient.post<UpdateAccessPasswordResponse>("bamboo/access/password", payload);
+    return apiClient.postOnce<UpdateAccessPasswordResponse>("bamboo/access/password", payload);
   }
 }
 
