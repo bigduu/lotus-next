@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   FALLBACK_DEFAULT,
+  UNLIMITED_OUTPUT,
   buildLimitRows,
   formatTokenCount,
   parseTokenCount,
@@ -69,5 +70,31 @@ describe("model limit table helpers", () => {
     })
     expect(validateLimitRows([row, { ...row, id: "duplicate", model_pattern: "CUSTOM-MODEL" }]))
       .toEqual({ error: "模型「CUSTOM-MODEL」重复" })
+  })
+
+  it("round-trips unlimited, automatic, and explicit output limits", () => {
+    const overrides = [
+      {
+        model_pattern: "unlimited-model",
+        max_context_tokens: 256_000,
+        max_output_tokens: null,
+        unlimited_output: true,
+      },
+      {
+        model_pattern: "automatic-model",
+        max_context_tokens: 256_000,
+        max_output_tokens: null,
+      },
+      {
+        model_pattern: "fixed-model",
+        max_context_tokens: 256_000,
+        max_output_tokens: 32_000,
+      },
+    ]
+    const rows = buildLimitRows(FALLBACK_DEFAULT, overrides, [])
+    expect(rows.map((row) => row.max_output_tokens)).toEqual([UNLIMITED_OUTPUT, null, "32K"])
+    expect(validateLimitRows(rows, true)).toEqual({ overrides })
+    expect(validateLimitRows(rows)).toHaveProperty("error")
+    expect(validateLimitRows([{ ...rows[0], max_output_tokens: "" }], true)).toHaveProperty("error")
   })
 })

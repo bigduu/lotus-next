@@ -65,3 +65,66 @@ test("published baseline Settings helper retains the explicit modal contract", a
   await expect(settings.getByRole("heading", { name: "系统设置", exact: true })).toBeVisible();
   await closeSettings(settings, "dialog");
 });
+
+test("maximum output can switch between unlimited and a fixed limit", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+  });
+  const observation = await installArtifactRuntime(page, standaloneScenario);
+  const fixed = {
+    model_pattern: "fixture-model",
+    max_context_tokens: 256_000,
+    max_output_tokens: 32_000,
+  };
+  let modelLimits = [{ ...fixed }];
+  await page.route("**/api/v1/bamboo/model-limits/defaults", (route) => route.fulfill({
+    json: {
+      supports_unlimited_output: true,
+      model_limits: [{ max_context_tokens: 1_000_000, max_output_tokens: 64_000, safety_margin: 10_000 }],
+    },
+  }));
+  await page.route("**/api/v1/bamboo/config", (route) => {
+    if (route.request().method() === "POST") {
+      modelLimits = route.request().postDataJSON().model_limits;
+    }
+    return route.fulfill({ json: { proxy_auth_mode: "auto", model_limits: modelLimits } });
+  });
+  await page.goto(standaloneScenario.entryUrl);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  await selectSettingsCategory(settings, "model-limits", "模型限额");
+  const output = settings.getByRole("combobox", { name: "fixture-model 最大输出" });
+  const expandOutput = settings.getByRole("button", { name: "展开fixture-model 最大输出选项" });
+  const save = settings.getByRole("button", { name: "保存", exact: true });
+
+  await expect(output).toHaveValue("32K");
+  await expandOutput.click();
+  const unlimited = page.getByRole("option", { name: /^不限/ });
+  await expect(unlimited).toBeVisible();
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("Unlimited maximum output option", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  }
+  await unlimited.click();
+  await expect(output).toHaveValue("不限");
+  await save.click();
+  await expect(settings.getByText("已保存", { exact: true })).toBeVisible();
+  expect(modelLimits).toEqual([{ ...fixed, max_output_tokens: null, unlimited_output: true }]);
+
+  await selectSettingsCategory(settings, "general", "通用");
+  await selectSettingsCategory(settings, "model-limits", "模型限额");
+  await expect(output).toHaveValue("不限");
+  await expandOutput.click();
+  await page.getByRole("option", { name: /^32K/ }).click();
+  await save.click();
+  await expect(settings.getByText("已保存", { exact: true })).toBeVisible();
+  expect(modelLimits).toEqual([fixed]);
+  expect(observation.errorResponses).toEqual([]);
+  expect(observation.pageErrors).toEqual([]);
+});
