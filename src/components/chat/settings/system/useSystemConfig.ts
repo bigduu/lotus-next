@@ -12,6 +12,7 @@ export interface ModelLimitOverride {
   model_pattern: string
   max_context_tokens: number
   max_output_tokens?: number | null
+  unlimited_output?: boolean
   safety_margin?: number | null
 }
 

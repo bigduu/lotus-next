@@ -93,6 +93,11 @@ export interface ModelLimitDefault {
   note?: string;
 }
 
+interface ModelLimitDefaultsResponse {
+  model_limits: ModelLimitDefault[];
+  supports_unlimited_output?: boolean;
+}
+
 /**
  * Generic API success response
  */
@@ -145,7 +150,7 @@ export interface UtilityService {
   /**
    * Get backend built-in model limit defaults.
    */
-  getModelLimitDefaults(): Promise<{ model_limits: ModelLimitDefault[] }>;
+  getModelLimitDefaults(): Promise<ModelLimitDefaultsResponse>;
 
   /**
    * Set Bamboo config
@@ -250,9 +255,9 @@ class HttpUtilityService implements UtilityService {
     }
   }
 
-  async getModelLimitDefaults(): Promise<{ model_limits: ModelLimitDefault[] }> {
+  async getModelLimitDefaults(): Promise<ModelLimitDefaultsResponse> {
     try {
-      return await apiClient.get<{ model_limits: ModelLimitDefault[] }>(
+      return await apiClient.get<ModelLimitDefaultsResponse>(
         "bamboo/model-limits/defaults",
       );
     } catch (error) {

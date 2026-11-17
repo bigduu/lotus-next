@@ -13,6 +13,8 @@ export const FALLBACK_DEFAULT: GlobalDefault = {
   safety_margin: 10_000,
 }
 
+export const UNLIMITED_OUTPUT = "unlimited"
+
 export interface LimitRowDraft {
   id: string
   model_pattern: string
@@ -21,7 +23,7 @@ export interface LimitRowDraft {
   /** False means the row follows Bamboo's global defaults and is not saved. */
   customized: boolean
   max_context_tokens: string
-  max_output_tokens: string
+  max_output_tokens: string | null
   safety_margin: string
 }
 
@@ -59,7 +61,9 @@ const toRow = (
   isCustom: !usedKeys.has(value.model_pattern.trim().toLocaleLowerCase()),
   customized: true,
   max_context_tokens: formatTokenCount(value.max_context_tokens),
-  max_output_tokens: formatTokenCount(value.max_output_tokens ?? FALLBACK_DEFAULT.max_output_tokens),
+  max_output_tokens: value.max_output_tokens != null
+    ? formatTokenCount(value.max_output_tokens)
+    : value.unlimited_output ? UNLIMITED_OUTPUT : null,
   safety_margin: value.safety_margin != null ? formatTokenCount(value.safety_margin) : "",
 })
 
@@ -98,6 +102,7 @@ export function buildLimitRows(
 
 export function validateLimitRows(
   rows: readonly LimitRowDraft[],
+  supportsUnlimitedOutput = false,
 ): { overrides: ModelLimitOverride[] } | { error: string } {
   const seen = new Set<string>()
   const overrides: ModelLimitOverride[] = []
@@ -115,11 +120,16 @@ export function validateLimitRows(
       return { error: uiText("the_context_window_for_must_be_an_integer_of_at_least_1_3efecb54", { v0: pattern }) }
     }
 
-    const output = parseTokenCount(row.max_output_tokens)
-    if (output === null || output < 1) {
+    const rawOutput = row.max_output_tokens
+    const unlimited = supportsUnlimitedOutput && (
+      rawOutput?.trim().toLowerCase() === UNLIMITED_OUTPUT
+      || rawOutput?.trim() === uiText("unlimited_model_output")
+    )
+    const output = rawOutput === null || unlimited ? null : parseTokenCount(rawOutput)
+    if (rawOutput !== null && !unlimited && (output === null || output < 1)) {
       return { error: uiText("maximum_output_for_must_be_an_integer_of_at_least_1_f032d4bd", { v0: pattern }) }
     }
-    if (output > context) return { error: uiText("maximum_output_for_cannot_exceed_its_context_window_e5cd692f", { v0: pattern }) }
+    if (output !== null && output > context) return { error: uiText("maximum_output_for_cannot_exceed_its_context_window_e5cd692f", { v0: pattern }) }
 
     let margin: number | undefined
     if (row.safety_margin.trim()) {
@@ -135,6 +145,7 @@ export function validateLimitRows(
       model_pattern: pattern,
       max_context_tokens: context,
       max_output_tokens: output,
+      ...(unlimited ? { unlimited_output: true } : {}),
       ...(margin !== undefined ? { safety_margin: margin } : {}),
     })
   }
