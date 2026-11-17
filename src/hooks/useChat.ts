@@ -1292,7 +1292,11 @@ export function useChat(
             answerLease.handoff = retained
           }
           stopStream(finalText, operationId)
-        })()
+        })().finally(() => {
+          // A Complete event can arrive while the channel stays open for
+          // child results. Release this pane's subscription after settling.
+          ac.abort()
+        })
       }
 
       const settleFailed = (historyReady = false, error?: unknown, diagnostic?: Readonly<PublicRunDiagnostic> | null): void => {
