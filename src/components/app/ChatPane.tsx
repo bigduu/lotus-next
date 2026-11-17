@@ -851,7 +851,7 @@ export function ChatPane({
     setCompactionPending(sessionId, true)
     setMenusDismissed(true)
     composerInputRef.current?.focus()
-    void agentClient.compactSessionContext(sessionId).then(async (receipt) => {
+    void agentClient.compactSessionContext(sessionId).then((receipt) => {
       const store = useAppStore.getState()
       store.setInputContentIfRevision(draftKey, commandRevision, "")
       if (receipt.status === "unchanged") {
@@ -874,8 +874,8 @@ export function ChatPane({
           after: percent.format(receipt.usage_after_percent),
         }))
       }
-      try { await store.loadChatHistory(sessionId, { mode: "monotonic" }) }
-      catch { /* The command receipt already confirms the durable compaction. */ }
+      // A slow history refresh must not keep the finished operation pending.
+      void store.loadChatHistory(sessionId, { mode: "monotonic" }).catch(() => {})
     }, (error) => {
       observeSessionExecutionConflict(sessionId, error)
       if (!mountedRef.current) return
@@ -1546,10 +1546,12 @@ export function ChatPane({
             </div>
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
-          <ContextCompressionNotice feedback={contextCompression} />
-          {compacting ? (
-            <p role="status" className="mx-4 text-xs text-muted-foreground">{uiText("compact_in_progress")}</p>
-          ) : null}
+          <ContextCompressionNotice
+            feedback={contextCompression}
+            sessionId={pageVisible && !historyBlocked && currentChat?.kind === "root" ? currentSessionId : null}
+            manualPending={compacting}
+            runActive={currentlyRunning}
+          />
           <Composer
           draft={draft}
           draftKey={draftKey}

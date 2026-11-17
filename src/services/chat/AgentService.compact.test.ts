@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest"
-const mock = vi.hoisted(() => ({ postOnce: vi.fn() }))
+const mock = vi.hoisted(() => ({ postOnce: vi.fn(), getOnce: vi.fn() }))
 vi.mock("@services/api", () => ({ apiClient: mock }))
 import { agentClient } from "./AgentService"
 
@@ -15,7 +15,10 @@ const compacted = {
     budget_limit: 96000, max_context_tokens: 100000, truncation_occurred: false, segments_removed: 0,
   },
 }
-beforeEach(() => mock.postOnce.mockReset())
+beforeEach(() => {
+  mock.postOnce.mockReset()
+  mock.getOnce.mockReset()
+})
 
 it.each([unchanged, compacted])("posts once to the encoded maintenance endpoint", async (receipt) => {
   mock.postOnce.mockResolvedValue(receipt)
@@ -33,4 +36,30 @@ it.each([
   mock.postOnce.mockResolvedValue(receipt)
   await expect(agentClient.compactSessionContext(sessionId)).rejects.toThrow("Invalid context compaction receipt")
   expect(mock.postOnce).toHaveBeenCalledOnce()
+})
+
+const observation = {
+  session_id: sessionId,
+  configured_strategy: "message_summary",
+  active: { id: "attempt", strategy: "message_summary", phase: "summarizing", part: 2, total: 4, elapsed_ms: 38000 },
+  applied: { id: "previous", strategy: "summary" },
+}
+
+it("reads live progress and the distinct durable result without retry or cache", async () => {
+  const { signal } = new AbortController()
+  mock.getOnce.mockResolvedValue(observation)
+  await expect(agentClient.getSessionCompactionStatus(sessionId, signal)).resolves.toBe(observation)
+  expect(mock.getOnce).toHaveBeenCalledExactlyOnceWith(
+    "sessions/fixture%2Fsession/compact", { cache: "no-store", signal },
+  )
+})
+
+it.each([
+  { ...observation, session_id: "other" },
+  { ...observation, active: { ...observation.active, part: 5 } },
+  { ...observation, active: { ...observation.active, phase: "provider detail" } },
+  { ...observation, applied: { ...observation.applied, strategy: "unconfirmed" } },
+])("rejects malformed compaction observations %#", async (status) => {
+  mock.getOnce.mockResolvedValue(status)
+  await expect(agentClient.getSessionCompactionStatus(sessionId)).rejects.toThrow(/compaction/)
 })
