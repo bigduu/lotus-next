@@ -107,6 +107,8 @@ export function useTicketIngress(sessionId?: string | null) {
     const operationId = ++sequence.current
     let replay = false
     let deliveryId: string | undefined
+    let activation: Promise<boolean> | undefined
+    const releaseAdmission = () => { admittedSessions.delete(sessionId); notifyIngress() }
     admittedSessions.add(sessionId); notifyIngress(); updateError(captured, sessionId, null)
     try {
       const prior = readReceipt(sessionId)
@@ -140,7 +142,9 @@ export function useTicketIngress(sessionId?: string | null) {
       const acknowledged: Delivery = { ...saved, phase: "activation" }
       sessionStorage.setItem(receiptKey(sessionId), JSON.stringify(acknowledged))
       notifyIngress()
-      await execute(sessionId, acknowledged)
+      // Persistence acknowledges the composer. Activation owns its separate
+      // recovery receipt and admission lock until the start request settles.
+      activation = execute(sessionId, acknowledged)
       return { kind: "accepted", operationId, sessionId, navigated: false }
     } catch (failure) {
       const compatibilityConflict = observeSessionExecutionConflict(sessionId, failure)
@@ -150,7 +154,10 @@ export function useTicketIngress(sessionId?: string | null) {
       if (compatibilityConflict) return { kind: "blocked" }
       updateError(captured, sessionId, getErrorMessage(failure) + uiText("ticket__draft_preserved_retrying_will_use_the_same_m_0c9ddb59"))
       return { kind: "unconfirmed", operationId }
-    } finally { admittedSessions.delete(sessionId); notifyIngress() }
+    } finally {
+      if (activation) void activation.then(releaseAdmission, releaseAdmission)
+      else releaseAdmission()
+    }
   }
   const retryExecute = async () => {
     const target = executePending
