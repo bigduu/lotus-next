@@ -24,10 +24,12 @@ import {
   type ExecuteResponse,
 } from "@services/chat/AgentService"
 import { permissionDecisionFor } from "@services/chat/permissionDecision"
+import { observeBackgroundShells, recordBackgroundShellOutcome } from "@services/chat/backgroundShellObservation"
 import { apiClient, getBackendStorageScope } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
 import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { notify } from "@/lib/notify"
+import { backgroundBashIds, parseBackgroundBashLaunch } from "@/lib/sessionBackgroundTasks"
 import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId, discardUnsentContinuousRetryFence, restoreConfirmedUnstartedRetryFence, readContinuousRetryFence, readOrdinaryRetryFence } from "@/lib/continuousRetryFence"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import {
@@ -356,6 +358,10 @@ export function useChat(
   const executionCompatibility = useSessionExecutionCompatibility(sid)
   const currentChat = useAppStore(selectSessionById(sid))
   const canonicalMessages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
+  const observedShellIds = useAppStore(useShallow((s) => backgroundBashIds(selectSessionById(sid)(s)?.messages)))
+  useEffect(() => {
+    if (sid) observeBackgroundShells(sid, observedShellIds)
+  }, [sid, observedShellIds])
   const completedHandoffs = useSyncExternalStore(subscribeCompletedAnswerHandoffs, getCompletedAnswerHandoffs, getCompletedAnswerHandoffs)
   useEffect(() => {
     for (const sessionId of new Set(completedHandoffs.map((entry) => entry.sessionId))) {
@@ -1472,6 +1478,10 @@ export function useChat(
             if (!ownsRunEvent() || !result) return
             const call = toolCallsByIdRef.current.get(toolCallId)
             if (!call || call.status !== "running") return
+            if (result.success !== false) {
+              const bashId = parseBackgroundBashLaunch(result.result)
+              if (bashId) observeBackgroundShells(runSid, [bashId])
+            }
             call.status = result.success === false ? "error" : "completed"
             if (typeof result.result === "string") call.output = result.result
             call.images = result.images
@@ -1557,15 +1567,9 @@ export function useChat(
               error: error || undefined,
             })
           },
-          // A background/async shell finished. Record its outcome in the store
-          // keyed by bash_id so the already-rendered tool card flips reactively
-          // (no history reload). NO ping is fired here: `bash_completed` is a
-          // cached CRITICAL event replayed on every resubscribe, which would
-          // burst. The user-facing ping comes from the backend `notification`
-          // (category background_task_completed) via `onNotification` below —
-          // deduped, preference-gated, and never replayed.
+          // A replay can precede the tool result or its history hydration.
           onBashCompleted: (bashId, _command, exitCode, status) => {
-            useAppStore.getState().setBashCompleted(bashId, status, exitCode)
+            recordBackgroundShellOutcome(runSid, bashId, status, exitCode)
           },
           // Backend-classified notifications (deduped + preference-gated server
           // side, and NOT part of the critical-event replay). Surface as an OS
