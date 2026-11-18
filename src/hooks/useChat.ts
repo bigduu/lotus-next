@@ -24,11 +24,12 @@ import {
   type ExecuteResponse,
 } from "@services/chat/AgentService"
 import { permissionDecisionFor } from "@services/chat/permissionDecision"
-import { observeBackgroundShells, recordBackgroundShellOutcome } from "@services/chat/backgroundShellObservation"
+import {
+  deliverSessionNotification, observeBackgroundShells, recordBackgroundShellOutcome,
+} from "@services/chat/backgroundShellObservation"
 import { apiClient, getBackendStorageScope } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
 import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
-import { notify } from "@/lib/notify"
 import { backgroundBashIds, parseBackgroundBashLaunch } from "@/lib/sessionBackgroundTasks"
 import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId, discardUnsentContinuousRetryFence, restoreConfirmedUnstartedRetryFence, readContinuousRetryFence, readOrdinaryRetryFence } from "@/lib/continuousRetryFence"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
@@ -1669,10 +1670,7 @@ export function useChat(
           // side, and NOT part of the critical-event replay). Surface as an OS
           // notification (opt-in via lib/notify). Covers needs-clarification /
           // approval / context-critical / sub-agent + background-task completion.
-          onNotification: (event) => {
-            const e = event as { title?: string; body?: string }
-            notify(e.title ?? "", e.body ?? "")
-          },
+          onNotification: deliverSessionNotification,
           onNeedClarification: () => {
             const scope = navigationRef.current
             if (!ownsStream() || scope.sessionId !== runSid || !ownsQuestionScope(scope)) return

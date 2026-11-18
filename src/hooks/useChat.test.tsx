@@ -124,7 +124,7 @@ vi.mock("@services/api", () => ({
 vi.mock("@/lib/taskTemplates", () => ({
   acknowledgePendingTemplatePrompt: mocks.acknowledgeTemplate,
 }))
-vi.mock("@/lib/notify", () => ({ notify: vi.fn() }))
+vi.mock("@/lib/notify", () => ({ notify: vi.fn(), isNotifyEnabled: () => false, notifyPermission: () => "denied" }))
 vi.mock("@shared/utils/systemPromptEnhancement", () => ({
   getSystemPromptEnhancementText: () => "",
 }))
