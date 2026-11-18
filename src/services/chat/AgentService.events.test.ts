@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const stream = vi.hoisted(() => ({
   event: {} as Record<string, unknown>,
+  fresh: true,
 }))
 
 vi.mock("./v2Stream", () => ({
   subscribeAgent: vi.fn((_sessionId, handlers, dispatch) => {
     dispatch(stream.event, handlers)
-    return { promise: Promise.resolve(), close: vi.fn() }
+    return { promise: Promise.resolve(), close: vi.fn(), fresh: stream.fresh }
   }),
   stopAgent: vi.fn(() => false),
 }))
@@ -18,6 +19,7 @@ import { diagnosticFixture, diagnosticFixtureError, timeoutDiagnosticFixture, ti
 describe("AgentClient session event routing", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    stream.fresh = true
     stream.event = {
       type: "message_appended",
       session_id: "session-1",
@@ -27,6 +29,16 @@ describe("AgentClient session event routing", () => {
       content: "apply this next",
       created_at: "2026-09-21T00:00:00Z",
     }
+  })
+
+  it.each([true, false])("uses the pre-attachment run ID only for a fresh subscription (%s)", async (fresh) => {
+    stream.fresh = fresh
+    const acceptRunId = vi.fn()
+    await new AgentClient().subscribeToEvents("session-1", {}, undefined, {
+      beforeAttachment: Promise.resolve("snapshot-run"), acceptRunId,
+    })
+    if (fresh) expect(acceptRunId).toHaveBeenCalledExactlyOnceWith("snapshot-run")
+    else expect(acceptRunId).not.toHaveBeenCalled()
   })
 
   it.each([

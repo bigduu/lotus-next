@@ -157,10 +157,7 @@ test("Stop uses the exact run already observed when reopening a running session"
   await expect(stop).toBeVisible()
   await expect.poll(() => Boolean(subscribed)).toBe(true)
   subscribed!.send(JSON.stringify({
-    ch: `agent.${sessionId}`, seq: 1, event: { type: "execution_started", session_id: sessionId, run_id: runId },
-  }))
-  subscribed!.send(JSON.stringify({
-    ch: `agent.${sessionId}`, seq: 2, event: { type: "token", content: partialText },
+    ch: `agent.${sessionId}`, seq: 1, event: { type: "token", content: partialText },
   }))
   await expect(page.locator(".assistant-streamdown-streaming")).toContainText(partialText)
   await stop.click()

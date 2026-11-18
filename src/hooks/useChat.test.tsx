@@ -956,6 +956,7 @@ describe("useChat two-phase send lifecycle", () => {
       "main-session",
       expect.any(Object),
       expect.any(AbortController),
+      expect.objectContaining({ beforeAttachment: expect.any(Promise), acceptRunId: expect.any(Function) }),
     )
   })
   it.each([
@@ -4415,7 +4416,13 @@ describe("explicit continuous upstream retry", () => {
   const refusedResume = (sessionId: string) => new ApiError("synthetic private server detail", 409, "Conflict", JSON.stringify({
     session_id: sessionId, error: { code: "retry_resume_not_prepared", message: "synthetic private server detail" },
   }))
-  const abortableSubscription = (_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+  const abortableSubscription = (
+    _sid: string, _h: SubscriptionHandlers, controller: AbortController,
+    observation?: { beforeAttachment: Promise<string | null>; acceptRunId: (runId: string) => void },
+  ) => {
+    if (observation) void observation.beforeAttachment.then((runId) => {
+      if (runId && !controller.signal.aborted) observation.acceptRunId(runId)
+    })
     const sub = deferred<void>()
     controller.signal.addEventListener("abort", () => sub.resolve(), { once: true })
     return sub.promise
@@ -4696,7 +4703,7 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
   })
 
-  it("ignores a successor snapshot that arrives after the observed run has streamed output", async () => {
+  it("ignores a late running snapshot after the observer attaches", async () => {
     allow()
     const target = "successor-before-stop"
     const running = deferred<{ sessions: Array<{ session_id: string; run_id: string }> }>()
@@ -4705,7 +4712,8 @@ describe("explicit continuous upstream retry", () => {
     mocks.getRunningSessions.mockReturnValue(running.promise)
     mocks.subscribeToEvents.mockImplementation(abortableSubscription)
     const hook = await mountUseChat({ mode: "bound", sessionId: target })
-    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    const [, handlers, , observation] = mocks.subscribeToEvents.mock.lastCall! as Parameters<typeof abortableSubscription>
+    expect(await observation!.beforeAttachment).toBeNull()
     await act(async () => {
       handlers.onToken("Output from the previous run")
       running.resolve({ sessions: [{ session_id: target, run_id: "successor-run" }] })
@@ -4719,21 +4727,45 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
   })
 
+  it("does not use a non-start Execute receipt that arrives after the Stop click", async () => {
+    allow()
+    const target = "later-nonstart-receipt"
+    const ack = deferred<{ session_id: string; status: "already_running"; run_id: string }>()
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockReturnValue(ack.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("Observe a synthetic run") })
+    await vi.waitFor(() => expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1))
+    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    await act(async () => {
+      handlers.onExecutionStarted("observed-run")
+      hook.current.stop()
+      ack.resolve({ session_id: target, status: "already_running", run_id: "successor-run" })
+    })
+    await flushMicrotasks()
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "observed-run")
+  })
+
   it("keeps text before a tool visible through one history reconciliation for repeated Stop clicks", async () => {
     allow()
     const target = "exact-stop-tool-checkpoint"
     const history = deferred<void>()
+    const stopReceipt = deferred<void>()
     const text = "Partial answer before a tool"
-    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, config: { model: "test-model" } }]
-    mocks.shouldObserve = true
-    mocks.getRunningSessions.mockResolvedValue({ sessions: [{ session_id: target, run_id: "observed-run" }] })
-    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "owned-run" })
+    mocks.stopGeneration.mockReturnValue(stopReceipt.promise)
     mocks.subscribeToEvents.mockImplementation(abortableSubscription)
     const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("Start an ordinary turn") })
     await flushMicrotasks()
     const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
     mocks.appState.loadChatHistory.mockClear().mockReturnValue(history.promise)
-    mocks.shouldObserve = false
+    mocks.shouldObserve = true
     await act(async () => {
       handlers.onToken(text)
       handlers.onToolStart("tool-id", "Bash", {})
@@ -4743,10 +4775,16 @@ describe("explicit continuous upstream retry", () => {
     await flushMicrotasks()
 
     expect(hook.current.liveSegments).toContainEqual(expect.objectContaining({ kind: "text", text }))
-    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "observed-run")
+    expect(hook.current.sending).toBe(false)
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "owned-run")
+    expect(mocks.appState.loadChatHistory).not.toHaveBeenCalled()
+    await act(async () => { stopReceipt.resolve() })
+    await flushMicrotasks()
     expect(mocks.appState.loadChatHistory).toHaveBeenCalledExactlyOnceWith(target, expect.objectContaining({
       mode: "monotonic", waitForAssistant: true,
     }))
+    mocks.shouldObserve = false
     await act(async () => { history.resolve() })
     await flushMicrotasks()
     expect(hook.current.liveSegments).toEqual([])

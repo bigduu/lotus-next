@@ -1374,7 +1374,7 @@ export const subscribeAgent = (
   sessionId: string,
   handlers: AgentEventHandlers,
   dispatch: AgentEventDispatch,
-): { promise: Promise<void>; close: () => void } => {
+): { promise: Promise<void>; close: () => void; fresh: boolean } => {
   const ch = agentCh(sessionId);
   let settled = false;
   let resolveFn: () => void = () => {};
@@ -1413,7 +1413,7 @@ export const subscribeAgent = (
     connect();
   }
 
-  return { promise, close: () => resolveFn() };
+  return { promise, close: () => resolveFn(), fresh: isFirstSubscriber };
 };
 
 /** Subscribe to the strictly message-only `message.{sessionId}` channel. */

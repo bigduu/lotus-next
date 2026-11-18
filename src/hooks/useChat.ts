@@ -983,9 +983,12 @@ export function useChat(
     if (reservation.kind === "unavailable" && mountedRef.current && navigationRef.current.sessionId === runSid)
       setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "identity_unsaved" })
     const execution = execute()
+    let acknowledgedRunId: string | undefined
     let restoredStopFence: ContinuousStopFence | undefined
     const ownFence: ContinuousStopFence = { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
       const observedRunId = getObservedRunId?.()
+      const receiptRunId = acknowledgedRunId
+      const priorStop = restoredStopFence
       const ack = await execution
       if (ack?.session_id !== runSid) throw new Error("Execution identity unavailable")
       if (ack.status !== "started") {
@@ -993,12 +996,14 @@ export function useChat(
         // checks it. Only stop the exact run already bound to this observer.
         const isCurrent = () => continuousStopFences.get(runSid) === ownFence && getBackendStorageScope() === backendScope
         if (!isCurrent()) throw new Error("Execution identity unavailable")
-        if (ack.run_id != null && restoredStopFence) return restoredStopFence.stop(onDispatched)
-        const runId = ack.run_id ?? observedRunId
+        if (receiptRunId != null && priorStop) return priorStop.stop(onDispatched)
+        if (observedRunId && receiptRunId != null && observedRunId !== receiptRunId)
+          throw new Error("Execution identity changed")
+        const runId = receiptRunId ?? observedRunId
         if ((ack.status === "completed" || ack.status === "already_running") && isRetryRunId(runId)) {
           return stopExactContinuousRun(runSid, runId, onDispatched, isCurrent)
         }
-        if (restoredStopFence) return restoredStopFence.stop(onDispatched)
+        if (priorStop) return priorStop.stop(onDispatched)
         throw new Error("Execution did not start")
       }
       const capability = await readUpstreamRetryCapability()
@@ -1016,8 +1021,10 @@ export function useChat(
     }) }
     continuousStopFences.set(runSid, ownFence)
     paneStopFencesRef.current.set(runSid, ownFence)
-    if (reservation.kind === "reserved") void execution.then((ack) => {
+    void execution.then((ack) => {
       if (ack?.session_id !== runSid) return
+      if (ack.status === "already_running" || ack.status === "completed") acknowledgedRunId = ack.run_id ?? undefined
+      if (reservation.kind !== "reserved") return
       if (ack.status === "started") {
         const saved = ack.run_id == null
           ? confirmOrdinaryStartedWithoutRunId(reservation.reservation)
@@ -1165,17 +1172,34 @@ export function useChat(
         observedOutput = true
         return true
       }
-      const observeActiveRun = () => {
-        if (getObservedRunId() || observedOutput) return
-        // The active list can initialize an observer. Once it has shown output,
-        // the list may describe a successor to the run that produced that output.
-        void agentClient.getRunningSessions().then(({ sessions }) => {
-          if (!ownsRunEvent() || getObservedRunId() || observedOutput || getBackendStorageScope() !== backendScope) return
-          const matching = sessions.filter((entry) => entry.session_id === runSid)
-          if (matching.length === 1 && isRetryRunId(matching[0].run_id)) activeSnapshotRunId = matching[0].run_id
-        }).catch(() => {})
+      const readRunBeforeAttaching = async (execution?: Promise<ExecuteResponse>): Promise<string | null> => {
+        const lookup = new AbortController()
+        const cancelLookup = () => lookup.abort()
+        const deadline = new Promise<null>((resolve) => {
+          lookup.signal.addEventListener("abort", () => resolve(null), { once: true })
+        })
+        ac.signal.addEventListener("abort", cancelLookup, { once: true })
+        // Keep attachment responsive on a slow backend. Results after the
+        // stream attaches cannot identify the generation in that stream.
+        const timer = setTimeout(cancelLookup, 400)
+        try {
+          if (execution) {
+            const ack = await Promise.race([execution, deadline])
+            if (ack?.session_id !== runSid || ack.run_id != null
+                || (ack.status !== "completed" && ack.status !== "already_running")) return null
+          }
+          if (!ownsRunEvent() || lookup.signal.aborted || getBackendStorageScope() !== backendScope) return null
+          const active = await Promise.race([agentClient.getRunningSessions(lookup.signal), deadline])
+          const matching = active?.sessions.filter((entry) => entry.session_id === runSid)
+          return matching?.length === 1 && isRetryRunId(matching[0].run_id) ? matching[0].run_id : null
+        } catch {
+          return null
+        } finally {
+          clearTimeout(timer)
+          ac.signal.removeEventListener("abort", cancelLookup)
+        }
       }
-      if (observeAttachedRun) observeActiveRun()
+      let runBeforeAttachment = observeAttachedRun ? readRunBeforeAttaching() : undefined
       const updateCompression = (
         update: (previous: ContextCompressionFeedback | null) => ContextCompressionFeedback | null,
         phase?: string,
@@ -1220,6 +1244,7 @@ export function useChat(
           : startOrdinaryExecution(runSid, operationId, () => opts?.liveBootstrapResume
             ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
             : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef), getObservedRunId)
+        if (!opts?.upstreamRetry) runBeforeAttachment = readRunBeforeAttaching(execution)
         if (opts?.upstreamRetry) {
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
           // A Stop clicked before Execute returns waits for that exact ACK. It
@@ -1235,10 +1260,6 @@ export function useChat(
         }
         void execution.then((ack) => {
           executeAcknowledged = true
-          if (!opts?.upstreamRetry && ownsRunEvent() && ack?.session_id === runSid && ack.run_id == null
-              && (ack.status === "completed" || ack.status === "already_running")) {
-            observeActiveRun()
-          }
           if (ownsRunEvent() && ack?.session_id === runSid && ack.run_id?.trim()) {
             confirmedRunId = ack.run_id
             answerLease.runId = ack.run_id
@@ -1509,6 +1530,12 @@ export function useChat(
         reconcileTimer = setTimeout(() => { void reconcileOwnedRun() }, 5_000)
       }
 
+      const observation = runBeforeAttachment ? {
+        beforeAttachment: runBeforeAttachment,
+        acceptRunId: (runId: string) => {
+          if (ownsRunEvent() && getBackendStorageScope() === backendScope) activeSnapshotRunId = runId
+        },
+      } : undefined
       await agentClient.subscribeToEvents(
         runSid,
         {
@@ -1713,6 +1740,7 @@ export function useChat(
           },
         },
         ac,
+        ...(observation ? [observation] : []),
       ).finally(() => {
         subscriptionOpen = false
         clearReconcileTimer()
@@ -1867,14 +1895,16 @@ export function useChat(
   const summaryRunning = currentChat?.isRunning ?? false
   const summarySuspended = currentChat?.lastRunStatus === "suspended"
   const shouldObserve = useAppStore((s) => (sid ? selectShouldObserve(sid)(s) : false))
+  const stoppingInPane = upstreamRetryFeedback?.sessionId === sid && upstreamRetryFeedback?.status === "stopping"
   useEffect(() => {
     // Active children can keep the execution rail busy while their parent is
     // suspended. Wait for its running summary before observing another run.
     if (!sid || !shouldObserve || summarySuspended && !summaryRunning) return
     if (activeSendRef.current) return
+    if (stoppingInPane) return
     if (subscribedSidRef.current === sid) return
     void runStream(sid, { resume: true })
-  }, [sid, shouldObserve, summarySuspended, summaryRunning, sending, runStream])
+  }, [sid, shouldObserve, summarySuspended, summaryRunning, sending, runStream, stoppingInPane])
 
   // ── Stranded-terminal reconcile ───────────────────────────────────────
   // If the summary settles (is_running=false via the feed) while we still hold
@@ -2543,15 +2573,6 @@ export function useChat(
       streamBufRef.current.trim() || liveSegRef.current.some((segment) => segment.kind === "text" && segment.text.trim())
     ))
     const stopRequest = stopFence ? stopFence.stop(() => stoppedSubscription?.abort()) : targetSessionId ? agentClient.stopGeneration(targetSessionId) : null
-    if (stopFence && stopRequest) void stopRequest.then(() => {
-      if (mountedRef.current && navigationRef.current.sessionId === stopFence.sessionId
-          && ownsStopFence())
-        setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId, status: "stop_requested" })
-    }, () => {
-      if (mountedRef.current && navigationRef.current.sessionId === stopFence.sessionId
-          && ownsStopFence())
-        setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId, status: "stop_unconfirmed" })
-    })
     if (targetSessionId && !stopFence) {
       const store = useAppStore.getState()
       store.markCancel(targetSessionId)
@@ -2595,6 +2616,10 @@ export function useChat(
         if (stopFence) stoppingFencesRef.current.delete(stopFence)
         if (keepPartialAnswer && mountedRef.current && navigationRef.current.sessionId === targetSessionId
             && abortRef.current === stoppedSubscription && streamOperationRef.current === null) stopStream(null)
+        if (stopFence && mountedRef.current && navigationRef.current.sessionId === stopFence.sessionId && ownsStopFence()) {
+          setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId,
+            status: dispatched === null ? "stop_unconfirmed" : "stop_requested" })
+        }
       }
     })()
   }, [clearPendingOperation, sid, stopStream, publishCompression, makeUnownedStopFence, makeRestoredOrdinaryStopFence])
