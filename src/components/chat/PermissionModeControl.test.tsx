@@ -126,13 +126,15 @@ describe("PermissionModeControl", () => {
     const plain = { ...snapshot("auto"), supervisorAutoDispatch: false }
     const dispatch = { ...snapshot("auto", '"8"'), supervisorAutoDispatch: true }
     const revoked = { ...snapshot("auto", '"9"'), supervisorAutoDispatch: false }
+    const reenabled = { ...snapshot("auto", '"10"'), supervisorAutoDispatch: true }
     read.mockResolvedValueOnce(plain).mockResolvedValueOnce(dispatch)
       .mockResolvedValueOnce(dispatch).mockResolvedValueOnce(revoked)
+      .mockResolvedValueOnce(reenabled)
     patch.mockResolvedValueOnce(snapshot("auto", '"9"'))
     await mount()
     await act(async () => {
       useAppStore.getState().reconcileSessionPermissionModes([{
-        ...summary("a"), permission_mode: "auto", supervisor_auto_dispatch: true,
+        ...summary("a"), permission_mode: "auto", supervisor_permission_etag: '"8"',
       }])
     })
     expect(selector().textContent).toBe("Auto for dispatches")
@@ -142,6 +144,13 @@ describe("PermissionModeControl", () => {
     expect(read).toHaveBeenCalledTimes(4)
     expect(selectedMode()).toBe("auto")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("save response was not confirmed")
+    await act(async () => {
+      useAppStore.getState().reconcileSessionPermissionModes([{
+        ...summary("a"), permission_mode: "auto", supervisor_permission_etag: '"10"',
+      }])
+    })
+    expect(read).toHaveBeenCalledTimes(5)
+    expect(selector().textContent).toBe("Auto for dispatches")
   })
 
   it("reads permissions when the selected session arrives after the composer mounts", async () => {

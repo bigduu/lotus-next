@@ -888,8 +888,10 @@ export interface SessionSummary {
   bypass_permissions?: boolean;
   /** Missing or unknown typed support must not enable permission-mode writes. */
   permission_mode?: SessionPermissionMode;
-  /** An index hint. Only the revisioned detail can authorize changes. */
+  /** The opt-in is reported by Supervisor detail. */
   supervisor_auto_dispatch?: boolean;
+  /** An index hint to refresh permission detail. */
+  supervisor_permission_etag?: string;
 }
 
 export interface RunningSessionEntry {
