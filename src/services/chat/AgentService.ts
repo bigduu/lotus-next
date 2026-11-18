@@ -1841,7 +1841,7 @@ export class AgentClient {
    */
   async getRunningSessions(): Promise<RunningSessionsResponse> {
     debugLog("[AgentClient]", "runs.active.request", {});
-    const response = await apiClient.get<RunningSessionsResponse>("runs/active");
+    const response = await apiClient.get<RunningSessionsResponse>("runs/active", { cache: "no-store" });
     debugLog("[AgentClient]", "runs.active.response", summarizeRunningSessions(response));
     return response;
   }
@@ -2120,6 +2120,7 @@ export class AgentClient {
         }
         break;
       case "execution_started":
+        if (event.session_id !== sessionId) break;
         handlers.onExecutionStarted?.(event.run_id || "", event.started_at);
         break;
       case "runner_progress":

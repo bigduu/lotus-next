@@ -203,6 +203,7 @@ type StopDispatchKind = "legacy" | "exact"
 type ContinuousStopFence = {
   sessionId: string
   operationId: number
+  observation?: true
   stop: (onDispatched?: () => void) => Promise<StopDispatchKind>
 }
 
@@ -963,7 +964,12 @@ export function useChat(
 
   // Give every ordinary start a pane-owned identity before its ACK. A guarded
   // session reserves a unique persistent generation before the request is sent.
-  const startOrdinaryExecution = useCallback((runSid: string, operationId: number, execute: () => Promise<ExecuteResponse>) => {
+  const startOrdinaryExecution = useCallback((
+    runSid: string,
+    operationId: number,
+    execute: () => Promise<ExecuteResponse>,
+    getObservedRunId?: () => string | null,
+  ) => {
     const backendScope = getBackendStorageScope()
     // Reserve synchronously: an acknowledged user message must dispatch its
     // Execute before send() resolves, without awaiting a capability request.
@@ -971,9 +977,22 @@ export function useChat(
     if (reservation.kind === "unavailable" && mountedRef.current && navigationRef.current.sessionId === runSid)
       setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "identity_unsaved" })
     const execution = execute()
+    let restoredStopFence: ContinuousStopFence | undefined
     const ownFence: ContinuousStopFence = { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
+      const observedRunId = getObservedRunId?.()
       const ack = await execution
-      if (ack?.session_id !== runSid || ack.status !== "started") throw new Error("Execution did not start")
+      if (ack?.session_id !== runSid) throw new Error("Execution identity unavailable")
+      if (ack.status !== "started") {
+        // A Root Inbox activation can consume the input before this Execute
+        // checks it. Only stop the exact run already bound to this observer.
+        if (observedRunId && (ack.status === "completed" || ack.status === "already_running")
+            && continuousStopFences.get(runSid) === ownFence
+            && getBackendStorageScope() === backendScope) {
+          return stopExactContinuousRun(runSid, observedRunId, onDispatched)
+        }
+        if (restoredStopFence) return restoredStopFence.stop(onDispatched)
+        throw new Error("Execution did not start")
+      }
       const capability = await readUpstreamRetryCapability()
       if (capability === "unsupported") {
         const current = readOrdinaryRetryFence(backendScope, runSid)
@@ -1000,12 +1019,16 @@ export function useChat(
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "identity_unsaved" })
       } else if (ack.status === "already_running" || ack.status === "completed" || ack.status === "error" || ack.status === "cancelled") {
         const restored = restoreConfirmedUnstartedRetryFence(reservation.reservation)
+        const canObserve = getObservedRunId && (ack.status === "already_running" || ack.status === "completed")
         if (restored && continuousStopFences.get(runSid) === ownFence && paneStopFencesRef.current.get(runSid) === ownFence) {
           const previous = readOrdinaryRetryFence(backendScope, runSid)
           if (previous?.started) {
             const priorFence = makeRestoredOrdinaryStopFence(runSid, operationId, previous.operationId)
-            continuousStopFences.set(runSid, priorFence)
-            paneStopFencesRef.current.set(runSid, priorFence)
+            if (canObserve) restoredStopFence = priorFence
+            else {
+              continuousStopFences.set(runSid, priorFence)
+              paneStopFencesRef.current.set(runSid, priorFence)
+            }
           }
         }
       }
@@ -1013,16 +1036,24 @@ export function useChat(
     return execution
   }, [makeRestoredOrdinaryStopFence])
 
-  // A pane observing a run without an identity must not borrow a later pane's
-  // fence. Only an explicitly unsupported old service can use legacy Stop.
-  const makeUnownedStopFence = useCallback((runSid: string, operationId: number): ContinuousStopFence => {
+  // Capture the observed run at the click, before awaiting capability or
+  // dispatch. A later operation must never supply the target of this click.
+  const makeUnownedStopFence = useCallback((
+    runSid: string,
+    operationId: number,
+    getObservedRunId?: () => string | null,
+  ): ContinuousStopFence => {
     const backendScope = getBackendStorageScope()
     const priorFence = continuousStopFences.get(runSid)
-    return { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
-      if (await readUpstreamRetryCapability() !== "unsupported" || continuousStopFences.get(runSid) !== priorFence
+    return { sessionId: runSid, operationId, observation: true, stop: coalesceExactStop(async (onDispatched) => {
+      const observedRunId = getObservedRunId?.()
+      const capability = await readUpstreamRetryCapability()
+      if (continuousStopFences.get(runSid) !== priorFence || getBackendStorageScope() !== backendScope
           || readContinuousRetryFence(backendScope, runSid).kind !== "clear")
         throw new Error("Execution identity unavailable")
-      return requestLegacyStop(runSid, onDispatched)
+      if (capability === "unsupported") return requestLegacyStop(runSid, onDispatched)
+      if (capability === "supported" && observedRunId) return stopExactContinuousRun(runSid, observedRunId, onDispatched)
+      throw new Error("Execution identity unavailable")
     }) }
   }, [])
 
@@ -1055,7 +1086,11 @@ export function useChat(
         throw new Error(uiText("upstream_retry_identity_unavailable"))
       }
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
-      if (opts?.resume && !paneStopFencesRef.current.has(runSid)) {
+      let observedRunId: string | null = null
+      let observeStopIdentity = false
+      const getObservedRunId = () => observedRunId
+      const paneFence = paneStopFencesRef.current.get(runSid)
+      if (opts?.resume && (!paneFence || paneFence.observation)) {
         const existing = continuousStopFences.get(runSid)
         const ordinary = readOrdinaryRetryFence(backendScope, runSid)
         const saved = readContinuousRetryFence(backendScope, runSid)
@@ -1064,7 +1099,10 @@ export function useChat(
             stop: coalesceExactStop((onDispatched) => stopExactContinuousRun(runSid, saved.runId, onDispatched)) } : null
         const recoverable = existing ?? restored
         if (recoverable) paneStopFencesRef.current.set(runSid, recoverable)
-        else if (saved.kind === "clear") paneStopFencesRef.current.set(runSid, makeUnownedStopFence(runSid, operationId))
+        else if (saved.kind === "clear") {
+          observeStopIdentity = true
+          paneStopFencesRef.current.set(runSid, makeUnownedStopFence(runSid, operationId, getObservedRunId))
+        }
       }
       // A successor owns fresh buffers, not an earlier completed answer whose
       // exact canonical history has not arrived yet.
@@ -1112,6 +1150,21 @@ export function useChat(
       subscriptionRef.current = subscription
       subscribedSidRef.current = runSid
       const ownsRunEvent = () => ownsStream() && !ac.signal.aborted && mountedRef.current && !terminal.settlement
+      let stopSnapshotPending = false
+      let stopSnapshotReads = 0
+      const observeActiveRun = () => {
+        if (!observeStopIdentity || observedRunId || stopSnapshotPending || stopSnapshotReads >= 2) return
+        stopSnapshotPending = true
+        stopSnapshotReads++
+        // Replay the active identity at observation time, never in response to
+        // Stop. A miss at attachment gets one more read when output arrives.
+        void agentClient.getRunningSessions().then(({ sessions }) => {
+          if (!ownsRunEvent() || observedRunId || getBackendStorageScope() !== backendScope) return
+          const matching = sessions.filter((entry) => entry.session_id === runSid)
+          if (matching.length === 1 && isRetryRunId(matching[0].run_id)) observedRunId = matching[0].run_id
+        }).catch(() => {}).finally(() => { stopSnapshotPending = false })
+      }
+      observeActiveRun()
       const updateCompression = (
         update: (previous: ContextCompressionFeedback | null) => ContextCompressionFeedback | null,
         phase?: string,
@@ -1155,7 +1208,7 @@ export function useChat(
           ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
           : startOrdinaryExecution(runSid, operationId, () => opts?.liveBootstrapResume
             ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
-            : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef))
+            : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef), getObservedRunId)
         if (opts?.upstreamRetry) {
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
           // A Stop clicked before Execute returns waits for that exact ACK. It
@@ -1171,6 +1224,11 @@ export function useChat(
         }
         void execution.then((ack) => {
           executeAcknowledged = true
+          if (!opts?.upstreamRetry && ownsRunEvent() && ack?.session_id === runSid
+              && (ack.status === "completed" || ack.status === "already_running")) {
+            observeStopIdentity = true
+            observeActiveRun()
+          }
           if (ownsRunEvent() && ack?.session_id === runSid && ack.run_id?.trim()) {
             confirmedRunId = ack.run_id
             answerLease.runId = ack.run_id
@@ -1444,12 +1502,16 @@ export function useChat(
       await agentClient.subscribeToEvents(
         runSid,
         {
-          onToken: (content) => { if (ownsRunEvent()) pushToken(content) },
-          onReasoningToken: (content) => { if (ownsRunEvent()) pushReasoning(content) },
+          onExecutionStarted: (runId) => {
+            if (ownsRunEvent() && !observedRunId && isRetryRunId(runId)) observedRunId = runId
+          },
+          onToken: (content) => { if (ownsRunEvent()) { observeActiveRun(); pushToken(content) } },
+          onReasoningToken: (content) => { if (ownsRunEvent()) { observeActiveRun(); pushReasoning(content) } },
           onToolStart: (toolCallId, toolName, args) => {
             // A tool id identifies one invocation within this operation, even
             // when critical events are replayed after a subscription reconnect.
             if (!ownsRunEvent() || !toolCallId || toolCallsByIdRef.current.has(toolCallId)) return
+            observeActiveRun()
             // Natural reading order: whatever text streamed before this tool
             // round freezes above it; the buffers restart afterwards.
             freezeTextSegment()
@@ -2462,6 +2524,7 @@ export function useChat(
       && paneStopFencesRef.current.get(stopFence.sessionId) === stopFence
     if (stopFence) setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId, status: "stopping" })
     const stoppedSubscription = abortRef.current
+    const hasPartialText = subscribedSidRef.current === targetSessionId && Boolean(streamBufRef.current.trim())
     const stopRequest = stopFence ? stopFence.stop(() => stoppedSubscription?.abort()) : targetSessionId ? agentClient.stopGeneration(targetSessionId) : null
     if (stopFence && stopRequest) void stopRequest.then(() => {
       if (mountedRef.current && navigationRef.current.sessionId === stopFence.sessionId
@@ -2500,7 +2563,14 @@ export function useChat(
         await useAppStore.getState().refreshChatsNow().catch(() => {})
       }
       try {
-        await useAppStore.getState().loadChatHistory(targetSessionId)
+        if (dispatched === "exact" && hasPartialText) {
+          // The Stop receipt precedes the cancelled runner's last checkpoint.
+          await useAppStore.getState().loadChatHistory(targetSessionId, {
+            mode: "monotonic", waitForAssistant: true, retries: 8, retryDelayMs: 150,
+          })
+        } else {
+          await useAppStore.getState().loadChatHistory(targetSessionId)
+        }
         if (pendingOperationId !== undefined) clearPendingOperation(pendingOperationId)
       } catch (err) {
         console.warn("[useChat] stopped-generation history hydration failed", err)
