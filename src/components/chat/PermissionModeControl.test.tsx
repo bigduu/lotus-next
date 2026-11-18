@@ -85,6 +85,29 @@ afterEach(() => {
 })
 
 describe("PermissionModeControl", () => {
+  it("opts in to new execution sessions from plain Auto and can revoke that scope", async () => {
+    const plain = { ...snapshot("auto"), supervisorAutoDispatch: false }
+    const dispatch = { ...snapshot("auto", '"8"'), supervisorAutoDispatch: true }
+    const revoked = { ...snapshot("auto", '"9"'), supervisorAutoDispatch: false }
+    read.mockResolvedValueOnce(plain).mockResolvedValueOnce(plain).mockResolvedValueOnce(dispatch)
+    patch.mockResolvedValueOnce(dispatch).mockResolvedValueOnce(revoked)
+
+    await mount()
+    choose("auto for dispatches")
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("the new execution sessions it starts")
+    expect(patch).not.toHaveBeenCalled()
+    click("Enable for dispatches")
+    await flush()
+    expect(patch).toHaveBeenNthCalledWith(1, "a", "auto", '"7"', true)
+    expect(selector().textContent).toBe("Auto for dispatches")
+
+    choose("auto")
+    await flush()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(patch).toHaveBeenNthCalledWith(2, "a", "auto", '"8"')
+    expect(selectedMode()).toBe("auto")
+  })
+
   it("reads permissions when the selected session arrives after the composer mounts", async () => {
     useAppStore.setState({ chats: [] })
     await mount("a", true)

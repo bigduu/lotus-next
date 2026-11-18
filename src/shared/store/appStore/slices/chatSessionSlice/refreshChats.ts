@@ -271,6 +271,7 @@ function sessionListUpdate(
         // only another revisioned detail/PATCH response may replace it.
         permissionMode: prevConfig.permissionModeEtag ? prevConfig.permissionMode : nextConfig.permissionMode,
         permissionModeEtag: prevConfig.permissionModeEtag,
+        supervisorAutoDispatch: prevConfig.supervisorAutoDispatch,
         bypassPermissions: prevConfig.permissionModeEtag
           ? prevConfig.bypassPermissions
           : nextConfig.bypassPermissions,

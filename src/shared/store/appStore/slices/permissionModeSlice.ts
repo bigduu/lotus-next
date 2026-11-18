@@ -22,7 +22,7 @@ export interface PermissionModeSlice {
   /** Transient request state only. The one mode/ETag snapshot lives in ChatItem.config. */
   permissionModeRequests: Record<string, PermissionModeRequest>;
   refreshSessionPermissionMode: (sessionId: string) => Promise<void>;
-  changeSessionPermissionMode: (sessionId: string, mode: SessionPermissionMode, etag: string) => Promise<void>;
+  changeSessionPermissionMode: (sessionId: string, mode: SessionPermissionMode, etag: string, supervisorAutoDispatch?: true) => Promise<void>;
   reconcileSessionPermissionModes: (summaries: SessionSummary[]) => void;
   resetSessionPermissionModes: (sessionIds?: string[]) => void;
 }
@@ -65,10 +65,13 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
     const current = chatFor(id)!;
     const previousRevision = sessionPermissionRevision(current.config.permissionModeEtag);
     const nextRevision = sessionPermissionRevision(snapshot.etag);
+    const previousDispatch = current.config.supervisorAutoDispatch;
+    const conflictingDispatch = previousDispatch !== undefined && snapshot.supervisorAutoDispatch !== undefined
+      && previousDispatch !== snapshot.supervisorAutoDispatch;
     if (
       snapshot.sessionId !== id || !parseSessionPermissionMode(snapshot.mode) || nextRevision === null ||
       (previousRevision !== null && (nextRevision < previousRevision ||
-        (nextRevision === previousRevision && current.config.permissionMode !== snapshot.mode)))
+        (nextRevision === previousRevision && (current.config.permissionMode !== snapshot.mode || conflictingDispatch))))
     ) {
       setRequest(id, operation, "unconfirmed", "stale");
       return false;
@@ -80,6 +83,7 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
           ...chat.config,
           permissionMode: snapshot.mode,
           permissionModeEtag: snapshot.etag,
+          supervisorAutoDispatch: snapshot.supervisorAutoDispatch,
           bypassPermissions: snapshot.mode !== "default",
         },
       } : chat),
@@ -134,7 +138,7 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
       return operation.promise;
     },
 
-    changeSessionPermissionMode: (id, mode, etag) => {
+    changeSessionPermissionMode: (id, mode, etag, supervisorAutoDispatch) => {
       const chat = chatFor(id);
       const request = get().permissionModeRequests[id];
       // Synchronous fence, including repeated events before React can render disabled.
@@ -146,7 +150,9 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
         } }));
         return Promise.resolve();
       }
-      if (chat.config.permissionMode === mode) return Promise.resolve();
+      const observedDispatch = chat.config.supervisorAutoDispatch;
+      if (supervisorAutoDispatch && (mode !== "auto" || observedDispatch === undefined)) return Promise.resolve();
+      if (chat.config.permissionMode === mode && Boolean(observedDispatch) === Boolean(supervisorAutoDispatch)) return Promise.resolve();
       const observedMode = chat.config.permissionMode;
       const operation = begin(id, "saving");
       operation.promise = (async () => {
@@ -160,11 +166,14 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
           setRequest(id, operation, unsupported ? "unsupported" : "unconfirmed", unsupported ? "unsupported" : "unconfirmed");
           return;
         }
-        const changed = fresh.mode !== observedMode;
+        const changed = fresh.mode !== observedMode || fresh.supervisorAutoDispatch !== observedDispatch;
         if (!confirm(id, operation, fresh, changed ? "changed" : undefined, changed ? "ready" : "saving") || changed) return;
         try {
-          const snapshot = await agentClient.patchSessionPermissionMode(id, mode, fresh.etag);
-          confirm(id, operation, snapshot, snapshot.mode === mode ? undefined : "changed");
+          const snapshot = supervisorAutoDispatch
+            ? await agentClient.patchSessionPermissionMode(id, mode, fresh.etag, true)
+            : await agentClient.patchSessionPermissionMode(id, mode, fresh.etag);
+          const matched = snapshot.mode === mode && Boolean(snapshot.supervisorAutoDispatch) === Boolean(supervisorAutoDispatch);
+          confirm(id, operation, snapshot, matched ? undefined : "changed");
         } catch (error) {
           if (!isCurrent(id, operation)) return;
           const reason: PermissionModeError = isApiError(error) && error.status === 412

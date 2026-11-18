@@ -15,12 +15,13 @@ type Props = { sessionId: string; title: string; compact?: boolean }
 const compactPermissionSelectClassName = cn(composerControlClassName,
   "border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:size-3")
 
-function PermissionModeOptions() {
+function PermissionModeOptions({ dispatchLabel }: { dispatchLabel?: string }) {
   return (
     <SelectContent side="top" align="start">
       <SelectItem value="default">Default</SelectItem>
       <SelectItem value="bypass">Bypass</SelectItem>
       <SelectItem value="auto">Auto</SelectItem>
+      {dispatchLabel ? <SelectItem value="auto-dispatch">{dispatchLabel}</SelectItem> : null}
     </SelectContent>
   )
 }
@@ -36,11 +37,12 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
   const hasChat = useAppStore((state) => state.chats.some((chat) => chat.id === sessionId))
   const mode = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.permissionMode)
   const etag = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.permissionModeEtag)
+  const dispatchAuto = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.supervisorAutoDispatch)
   const request = useAppStore((state) => state.permissionModeRequests[sessionId])
   const refresh = useAppStore((state) => state.refreshSessionPermissionMode)
   const change = useAppStore((state) => state.changeSessionPermissionMode)
   const needsRead = !request
-  const [confirmation, setConfirmation] = useState<{ etag: string } | null>(null)
+  const [confirmation, setConfirmation] = useState<{ etag: string; dispatch: boolean } | null>(null)
   const selectRef = useRef<HTMLButtonElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -56,7 +58,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
   const unavailableLabel = !hasChat ? t("chat.permissionMode.unconfirmed") : request?.status === "unsupported"
     ? t("chat.permissionMode.unavailable")
     : busy ? t("chat.permissionMode.loading") : t("chat.permissionMode.unconfirmed")
-  const helpText = confirmed ? t(`chat.permissionMode.help.${mode!}`) : t("chat.permissionMode.readRequired")
+  const helpText = confirmed ? t(`chat.permissionMode.help.${dispatchAuto ? "dispatch" : mode!}`) : t("chat.permissionMode.readRequired")
   const errorText = request?.error ? t(`chat.permissionMode.errors.${request.error}`) : null
 
   return (
@@ -70,11 +72,13 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
         <label htmlFor={labelId} className={compact ? "sr-only" : "text-xs font-medium"}>{t("chat.permissionMode.label")}</label>
         <Select
           disabled={!ready}
-          value={confirmed ? mode! : ""}
+          value={confirmed ? dispatchAuto ? "auto-dispatch" : mode! : ""}
           onValueChange={(value) => {
-            const nextMode = parseSessionPermissionMode(value)
-            if (!ready || !etag || !nextMode || nextMode === mode) return
-            if (nextMode === "auto") setConfirmation({ etag })
+            const dispatch = value === "auto-dispatch"
+            const nextMode = dispatch ? "auto" : parseSessionPermissionMode(value)
+            if (!ready || !etag || !nextMode || (dispatch && dispatchAuto === undefined)
+              || (nextMode === mode && dispatch === Boolean(dispatchAuto))) return
+            if (dispatch || (nextMode === "auto" && mode !== "auto")) setConfirmation({ etag, dispatch })
             else void change(sessionId, nextMode, etag)
           }}
         >
@@ -93,7 +97,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
             {compact ? <ShieldAlert className={cn("size-4 shrink-0", confirmed && mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden /> : null}
             <SelectValue placeholder={unavailableLabel} />
           </SelectTrigger>
-          <PermissionModeOptions />
+          <PermissionModeOptions dispatchLabel={dispatchAuto === undefined ? undefined : t("chat.permissionMode.dispatchLabel")} />
         </Select>
         <span role="status" className={compact ? "sr-only" : "text-xs text-muted-foreground"}>
           {saving ? t("chat.permissionMode.saving") : busy ? t("chat.permissionMode.loading") : null}
@@ -120,10 +124,10 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldAlert className="size-5 shrink-0 text-amber-500" />
-              {t("chat.permissionMode.confirmTitle")}
+              {t(confirmation?.dispatch ? "chat.permissionMode.confirmDispatchTitle" : "chat.permissionMode.confirmTitle")}
             </DialogTitle>
             <DialogDescription className="break-words">
-              {t("chat.permissionMode.confirmDescription", { title })}
+              {t(confirmation?.dispatch ? "chat.permissionMode.confirmDispatchDescription" : "chat.permissionMode.confirmDescription", { title })}
             </DialogDescription>
           </DialogHeader>
           {!ready ? <p role="alert" className="text-sm text-destructive">{t("chat.permissionMode.readRequired")}</p> : null}
@@ -133,8 +137,9 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
               const expected = confirmation?.etag
               if (!ready || !expected || expected !== etag) return
               setConfirmation(null)
-              void change(sessionId, "auto", expected)
-            }}>{t("chat.permissionMode.confirm")}</Button>
+              if (confirmation?.dispatch) void change(sessionId, "auto", expected, true)
+              else void change(sessionId, "auto", expected)
+            }}>{t(confirmation?.dispatch ? "chat.permissionMode.confirmDispatch" : "chat.permissionMode.confirm")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
