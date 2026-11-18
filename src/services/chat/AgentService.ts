@@ -82,10 +82,12 @@ export interface SessionPermissionSnapshot {
   sessionId: string;
   mode: SessionPermissionMode;
   etag: string;
+  supervisorAutoDispatch?: boolean;
 }
 
 export interface PatchSessionPermissionRequest {
   permission_mode: SessionPermissionMode;
+  supervisor_auto_dispatch?: true;
 }
 
 export class SessionPermissionContractError extends Error {
@@ -111,7 +113,14 @@ const readSessionPermissionSnapshot = async (
   ) {
     throw new SessionPermissionContractError();
   }
-  return { sessionId, mode, etag };
+  if (!("supervisor_auto_dispatch" in session)) {
+    return { sessionId, mode, etag };
+  }
+  const dispatch = session.supervisor_auto_dispatch;
+  if (typeof dispatch !== "boolean" || (dispatch && mode !== "auto")) {
+    throw new SessionPermissionContractError();
+  }
+  return { sessionId, mode, etag, supervisorAutoDispatch: dispatch };
 };
 
 export interface GoldConfig {
@@ -879,6 +888,10 @@ export interface SessionSummary {
   bypass_permissions?: boolean;
   /** Missing or unknown typed support must not enable permission-mode writes. */
   permission_mode?: SessionPermissionMode;
+  /** The opt-in is reported by Supervisor detail. */
+  supervisor_auto_dispatch?: boolean;
+  /** An index hint to refresh permission detail. */
+  supervisor_permission_etag?: string;
 }
 
 export interface RunningSessionEntry {
@@ -1664,11 +1677,13 @@ export class AgentClient {
     sessionId: string,
     mode: SessionPermissionMode,
     etag: string,
+    supervisorAutoDispatch?: true,
   ): Promise<SessionPermissionSnapshot> {
-    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) {
+    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null || (supervisorAutoDispatch && mode !== "auto")) {
       throw new SessionPermissionContractError();
     }
     const request: PatchSessionPermissionRequest = { permission_mode: mode };
+    if (supervisorAutoDispatch) request.supervisor_auto_dispatch = true;
     const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "If-Match": etag },
