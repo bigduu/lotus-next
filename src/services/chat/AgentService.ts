@@ -1839,9 +1839,9 @@ export class AgentClient {
    * Get a snapshot of all currently-running sessions.
    * Used by the frontend on boot/reconnect to replay active run state.
    */
-  async getRunningSessions(): Promise<RunningSessionsResponse> {
+  async getRunningSessions(signal?: AbortSignal): Promise<RunningSessionsResponse> {
     debugLog("[AgentClient]", "runs.active.request", {});
-    const response = await apiClient.get<RunningSessionsResponse>("runs/active");
+    const response = await apiClient.get<RunningSessionsResponse>("runs/active", { cache: "no-store", signal });
     debugLog("[AgentClient]", "runs.active.response", summarizeRunningSessions(response));
     return response;
   }
@@ -1893,6 +1893,7 @@ export class AgentClient {
     sessionId: string,
     handlers: AgentEventHandlers,
     abortController?: AbortController,
+    observation?: { beforeAttachment: Promise<string | null>; acceptRunId: (runId: string) => void },
   ): Promise<void> {
     const signal = abortController?.signal;
     debugLog("[AgentClient]", "events.subscribe.request", { sessionId });
@@ -1907,10 +1908,12 @@ export class AgentClient {
     // load support details must not prevent ordinary stream observation.
     const decode = await import("./runDiagnostic")
       .then((module) => module.decodeRunDiagnostic).catch(() => undefined);
+    const initialRunId = observation && await observation.beforeAttachment;
     if (signal?.aborted) return;
-    const { promise, close } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
+    const { promise, close, fresh } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
       this.handleEvent(event, h, sessionId, decode),
     );
+    if (fresh && initialRunId) observation?.acceptRunId(initialRunId);
     const abortListener = () => {
       debugLog("[AgentClient]", "events.subscribe.ws.abort", { sessionId });
       close();
@@ -2120,6 +2123,7 @@ export class AgentClient {
         }
         break;
       case "execution_started":
+        if (event.session_id !== sessionId) break;
         handlers.onExecutionStarted?.(event.run_id || "", event.started_at);
         break;
       case "runner_progress":
