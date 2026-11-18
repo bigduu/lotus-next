@@ -43,8 +43,9 @@ export function observeBackgroundShells(sessionId: string, bashIds: readonly str
   // Join synchronously so the run subscriber can leave without dropping the
   // wire channel. The shared transport also replays critical events on reconnect.
   const subscription = subscribeAgent(sessionId, {}, (event) => {
-    if (event.type !== "bash_completed" || !event.bash_id || !pending.has(event.bash_id)) return
+    if (event.type !== "bash_completed" || !event.bash_id) return
     if (observations.get(sessionId)?.pending !== pending) return
+    // The outcome can arrive before this pane discovers the launch in history.
     recordBackgroundShellOutcome(sessionId, event.bash_id, typeof event.status === "string" ? event.status : "completed", event.exit_code ?? null)
   })
   const observation = { pending, close: subscription.close }

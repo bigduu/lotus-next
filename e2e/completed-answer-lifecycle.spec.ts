@@ -124,7 +124,9 @@ async function prepare(page: Page) {
       emit({ type: "complete" })
       if (closeChannel) socket!.send(JSON.stringify({ ch: `agent.${primary}`, seq: ++seq, control: { type: "terminal" } }))
     },
-    persistMessages(...messages: FixtureMessage[]) { histories[primary].push(...messages) },
+    persistResponse(...messages: FixtureMessage[]) {
+      histories[primary] = [...histories[primary].filter(({ role }) => role === "user"), ...messages]
+    },
     publishCanonical() {
       histories[primary] = prompts.flatMap((prompt, index) => [
         item(`user-${index + 1}`, "user", prompt), item(`answer-${index + 1}`, "assistant", answers[index]),
@@ -172,19 +174,25 @@ test("background shell outcomes still reach their cards after the answer complet
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => f.channels.has(channel)).toBe(true)
 
-  for (const id of ["shell-ok", "shell-failed"]) {
+  const shell = (id: string) => {
     const args = { command: `fixture ${id}`, run_in_background: true }
     const result = JSON.stringify({ bash_id: id, status: "running", command: args.command })
-    f.emit({ type: "tool_start", tool_call_id: id, tool_name: "Bash", arguments: args })
-    f.emit({ type: "tool_complete", tool_call_id: id, result: { success: true, result } })
-    f.persistMessages(
+    const history = [
       { ...item(`call-${id}`, "assistant", ""), tool_calls: [{ id, type: "function",
         function: { name: "Bash", arguments: JSON.stringify(args) } }] },
       { ...item(`result-${id}`, "tool", result), tool_call_id: id, tool_success: true },
-    )
+    ]
+    return { id, args, result, history }
   }
+  const launched = [shell("shell-ok"), shell("shell-failed")]
+  for (const { id, args, result } of launched) {
+    f.emit({ type: "tool_start", tool_call_id: id, tool_name: "Bash", arguments: args })
+    f.emit({ type: "tool_complete", tool_call_id: id, result: { success: true, result } })
+  }
+  const history = launched.flatMap(({ history }) => history)
+  const answer = item("answer-1", "assistant", answers[0])
   f.emit({ type: "token", content: answers[0] })
-  f.persistMessages(item("answer-1", "assistant", answers[0]))
+  f.persistResponse(...history, answer)
   f.complete(false)
   await expect(page.getByRole("button", { name: "停止生成", exact: true })).toHaveCount(0)
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeEditable()
@@ -193,14 +201,23 @@ test("background shell outcomes still reach their cards after the answer complet
   const running = page.getByText("后台运行中…", { exact: true })
   const succeeded = page.getByText("已完成 · exit 0", { exact: true })
   const failed = page.getByText("失败 · exit 7", { exact: true })
-  const openActivity = async () => {
+  const discoveredLate = page.getByText("失败 · exit 3", { exact: true })
+  const openActivity = async (shellCount: number) => {
     await expect(page.locator('[data-message-row="answer-1"]')).toContainText(answers[0])
     const turn = page.locator("[data-turn-toggle]").first()
+    await expect(turn).toHaveAccessibleName(new RegExp(`${shellCount} 次工具调用$`))
     if (await turn.getAttribute("aria-expanded") === "false") await turn.click()
     const toggle = page.locator("[data-process-toggle]").first()
     if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click()
   }
-  await openActivity()
+  const selectSession = async (name: "A" | "B") => {
+    const title = `Synthetic lifecycle ${name}`
+    await revealSidebar(page)
+    await page.getByRole("button", { name: new RegExp(`${title}$`) }).click()
+    await expect(page.getByRole("banner")).toContainText(title)
+  }
+
+  await openActivity(2)
   await expect(running).toHaveCount(2)
   expect(f.channels.has(channel)).toBe(true)
   const success = { type: "bash_completed", bash_id: "shell-ok", status: "completed", exit_code: 0 }
@@ -209,31 +226,45 @@ test("background shell outcomes still reach their cards after the answer complet
   await expect(succeeded).toBeVisible()
   await expect(running).toHaveCount(1)
 
-  await revealSidebar(page)
-  await page.getByRole("button", { name: "Synthetic lifecycle B", exact: true }).click()
-  await expect(page.getByRole("banner")).toContainText("Synthetic lifecycle B")
+  await selectSession("B")
+  expect(f.channels.has(channel)).toBe(true)
+  // This completion reaches the shared subscription before the pane discovers
+  // the launch in canonical history. The other shell keeps the wire open.
+  const lateShell = shell("shell-late")
+  const lateOutcome = { type: "bash_completed", bash_id: lateShell.id, status: "error", exit_code: 3 }
+  f.emit(lateOutcome)
+  f.persistResponse(...history, ...lateShell.history, answer)
+  await selectSession("A")
+  f.notifyCanonical(`result-${lateShell.id}`)
+  await openActivity(3)
+  await expect(discoveredLate).toBeVisible()
+  await expect(running).toHaveCount(1)
+  expect(f.subscriptions).toBe(1)
+
+  await selectSession("B")
   expect(f.channels.has(channel)).toBe(true)
   f.emit(failure)
   await expect.poll(() => f.channels.has(channel)).toBe(false)
-  await revealSidebar(page)
-  await page.getByRole("button", { name: "Synthetic lifecycle A", exact: true }).click()
+  await selectSession("A")
   await expectAnswers(page, [answers[0]])
-  await openActivity()
+  await openActivity(3)
   await expect(succeeded).toBeVisible()
   await expect(failed).toBeVisible()
   expect(f.subscriptions).toBe(1)
 
   // Reload opens one observation for unresolved canonical launches. The
-  // backend replays both terminal outcomes on the agent channel.
+  // backend replays the terminal outcomes on the agent channel.
   await page.reload()
   await expect.poll(() => f.subscriptions).toBe(2)
   f.emit(success)
   f.emit(failure)
+  f.emit(lateOutcome)
   await expect.poll(() => f.channels.has(channel)).toBe(false)
   await expectAnswers(page, [answers[0]])
-  await openActivity()
+  await openActivity(3)
   await expect(succeeded).toBeVisible()
   await expect(failed).toBeVisible()
+  await expect(discoveredLate).toBeVisible()
   await expect(running).toHaveCount(0)
   await page.screenshot({ path: info.outputPath("background-shell-outcomes.png"), animations: "disabled" })
   expect(f.executions).toEqual(["synthetic-run-1"])
