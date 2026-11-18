@@ -36,7 +36,7 @@ vi.mock("@shared/store/appStore", () => ({
   selectShouldObserve: mockState.selectShouldObserve,
 }));
 
-vi.mock("@/lib/notify", () => ({ notify: mockState.notify }));
+vi.mock("@/lib/notify", () => ({ notify: mockState.notify, isNotifyEnabled: () => false, notifyPermission: () => "denied" }));
 
 import {
   isAccountFeedDisconnected,
