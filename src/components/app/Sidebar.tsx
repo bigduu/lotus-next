@@ -289,7 +289,9 @@ export function Sidebar({
   const visibleGroups = query
     ? groups.map((group) => ({
         ...group,
-        chats: group.chats.filter((c) => (c.title || "").toLowerCase().includes(query)),
+        chats: group.chats.filter(({ id, title }) =>
+          (title ?? "").toLowerCase().includes(query) || id.toLowerCase().includes(query),
+        ),
       })).filter((group) => group.chats.length > 0)
     : isProjectMode
       ? groups

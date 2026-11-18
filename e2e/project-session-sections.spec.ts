@@ -941,7 +941,7 @@ test("reload restores Project and Section folds around the active session", asyn
   expect(observation.consoleErrors).toEqual([])
 })
 
-test("search reveals folded project sections and selecting a result reveals its active path", async ({ page }, testInfo) => {
+test("search by title or session ID reveals folded project sections", async ({ page }, testInfo) => {
   const { observation } = await installSectionFixture(page)
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
@@ -963,7 +963,12 @@ test("search reveals folded project sections and selecting a result reveals its 
   await search.fill("")
   await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "false")
   await expect(target).toHaveCount(0)
-  await search.fill("Alpha searchable")
+  await search.fill("  ALPHA-SEARCH  ")
+  await expect(target).toBeVisible()
+  await testInfo.attach("Session ID search result", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
   await target.getByRole("button", { name: "Alpha searchable investigation", exact: true }).click()
   await expect(page.locator("header").getByText("Alpha searchable investigation", { exact: true })).toBeVisible()
   if (phone) await openSidebar(page, true)

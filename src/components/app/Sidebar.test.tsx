@@ -455,13 +455,16 @@ describe("Sidebar project grouping", () => {
   it("reveals all matching sessions during search in project mode", () => {
     render({
       chats: Array.from({ length: 9 }, (_, index) =>
-        chat(`day-${index}-s`, 5, { title: `s${index}`, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
+        chat(`p-task-${index}`, 5, { title: `Investigation ${index}`, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
     act(() => buttonByLabel("切换为项目视图").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
-    search("s")
+    search("investigation")
     expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
     expect(container.textContent).not.toContain("展开")
+    search("  TASK-8  ")
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(1)
+    expect(row("p-task-8")).not.toBeNull()
   })
 
   it("auto-reveals an active session beyond the project preview fold", () => {
