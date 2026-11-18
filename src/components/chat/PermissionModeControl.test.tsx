@@ -108,6 +108,42 @@ describe("PermissionModeControl", () => {
     expect(selectedMode()).toBe("auto")
   })
 
+  it("requires new confirmation when the dispatch consent revision advanced with the same values", async () => {
+    const plain = { ...snapshot("auto"), supervisorAutoDispatch: false }
+    const afterRevocation = { ...snapshot("auto", '"9"'), supervisorAutoDispatch: false }
+    read.mockResolvedValueOnce(plain).mockResolvedValueOnce(afterRevocation)
+
+    await mount()
+    choose("auto for dispatches")
+    click("Enable for dispatches")
+    await flush()
+    expect(patch).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("session changed")
+    expect(selectedMode()).toBe("auto")
+  })
+
+  it("refreshes a same-mode scope hint and reads back a missing revocation acknowledgement", async () => {
+    const plain = { ...snapshot("auto"), supervisorAutoDispatch: false }
+    const dispatch = { ...snapshot("auto", '"8"'), supervisorAutoDispatch: true }
+    const revoked = { ...snapshot("auto", '"9"'), supervisorAutoDispatch: false }
+    read.mockResolvedValueOnce(plain).mockResolvedValueOnce(dispatch)
+      .mockResolvedValueOnce(dispatch).mockResolvedValueOnce(revoked)
+    patch.mockResolvedValueOnce(snapshot("auto", '"9"'))
+    await mount()
+    await act(async () => {
+      useAppStore.getState().reconcileSessionPermissionModes([{
+        ...summary("a"), permission_mode: "auto", supervisor_auto_dispatch: true,
+      }])
+    })
+    expect(selector().textContent).toBe("Auto for dispatches")
+    choose("auto")
+    await flush()
+    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"8"')
+    expect(read).toHaveBeenCalledTimes(4)
+    expect(selectedMode()).toBe("auto")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("save response was not confirmed")
+  })
+
   it("reads permissions when the selected session arrives after the composer mounts", async () => {
     useAppStore.setState({ chats: [] })
     await mount("a", true)

@@ -70,7 +70,7 @@ test("Supervisor can authorize new execution sessions after choosing current-ses
     }
     await route.fulfill({
       headers: { ETag: `"${revision}"` },
-      json: { session: { ...session, title: "Supervisor", permission_mode: "auto" }, supervisor_auto_dispatch: dispatchAuto },
+      json: { session: { ...session, title: "Supervisor", permission_mode: "auto", supervisor_auto_dispatch: dispatchAuto } },
     })
   })
   await page.goto(standaloneScenario.entryUrl)

@@ -113,10 +113,10 @@ const readSessionPermissionSnapshot = async (
   ) {
     throw new SessionPermissionContractError();
   }
-  if (!body || typeof body !== "object" || !("supervisor_auto_dispatch" in body)) {
+  if (!("supervisor_auto_dispatch" in session)) {
     return { sessionId, mode, etag };
   }
-  const dispatch = body.supervisor_auto_dispatch;
+  const dispatch = session.supervisor_auto_dispatch;
   if (typeof dispatch !== "boolean" || (dispatch && mode !== "auto")) {
     throw new SessionPermissionContractError();
   }
@@ -888,6 +888,8 @@ export interface SessionSummary {
   bypass_permissions?: boolean;
   /** Missing or unknown typed support must not enable permission-mode writes. */
   permission_mode?: SessionPermissionMode;
+  /** An index hint. Only the revisioned detail can authorize changes. */
+  supervisor_auto_dispatch?: boolean;
 }
 
 export interface RunningSessionEntry {
