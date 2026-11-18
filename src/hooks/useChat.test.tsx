@@ -4632,6 +4632,25 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.upstreamRetryStatus).toBe("stop_requested")
   })
 
+  it("uses an already-running Execute receipt without consulting the active list", async () => {
+    allow()
+    const target = "already-running-receipt"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValue({ session_id: target, status: "already_running", run_id: "acknowledged-run" })
+    mocks.getRunningSessions.mockResolvedValue({ sessions: [{ session_id: target, run_id: "successor-run" }] })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("Continue the synthetic Root") })
+    await act(async () => { hook.current.stop() })
+    await flushMicrotasks()
+
+    expect(mocks.getRunningSessions).not.toHaveBeenCalled()
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "acknowledged-run")
+  })
+
   it("stops an externally started run using the identity captured while attaching", async () => {
     allow()
     const target = "observed-exact-stop"
@@ -4675,6 +4694,62 @@ describe("explicit continuous upstream retry", () => {
     await flushMicrotasks()
     expect(mocks.stopGeneration).not.toHaveBeenCalled()
     expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+  })
+
+  it("ignores a successor snapshot that arrives after the observed run has streamed output", async () => {
+    allow()
+    const target = "successor-before-stop"
+    const running = deferred<{ sessions: Array<{ session_id: string; run_id: string }> }>()
+    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, config: { model: "test-model" } }]
+    mocks.shouldObserve = true
+    mocks.getRunningSessions.mockReturnValue(running.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    await act(async () => {
+      handlers.onToken("Output from the previous run")
+      running.resolve({ sessions: [{ session_id: target, run_id: "successor-run" }] })
+    })
+    await flushMicrotasks()
+    mocks.shouldObserve = false
+    await act(async () => { hook.current.stop() })
+    await flushMicrotasks()
+
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+  })
+
+  it("keeps text before a tool visible through one history reconciliation for repeated Stop clicks", async () => {
+    allow()
+    const target = "exact-stop-tool-checkpoint"
+    const history = deferred<void>()
+    const text = "Partial answer before a tool"
+    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, config: { model: "test-model" } }]
+    mocks.shouldObserve = true
+    mocks.getRunningSessions.mockResolvedValue({ sessions: [{ session_id: target, run_id: "observed-run" }] })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await flushMicrotasks()
+    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    mocks.appState.loadChatHistory.mockClear().mockReturnValue(history.promise)
+    mocks.shouldObserve = false
+    await act(async () => {
+      handlers.onToken(text)
+      handlers.onToolStart("tool-id", "Bash", {})
+      hook.current.stop()
+      hook.current.stop()
+    })
+    await flushMicrotasks()
+
+    expect(hook.current.liveSegments).toContainEqual(expect.objectContaining({ kind: "text", text }))
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "observed-run")
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledExactlyOnceWith(target, expect.objectContaining({
+      mode: "monotonic", waitForAssistant: true,
+    }))
+    await act(async () => { history.resolve() })
+    await flushMicrotasks()
+    expect(hook.current.liveSegments).toEqual([])
   })
 
   it("does not let an unowned observer borrow a later run's Stop identity", async () => {

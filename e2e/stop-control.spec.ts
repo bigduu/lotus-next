@@ -94,11 +94,12 @@ test("Stop is a primary realtime control and never enters the message queue", as
   ).toBe(false)
 })
 
-test("Stop uses the exact run already observed when reopening a running session", async ({ page }) => {
+test("Stop uses the exact run already observed when reopening a running session", async ({ page }, testInfo) => {
   const sessionId = runningSession.id
   const runId = "fixture-observed-run"
   const partialText = "The partial answer is saved after Stop."
   let cancelled = false
+  let checkpointSaved = false
   let readsAfterStop = 0
   let subscribed: WebSocketRoute | undefined
   const receivedRunIds: string[] = []
@@ -137,7 +138,8 @@ test("Stop uses the exact run already observed when reopening a running session"
       id: "observed-user", role: "user", content: "Continue the existing run",
       created_at: runningSession.created_at,
     }]
-    if (cancelled && ++readsAfterStop > 1) messages.push({
+    if (cancelled) readsAfterStop++
+    if (checkpointSaved) messages.push({
       id: "cancelled-partial", role: "assistant", content: partialText,
       created_at: runningSession.created_at,
     })
@@ -155,14 +157,24 @@ test("Stop uses the exact run already observed when reopening a running session"
   await expect(stop).toBeVisible()
   await expect.poll(() => Boolean(subscribed)).toBe(true)
   subscribed!.send(JSON.stringify({
-    ch: `agent.${sessionId}`, seq: 1, event: { type: "token", content: partialText },
+    ch: `agent.${sessionId}`, seq: 1, event: { type: "execution_started", session_id: sessionId, run_id: runId },
+  }))
+  subscribed!.send(JSON.stringify({
+    ch: `agent.${sessionId}`, seq: 2, event: { type: "token", content: partialText },
   }))
   await expect(page.locator(".assistant-streamdown-streaming")).toContainText(partialText)
   await stop.click()
   await expect.poll(() => receivedRunIds).toEqual([runId])
   await expect(stop).toBeHidden()
-  await expect(page.locator(".assistant-streamdown:not(.assistant-streamdown-streaming)"))
-    .toContainText(partialText)
+  await expect.poll(() => readsAfterStop).toBeGreaterThan(0)
+  await expect(page.getByText(partialText, { exact: true })).toBeVisible()
+  await testInfo.attach("stop-partial-before-checkpoint", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  })
+  checkpointSaved = true
+  await expect(page.locator('[data-message-row="cancelled-partial"]')).toContainText(partialText)
+  await expect(page.getByText(partialText, { exact: true })).toHaveCount(1)
   expect(readsAfterStop).toBeGreaterThanOrEqual(2)
   expect(realtimeStops).toEqual([])
   expect(observation.httpRequests.some(({ method, url }) => method === "POST" && new URL(url).pathname.includes("/execute/"))).toBe(false)
