@@ -15,6 +15,16 @@ type FixtureMessage = {
   tool_call_id?: string; tool_success?: boolean
 }
 const item = (id: string, role: FixtureMessage["role"], content: string): FixtureMessage => ({ id, role, content, created_at: at })
+const backgroundShell = (id: string) => {
+  const args = { command: `fixture ${id}`, run_in_background: true }
+  const result = JSON.stringify({ bash_id: id, status: "running", command: args.command })
+  const history = [
+    { ...item(`call-${id}`, "assistant", ""), tool_calls: [{ id, type: "function",
+      function: { name: "Bash", arguments: JSON.stringify(args) } }] },
+    { ...item(`result-${id}`, "tool", result), tool_call_id: id, tool_success: true },
+  ]
+  return { id, args, result, history }
+}
 const otherHistory = [item("other-user", "user", "Other session question"), item("other-answer", "assistant", otherAnswer)]
 const toolHistory = (index: number): FixtureMessage[] => [
   { ...item(`tool-call-${index}`, "assistant", ""), tool_calls: [{ id: `tool-${index}`, type: "function",
@@ -167,6 +177,50 @@ async function expectAnswers(page: Page, expected: readonly string[]) {
   }
 }
 
+test("the final background shell delivers its backend notification after the answer settles", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("lotus_notify_enabled_v1", "1")
+    const messages: Array<{ title: string; body?: string }> = []
+    Object.defineProperty(globalThis, "testShellNotifications", { value: messages })
+    Object.defineProperty(globalThis, "Notification", { value: class {
+      static permission = "granted"
+      constructor(title: string, options?: { body?: string }) {
+        messages.push({ title, body: options?.body })
+      }
+    } })
+  })
+  const f = await prepare(page)
+  const channel = `agent.${primary}`
+  await page.getByRole("textbox", { name: "消息", exact: true }).fill(prompts[0])
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => f.channels.has(channel)).toBe(true)
+
+  const shell = backgroundShell("final-shell")
+  f.emit({ type: "tool_start", tool_call_id: shell.id, tool_name: "Bash", arguments: shell.args })
+  f.emit({ type: "tool_complete", tool_call_id: shell.id, result: { success: true, result: shell.result } })
+  const answer = item("answer-1", "assistant", answers[0])
+  f.emit({ type: "token", content: answers[0] })
+  f.persistResponse(...shell.history, answer)
+  f.complete(false)
+  await expect(page.getByRole("button", { name: "停止生成", exact: true })).toHaveCount(0)
+  await expectAnswers(page, [answers[0]])
+  await expect(page.getByRole("banner")).toContainText("Synthetic lifecycle A")
+
+  const messages = () => page.evaluate(() => (globalThis as typeof globalThis & {
+    testShellNotifications: Array<{ title: string; body?: string }>
+  }).testShellNotifications)
+  f.emit({ type: "bash_completed", bash_id: shell.id, status: "completed", exit_code: 0 })
+  expect(f.channels.has(channel)).toBe(true)
+  expect(await messages()).toEqual([])
+  const notice = { title: "Background command finished", body: "fixture final-shell — completed, exit 0" }
+  f.emit({
+    type: "notification", session_id: primary, id: "final-shell-notification", dedup_key: `bash:${shell.id}`,
+    category: "background_task_completed", priority: "normal", created_at: at, ...notice,
+  })
+  await expect.poll(messages).toEqual([notice])
+  await expect.poll(() => f.channels.has(channel)).toBe(false)
+})
+
 test("background shell outcomes still reach their cards after the answer completes", async ({ page }, info) => {
   const f = await prepare(page)
   const channel = `agent.${primary}`
@@ -174,17 +228,7 @@ test("background shell outcomes still reach their cards after the answer complet
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => f.channels.has(channel)).toBe(true)
 
-  const shell = (id: string) => {
-    const args = { command: `fixture ${id}`, run_in_background: true }
-    const result = JSON.stringify({ bash_id: id, status: "running", command: args.command })
-    const history = [
-      { ...item(`call-${id}`, "assistant", ""), tool_calls: [{ id, type: "function",
-        function: { name: "Bash", arguments: JSON.stringify(args) } }] },
-      { ...item(`result-${id}`, "tool", result), tool_call_id: id, tool_success: true },
-    ]
-    return { id, args, result, history }
-  }
-  const launched = [shell("shell-ok"), shell("shell-failed")]
+  const launched = [backgroundShell("shell-ok"), backgroundShell("shell-failed")]
   for (const { id, args, result } of launched) {
     f.emit({ type: "tool_start", tool_call_id: id, tool_name: "Bash", arguments: args })
     f.emit({ type: "tool_complete", tool_call_id: id, result: { success: true, result } })
@@ -230,7 +274,7 @@ test("background shell outcomes still reach their cards after the answer complet
   expect(f.channels.has(channel)).toBe(true)
   // This completion reaches the shared subscription before the pane discovers
   // the launch in canonical history. The other shell keeps the wire open.
-  const lateShell = shell("shell-late")
+  const lateShell = backgroundShell("shell-late")
   const lateOutcome = { type: "bash_completed", bash_id: lateShell.id, status: "error", exit_code: 3 }
   f.emit(lateOutcome)
   f.persistResponse(...history, ...lateShell.history, answer)
