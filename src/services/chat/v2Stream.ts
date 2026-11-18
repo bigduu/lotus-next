@@ -1192,8 +1192,9 @@ const handleFrame = (
     const subscribers = agentChannels.get(ch);
     if (!subscribers || subscribers.size === 0) return;
     if (control) {
+      // A gap can hide the end of one run and the start of its successor.
+      liveness?.agentStarts.delete(ch);
       if (control.type === "terminal") {
-        liveness?.agentStarts.delete(ch);
         debugLog("[v2Stream]", "agent.terminal", { ch, subscribers: subscribers.size });
         // resolve() mutates the set (removes the subscriber) — snapshot first.
         for (const channel of [...subscribers]) {

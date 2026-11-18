@@ -1013,16 +1013,19 @@ describe("v2Stream shared WebSocket client", () => {
     expect(pane.mock.calls.map(([event]) => event)).toEqual([started, token])
   })
 
-  it("drops the shared run identity at its terminal event and the final unsubscribe", () => {
+  it.each([
+    { reason: "terminal event", invalidation: { event: { type: "complete" } } },
+    { reason: "gap", invalidation: { control: { type: "gap", skipped: 4 } } },
+  ])("drops the shared run identity after a $reason and the final unsubscribe", ({ invalidation }) => {
     const ch = "agent.session-1"
     subscribeFeed({ onChange: vi.fn() }, 0)
     const background = subscribeAgent("session-1", {}, tokenDispatch)
     const socket = lastSocket()
     socket.open()
     socket.emit({ ch, seq: 1, event: { type: "execution_started", session_id: "session-1", run_id: "first-run" } })
-    socket.emit({ ch, seq: 2, event: { type: "complete" } })
+    socket.emit({ ch, seq: 2, ...invalidation })
 
-    // Running children can keep the agent channel subscribed past the root terminal event.
+    // The socket can stay subscribed through a root terminal event or an event gap.
     const pane = vi.fn<AgentEventDispatch>()
     const betweenRuns = subscribeAgent("session-1", {}, pane)
     expect(betweenRuns.fresh).toBe(false)
