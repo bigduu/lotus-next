@@ -956,7 +956,6 @@ describe("useChat two-phase send lifecycle", () => {
       "main-session",
       expect.any(Object),
       expect.any(AbortController),
-      expect.objectContaining({ beforeAttachment: expect.any(Promise), acceptRunId: expect.any(Function) }),
     )
   })
   it.each([
@@ -4611,29 +4610,37 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.upstreamRetryStatus).toBe("identity_unsaved")
     blocked.mockRestore()
   })
-  it.each(["completed", "already_running"] as const)("stops the observed Root when ordinary Execute reports %s without a run ID", async (status) => {
+  it.each(["completed", "already_running"] as const)("streams before Execute reports %s and stops the observed Root", async (status) => {
     allow()
     const target = `inbox-stop-${status}`
     const prior = beginOrdinaryRetryFence("https://fixture.test/api/v1", target, { ensureGuard: true })
     if (prior.kind !== "reserved") throw new Error("Previous run was not reserved")
     expect(confirmContinuousRetryFence(prior.reservation, "previous-run")).toBe(true)
+    const ack = deferred<{ session_id: string; status: typeof status }>()
     mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
     mocks.sendMessage.mockResolvedValue({ session_id: target })
-    mocks.execute.mockResolvedValue({ session_id: target, status })
-    mocks.getRunningSessions.mockResolvedValue({ sessions: [
-      { session_id: "another-session", run_id: "another-run" },
-      { session_id: target, run_id: "inbox-run" },
-    ] })
+    mocks.execute.mockReturnValue(ack.promise)
     mocks.stopGeneration.mockResolvedValue(undefined)
     mocks.subscribeToEvents.mockImplementation(abortableSubscription)
 
     const hook = await mountUseChat({ mode: "bound", sessionId: target })
     await act(async () => { await hook.current.send("Start the synthetic Root") })
-    await flushMicrotasks()
-    expect(mocks.getRunningSessions).toHaveBeenCalledTimes(1)
+    expect(mocks.subscribeToEvents).toHaveBeenCalledExactlyOnceWith(
+      target, expect.any(Object), expect.any(AbortController),
+    )
+    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    await act(async () => {
+      handlers.onExecutionStarted("inbox-run")
+      handlers.onToken("Output before Execute acknowledges")
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(hook.current.streaming).toBe("Output before Execute acknowledges")
+
+    await act(async () => { ack.resolve({ session_id: target, status }) })
     await act(async () => { hook.current.stop(); hook.current.stop() })
     await flushMicrotasks()
 
+    expect(mocks.getRunningSessions).not.toHaveBeenCalled()
     expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "inbox-run")
     expect(mocks.appState.markCancel).not.toHaveBeenCalled()
     expect(hook.current.upstreamRetryStatus).toBe("stop_requested")
