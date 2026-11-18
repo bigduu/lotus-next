@@ -1,5 +1,5 @@
 import { expectComposerText } from "./support/composer.js"
-import { expect, test, type WebSocketRoute } from "@playwright/test"
+import { expect, test, type Page, type TestInfo, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 const runningSession = {
@@ -94,14 +94,17 @@ test("Stop is a primary realtime control and never enters the message queue", as
   ).toBe(false)
 })
 
-test("Stop uses the exact run already observed when reopening a running session", async ({ page }, testInfo) => {
+async function stopObservedRun(page: Page, testInfo: TestInfo, backgroundFirst: boolean) {
   const sessionId = runningSession.id
   const runId = "fixture-observed-run"
   const partialText = "The partial answer is saved after Stop."
   let cancelled = false
+  let foregroundRunning = !backgroundFirst
   let checkpointSaved = false
   let readsAfterStop = 0
   let subscribed: WebSocketRoute | undefined
+  let feed: WebSocketRoute | undefined
+  let agentSubscriptions = 0
   const receivedRunIds: string[] = []
   const realtimeStops: unknown[] = []
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
@@ -111,13 +114,18 @@ test("Stop uses the exact run already observed when reopening a running session"
       const frame = JSON.parse(String(raw))
       if (frame.type === "hello") socket.send(JSON.stringify({ type: "welcome" }))
       if (frame.type === "ping") socket.send(JSON.stringify({ type: "pong" }))
-      if (frame.type === "subscribe" && frame.ch === `agent.${sessionId}`) subscribed = socket
+      if (frame.type === "subscribe" && frame.ch === "feed") feed = socket
+      if (frame.type === "subscribe" && frame.ch === `agent.${sessionId}`) {
+        subscribed = socket
+        agentSubscriptions++
+      }
       if (frame.type === "stop") realtimeStops.push(frame)
     })
   })
-  const sessionSnapshot = () => (
-    cancelled ? { ...runningSession, is_running: false, last_run_status: "cancelled" } : runningSession
-  )
+  const sessionSnapshot = () => ({
+    ...runningSession, is_running: foregroundRunning && !cancelled,
+    last_run_status: cancelled ? "cancelled" : foregroundRunning ? "running" : "completed",
+  })
   await page.route("**/api/v1/execute/defaults", (route) => route.fulfill({
     json: { upstream_retry: { supported_modes: ["until_cancelled"] } },
   }))
@@ -125,19 +133,32 @@ test("Stop uses the exact run already observed when reopening a running session"
     json: { sessions: [sessionSnapshot()], total: 1, limit: 200, offset: 0 },
   }))
   await page.route(`**/api/v1/sessions/${sessionId}`, (route) => route.fulfill({
-    json: { session: sessionSnapshot() }, headers: { ETag: cancelled ? '"2"' : '"1"' },
+    json: { session: sessionSnapshot() }, headers: { ETag: cancelled ? '"2"' : foregroundRunning ? '"1"' : '"0"' },
   }))
   await page.route("**/api/v1/runs/active", (route) => route.fulfill({
-    json: { sessions: cancelled ? [] : [{
+    json: { sessions: cancelled || !foregroundRunning ? [] : [{
       session_id: sessionId, run_id: runId, started_at: runningSession.created_at,
       round_count: 0, last_critical_events: [], running_child_session_ids: [],
     }] },
   }))
   await page.route(`**/api/v1/history/${sessionId}`, (route) => {
-    const messages = [{
+    const messages: Record<string, unknown>[] = [{
       id: "observed-user", role: "user", content: "Continue the existing run",
       created_at: runningSession.created_at,
     }]
+    if (backgroundFirst) {
+      const command = "fixture background shell"
+      messages.push({
+        id: "observed-shell-launch", role: "assistant", content: "", created_at: runningSession.created_at,
+        tool_calls: [{ id: "shell-watch", type: "function", function: {
+          name: "Bash", arguments: JSON.stringify({ command, run_in_background: true }),
+        } }],
+      }, {
+        id: "observed-shell-result", role: "tool", tool_call_id: "shell-watch", tool_success: true,
+        content: JSON.stringify({ bash_id: "shell-watch", command, status: "running" }),
+        created_at: runningSession.created_at,
+      })
+    }
     if (cancelled) readsAfterStop++
     if (checkpointSaved) messages.push({
       id: "cancelled-partial", role: "assistant", content: partialText,
@@ -154,10 +175,23 @@ test("Stop uses the exact run already observed when reopening a running session"
 
   await page.goto(standaloneScenario.entryUrl)
   const stop = page.getByRole("button", { name: "停止生成", exact: true })
+  if (backgroundFirst) {
+    await expect.poll(() => Boolean(subscribed && feed)).toBe(true)
+    await expect(stop).toHaveCount(0)
+    const activeSnapshot = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/runs/active")
+    const started = { type: "execution_started", session_id: sessionId, run_id: runId, started_at: runningSession.created_at }
+    subscribed!.send(JSON.stringify({ ch: `agent.${sessionId}`, seq: 1, event: started }))
+    foregroundRunning = true
+    // The account event refreshes the running summary, then the pane joins.
+    feed!.send(JSON.stringify({ ch: "feed", seq: 1, event: {
+      seq: 1, ts: runningSession.created_at, session_id: sessionId, event: started,
+    } }))
+    await activeSnapshot
+  }
   await expect(stop).toBeVisible()
   await expect.poll(() => Boolean(subscribed)).toBe(true)
   subscribed!.send(JSON.stringify({
-    ch: `agent.${sessionId}`, seq: 1, event: { type: "token", content: partialText },
+    ch: `agent.${sessionId}`, seq: backgroundFirst ? 2 : 1, event: { type: "token", content: partialText },
   }))
   await expect(page.locator(".assistant-streamdown-streaming")).toContainText(partialText)
   await stop.click()
@@ -174,5 +208,14 @@ test("Stop uses the exact run already observed when reopening a running session"
   await expect(page.getByText(partialText, { exact: true })).toHaveCount(1)
   expect(readsAfterStop).toBeGreaterThanOrEqual(2)
   expect(realtimeStops).toEqual([])
+  if (backgroundFirst) expect(agentSubscriptions).toBe(1)
   expect(observation.httpRequests.some(({ method, url }) => method === "POST" && new URL(url).pathname.includes("/execute/"))).toBe(false)
+}
+
+test("Stop uses the exact run already observed when reopening a running session", ({ page }, testInfo) => {
+  return stopObservedRun(page, testInfo, false)
+})
+
+test("Stop uses the run identity already received by the shared background shell channel", ({ page }, testInfo) => {
+  return stopObservedRun(page, testInfo, true)
 })

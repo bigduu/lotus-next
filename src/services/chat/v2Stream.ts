@@ -397,6 +397,8 @@ const feedResetCursorFromFrame = (frame: ServerFrame): number | null => {
  */
 interface SocketLiveness {
   socket: WebSocket;
+  /** Published run starts observed by each currently subscribed agent channel. */
+  agentStarts: Map<string, AgentEvent>;
   phase: "awaiting-welcome" | "subscribing" | "ready";
   lastFrameAt: number;
   pingSent: boolean;
@@ -780,6 +782,7 @@ const startAwaitingWelcome = (ws: WebSocket): SocketLiveness => {
   clearSocketLiveness();
   const liveness: SocketLiveness = {
     socket: ws,
+    agentStarts: new Map(),
     phase: "awaiting-welcome",
     lastFrameAt: Date.now(),
     pingSent: false,
@@ -1001,6 +1004,14 @@ const acknowledgeWelcome = (liveness: SocketLiveness): void => {
   }
 };
 
+const dispatchAgentEvent = (subscriber: AgentChannel, event: AgentEvent): void => {
+  try {
+    subscriber.dispatch(event, subscriber.handlers);
+  } catch (error) {
+    console.warn("Failed to dispatch v2 agent event:", event, error);
+  }
+};
+
 const handleFrame = (
   frame: ServerFrame | undefined,
   liveness: SocketLiveness | null,
@@ -1182,6 +1193,7 @@ const handleFrame = (
     if (!subscribers || subscribers.size === 0) return;
     if (control) {
       if (control.type === "terminal") {
+        liveness?.agentStarts.delete(ch);
         debugLog("[v2Stream]", "agent.terminal", { ch, subscribers: subscribers.size });
         // resolve() mutates the set (removes the subscriber) — snapshot first.
         for (const channel of [...subscribers]) {
@@ -1194,12 +1206,23 @@ const handleFrame = (
       debugLog("[v2Stream]", "agent.frame.no_event", {});
       return;
     }
-    for (const channel of [...subscribers]) {
-      try {
-        channel.dispatch(event as AgentEvent, channel.handlers);
-      } catch (error) {
-        console.warn("Failed to dispatch v2 agent event:", event, error);
+    const agentEvent = event as AgentEvent;
+    if (agentEvent?.type === "execution_started") {
+      if (
+        agentEvent.session_id === ch.slice("agent.".length) &&
+        typeof agentEvent.run_id === "string" &&
+        agentEvent.run_id.length > 0
+      ) {
+        liveness?.agentStarts.set(ch, { ...agentEvent });
+      } else {
+        liveness?.agentStarts.delete(ch);
       }
+    } else if (isTerminalReason(agentEvent?.type)) {
+      // A root terminal event can arrive while children keep the wire channel open.
+      liveness?.agentStarts.delete(ch);
+    }
+    for (const channel of [...subscribers]) {
+      dispatchAgentEvent(channel, agentEvent);
     }
     return;
   }
@@ -1391,6 +1414,7 @@ export const subscribeAgent = (
       // another pane may still be watching the same session.
       if (!subscribers || subscribers.size === 0) {
         agentChannels.delete(ch);
+        socketLiveness?.agentStarts.delete(ch);
         if (isSocketReady()) send({ type: "unsubscribe", ch });
         closeIfIdle();
       }
@@ -1408,6 +1432,9 @@ export const subscribeAgent = (
     if (isFirstSubscriber && !sendOnSocket(socket, { type: "subscribe", ch })) {
       const liveness = socketLiveness;
       if (liveness) failSocketEpoch(liveness, "agent-subscribe-send-failed");
+    } else if (!isFirstSubscriber) {
+      const started = socketLiveness?.agentStarts.get(ch);
+      if (started) dispatchAgentEvent(subscriber, { ...started });
     }
   } else {
     connect();

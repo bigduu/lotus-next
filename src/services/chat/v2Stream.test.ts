@@ -989,6 +989,83 @@ describe("v2Stream shared WebSocket client", () => {
     expect(unsubscribeFrames).toHaveLength(1)
   })
 
+  it("replays the observed run identity to a pane joining a background observer", () => {
+    const ch = "agent.session-1"
+    const started = {
+      type: "execution_started", session_id: "session-1", run_id: "existing-run", started_at: "2026-11-18T00:00:00Z",
+    }
+    const background = vi.fn<AgentEventDispatch>()
+    subscribeAgent("session-1", {}, background)
+    const socket = lastSocket()
+    socket.open()
+    socket.emit({ ch, seq: 1, event: started })
+    socket.emit({ ch, seq: 2, event: { type: "token", content: "before pane" } })
+
+    const pane = vi.fn<AgentEventDispatch>()
+    const attachment = subscribeAgent("session-1", {}, pane)
+    expect(attachment.fresh).toBe(false)
+    expect(pane.mock.calls.map(([event]) => event)).toEqual([started])
+    expect(background).toHaveBeenCalledTimes(2)
+    expect(socket.parsedSent().filter((frame) => frame.type === "subscribe" && frame.ch === ch)).toHaveLength(1)
+
+    const token = { type: "token", content: "after pane" }
+    socket.emit({ ch, seq: 3, event: token })
+    expect(pane.mock.calls.map(([event]) => event)).toEqual([started, token])
+  })
+
+  it("drops the shared run identity at its terminal event and the final unsubscribe", () => {
+    const ch = "agent.session-1"
+    subscribeFeed({ onChange: vi.fn() }, 0)
+    const background = subscribeAgent("session-1", {}, tokenDispatch)
+    const socket = lastSocket()
+    socket.open()
+    socket.emit({ ch, seq: 1, event: { type: "execution_started", session_id: "session-1", run_id: "first-run" } })
+    socket.emit({ ch, seq: 2, event: { type: "complete" } })
+
+    // Running children can keep the agent channel subscribed past the root terminal event.
+    const pane = vi.fn<AgentEventDispatch>()
+    const betweenRuns = subscribeAgent("session-1", {}, pane)
+    expect(betweenRuns.fresh).toBe(false)
+    expect(pane).not.toHaveBeenCalled()
+
+    const successor = { type: "execution_started", session_id: "session-1", run_id: "second-run" }
+    socket.emit({ ch, seq: 3, event: successor })
+    expect(pane).toHaveBeenCalledExactlyOnceWith(successor, {})
+    background.close()
+    betweenRuns.close()
+
+    subscribeAgent("session-1", {}, tokenDispatch)
+    const reopened = vi.fn<AgentEventDispatch>()
+    subscribeAgent("session-1", {}, reopened)
+    expect(reopened).not.toHaveBeenCalled()
+    expect(lastSocket()).toBe(socket)
+  })
+
+  it("requires a new observed run identity after a socket reconnects", () => {
+    vi.useFakeTimers()
+    const ch = "agent.session-1"
+    const oldRun = { type: "execution_started", session_id: "session-1", run_id: "old-run" }
+    subscribeAgent("session-1", {}, tokenDispatch)
+    const first = lastSocket()
+    first.open()
+    first.emit({ ch, seq: 1, event: oldRun })
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    const replacement = lastSocket()
+    replacement.open()
+    const pane = vi.fn<AgentEventDispatch>()
+    const attachment = subscribeAgent("session-1", {}, pane)
+    expect(attachment.fresh).toBe(false)
+    expect(pane).not.toHaveBeenCalled()
+
+    const resumed = { ...oldRun, run_id: "current-run" }
+    replacement.emit({ ch, seq: 1, event: resumed })
+    const anotherPane = vi.fn<AgentEventDispatch>()
+    subscribeAgent("session-1", {}, anotherPane)
+    expect(anotherPane).toHaveBeenCalledExactlyOnceWith(resumed, {})
+  })
+
   it("stops feed delivery and sends one unsubscribe after close", () => {
     const onChange = vi.fn()
     const feed = subscribeFeed({ onChange }, 0)
