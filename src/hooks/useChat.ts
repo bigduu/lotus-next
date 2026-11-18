@@ -2603,9 +2603,19 @@ export function useChat(
       try {
         if (dispatched === "exact" && keepPartialAnswer) {
           // The Stop receipt precedes the cancelled runner's last checkpoint.
-          await useAppStore.getState().loadChatHistory(targetSessionId, {
-            mode: "monotonic", waitForAssistant: true, retries: 8, retryDelayMs: 150,
+          const loadStoppedHistory = () => useAppStore.getState().loadChatHistory(targetSessionId, {
+            mode: "monotonic", waitForAssistant: true, retries: 8, retryDelayMs: 150, throwOnError: true,
           })
+          try {
+            await loadStoppedHistory()
+          } catch (error) {
+            // The account feed can start its own read before the checkpoint.
+            // A superseded read has not hydrated the partial answer.
+            if (!(error instanceof DOMException) || error.name !== "AbortError" || !mountedRef.current
+                || navigationRef.current.sessionId !== targetSessionId || abortRef.current !== stoppedSubscription
+                || answerLeaseRef.current?.valid === false) throw error
+            await loadStoppedHistory()
+          }
         } else {
           await useAppStore.getState().loadChatHistory(targetSessionId)
         }

@@ -4749,7 +4749,7 @@ describe("explicit continuous upstream retry", () => {
     expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "observed-run")
   })
 
-  it("keeps text before a tool visible through one history reconciliation for repeated Stop clicks", async () => {
+  it.each([false, true])("keeps text before a tool through repeated Stop clicks and history supersession=%s", async (superseded) => {
     allow()
     const target = "exact-stop-tool-checkpoint"
     const history = deferred<void>()
@@ -4765,6 +4765,7 @@ describe("explicit continuous upstream retry", () => {
     await flushMicrotasks()
     const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
     mocks.appState.loadChatHistory.mockClear().mockReturnValue(history.promise)
+    if (superseded) mocks.appState.loadChatHistory.mockRejectedValueOnce(new DOMException("Superseded by the feed", "AbortError"))
     mocks.shouldObserve = true
     await act(async () => {
       handlers.onToken(text)
@@ -4781,9 +4782,11 @@ describe("explicit continuous upstream retry", () => {
     expect(mocks.appState.loadChatHistory).not.toHaveBeenCalled()
     await act(async () => { stopReceipt.resolve() })
     await flushMicrotasks()
-    expect(mocks.appState.loadChatHistory).toHaveBeenCalledExactlyOnceWith(target, expect.objectContaining({
-      mode: "monotonic", waitForAssistant: true,
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledTimes(superseded ? 2 : 1)
+    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(target, expect.objectContaining({
+      mode: "monotonic", waitForAssistant: true, throwOnError: true,
     }))
+    expect(hook.current.liveSegments).toContainEqual(expect.objectContaining({ kind: "text", text }))
     mocks.shouldObserve = false
     await act(async () => { history.resolve() })
     await flushMicrotasks()
