@@ -1172,7 +1172,7 @@ export function useChat(
         observedOutput = true
         return true
       }
-      const readRunBeforeAttaching = async (execution?: Promise<ExecuteResponse>): Promise<string | null> => {
+      const readRunBeforeAttaching = async (): Promise<string | null> => {
         const lookup = new AbortController()
         const cancelLookup = () => lookup.abort()
         const deadline = new Promise<null>((resolve) => {
@@ -1183,11 +1183,6 @@ export function useChat(
         // stream attaches cannot identify the generation in that stream.
         const timer = setTimeout(cancelLookup, 400)
         try {
-          if (execution) {
-            const ack = await Promise.race([execution, deadline])
-            if (ack?.session_id !== runSid || ack.run_id != null
-                || (ack.status !== "completed" && ack.status !== "already_running")) return null
-          }
           if (!ownsRunEvent() || lookup.signal.aborted || getBackendStorageScope() !== backendScope) return null
           const active = await Promise.race([agentClient.getRunningSessions(lookup.signal), deadline])
           const matching = active?.sessions.filter((entry) => entry.session_id === runSid)
@@ -1199,7 +1194,7 @@ export function useChat(
           ac.signal.removeEventListener("abort", cancelLookup)
         }
       }
-      let runBeforeAttachment = observeAttachedRun ? readRunBeforeAttaching() : undefined
+      const runBeforeAttachment = observeAttachedRun ? readRunBeforeAttaching() : undefined
       const updateCompression = (
         update: (previous: ContextCompressionFeedback | null) => ContextCompressionFeedback | null,
         phase?: string,
@@ -1244,7 +1239,6 @@ export function useChat(
           : startOrdinaryExecution(runSid, operationId, () => opts?.liveBootstrapResume
             ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
             : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef), getObservedRunId)
-        if (!opts?.upstreamRetry) runBeforeAttachment = readRunBeforeAttaching(execution)
         if (opts?.upstreamRetry) {
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
           // A Stop clicked before Execute returns waits for that exact ACK. It
