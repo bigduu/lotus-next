@@ -59,7 +59,7 @@ describe("background shell notification handoff", () => {
     expect(close).not.toHaveBeenCalled()
     expect(mocks.notify).not.toHaveBeenCalled()
 
-    emit({ ...notification(), dedup_key: "bash:untracked" })
+    emit({ ...notification(), session_id: "other-session" })
     expect(mocks.notify).not.toHaveBeenCalled()
     expect(close).not.toHaveBeenCalled()
 

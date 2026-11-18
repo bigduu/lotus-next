@@ -177,7 +177,7 @@ async function expectAnswers(page: Page, expected: readonly string[]) {
   }
 }
 
-test("the final background shell delivers its backend notification after the answer settles", async ({ page }) => {
+async function captureShellNotifications(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem("lotus_notify_enabled_v1", "1")
     const messages: Array<{ title: string; body?: string }> = []
@@ -189,6 +189,13 @@ test("the final background shell delivers its backend notification after the ans
       }
     } })
   })
+  return () => page.evaluate(() => (globalThis as typeof globalThis & {
+    testShellNotifications: Array<{ title: string; body?: string }>
+  }).testShellNotifications)
+}
+
+test("the final background shell delivers its backend notification after the answer settles", async ({ page }) => {
+  const messages = await captureShellNotifications(page)
   const f = await prepare(page)
   const channel = `agent.${primary}`
   await page.getByRole("textbox", { name: "消息", exact: true }).fill(prompts[0])
@@ -206,9 +213,6 @@ test("the final background shell delivers its backend notification after the ans
   await expectAnswers(page, [answers[0]])
   await expect(page.getByRole("banner")).toContainText("Synthetic lifecycle A")
 
-  const messages = () => page.evaluate(() => (globalThis as typeof globalThis & {
-    testShellNotifications: Array<{ title: string; body?: string }>
-  }).testShellNotifications)
   f.emit({ type: "bash_completed", bash_id: shell.id, status: "completed", exit_code: 0 })
   expect(f.channels.has(channel)).toBe(true)
   expect(await messages()).toEqual([])
@@ -222,6 +226,7 @@ test("the final background shell delivers its backend notification after the ans
 })
 
 test("background shell outcomes still reach their cards after the answer completes", async ({ page }, info) => {
+  const messages = await captureShellNotifications(page)
   const f = await prepare(page)
   const channel = `agent.${primary}`
   await page.getByRole("textbox", { name: "消息", exact: true }).fill(prompts[0])
@@ -267,6 +272,8 @@ test("background shell outcomes still reach their cards after the answer complet
   const success = { type: "bash_completed", bash_id: "shell-ok", status: "completed", exit_code: 0 }
   const failure = { type: "bash_completed", bash_id: "shell-failed", status: "error", exit_code: 7 }
   f.emit(success)
+  const successNotice = { title: "Background command finished", body: "fixture shell-ok — completed, exit 0" }
+  f.emit({ type: "notification", session_id: primary, dedup_key: "bash:shell-ok", ...successNotice })
   await expect(succeeded).toBeVisible()
   await expect(running).toHaveCount(1)
 
@@ -277,6 +284,9 @@ test("background shell outcomes still reach their cards after the answer complet
   const lateShell = backgroundShell("shell-late")
   const lateOutcome = { type: "bash_completed", bash_id: lateShell.id, status: "error", exit_code: 3 }
   f.emit(lateOutcome)
+  const lateNotice = { title: "Background command failed", body: "fixture shell-late — failed, exit 3" }
+  f.emit({ type: "notification", session_id: primary, dedup_key: `bash:${lateShell.id}`, ...lateNotice })
+  await expect.poll(messages).toEqual([successNotice, lateNotice])
   f.persistResponse(...history, ...lateShell.history, answer)
   await selectSession("A")
   f.notifyCanonical(`result-${lateShell.id}`)
@@ -288,6 +298,9 @@ test("background shell outcomes still reach their cards after the answer complet
   await selectSession("B")
   expect(f.channels.has(channel)).toBe(true)
   f.emit(failure)
+  const failureNotice = { title: "Background command failed", body: "fixture shell-failed — failed, exit 7" }
+  f.emit({ type: "notification", session_id: primary, dedup_key: "bash:shell-failed", ...failureNotice })
+  await expect.poll(messages).toEqual([successNotice, lateNotice, failureNotice])
   await expect.poll(() => f.channels.has(channel)).toBe(false)
   await selectSession("A")
   await expectAnswers(page, [answers[0]])

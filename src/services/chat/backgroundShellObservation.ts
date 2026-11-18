@@ -81,12 +81,11 @@ export function observeBackgroundShells(sessionId: string, bashIds: readonly str
     if (event.type === "bash_completed" && event.bash_id) {
       // The outcome can arrive before this pane discovers the launch in history.
       recordBackgroundShellOutcome(sessionId, event.bash_id, typeof event.status === "string" ? event.status : "completed", event.exit_code ?? null)
-    } else if (
-      event.type === "notification" && event.session_id === sessionId && event.dedup_key &&
-      observation.awaitingNotifications.delete(event.dedup_key)
-    ) {
+    } else if (event.type === "notification" && event.session_id === sessionId) {
       deliverSessionNotification(event)
-      closeFinishedObservation(sessionId, observation)
+      if (event.dedup_key && observation.awaitingNotifications.delete(event.dedup_key)) {
+        closeFinishedObservation(sessionId, observation)
+      }
     }
   })
   const observation: ShellObservation = { pending, awaitingNotifications: new Set(), close: subscription.close }
