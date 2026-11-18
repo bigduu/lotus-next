@@ -10,8 +10,6 @@ import {
   isInputLockedPhase,
   isCancellablePhase,
 } from "../slices/executionStateSlice";
-import type { Message } from "@shared/types/chatMessages";
-import { sessionHasRunningBackgroundBash } from "@/lib/sessionBackgroundTasks";
 
 // =============================================================================
 // Selectors operating on the executionBySession map.
@@ -24,9 +22,6 @@ import { sessionHasRunningBackgroundBash } from "@/lib/sessionBackgroundTasks";
  */
 export interface ExecutionStateView {
   executionBySession: ExecutionMap;
-  chats?: ReadonlyArray<{ id: string; isRunning?: boolean; messages?: readonly Message[] }>;
-  /** bash_id → terminal outcome; a missing entry means the shell still runs. */
-  backgroundBash?: Readonly<Record<string, unknown>>;
 }
 
 const NO_CHILDREN: SessionChildrenSnapshot = { byId: {}, runningCount: 0 };
@@ -110,31 +105,18 @@ export const selectCanCancel =
   };
 
 /**
- * True when the session still needs a live SSE subscription.
+ * True when the pane needs to observe the current agent run.
  *
  * This is intentionally narrower than `selectIsBusy()`: `waiting_user_answer`
  * is a blocked/awaiting-input phase, not an actively executing phase, so we
- * should preserve the busy rail semantics without continuously reconnecting SSE.
- *
- * A session with a still-running background shell also stays observed even
- * though its main execution has settled. `BashCompleted` is replayable session
- * state, so remaining subscribed is what delivers the shell's outcome; once it
- * is recorded the session drops back to idle and this returns false, closing
- * the subscription. Without this the outcome would only arrive the next time
- * the session happened to be opened, leaving the sidebar indicator stuck on.
+ * should preserve the busy rail semantics without continuously reconnecting.
+ * Background shell results have their own observer after the run settles.
  */
 export const selectShouldObserve =
   (sessionId: string | null) =>
   (state: ExecutionStateView): boolean => {
-    const entry = getEntry(state, sessionId);
-    if (isBusyPhase(entry?.phase)) {
-      return entry?.phase !== "waiting_user_answer";
-    }
-    if (!sessionId || !entry || !state.backgroundBash) {
-      return false;
-    }
-    const chat = state.chats?.find((candidate) => candidate.id === sessionId);
-    return sessionHasRunningBackgroundBash(chat?.messages, state.backgroundBash);
+    const phase = getEntry(state, sessionId)?.phase;
+    return isBusyPhase(phase) && phase !== "waiting_user_answer";
   };
 
 export const selectActiveToolCalls =

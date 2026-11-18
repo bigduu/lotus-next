@@ -16,6 +16,7 @@
  */
 import { AgentClient, type ChangeEvent, type FeedSubscription } from "./AgentService";
 import { isFeedOpen, onReconnected } from "./v2Stream";
+import { stopAllBackgroundShellObservations, stopObservingBackgroundShells } from "./backgroundShellObservation";
 import { useAppStore, selectShouldObserve } from "@shared/store/appStore";
 import { notify } from "@/lib/notify";
 
@@ -128,6 +129,9 @@ const applyChange = (change: ChangeEvent): void => {
   const store = useAppStore.getState();
   const sessionId = change.session_id ?? event.session_id;
 
+  if (sessionId && (event.type === "session_cleared" || event.type === "session_deleted")) {
+    stopObservingBackgroundShells(sessionId);
+  }
   if (event.type === "session_cleared" && sessionId) {
     store.reconcileClearedConversation(sessionId);
   }
@@ -259,6 +263,7 @@ export const startAccountFeed = (): void => {
 
 /** Stop the account feed and tear down the connection. */
 export const stopAccountFeed = (): void => {
+  stopAllBackgroundShellObservations();
   cancelScheduledRefresh();
   if (offReconnected) {
     offReconnected();
