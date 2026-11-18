@@ -173,6 +173,63 @@ test("129 persistent actors render recursively without expanding the content sub
 const activationA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 const activationB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 const treeCursor = (revision: number) => `at1-${"a".repeat(64)}-${revision}`
+
+test("running Inspector siblings stay first without displacing actors already running", async ({ page }, testInfo) => {
+  let revision = 7
+  const current = actorSnapshotFixture(rootId, 4, treeCursor(revision))
+  const updateChild = (index: number, status: "running" | "succeeded" | "failed", attempt = 1) => {
+    const node = current.nodes.find((item) => item.actor_id === `actor-${index}`)!
+    node.logical_state = status === "succeeded" ? "cold" : status === "failed" ? "failed" : "active"
+    node.revision.actor_directory_revision = revision
+    node.activation = { activation_id: attempt === 1 ? activationA : activationB, attempt, status }
+  }
+  updateChild(0, "succeeded")
+  updateChild(1, "running")
+  updateChild(2, "failed")
+  updateChild(3, "running")
+  const titles = ["初步检查", "修复数据集", "旧任务", "验证结果"]
+  current.nodes.forEach((node, index) => { node.title = index === 0 ? "Subagent 排序验证" : titles[index - 1] })
+  const { observation } = await prepare(page, sessions.filter((session) => current.nodes.some((node) => node.actor_id === session.id)))
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, (route) => route.fulfill({ json: current }))
+  await page.goto(standaloneScenario.entryUrl)
+  const panel = await openInspector(page)
+  const tree = panel.getByRole("tree")
+  const actorOrder = () => tree.getByRole("treeitem").evaluateAll((items) => items.map((item) => item.getAttribute("data-actor-id")))
+  const refresh = async () => {
+    revision += 1
+    current.snapshot_id = `as1-${revision.toString(16).padStart(64, "0")}`
+    current.stream_cursor = treeCursor(revision)
+    await panel.getByRole("button", { name: "刷新代理结构" }).click()
+    await expect(panel).toHaveAttribute("aria-busy", "false")
+  }
+
+  await expect.poll(actorOrder).toEqual([rootId, "actor-1", "actor-3", "actor-0", "actor-2"])
+  await expect(panel.locator('[data-actor-id="actor-1"]')).toHaveAttribute("aria-posinset", "1")
+  await tree.focus()
+  await page.keyboard.press("Home")
+  await page.keyboard.press("ArrowDown")
+  await page.keyboard.press("ArrowDown")
+  const activeRow = panel.locator('[data-actor-id="actor-3"]')
+  await expect(tree).toHaveAttribute("aria-activedescendant", (await activeRow.getAttribute("id"))!)
+  await page.screenshot({ path: testInfo.outputPath("running-subagents-first.png") })
+
+  // A fresh activation joins behind the two already-running siblings.
+  updateChild(0, "running", 2)
+  await refresh()
+  await expect.poll(actorOrder).toEqual([rootId, "actor-1", "actor-3", "actor-0", "actor-2"])
+  current.nodes.reverse()
+  await refresh()
+  await expect.poll(actorOrder).toEqual([rootId, "actor-1", "actor-3", "actor-0", "actor-2"])
+
+  updateChild(1, "succeeded")
+  await refresh()
+  await expect.poll(actorOrder).toEqual([rootId, "actor-3", "actor-0", "actor-1", "actor-2"])
+  await expect(tree).toHaveAttribute("aria-activedescendant", (await activeRow.getAttribute("id"))!)
+  await expect(panel.locator(`[data-actor-id="${rootId}"]`)).toHaveAttribute("aria-selected", "true")
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.protocolErrors).toEqual([])
+})
+
 function activationSnapshot(activationId: string, attempt: number,
   status: "reserved" | "running" | "succeeded", revision: number) {
   const value = actorSnapshotFixture(rootId, 128, treeCursor(revision))

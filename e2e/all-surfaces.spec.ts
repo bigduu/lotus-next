@@ -254,6 +254,7 @@ test("system settings save and restore all three context-management strategies",
   const summary = section.getByRole("radio", { name: "完整对话摘要", exact: true })
   const messages = section.getByRole("radio", { name: "消息正文摘要", exact: true })
   const retrieval = section.getByRole("radio", { name: "原文检索窗口", exact: true })
+  const savedForNextCompaction = section.getByText("策略已保存，将在下次压缩时使用。", { exact: true })
   await expect(summary).toBeChecked()
   await expect(section.getByText(/从下一次执行开始生效/)).toBeVisible()
 
@@ -263,7 +264,7 @@ test("system settings save and restore all three context-management strategies",
   await section.getByRole("button", { name: "保存", exact: true }).click()
   await expect.poll(() => configPatches).toHaveLength(1)
   expect(configPatches[0]).toMatchObject({ context_management: { strategy: "message_summary" } })
-  await expect(section.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(savedForNextCompaction).toBeVisible()
   await selectSettingsCategory(surface, "general", "通用")
   await selectSettingsCategory(surface, "system", "系统")
   await expect(messages).toBeChecked()
@@ -287,14 +288,14 @@ test("system settings save and restore all three context-management strategies",
       },
     },
   })
-  await expect(section.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(savedForNextCompaction).toBeVisible()
   await expect(retrieval).toBeChecked()
 
   await summary.check()
   await section.getByRole("button", { name: "保存", exact: true }).click()
   await expect.poll(() => configPatches).toHaveLength(3)
   expect(configPatches[2]).toMatchObject({ context_management: { strategy: "summary" } })
-  await expect(section.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(savedForNextCompaction).toBeVisible()
   await expect(summary).toBeChecked()
 })
 

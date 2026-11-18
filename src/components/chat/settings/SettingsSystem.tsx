@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useContext } from "react"
+import { useContext, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
@@ -11,6 +11,7 @@ import { SectionMemory } from "./system/SectionMemory"
 import { SectionSubagents } from "./system/SectionSubagents"
 import { SectionTools } from "./system/SectionTools"
 import { SectionAccessPassword } from "./system/SectionAccessPassword"
+import { SectionTailscale } from "./system/SectionTailscale"
 import { SectionHooks } from "./system/SectionHooks"
 import { SectionSessions } from "./system/SectionSessions"
 import { SectionApp } from "./system/SectionApp"
@@ -28,6 +29,7 @@ export function SettingsSystem() {
   useUiLocale()
   const { config, loading, loadError, reload, saveSection } = useSystemConfig()
   const ownerAccess = useContext(OwnerAccessContext)
+  const [passwordRevision, setPasswordRevision] = useState(0)
   const isAdvanced = useExperienceModeStore((s) => s.isAdvanced)
   const workMutation = config?.features?.ticket_mutation
   const workDispatch = config?.features?.ticket_dispatch
@@ -64,11 +66,14 @@ export function SettingsSystem() {
         </>
       ) : null}
 
-      {isAdvanced ? (
-        <>
-          <SectionAccessPassword saveSection={saveSection} configReady={!!config} />
-        </>
-      ) : null}
+      {ownerAccess && <SectionTailscale passwordRevision={passwordRevision} />}
+      {(ownerAccess || isAdvanced) && (
+        <SectionAccessPassword
+          saveSection={saveSection}
+          configReady={!!config}
+          onChange={() => setPasswordRevision((revision) => revision + 1)}
+        />
+      )}
       <SectionSessions advanced={isAdvanced} />
       <SectionApp />
     </div>

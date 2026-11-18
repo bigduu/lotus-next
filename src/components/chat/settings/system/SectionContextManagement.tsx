@@ -89,7 +89,7 @@ export function SectionContextManagement({
       }
       setSelectedStrategy(persistedStrategy)
       setSavedStrategy(persistedStrategy)
-      setMsg({ kind: "ok", text: uiText("saved_1bd91a7d") })
+      setMsg({ kind: "ok", text: uiText("compact_status_strategy_saved") })
     } catch (e) {
       setMsg({ kind: "error", text: getErrorMessage(e) })
     } finally {

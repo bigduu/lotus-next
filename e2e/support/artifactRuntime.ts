@@ -44,6 +44,7 @@ export interface ArtifactRuntimeOptions {
   readonly providerInstancesResponse?: unknown
   readonly bootstrapRequestState?: "local_bypass" | "authenticated" | "unauthenticated"
   readonly sessionId?: string
+  readonly sessionFeatures?: readonly string[]
 }
 
 export const standaloneScenario: ArtifactScenario = {
@@ -157,7 +158,10 @@ const fixtureModel = {
   source: "static",
 }
 
-const apiResponse = (method: string, pathnameWithSearch: string, session: typeof fixtureSession): unknown => {
+const apiResponse = (
+  method: string, pathnameWithSearch: string, session: typeof fixtureSession,
+  sessionFeatures?: readonly string[],
+): unknown => {
   const migrationRead = /^\/api\/v1\/sessions\/([^/]+)\/version-migration$/.exec(pathnameWithSearch)
   if (method === "GET" && migrationRead) {
     // Shared surface fixtures model current, idle sessions, including IDs
@@ -190,7 +194,7 @@ const apiResponse = (method: string, pathnameWithSearch: string, session: typeof
   if (method === "GET" && /^\/api\/v1\/sessions(?:\?.*)?$/.test(pathnameWithSearch)) {
     const url = new URL(pathnameWithSearch, "http://fixture.invalid")
     const sessions = url.searchParams.get("kind") === "child" ? [] : [session]
-    return { sessions, total: sessions.length, limit: 200, offset: 0 }
+    return { sessions, total: sessions.length, limit: 200, offset: 0, features: sessionFeatures }
   }
   switch (`${method} ${pathnameWithSearch}`) {
     case "GET /api/v1/execute/defaults":
@@ -245,6 +249,8 @@ const apiResponse = (method: string, pathnameWithSearch: string, session: typeof
       return { available: false, mutation_enabled: false, dispatch_enabled: false }
     case "GET /api/v1/bamboo/config":
       return { proxy_auth_mode: "auto" }
+    case "GET /api/v1/bamboo/tailscale":
+      return { state: "not_installed", enabled: false, tailnet: null, url: null, action_url: null }
     case "GET /api/v1/bamboo/tools":
       return { tools: [] }
     case "GET /api/v1/bamboo/access/status":
@@ -511,7 +517,7 @@ export const installArtifactRuntime = async (
               })()
             : request.method() === "GET" && url.pathname === `/api/v1/history/${sessionId}`
             ? { session_id: sessionId, messages: historyMessages }
-            : apiResponse(request.method(), `${url.pathname}${url.search}`, session)
+            : apiResponse(request.method(), `${url.pathname}${url.search}`, session, options.sessionFeatures)
       if (response === undefined) {
         await route.fulfill({
           status: 501,

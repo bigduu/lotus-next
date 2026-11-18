@@ -194,6 +194,62 @@ export type SessionCompactionReceipt =
 const nonnegativeFinite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 
+export type CompactionStrategy = "summary" | "message_summary" | "retrieval_window";
+
+export type ActiveCompaction = {
+  id: string;
+  elapsed_ms: number;
+  strategy: CompactionStrategy | null;
+} & (
+  | { phase: "preparing" | "validating" | "saving" }
+  | { phase: "summarizing" | "merging"; part: number; total: number }
+);
+
+export interface SessionCompactionStatus {
+  session_id: string;
+  configured_strategy: CompactionStrategy;
+  active: ActiveCompaction | null;
+  applied: {
+    id: string;
+    strategy: CompactionStrategy;
+  } | null;
+}
+
+const isCompactionStrategy = (value: unknown): value is CompactionStrategy =>
+  value === "summary" || value === "message_summary" || value === "retrieval_window";
+
+function readSessionCompactionStatus(value: unknown, sessionId: string): SessionCompactionStatus {
+  const status = value as SessionCompactionStatus | null;
+  if (!status || status.session_id !== sessionId || !isCompactionStrategy(status.configured_strategy)) {
+    throw new Error("Invalid session compaction status");
+  }
+  const { active, applied } = status;
+  if (active !== null) {
+    if (!active?.id || typeof active.id !== "string" || !nonnegativeFinite(active.elapsed_ms)
+      || (active.strategy !== null && !isCompactionStrategy(active.strategy))) {
+      throw new Error("Invalid active compaction");
+    }
+    switch (active.phase) {
+      case "preparing":
+      case "validating":
+      case "saving":
+        break;
+      case "summarizing":
+      case "merging":
+        if (Number.isSafeInteger(active.part) && Number.isSafeInteger(active.total)
+          && active.part >= 1 && active.part <= active.total) break;
+        throw new Error("Invalid compaction progress");
+      default:
+        throw new Error("Invalid compaction phase");
+    }
+  }
+  if (applied !== null && (!applied?.id || typeof applied.id !== "string"
+    || !isCompactionStrategy(applied.strategy))) {
+    throw new Error("Invalid applied compaction");
+  }
+  return status;
+}
+
 export interface ContextSummaryInfo {
   summary: string;
   messages_summarized: number;
@@ -1649,6 +1705,13 @@ export class AgentClient {
     if (receipt?.success !== true || receipt.session_id !== sessionId) {
       throw new Error("Invalid conversation clear receipt");
     }
+  }
+
+  async getSessionCompactionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionCompactionStatus> {
+    const value = await apiClient.getOnce<unknown>(`sessions/${encodeURIComponent(sessionId)}/compact`, {
+      cache: "no-store", signal,
+    });
+    return readSessionCompactionStatus(value, sessionId);
   }
 
   /** Compress one idle session without submitting a chat turn. */

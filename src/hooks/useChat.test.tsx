@@ -2392,7 +2392,7 @@ describe("owned streams without a terminal frame", () => {
     expect(mocks.getSession).toHaveBeenCalledExactlyOnceWith(sessionId)
     mocks.getSession.mockClear()
     await act(async () => { await hook.current.send("inspect the worktree") })
-    return { hook, controller: mocks.subscribeToEvents.mock.calls[0][2] as AbortController, closeSubscription: subscription.resolve }
+    return { hook, controller: mocks.subscribeToEvents.mock.calls[0][2] as AbortController }
   }
   async function advance(ms: number) {
     await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
@@ -2585,13 +2585,13 @@ describe("owned streams without a terminal frame", () => {
     expect(mocks.getSession).toHaveBeenCalledTimes(1)
   })
 
-  it("ignores an idle status response when a terminal event arrives during the read", async () => {
-    const { hook, controller, closeSubscription } = await start()
+  it("closes on Complete and ignores an idle status response still in flight", async () => {
+    const { hook, controller } = await start()
     const status = deferred<unknown>()
     mocks.getSession.mockReturnValueOnce(status.promise)
     await advance(5_000)
     const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
-    await act(async () => { handlers.onComplete(); closeSubscription(); await Promise.resolve() })
+    await act(async () => { handlers.onComplete() })
     const historyReads = mocks.appState.loadChatHistory.mock.calls.length
     await act(async () => {
       status.resolve({ session: { id: sessionId, is_running: false } })
@@ -2603,7 +2603,8 @@ describe("owned streams without a terminal frame", () => {
     expect(mocks.appState.refreshChatsNow).not.toHaveBeenCalled()
     expect(hook.current.sendFailure).toBeNull()
     expect(hook.current.sending).toBe(false)
-    expect(controller.signal.aborted).toBe(false)
+    expect(controller.signal.aborted).toBe(true)
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
   })
 })
 

@@ -71,6 +71,30 @@ it("does not send when the recovery receipt cannot be persisted", async () => {
   storage.mockRestore()
 })
 
+it("acknowledges a saved Human message while activation is pending and keeps its admission locked", async () => {
+  let confirm!: (value: Awaited<ReturnType<typeof agentClient.execute>>) => void
+  vi.mocked(agentClient.execute).mockReturnValueOnce(new Promise((resolve) => { confirm = resolve }))
+  await mount()
+  let accepted: Awaited<ReturnType<typeof ingress.send>> | undefined
+  await act(async () => { void ingress.send(request).then((result) => { accepted = result }) })
+  try {
+    expect(accepted).toMatchObject({ kind: "accepted", sessionId: "ticket-root" })
+    expect(ingress.busy).toBe(true)
+    expect(ingress.starting).toBe(true)
+    expect(ingress.error).toBeNull()
+    expect(ingress.canRetryStart).toBe(false)
+    expect(JSON.parse(sessionStorage.getItem("lotus-next.ticket-human.ticket-root")!).phase).toBe("activation")
+    await act(async () => { expect((await ingress.send({ ...request, message: "next instruction" })).kind).toBe("busy") })
+    expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+    expect(agentClient.execute).toHaveBeenCalledTimes(1)
+  } finally {
+    await act(async () => { confirm({ session_id: "ticket-root", status: "started", events_url: "/events" }) })
+  }
+  expect(ingress.busy).toBe(false)
+  expect(ingress.starting).toBe(false)
+  expect(ingress.hasPending("ticket-root")).toBe(false)
+})
+
 it("shows an unconfirmed start only after the activation request times out and retries only activation", async () => {
   let reject!: (failure: Error) => void
   vi.mocked(agentClient.execute).mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail }))

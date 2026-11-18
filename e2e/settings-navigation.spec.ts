@@ -66,6 +66,85 @@ test("published baseline Settings helper retains the explicit modal contract", a
   await closeSettings(settings, "dialog");
 });
 
+test("Tailscale settings connect, require a password, and manage the private address", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+  });
+  const observation = await installArtifactRuntime(page, standaloneScenario);
+  const address = "https://bamboo.example.ts.net:8443/";
+  let connected = false;
+  let passwordSet = false;
+  let enabled = false;
+  const actions: string[] = [];
+  await page.route("**/api/v1/bamboo/tailscale", (route) => {
+    let loginRequested = false;
+    if (route.request().method() === "POST") {
+      const { action } = route.request().postDataJSON();
+      actions.push(action);
+      if (action === "connect") loginRequested = true;
+      if (action === "enable") enabled = true;
+      if (action === "disable") enabled = false;
+    }
+    const state = !connected ? "login_required" : !passwordSet ? "password_required" : enabled ? "active" : "ready";
+    return route.fulfill({ json: {
+      state,
+      enabled,
+      tailnet: connected ? "example.ts.net" : null,
+      url: enabled ? address : null,
+      action_url: loginRequested && !connected ? "https://login.tailscale.com/a/test-fixture" : null,
+    } });
+  });
+  await page.route("**/api/v1/bamboo/access/status", (route) => route.fulfill({ json: {
+    password_enabled: passwordSet, local_bypass: true, requires_password: false, revision: passwordSet ? 8 : 7,
+  } }));
+  await page.route("**/api/v1/bamboo/access/password", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ expected_revision: 7, new_password: "fixture-password" });
+    passwordSet = true;
+    return route.fulfill({ json: { success: true, password_enabled: true, revision: 8 } });
+  });
+
+  await page.goto(standaloneScenario.entryUrl);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  await selectSettingsCategory(settings, "system", "系统");
+  const section = settings.getByRole("region", { name: "Tailscale 远程访问" });
+  await section.getByRole("button", { name: "连接这台电脑" }).click();
+  await expect(section.getByRole("link", { name: "登录 Tailscale" }))
+    .toHaveAttribute("href", "https://login.tailscale.com/a/test-fixture");
+  await page.waitForResponse((response) => response.url().endsWith("/api/v1/bamboo/tailscale")
+    && response.request().method() === "GET");
+  await expect(section.getByRole("link", { name: "登录 Tailscale" }))
+    .toHaveAttribute("href", "https://login.tailscale.com/a/test-fixture");
+  connected = true;
+  await section.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(section.getByText("请先在下方设置 Bamboo 访问密码", { exact: false })).toBeVisible();
+  await expect(section.getByRole("button", { name: "开启远程访问" })).toHaveCount(0);
+
+  await settings.getByLabel(/^设置密码/).fill("fixture-password");
+  await settings.getByLabel(/^确认密码/).fill("fixture-password");
+  await settings.getByRole("button", { name: "启用密码", exact: true }).click();
+  await section.getByRole("button", { name: "开启远程访问" }).click();
+  await expect(section.getByRole("link", { name: address })).toHaveAttribute("href", address);
+  await expect(section.getByRole("button", { name: "复制地址" })).toBeVisible();
+  await settings.getByRole("button", { name: "关闭密码", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "关闭访问密码" });
+  await expect(confirm.getByText(/Tailscale 分享会暂停/)).toBeVisible();
+  await confirm.getByRole("button", { name: "取消" }).click();
+  if (testInfo.project.name !== "tablet-chromium") {
+    await testInfo.attach("Tailscale remote access", { body: await section.screenshot(), contentType: "image/png" });
+  }
+  await section.getByRole("button", { name: "关闭远程访问" }).click();
+  await expect(section.getByRole("link", { name: address })).toHaveCount(0);
+  await expect(section.getByRole("button", { name: "开启远程访问" })).toBeEnabled();
+  expect(actions).toEqual(["connect", "enable", "disable"]);
+  expect(observation.errorResponses).toEqual([]);
+  expect(observation.pageErrors).toEqual([]);
+});
+
 test("maximum output can switch between unlimited and a fixed limit", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1");
