@@ -121,13 +121,17 @@ export function sessionHasLiveWork(
   execution: SessionExecutionState | undefined,
   backgroundBash: Readonly<Record<string, unknown>>,
 ): boolean {
-  if (session.isRunning) return true
+  if (session.isRunning || (session.runningChildCount ?? 0) > 0) return true
   if (session.activity && LIVE_ACTIVITY.has(session.activity)) return true
-  if (session.activity === undefined && (session.runningChildCount ?? 0) > 0) return true
-  if (execution) {
-    if (isBusyPhase(execution.phase)) return true
-    if (execution.children.runningCount > 0) return true
-    return sessionHasRunningBackgroundBash(session.messages, backgroundBash)
-  }
-  return false
+  if (!execution) return false
+
+  // The server's current child count also covers children that outlive the
+  // Root. When the Root is blocked or terminal, a cached wait or child count
+  // alone cannot keep the indicator lit.
+  const rootStopped = session.activity === "waiting_user" || session.activity === "terminal"
+  const cachedWait = execution.confidence === "summary"
+    || execution.phase === "running_children" || execution.phase === "waiting_user_answer"
+  return (isBusyPhase(execution.phase) && !(rootStopped && cachedWait))
+    || (!rootStopped && execution.children.runningCount > 0)
+    || sessionHasRunningBackgroundBash(session.messages, backgroundBash)
 }
