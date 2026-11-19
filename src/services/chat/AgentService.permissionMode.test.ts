@@ -57,17 +57,17 @@ describe("typed session permission service", () => {
     });
   });
 
-  it("writes Supervisor dispatch consent only with explicit typed Auto and reads it back", async () => {
+  it("reads the Supervisor inheritance capability while writing only the selected mode", async () => {
     raw.mockResolvedValue(new Response(
-      JSON.stringify({ session: { id: "session/a", permission_mode: "auto", supervisor_auto_dispatch: true } }),
+      JSON.stringify({ session: { id: "session/a", permission_mode: "auto", supervisor_dispatch_inherits_permission_mode: true } }),
       { headers: { ETag: '"8"' } },
     ));
-    await expect(agentClient.patchSessionPermissionMode("session/a", "auto", '"7"', true)).resolves.toEqual({
-      sessionId: "session/a", mode: "auto", etag: '"8"', supervisorAutoDispatch: true,
+    await expect(agentClient.patchSessionPermissionMode("session/a", "auto", '"7"')).resolves.toEqual({
+      sessionId: "session/a", mode: "auto", etag: '"8"', supervisorDispatchInheritsPermissionMode: true,
     });
     expect(raw).toHaveBeenCalledExactlyOnceWith("sessions/session%2Fa", {
       method: "PATCH", headers: { "If-Match": '"7"' },
-      body: JSON.stringify({ permission_mode: "auto", supervisor_auto_dispatch: true }), cache: "no-store",
+      body: JSON.stringify({ permission_mode: "auto" }), cache: "no-store",
     });
   });
 

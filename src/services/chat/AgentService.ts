@@ -82,12 +82,11 @@ export interface SessionPermissionSnapshot {
   sessionId: string;
   mode: SessionPermissionMode;
   etag: string;
-  supervisorAutoDispatch?: boolean;
+  supervisorDispatchInheritsPermissionMode?: true;
 }
 
 export interface PatchSessionPermissionRequest {
   permission_mode: SessionPermissionMode;
-  supervisor_auto_dispatch?: true;
 }
 
 export class SessionPermissionContractError extends Error {
@@ -113,14 +112,11 @@ const readSessionPermissionSnapshot = async (
   ) {
     throw new SessionPermissionContractError();
   }
-  if (!("supervisor_auto_dispatch" in session)) {
-    return { sessionId, mode, etag };
+  if ("supervisor_dispatch_inherits_permission_mode" in session &&
+    session.supervisor_dispatch_inherits_permission_mode === true) {
+    return { sessionId, mode, etag, supervisorDispatchInheritsPermissionMode: true };
   }
-  const dispatch = session.supervisor_auto_dispatch;
-  if (typeof dispatch !== "boolean" || (dispatch && mode !== "auto")) {
-    throw new SessionPermissionContractError();
-  }
-  return { sessionId, mode, etag, supervisorAutoDispatch: dispatch };
+  return { sessionId, mode, etag };
 };
 
 export interface GoldConfig {
@@ -888,8 +884,6 @@ export interface SessionSummary {
   bypass_permissions?: boolean;
   /** Missing or unknown typed support must not enable permission-mode writes. */
   permission_mode?: SessionPermissionMode;
-  /** The opt-in is reported by Supervisor detail. */
-  supervisor_auto_dispatch?: boolean;
   /** An index hint to refresh permission detail. */
   supervisor_permission_etag?: string;
 }
@@ -1677,13 +1671,11 @@ export class AgentClient {
     sessionId: string,
     mode: SessionPermissionMode,
     etag: string,
-    supervisorAutoDispatch?: true,
   ): Promise<SessionPermissionSnapshot> {
-    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null || (supervisorAutoDispatch && mode !== "auto")) {
+    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) {
       throw new SessionPermissionContractError();
     }
     const request: PatchSessionPermissionRequest = { permission_mode: mode };
-    if (supervisorAutoDispatch) request.supervisor_auto_dispatch = true;
     const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "If-Match": etag },

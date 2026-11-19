@@ -85,72 +85,48 @@ afterEach(() => {
 })
 
 describe("PermissionModeControl", () => {
-  it("opts in to new execution sessions from plain Auto and can revoke that scope", async () => {
-    const plain = { ...snapshot("auto"), supervisorAutoDispatch: false }
-    const dispatch = { ...snapshot("auto", '"8"'), supervisorAutoDispatch: true }
-    const revoked = { ...snapshot("auto", '"9"'), supervisorAutoDispatch: false }
-    read.mockResolvedValueOnce(plain).mockResolvedValueOnce(plain).mockResolvedValueOnce(dispatch)
-    patch.mockResolvedValueOnce(dispatch).mockResolvedValueOnce(revoked)
+  it("explains Supervisor inheritance in the ordinary Auto confirmation", async () => {
+    const before = { ...snapshot(), supervisorDispatchInheritsPermissionMode: true as const }
+    const auto = { ...snapshot("auto", '"8"'), supervisorDispatchInheritsPermissionMode: true as const }
+    read.mockResolvedValueOnce(before).mockResolvedValueOnce(before)
+    patch.mockResolvedValueOnce(auto)
 
     await mount()
-    choose("auto for dispatches")
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("the new execution sessions it starts")
-    expect(patch).not.toHaveBeenCalled()
-    click("Enable for dispatches")
-    await flush()
-    expect(patch).toHaveBeenNthCalledWith(1, "a", "auto", '"7"', true)
-    expect(selector().textContent).toBe("Auto for dispatches")
-
     choose("auto")
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New execution sessions started by this Supervisor inherit its permission mode.")
+    expect(patch).not.toHaveBeenCalled()
+    click("Enable Auto")
     await flush()
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
-    expect(patch).toHaveBeenNthCalledWith(2, "a", "auto", '"8"')
+    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"')
     expect(selectedMode()).toBe("auto")
   })
 
-  it("requires new confirmation when the dispatch consent revision advanced with the same values", async () => {
-    const plain = { ...snapshot("auto"), supervisorAutoDispatch: false }
-    const afterRevocation = { ...snapshot("auto", '"9"'), supervisorAutoDispatch: false }
-    read.mockResolvedValueOnce(plain).mockResolvedValueOnce(afterRevocation)
-
+  it("requires a fresh choice when an upgraded backend changes the confirmation scope", async () => {
+    const upgraded = { ...snapshot(), supervisorDispatchInheritsPermissionMode: true as const }
+    read.mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(upgraded)
     await mount()
-    choose("auto for dispatches")
-    click("Enable for dispatches")
+    choose("auto")
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("New execution sessions")
+    click("Enable Auto")
     await flush()
     expect(patch).not.toHaveBeenCalled()
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("session changed")
-    expect(selectedMode()).toBe("auto")
+    choose("auto")
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New execution sessions")
   })
 
-  it("refreshes a same-mode scope hint and reads back a missing revocation acknowledgement", async () => {
-    const plain = { ...snapshot("auto"), supervisorAutoDispatch: false }
-    const dispatch = { ...snapshot("auto", '"8"'), supervisorAutoDispatch: true }
-    const revoked = { ...snapshot("auto", '"9"'), supervisorAutoDispatch: false }
-    const reenabled = { ...snapshot("auto", '"10"'), supervisorAutoDispatch: true }
-    read.mockResolvedValueOnce(plain).mockResolvedValueOnce(dispatch)
-      .mockResolvedValueOnce(dispatch).mockResolvedValueOnce(revoked)
-      .mockResolvedValueOnce(reenabled)
-    patch.mockResolvedValueOnce(snapshot("auto", '"9"'))
+  it("refreshes a newer Supervisor revision even if the permission mode is unchanged", async () => {
+    read.mockResolvedValueOnce(snapshot("auto")).mockResolvedValueOnce(snapshot("auto", '"8"'))
     await mount()
     await act(async () => {
       useAppStore.getState().reconcileSessionPermissionModes([{
         ...summary("a"), permission_mode: "auto", supervisor_permission_etag: '"8"',
       }])
     })
-    expect(selector().textContent).toBe("Auto for dispatches")
-    choose("auto")
-    await flush()
-    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"8"')
-    expect(read).toHaveBeenCalledTimes(4)
+    expect(read).toHaveBeenCalledTimes(2)
     expect(selectedMode()).toBe("auto")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("save response was not confirmed")
-    await act(async () => {
-      useAppStore.getState().reconcileSessionPermissionModes([{
-        ...summary("a"), permission_mode: "auto", supervisor_permission_etag: '"10"',
-      }])
-    })
-    expect(read).toHaveBeenCalledTimes(5)
-    expect(selector().textContent).toBe("Auto for dispatches")
+    expect(useAppStore.getState().chats.find((chat) => chat.id === "a")?.config.permissionModeEtag).toBe('"8"')
+    expect(patch).not.toHaveBeenCalled()
   })
 
   it("reads permissions when the selected session arrives after the composer mounts", async () => {
