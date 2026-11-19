@@ -2,6 +2,7 @@ import { isRetryRunId, type UpstreamRetrySelection } from "./upstreamRetry";
 import type { PublicRunDiagnostic } from "./runDiagnostic"
 import { uiText } from "@shared/i18n/ui"
 import { setBackendFeatures } from "@/lib/backendFeatures"
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 import { debugLog } from "@shared/utils/debugFlags";
 /**
  * Agent Client Service
@@ -87,7 +88,7 @@ export interface SessionPermissionSnapshot {
 
 export interface PatchSessionPermissionRequest {
   permission_mode: SessionPermissionMode;
-  expected_supervisor_dispatch_inheritance: boolean;
+  expected_supervisor_dispatch_inheritance?: boolean;
 }
 
 export class SessionPermissionContractError extends Error {
@@ -1678,10 +1679,10 @@ export class AgentClient {
     if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) {
       throw new SessionPermissionContractError();
     }
-    const request: PatchSessionPermissionRequest = {
-      permission_mode: mode,
-      expected_supervisor_dispatch_inheritance: expectedDispatchInheritance,
-    };
+    const request: PatchSessionPermissionRequest = { permission_mode: mode };
+    if (expectedDispatchInheritance || sessionId === DEFAULT_SUPERVISOR_SESSION_ID) {
+      request.expected_supervisor_dispatch_inheritance = expectedDispatchInheritance;
+    }
     const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "If-Match": etag },
