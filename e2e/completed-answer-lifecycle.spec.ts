@@ -205,6 +205,7 @@ test("server-projected command wait keeps observation active and shows the right
   const f = await prepare(page, { waitingForCommand: true })
   await expect(page.getByText("正在等待后台命令完成…", { exact: true })).toBeVisible()
   await expect(page.getByText("等待子会话完成", { exact: true })).toHaveCount(0)
+  await expect(page.getByText("思考中…", { exact: true })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "停止生成", exact: true })).toHaveCount(0)
   await expect.poll(() => f.channels.has(`agent.${primary}`)).toBe(true)
   await page.clock.fastForward(2_100)
