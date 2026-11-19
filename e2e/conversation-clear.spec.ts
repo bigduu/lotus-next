@@ -207,6 +207,56 @@ test("Supervisor keeps retained children folded after sending and reloading", as
   expect(f.writes.filter(({ method }) => method === "DELETE")).toEqual([])
   expect(f.runtime.pageErrors).toEqual([])
 })
+test("expanding historical children keeps the scrolled Supervisor transcript visible", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "Supervisor desktop transcript layout")
+  const snapshot = actorSnapshotFixture(supervisor, 24)
+  for (const node of snapshot.nodes.slice(1)) {
+    node.parent_actor_id = supervisor
+    node.depth = 1
+  }
+  await fixture(page, null, async () => {
+    await page.route(`**/api/v1/history/${supervisor}*`, (route) => route.fulfill({
+      json: { session_id: supervisor, messages: Array.from({ length: 70 }, (_, index) => ({
+        id: `message-${index}`, role: "user", content: `Retained message ${index}`, created_at: "2026-10-22T00:00:02Z",
+      })) },
+    }))
+  }, 70, snapshot)
+  await page.locator("aside").first().getByRole("button", { name: /^Supervisor/ }).click()
+  const scroll = page.locator("[data-message-list-content]").locator("..")
+  const fold = page.locator("[data-cleared-subagents-toggle]")
+  const childCards = page.locator("[data-subagent-id]")
+  const scrollPastCards = async () => {
+    await expect(scroll.locator("[data-virtual-history]")).toBeAttached()
+    const prefix = await scroll.evaluate((element) => {
+      const history = element.querySelector("[data-virtual-history]")!.getBoundingClientRect()
+      const offset = history.top - element.getBoundingClientRect().top + element.scrollTop
+      element.scrollTop = offset + 40
+      return offset
+    })
+    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeCloseTo(prefix + 40, 0)
+    return prefix
+  }
+  const visibleGap = () => scroll.evaluate((element) => {
+    const viewport = element.getBoundingClientRect()
+    const rows = [...element.querySelectorAll("[data-history-entry-key]")].map((row) => row.getBoundingClientRect())
+    const visible = rows.filter((row) => row.bottom > viewport.top && row.top < viewport.bottom)
+    return Math.max(Math.min(...visible.map((row) => row.top)) - viewport.top,
+      viewport.bottom - Math.max(...visible.map((row) => row.bottom)))
+  })
+  await expect(fold).toHaveText("24 个历史子会话")
+  await fold.click()
+  await expect(childCards).toHaveCount(24)
+  await scroll.hover()
+  await page.mouse.wheel(0, -80)
+  expect(await scrollPastCards()).toBeGreaterThan(750)
+  await expect.poll(visibleGap).toBeLessThan(50)
+  await page.screenshot({ path: info.outputPath("supervisor-visible-after-child-cards.png"), animations: "disabled" })
+
+  await fold.click()
+  await expect(childCards).toHaveCount(0)
+  expect(await scrollPastCards()).toBeLessThan(100)
+  await expect.poll(visibleGap).toBeLessThan(50)
+})
 test("simple-mode settings exposes conversation clear while bulk cleanup stays advanced", async ({ page }, info) => {
   await page.addInitScript(() => localStorage.setItem("lotus_experience_mode_v1", "simple"))
   const f = await fixture(page)

@@ -727,6 +727,10 @@ export const MessageList = memo(function MessageList({
   openTurnKeysRef.current = openTurnKeys
 
   const scrollElementRef = useRef<HTMLDivElement | null>(null)
+  const historyPrefixRef = useRef<HTMLDivElement | null>(null)
+  const historyListRef = useRef<HTMLDivElement | null>(null)
+  const [historyScrollMargin, setHistoryScrollMargin] = useState(0)
+  const hasHistory = historyEntries.length > 0
   const setScrollElement = useCallback((node: HTMLDivElement | null) => {
     scrollElementRef.current = node
     assignRef(scrollRef, node)
@@ -752,6 +756,7 @@ export const MessageList = memo(function MessageList({
     getScrollElement,
     getItemKey,
     estimateSize,
+    scrollMargin: historyScrollMargin,
     gap: HISTORY_ROW_GAP,
     overscan: 6,
     initialRect: INITIAL_VIRTUAL_RECT,
@@ -762,6 +767,25 @@ export const MessageList = memo(function MessageList({
     // already-delivered ancestor again in the same browser frame.
     useAnimationFrameWithResizeObserver: true,
   })
+
+  // The scroller includes the Subagent cards before the virtualized history.
+  // Their height changes when they load or expand, shifting its scroll origin.
+  useLayoutEffect(() => {
+    const scroller = scrollElementRef.current
+    const prefix = historyPrefixRef.current
+    const history = historyListRef.current
+    if (!hasHistory || !scroller || !prefix || !history) return
+    const update = () => {
+      const margin = history.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+        + scroller.scrollTop - scroller.clientTop
+      setHistoryScrollMargin(Math.max(0, Math.round(margin)))
+    }
+    update()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(update)
+    observer.observe(prefix)
+    return () => observer.disconnect()
+  }, [hasHistory])
 
   const previousExpansionStateRef = useRef({
     openProcessKeys,
@@ -1111,39 +1135,42 @@ export const MessageList = memo(function MessageList({
           transition: "transform var(--motion-normal) var(--motion-ease)",
         }}
       >
-        {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
-          {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
-        </div> : null}
-        {foldedSubAgentCount > 0 && (
-          <div data-cleared-subagents>
-            <button
-              type="button"
-              data-cleared-subagents-toggle
-              aria-expanded={foldedSubAgentsOpen}
-              onClick={() => setFoldedSubAgentsOpen((open) => !open)}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", foldedSubAgentsOpen && "rotate-90")} />
-              <span data-cleared-subagents-brief className="min-w-0 truncate">
-                {subAgentGroups.hasUnconfirmedAge ? `${uiText("subagents_76d97a95")}${foldedSubAgentCount})`
-                  : uiText("cleared_session_subagents", { count: foldedSubAgentCount })}
-              </span>
-            </button>
-            {foldedSubAgentsOpen && (
-              <SubAgents agents={subAgentGroups.folded} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
-            )}
-          </div>
-        )}
-        <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
-        {transcriptCleared && (
-          <div className="flex flex-col items-center gap-2 py-20 text-center">
-            <BrandMark className="size-10 text-primary" />
-            <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
-          </div>
-        )}
+        <div ref={historyPrefixRef} className="flex flex-col gap-2 empty:hidden">
+          {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
+            {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
+          </div> : null}
+          {foldedSubAgentCount > 0 && (
+            <div data-cleared-subagents>
+              <button
+                type="button"
+                data-cleared-subagents-toggle
+                aria-expanded={foldedSubAgentsOpen}
+                onClick={() => setFoldedSubAgentsOpen((open) => !open)}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", foldedSubAgentsOpen && "rotate-90")} />
+                <span data-cleared-subagents-brief className="min-w-0 truncate">
+                  {subAgentGroups.hasUnconfirmedAge ? `${uiText("subagents_76d97a95")}${foldedSubAgentCount})`
+                    : uiText("cleared_session_subagents", { count: foldedSubAgentCount })}
+                </span>
+              </button>
+              {foldedSubAgentsOpen && (
+                <SubAgents agents={subAgentGroups.folded} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+              )}
+            </div>
+          )}
+          <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+          {transcriptCleared && (
+            <div className="flex flex-col items-center gap-2 py-20 text-center">
+              <BrandMark className="size-10 text-primary" />
+              <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
+            </div>
+          )}
+        </div>
 
-        {historyEntries.length > 0 ? (
+        {hasHistory ? (
           <div
+            ref={historyListRef}
             data-virtual-history
             className="relative w-full"
             style={{ height: virtualizer.getTotalSize() }}
@@ -1164,7 +1191,7 @@ export const MessageList = memo(function MessageList({
                       entry.item.m.role === "user" &&
                       "pt-2",
                   )}
-                  style={{ transform: `translateY(${virtualItem.start}px)` }}
+                  style={{ transform: `translateY(${virtualItem.start - historyScrollMargin}px)` }}
                 >
                   {renderHistoryEntry(entry)}
                 </div>
