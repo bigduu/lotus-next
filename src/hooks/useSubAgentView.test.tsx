@@ -50,6 +50,13 @@ it("keeps first observed order when the session index changes recency order", ()
   expect(mergeSubAgentView("other", [chat("a")], {}, make("succeeded"), true)).toEqual({})
 })
 
+it("uses only the exact saved birth time for transcript placement", () => {
+  const createdAtExact = "2026-11-02T00:00:01.000100Z"
+  const agents = mergeSubAgentView("root", [chat("unknown"), { ...chat("saved"), createdAtExact }], {}, null, false)
+  expect(agents.unknown.createdAt).toBeUndefined()
+  expect(agents.saved.createdAt).toBe(createdAtExact)
+})
+
 it("reuses one view identity while only unrendered token detail changes", () => {
   const chats = [chat("actor-0")]
   const snapshot = make("succeeded")

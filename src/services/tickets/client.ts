@@ -1,7 +1,7 @@
 import { uiText } from "@shared/i18n/ui"
 import { apiClient, isApiError } from "@services/api"
 import { TicketScopeUnavailableError, unavailableScope, isTicketInitialization, scopeAvailability } from "./availability"
-import type { Cursor, ReadEnvelope, ResponseCommand, SnapshotRef, TicketInitialization, TicketInitializationResult, TicketScope, TicketSnapshot, WorkView } from "./types"
+import type { Cursor, IngressPreview, ReadEnvelope, ResponseCommand, ScopeBinding, SnapshotRef, TicketInitialization, TicketInitializationResult, TicketScope, TicketSnapshot, WorkView } from "./types"
 
 const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
   if (a.snapshot.commit !== expected.commit || a.snapshot.seq !== expected.seq || a.snapshot.authority_epoch !== expected.authority_epoch
@@ -117,6 +117,19 @@ export const ticketClient = {
   },
   respond(command: ResponseCommand) {
     return apiClient.postOnce<{ operation_id: string; committed_seq: number }>("tickets/requests/respond", command)
+  },
+  async inspectIngress(messageId: string): Promise<IngressPreview> {
+    const message = await apiClient.get<IngressPreview>("tickets/ingress/" + encodeURIComponent(messageId))
+    if (message?.message_id !== messageId || typeof message.text !== "string" || typeof message.proposal_saved !== "boolean") {
+      throw new Error(uiText("supervisor_work_invalid_response"))
+    }
+    return message
+  },
+  async dismissIngress(binding: ScopeBinding, messageId: string): Promise<void> {
+    const response = await apiClient.postOnce<{ message_id: string }>(
+      "tickets/ingress/" + encodeURIComponent(messageId) + "/dismiss", { binding },
+    )
+    if (response?.message_id !== messageId) throw new Error(uiText("supervisor_work_ingress_unconfirmed"))
   },
   async artifact(hash: string) {
     if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error(uiText("ticket_the_artifact_reference_is_invalid__5e443df8"))
