@@ -1,5 +1,5 @@
 import type { Message } from "@shared/types/chatMessages"
-import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
+import type { SubAgentCard } from "@/hooks/useSubAgentView"
 import { renderProbe } from "@/lib/renderProbe"
 
 const subAgentTool = (name: unknown) => typeof name === "string" && name.toLowerCase().replace(/[_-]/g, "") === "subagent"
@@ -109,7 +109,8 @@ export function collectSubAgentOrigins(groups: readonly ToolGroup[], history?: S
  */
 export function placeSubAgents(
   candidates: readonly SubAgentOrigin[],
-  agents: Record<string, ChildProgress>,
+  agents: Record<string, SubAgentCard>,
+  firstMessageAt?: number | null,
 ) {
   const origins = new Map<string, string>()
   for (const candidate of candidates) {
@@ -117,19 +118,29 @@ export function placeSubAgents(
       origins.set(candidate.id, candidate.key)
     }
   }
-  const byOrigin = new Map<string, Record<string, ChildProgress>>()
+  const byOrigin = new Map<string, Record<string, SubAgentCard>>()
   for (const [id, key] of origins) {
     const group = byOrigin.get(key) ?? {}
     group[id] = agents[id]; byOrigin.set(key, group)
   }
-  const unplaced = Object.fromEntries(Object.entries(agents).filter(([id]) => !origins.has(id)))
-  return { byOrigin, unplaced }
+  const historical: Record<string, SubAgentCard> = Object.create(null)
+  const unplaced: Record<string, SubAgentCard> = Object.create(null)
+  for (const [id, agent] of Object.entries(agents)) {
+    if (origins.has(id)) continue
+    // A missing transcript boundary leaves chronology unconfirmed. An empty
+    // transcript or a birth before its first message puts the card in history.
+    const predatesHistory = firstMessageAt === null ||
+      (firstMessageAt !== undefined && agent.createdAt !== undefined && agent.createdAt < firstMessageAt)
+    const group = predatesHistory ? historical : unplaced
+    group[id] = agent
+  }
+  return { byOrigin, historical, unplaced }
 }
 
 /** Convenience composition used by tests and one-shot callers. */
 export function groupSubAgents(
   groups: { key: string; messages: Message[] }[],
-  agents: Record<string, ChildProgress>,
+  agents: Record<string, SubAgentCard>,
 ) {
   return placeSubAgents(collectSubAgentOrigins(groups), agents)
 }

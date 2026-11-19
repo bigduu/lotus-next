@@ -8,12 +8,12 @@ import { useRenderProbe, renderProbe } from "@/lib/renderProbe"
 import { useActorSnapshot } from "./useActorSnapshot"
 
 /**
- * Exactly what a collapsed card renders. A view that carried `outputPreview`
- * or `roundCount` would change on every child token while showing nothing new,
- * so the projection stays this narrow on purpose.
+ * Stable card fields and the saved session birth time used for placement.
+ * Per-token details stay out of this projection.
  */
-type CardState = Pick<ChildProgress, "title" | "status"> & {
+export type SubAgentCard = ChildProgress & {
   placement?: SessionPlacement | null
+  createdAt?: number
 }
 
 const samePlacement = (
@@ -24,10 +24,11 @@ const samePlacement = (
 )
 
 /** True when reusing `previous` would render the identical card. */
-const sameCard = (previous: ChildProgress, next: CardState): boolean =>
+const sameCard = (previous: SubAgentCard, next: SubAgentCard): boolean =>
   previous.title === next.title &&
   previous.status === next.status &&
-  samePlacement((previous as CardState).placement, next.placement)
+  previous.createdAt === next.createdAt &&
+  samePlacement(previous.placement, next.placement)
 
 /**
  * Legacy parent events have no activation identity: they invalidate, never
@@ -38,7 +39,7 @@ const sameCard = (previous: ChildProgress, next: CardState): boolean =>
 export function mergeSubAgentView(parentId: string | null, chats: readonly ChatItem[],
   live: Record<string, ChildProgress>, snapshot: ActorSubtreeSnapshot | null,
   confirmed: boolean, previousIds: readonly string[] = [],
-  previous?: Record<string, ChildProgress>): Record<string, ChildProgress> {
+  previous?: Record<string, SubAgentCard>): Record<string, SubAgentCard> {
   if (!parentId) return {}
   const sessions = chats.filter((chat) => chat.parentSessionId === parentId)
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
@@ -47,14 +48,15 @@ export function mergeSubAgentView(parentId: string | null, chats: readonly ChatI
   const nodeById = new Map(nodes.map((node) => [node.actor_id, node]))
   const ids = new Set([...sessions.map((chat) => chat.id), ...Object.keys(live).sort(), ...nodes.map((node) => node.actor_id).sort()])
   const order = [...previousIds.filter((id) => ids.has(id)), ...[...ids].filter((id) => !previousIds.includes(id))]
-  const next: Record<string, ChildProgress> = {}
+  const next: Record<string, SubAgentCard> = {}
   let reusedAll = previous !== undefined && Object.keys(previous).length === order.length
   for (const id of order) {
     const chat = sessionById.get(id), node = nodeById.get(id)
     const lifecycle = confirmed && node ? actorSnapshotLifecycle(node) : "unknown"
-    const projected: CardState = {
+    const projected: SubAgentCard = {
       title: node?.title || chat?.title || live[id]?.title || chat?.subagentType || undefined,
       status: lifecycle === "cold" ? "idle" : lifecycle === "active" ? "unknown" : lifecycle,
+      createdAt: chat?.createdAt,
       // Unversioned preview/error text can belong to an earlier resident run.
       placement: chat?.placement,
     }
@@ -84,7 +86,7 @@ export function useSubAgentView(current: ChatItem | null | undefined, chats: rea
     if (active && hasChildren && previous.parentId === parentId && previous.lifecycleHint !== lifecycleHint) void refresh()
   }, [parentId, lifecycleHint, active, hasChildren, refresh])
   const confirmed = !!state.snapshot && state.snapshot.root_actor_id === rootId && !state.error && !state.gapReason
-  const previous = useRef<{ parentId: string | null; ids: string[]; agents?: Record<string, ChildProgress> }>({ parentId: null, ids: [] })
+  const previous = useRef<{ parentId: string | null; ids: string[]; agents?: Record<string, SubAgentCard> }>({ parentId: null, ids: [] })
   const agents = useMemo(() => {
     renderProbe.count("subagent.view.merge")
     const prior = previous.current

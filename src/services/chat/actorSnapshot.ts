@@ -196,9 +196,11 @@ export function parseActorSnapshot(value: unknown, rootId: string, subtreeId = r
         || !oneOf(sourceActivation.status, ["reserved", "running", "succeeded", "failed", "cancelled"])) return invalid()
       activation = { activation_id: sourceActivation.activation_id, attempt: sourceActivation.attempt, status: sourceActivation.status }
     }
-    if (revision.actor_directory_revision === null && (row.logical_state !== null || activation !== null || row.placement_class !== null)
-      || row.logical_state === null && revision.actor_directory_revision !== null
-      || activation === null && row.placement_class !== null) return invalid()
+    // Bamboo preserves historical directory revisions without current runtime
+    // evidence. Activation still requires current logical state.
+    if (row.logical_state !== null && revision.actor_directory_revision === null
+      || activation !== null && row.logical_state === null
+      || row.placement_class !== null && activation === null) return invalid()
     let localTask: PublicLocalTaskObservation | null = null
     if (version === 2 && row.local_task !== null) {
       const task = object(row.local_task, ["state", "reason", "observed_at", "lease_expires_at"])
@@ -286,9 +288,8 @@ const sameTreeNode = (left: ActorTreeNode, right: ActorTreeNode): boolean =>
 
 /** Show the last durable activation outcome when the logical actor is idle. */
 export const actorSnapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
-  if (node.logical_state === "retired" || node.logical_state === "failed" || node.logical_state === null) {
-    return node.logical_state ?? "unknown"
-  }
+  if (node.logical_state === null) return node.revision.actor_directory_revision === null ? "unknown" : "unconfirmed"
+  if (node.logical_state === "retired" || node.logical_state === "failed") return node.logical_state
   if (node.logical_state === "active") {
     if (node.local_task && node.local_task.state !== "running") return "unknown"
     if (node.activation?.status === "reserved") return "queued"

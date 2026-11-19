@@ -6,10 +6,12 @@ import { selectSettingsCategory, settingsSurface } from "./support/settingsNavig
 const ordinary = "all-surface-session", supervisor = "bamboo-default-supervisor"
 const stamp = "2026-10-22T00:00:00Z"
 type Failure = "blocked" | "unknown" | "readback" | "running" | "pending" | null
-async function fixture(page: Page, failure: Failure = null, setup?: () => Promise<void>, initialCount = 1) {
+async function fixture(page: Page, failure: Failure = null, setup?: () => Promise<void>, initialCount = 1,
+  supervisorSnapshot = actorSnapshotFixture(supervisor, 0),
+) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
-    localStorage.setItem("lotus_next_last_session", id)
+    if (!localStorage.getItem("lotus_next_last_session")) localStorage.setItem("lotus_next_last_session", id)
   }, ordinary)
   const runtime = await installArtifactRuntime(page, standaloneScenario)
   const writes: { method: string; path: string }[] = []
@@ -23,22 +25,52 @@ async function fixture(page: Page, failure: Failure = null, setup?: () => Promis
     model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
     created_at: stamp, updated_at: stamp, last_activity_at: stamp, message_count: cleared.has(id) ? newMessages.length : initialCount,
     has_attachments: false, is_running: running, has_pending_question: pendingEnabled,
-    root_orchestration_only: id === supervisor, thinking_mode: "standard", root_mode_transition_epoch: 0,
+    root_orchestration_only: id === supervisor, thinking_mode: id === supervisor ? "ultra" : "standard", root_mode_transition_epoch: 0,
     root_mode_birth_token: "a".repeat(64), permission_mode: "default", bypass_permissions: false,
-    subagent_count: 0, running_child_count: 0, placement: { kind: "local", host: "synthetic" } })
+    subagent_count: id === supervisor ? supervisorSnapshot.nodes.length - 1 : 0,
+    running_child_count: 0, placement: { kind: "local", host: "synthetic" } })
+  const children = supervisorSnapshot.nodes.slice(1).map((node) => ({
+    ...session(node.actor_id), title: node.title, kind: node.role,
+    root_session_id: supervisor, parent_session_id: node.parent_actor_id, spawn_depth: node.depth,
+    created_at: "2026-10-22T00:00:01Z",
+  }))
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname, method = request.method()
     if (method !== "GET") writes.push({ method, path })
     if (path === "/api/v1/sessions" && method === "GET") {
-      const sessions = url.searchParams.get("kind") === "child" ? [] : [session(ordinary), session(supervisor)]
+      const sessions = url.searchParams.get("kind") === "child"
+        ? children.filter((child) => child.root_session_id === url.searchParams.get("root_session_id"))
+        : [session(ordinary), session(supervisor)]
       return route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
+    }
+    if (children.length > 0 && path === "/api/v1/supervisor/default" && method === "POST") {
+      return route.fulfill({ json: { session_id: supervisor, incarnation_id: "550e8400-e29b-41d4-a716-446655440000", created: false } })
+    }
+    if (children.length > 0 && path === "/api/v1/supervisor/default/approvals" && method === "GET") {
+      return route.fulfill({ json: { approvals: [] } })
+    }
+    if (children.length > 0 && path === "/api/v1/chat" && method === "POST") {
+      const input = request.postDataJSON()
+      expect(input.session_id).toBe(supervisor)
+      expect(cleared.has(supervisor)).toBe(true)
+      const messageId = "retained-next-turn"
+      newMessages.push({ id: messageId, role: "user", content: input.message, created_at: "2026-10-22T00:00:02Z" })
+      return route.fulfill({ status: 201, json: { session_id: supervisor, message_id: messageId, status: "success" } })
+    }
+    if (children.length > 0 && path === `/api/v1/execute/${supervisor}` && method === "POST") {
+      return route.fulfill({ json: { session_id: supervisor, status: "started" } })
     }
     for (const id of [ordinary, supervisor]) {
       if (path === `/api/v1/sessions/${id}` && method === "GET") return route.fulfill({ json: { session: session(id) }, headers: { ETag: '"1"' } })
-      if (path === `/api/v1/actors/${id}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(id, 0) })
+      if (path === `/api/v1/actors/${id}/snapshot`) {
+        return route.fulfill({ json: id === supervisor ? supervisorSnapshot : actorSnapshotFixture(id, 0) })
+      }
       if (path === `/api/v1/respond/${id}/pending`) return route.fulfill({ json: pendingEnabled
         ? { has_pending_question: true, interaction_kind: "clarification", question: "Synthetic pending question", options: ["A"], allow_custom: true, tool_call_id: "fixture-pending" }
         : { has_pending_question: false } })
+      if (children.length > 0 && id === supervisor && path === `/api/v1/task/${id}` && method === "GET") {
+        return route.fulfill({ json: { session_id: id, items: [] } })
+      }
       if (path === `/api/v1/history/${id}`) {
         if (cleared.has(id) && failReadback) return route.fulfill({ status: 403, json: { error: "Synthetic readback unavailable" } })
         return route.fulfill({ json: { session_id: id, messages: cleared.has(id) ? newMessages : Array.from({ length: initialCount }, (_, n) => (
@@ -128,6 +160,46 @@ test("ordinary clear waits for exact receipt and readback, preserving the indepe
   expect(f.writes).toEqual([{ method: "POST", path: `/api/v1/sessions/${ordinary}/clear` }])
   await dialog.getByRole("button", { name: "关闭", exact: true }).last().click()
   await expect(page.getByText(`Synthetic history ${ordinary}`, { exact: true })).toBeHidden()
+  expect(f.runtime.pageErrors).toEqual([])
+})
+test("Supervisor keeps retained children folded after sending and reloading", async ({ page }, info) => {
+  const snapshot = actorSnapshotFixture(supervisor, 1)
+  Object.assign(snapshot.nodes[1], { title: "Retained child", logical_state: null, placement_class: null, activation: null })
+  const f = await fixture(page, null, undefined, 1, snapshot)
+  if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
+  await page.locator("aside").first().getByRole("button", { name: /^Supervisor/ }).click()
+  const history = page.getByText(`Synthetic history ${supervisor}`, { exact: true })
+  const child = page.locator('[data-subagent-id="actor-0"]')
+  const fold = page.locator("[data-cleared-subagents-toggle]")
+  await expect(history).toBeVisible()
+  await expect(child).toBeVisible()
+  await expect(child).toHaveAttribute("data-subagent-status", "unknown")
+
+  const dialog = await openHeader(page)
+  await dialog.getByRole("button", { name: "清除会话消息", exact: true }).click()
+  await expect(dialog.getByRole("status")).toContainText("服务已确认清理，并已读回核对")
+  await dialog.getByRole("button", { name: "关闭", exact: true }).last().click()
+  await expect(history).toHaveCount(0)
+  await expect(fold).toHaveAttribute("aria-expanded", "false")
+  await expect(child).toHaveCount(0)
+
+  const input = page.getByRole("textbox", { name: "消息", exact: true })
+  await input.fill("New Supervisor conversation")
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => f.writes.filter(({ path }) => path === "/api/v1/chat").length).toBe(1)
+  const newMessage = page.locator("[data-message-list-content]").getByText("New Supervisor conversation", { exact: true })
+  await expect(newMessage).toBeVisible()
+  await expect(fold).toHaveAttribute("aria-expanded", "false")
+  await expect(child).toHaveCount(0)
+
+  await page.reload()
+  await expect(newMessage).toBeVisible()
+  await expect(fold).toHaveAttribute("aria-expanded", "false")
+  await expect(child).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath("supervisor-history-fold.png"), animations: "disabled" })
+  await fold.click()
+  await expect(child).toHaveText(/Retained child/)
+  expect(f.writes.filter(({ method }) => method === "DELETE")).toEqual([])
   expect(f.runtime.pageErrors).toEqual([])
 })
 test("simple-mode settings exposes conversation clear while bulk cleanup stays advanced", async ({ page }, info) => {

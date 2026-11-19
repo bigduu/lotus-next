@@ -29,6 +29,7 @@ const INITIAL_RECT = { width: 320, height: 320 }
 const LIFECYCLE_LABEL: Record<ActorTreeNode["lifecycle"], string> = {
   get active() { return uiText("activity_f98dfe0b") },
   get unknown() { return uiText("lifecycle_unknown_2217e6e4") },
+  get unconfirmed() { return uiText("unconfirmed_c098e854") },
   get cold() { return uiText("not_started_e6fc5eb8") },
   get queued() { return uiText("queued_d6f766f2") },
   get running() { return uiText("running_1f0eb99b") },
@@ -66,6 +67,7 @@ const HEALTH_LABEL: Record<ActorHealth, string> = {
 const LIFECYCLE_ICON: Record<ActorTreeNode["lifecycle"], { Icon: LucideIcon; cls: string; spin?: boolean }> = {
   active: { Icon: CircleDot, cls: "text-primary" },
   unknown: { Icon: CircleSlash, cls: "text-muted-foreground" },
+  unconfirmed: { Icon: CircleSlash, cls: "text-muted-foreground" },
   cold: { Icon: CircleOff, cls: "text-muted-foreground" },
   queued: { Icon: Clock3, cls: "text-amber-500" },
   running: { Icon: LoaderCircle, cls: "text-primary", spin: true },
