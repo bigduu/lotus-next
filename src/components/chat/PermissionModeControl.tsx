@@ -15,13 +15,12 @@ type Props = { sessionId: string; title: string; compact?: boolean }
 const compactPermissionSelectClassName = cn(composerControlClassName,
   "border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:size-3")
 
-function PermissionModeOptions({ dispatchLabel }: { dispatchLabel?: string }) {
+function PermissionModeOptions() {
   return (
     <SelectContent side="top" align="start">
       <SelectItem value="default">Default</SelectItem>
       <SelectItem value="bypass">Bypass</SelectItem>
       <SelectItem value="auto">Auto</SelectItem>
-      {dispatchLabel ? <SelectItem value="auto-dispatch">{dispatchLabel}</SelectItem> : null}
     </SelectContent>
   )
 }
@@ -37,18 +36,23 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
   const hasChat = useAppStore((state) => state.chats.some((chat) => chat.id === sessionId))
   const mode = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.permissionMode)
   const etag = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.permissionModeEtag)
-  const dispatchAuto = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.supervisorAutoDispatch)
+  const inheritsForDispatches = useAppStore((state) =>
+    state.chats.find((chat) => chat.id === sessionId)?.config.supervisorDispatchInheritsPermissionMode === true,
+  )
   const request = useAppStore((state) => state.permissionModeRequests[sessionId])
   const refresh = useAppStore((state) => state.refreshSessionPermissionMode)
   const change = useAppStore((state) => state.changeSessionPermissionMode)
   const needsRead = !request
-  const [confirmation, setConfirmation] = useState<{ etag: string; dispatch: boolean } | null>(null)
+  const [confirmation, setConfirmation] = useState<{ etag: string; inheritsForDispatches: boolean } | null>(null)
   const selectRef = useRef<HTMLButtonElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (hasChat && needsRead) void refresh(sessionId)
   }, [sessionId, refresh, needsRead, hasChat])
+
+  const canConfirm = confirmation?.etag === etag && confirmation?.inheritsForDispatches === inheritsForDispatches
+  if (confirmation && !canConfirm) setConfirmation(null)
 
   const validSnapshot = Boolean(parseSessionPermissionMode(mode) && sessionPermissionRevision(etag) !== null)
   const ready = request?.status === "ready" && validSnapshot
@@ -58,7 +62,8 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
   const unavailableLabel = !hasChat ? t("chat.permissionMode.unconfirmed") : request?.status === "unsupported"
     ? t("chat.permissionMode.unavailable")
     : busy ? t("chat.permissionMode.loading") : t("chat.permissionMode.unconfirmed")
-  const helpText = confirmed ? t(`chat.permissionMode.help.${dispatchAuto ? "dispatch" : mode!}`) : t("chat.permissionMode.readRequired")
+  const inheritanceNote = inheritsForDispatches ? ` ${t("chat.permissionMode.inheritsForDispatches")}` : ""
+  const helpText = confirmed ? `${t(`chat.permissionMode.help.${mode!}`)}${inheritanceNote}` : t("chat.permissionMode.readRequired")
   const errorText = request?.error ? t(`chat.permissionMode.errors.${request.error}`) : null
 
   return (
@@ -72,13 +77,11 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
         <label htmlFor={labelId} className={compact ? "sr-only" : "text-xs font-medium"}>{t("chat.permissionMode.label")}</label>
         <Select
           disabled={!ready}
-          value={confirmed ? dispatchAuto ? "auto-dispatch" : mode! : ""}
+          value={confirmed ? mode! : ""}
           onValueChange={(value) => {
-            const dispatch = value === "auto-dispatch"
-            const nextMode = dispatch ? "auto" : parseSessionPermissionMode(value)
-            if (!ready || !etag || !nextMode || (dispatch && dispatchAuto === undefined)
-              || (nextMode === mode && dispatch === Boolean(dispatchAuto))) return
-            if (dispatch || (nextMode === "auto" && mode !== "auto")) setConfirmation({ etag, dispatch })
+            const nextMode = parseSessionPermissionMode(value)
+            if (!ready || !etag || !nextMode || nextMode === mode) return
+            if (nextMode === "auto") setConfirmation({ etag, inheritsForDispatches })
             else void change(sessionId, nextMode, etag)
           }}
         >
@@ -97,7 +100,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
             {compact ? <ShieldAlert className={cn("size-4 shrink-0", confirmed && mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden /> : null}
             <SelectValue placeholder={unavailableLabel} />
           </SelectTrigger>
-          <PermissionModeOptions dispatchLabel={dispatchAuto === undefined ? undefined : t("chat.permissionMode.dispatchLabel")} />
+          <PermissionModeOptions />
         </Select>
         <span role="status" className={compact ? "sr-only" : "text-xs text-muted-foreground"}>
           {saving ? t("chat.permissionMode.saving") : busy ? t("chat.permissionMode.loading") : null}
@@ -116,7 +119,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
           {errorText}
         </p>
       ) : null}
-      <Dialog open={Boolean(confirmation && confirmation.etag === etag)} onOpenChange={(open) => { if (!open) setConfirmation(null) }}>
+      <Dialog open={canConfirm} onOpenChange={(open) => { if (!open) setConfirmation(null) }}>
         <DialogContent
           onOpenAutoFocus={(event) => { event.preventDefault(); cancelRef.current?.focus() }}
           onCloseAutoFocus={(event) => { event.preventDefault(); selectRef.current?.focus() }}
@@ -124,22 +127,20 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldAlert className="size-5 shrink-0 text-amber-500" />
-              {t(confirmation?.dispatch ? "chat.permissionMode.confirmDispatchTitle" : "chat.permissionMode.confirmTitle")}
+              {t("chat.permissionMode.confirmTitle")}
             </DialogTitle>
             <DialogDescription className="break-words">
-              {t(confirmation?.dispatch ? "chat.permissionMode.confirmDispatchDescription" : "chat.permissionMode.confirmDescription", { title })}
+              {t("chat.permissionMode.confirmDescription", { title })}{inheritanceNote}
             </DialogDescription>
           </DialogHeader>
           {!ready ? <p role="alert" className="text-sm text-destructive">{t("chat.permissionMode.readRequired")}</p> : null}
           <DialogFooter>
             <Button ref={cancelRef} variant="outline" onClick={() => setConfirmation(null)}>{t("chat.permissionMode.cancel")}</Button>
             <Button variant="destructive" disabled={!ready} onClick={() => {
-              const expected = confirmation?.etag
-              if (!ready || !expected || expected !== etag) return
+              if (!ready || !confirmation || !canConfirm) return
               setConfirmation(null)
-              if (confirmation?.dispatch) void change(sessionId, "auto", expected, true)
-              else void change(sessionId, "auto", expected)
-            }}>{t(confirmation?.dispatch ? "chat.permissionMode.confirmDispatch" : "chat.permissionMode.confirm")}</Button>
+              void change(sessionId, "auto", confirmation.etag, confirmation.inheritsForDispatches)
+            }}>{t("chat.permissionMode.confirm")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

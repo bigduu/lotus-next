@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, NetworkRequestError } from "@services/api/errors";
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor";
 
 const raw = vi.hoisted(() => vi.fn());
 vi.mock("@services/api", () => ({ apiClient: { fetchRaw: raw } }));
@@ -48,7 +49,7 @@ describe("typed session permission service", () => {
     expect(raw.mock.calls[1][1].headers).toEqual({ "If-Match": etag });
   });
 
-  it.each(["default", "bypass", "auto"] as const)("writes only typed %s and the exact If-Match once", async (mode) => {
+  it.each(["default", "bypass", "auto"] as const)("writes only typed %s and the exact If-Match for an ordinary session", async (mode) => {
     raw.mockResolvedValue(response(mode, '"8"'));
     await expect(agentClient.patchSessionPermissionMode("session/a", mode, '"7"')).resolves.toEqual({ sessionId: "session/a", mode, etag: '"8"' });
     expect(raw).toHaveBeenCalledExactlyOnceWith("sessions/session%2Fa", {
@@ -57,17 +58,27 @@ describe("typed session permission service", () => {
     });
   });
 
-  it("writes Supervisor dispatch consent only with explicit typed Auto and reads it back", async () => {
+  it("includes the observed non-inheriting scope when the Supervisor was read from an older backend", async () => {
+    const id = DEFAULT_SUPERVISOR_SESSION_ID;
+    raw.mockResolvedValue(response("auto", '"8"', id));
+    await agentClient.patchSessionPermissionMode(id, "auto", '"7"');
+    expect(raw).toHaveBeenCalledExactlyOnceWith(`sessions/${id}`, {
+      method: "PATCH", headers: { "If-Match": '"7"' },
+      body: JSON.stringify({ permission_mode: "auto", expected_supervisor_dispatch_inheritance: false }), cache: "no-store",
+    });
+  });
+
+  it("pairs a Supervisor mode update with the observed inheritance scope", async () => {
     raw.mockResolvedValue(new Response(
-      JSON.stringify({ session: { id: "session/a", permission_mode: "auto", supervisor_auto_dispatch: true } }),
+      JSON.stringify({ session: { id: "session/a", permission_mode: "auto", supervisor_dispatch_inherits_permission_mode: true } }),
       { headers: { ETag: '"8"' } },
     ));
     await expect(agentClient.patchSessionPermissionMode("session/a", "auto", '"7"', true)).resolves.toEqual({
-      sessionId: "session/a", mode: "auto", etag: '"8"', supervisorAutoDispatch: true,
+      sessionId: "session/a", mode: "auto", etag: '"8"', supervisorDispatchInheritsPermissionMode: true,
     });
     expect(raw).toHaveBeenCalledExactlyOnceWith("sessions/session%2Fa", {
       method: "PATCH", headers: { "If-Match": '"7"' },
-      body: JSON.stringify({ permission_mode: "auto", supervisor_auto_dispatch: true }), cache: "no-store",
+      body: JSON.stringify({ permission_mode: "auto", expected_supervisor_dispatch_inheritance: true }), cache: "no-store",
     });
   });
 
