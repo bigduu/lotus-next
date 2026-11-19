@@ -375,8 +375,15 @@ export function ChatPane({
   const managedHistoryStatus = useAppStore((state) => currentSessionId
     ? state.managedHistoryBindings?.[currentSessionId]?.status : undefined)
   const managedHistoryStale = managedHistoryStatus === "stale"
-  const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
+  // A newer Human interaction may arrive while this pane retains an earlier
+  // generation failure. Keep its recovery state until the interaction clears.
+  const waitingForHuman = Boolean(pendingQuestion || pendingApproval)
+    || activity === "waiting_user" || currentChat?.planMode?.status === "awaiting_approval"
+  const visibleSendFailure = sendFailure?.sessionId === currentSessionId
+    && (sendFailure.kind === "submission-unconfirmed" || !waitingForHuman)
+    ? sendFailure : null
   const persistedRunError = !visibleSendFailure
+    && !waitingForHuman
     && !currentlyRunning
     && currentChat?.lastRunStatus === "error"
     ? currentChat.lastRunError?.trim() || uiText("generation_failed_the_server_provided_no_error_details_d70c7744")
