@@ -48,26 +48,26 @@ describe("typed session permission service", () => {
     expect(raw.mock.calls[1][1].headers).toEqual({ "If-Match": etag });
   });
 
-  it.each(["default", "bypass", "auto"] as const)("writes only typed %s and the exact If-Match once", async (mode) => {
+  it.each(["default", "bypass", "auto"] as const)("writes mode %s with its version and scope preconditions once", async (mode) => {
     raw.mockResolvedValue(response(mode, '"8"'));
     await expect(agentClient.patchSessionPermissionMode("session/a", mode, '"7"')).resolves.toEqual({ sessionId: "session/a", mode, etag: '"8"' });
     expect(raw).toHaveBeenCalledExactlyOnceWith("sessions/session%2Fa", {
       method: "PATCH", headers: { "If-Match": '"7"' },
-      body: JSON.stringify({ permission_mode: mode }), cache: "no-store",
+      body: JSON.stringify({ permission_mode: mode, expected_supervisor_dispatch_inheritance: false }), cache: "no-store",
     });
   });
 
-  it("reads the Supervisor inheritance capability while writing only the selected mode", async () => {
+  it("pairs a Supervisor mode update with the observed inheritance scope", async () => {
     raw.mockResolvedValue(new Response(
       JSON.stringify({ session: { id: "session/a", permission_mode: "auto", supervisor_dispatch_inherits_permission_mode: true } }),
       { headers: { ETag: '"8"' } },
     ));
-    await expect(agentClient.patchSessionPermissionMode("session/a", "auto", '"7"')).resolves.toEqual({
+    await expect(agentClient.patchSessionPermissionMode("session/a", "auto", '"7"', true)).resolves.toEqual({
       sessionId: "session/a", mode: "auto", etag: '"8"', supervisorDispatchInheritsPermissionMode: true,
     });
     expect(raw).toHaveBeenCalledExactlyOnceWith("sessions/session%2Fa", {
       method: "PATCH", headers: { "If-Match": '"7"' },
-      body: JSON.stringify({ permission_mode: "auto" }), cache: "no-store",
+      body: JSON.stringify({ permission_mode: "auto", expected_supervisor_dispatch_inheritance: true }), cache: "no-store",
     });
   });
 

@@ -33,11 +33,17 @@ interface Operation {
   reconcileRequested?: boolean;
 }
 
+interface PermissionIndexHint {
+  mode: SessionPermissionMode | null;
+  revision: bigint;
+  inheritsForDispatches: boolean;
+}
+
 export const createPermissionModeSlice: StateCreator<AppState, [], [], PermissionModeSlice> = (set, get) => {
   // Per-store, per-session fences survive pane navigation, but never page reload.
   const operations = new Map<string, Operation>();
   // Repeated index rows are the same hint, not permission to retry a failed GET forever.
-  const observedHints = new Map<string, readonly [SessionPermissionMode | null, bigint]>();
+  const observedHints = new Map<string, PermissionIndexHint>();
   let sequence = 0;
   const chatFor = (id: string) => get().chats.find((chat) => chat.id === id);
   const isCurrent = (id: string, operation: Operation) =>
@@ -124,7 +130,11 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
       if (!chatFor(id)) return Promise.resolve();
       if (!observedHints.has(id)) {
         const config = chatFor(id)?.config;
-        observedHints.set(id, [parseSessionPermissionMode(config?.permissionMode), sessionPermissionRevision(config?.permissionModeEtag) ?? -1n]);
+        observedHints.set(id, {
+          mode: parseSessionPermissionMode(config?.permissionMode),
+          revision: sessionPermissionRevision(config?.permissionModeEtag) ?? -1n,
+          inheritsForDispatches: config?.supervisorDispatchInheritsPermissionMode === true,
+        });
       }
       const operation = begin(id, "loading");
       operation.promise = (async () => {
@@ -169,8 +179,9 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
           fresh.supervisorDispatchInheritsPermissionMode !== observedInheritance;
         if (!confirm(id, operation, fresh, changed ? "changed" : undefined, changed ? "ready" : "saving") || changed) return;
         try {
-          const snapshot = await agentClient.patchSessionPermissionMode(id, mode, fresh.etag);
-          confirm(id, operation, snapshot, snapshot.mode === mode ? undefined : "changed");
+          const snapshot = await agentClient.patchSessionPermissionMode(id, mode, fresh.etag, observedInheritance === true);
+          const matched = snapshot.mode === mode && snapshot.supervisorDispatchInheritsPermissionMode === observedInheritance;
+          confirm(id, operation, snapshot, matched ? undefined : "changed");
         } catch (error) {
           if (!isCurrent(id, operation)) return;
           const reason: PermissionModeError = isApiError(error) && error.status === 412
@@ -198,17 +209,24 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
         const request = get().permissionModeRequests[summary.id];
         const chat = chatFor(summary.id);
         if (!request || !chat) continue;
-        // An index row has no ETag: a differing row is a hint to GET, never a write
-        // authority. This also makes stale index responses harmless after a PATCH.
+        // An index response is a hint to read permission detail. Only the
+        // authoritative detail response supplies a precondition for writes.
         const hint = parseSessionPermissionMode(summary.permission_mode);
         const indexRevision = sessionPermissionRevision(summary.supervisor_permission_etag) ?? -1n;
+        const inheritsForDispatches = summary.supervisor_dispatch_inherits_permission_mode === true;
         const previousHint = observedHints.get(summary.id);
-        const priorRevision = previousHint?.[1] ?? -1n;
+        const priorRevision = previousHint?.revision ?? -1n;
         const confirmedRevision = sessionPermissionRevision(chat.config.permissionModeEtag) ?? -1n;
         const newSupervisorRevision = indexRevision > priorRevision && indexRevision > confirmedRevision;
-        const differs = hint !== chat.config.permissionMode || newSupervisorRevision;
-        const newHint = previousHint?.[0] !== hint || newSupervisorRevision;
-        observedHints.set(summary.id, [hint, indexRevision > priorRevision ? indexRevision : priorRevision]);
+        const differs = hint !== chat.config.permissionMode || newSupervisorRevision ||
+          inheritsForDispatches !== (chat.config.supervisorDispatchInheritsPermissionMode === true);
+        const newHint = previousHint?.mode !== hint || newSupervisorRevision ||
+          previousHint?.inheritsForDispatches !== inheritsForDispatches;
+        observedHints.set(summary.id, {
+          mode: hint,
+          revision: indexRevision > priorRevision ? indexRevision : priorRevision,
+          inheritsForDispatches,
+        });
         const active = operations.get(summary.id);
         if (active) {
           if (newHint && (differs || !chat.config.permissionModeEtag)) active.reconcileRequested = true;

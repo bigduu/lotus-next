@@ -87,6 +87,7 @@ export interface SessionPermissionSnapshot {
 
 export interface PatchSessionPermissionRequest {
   permission_mode: SessionPermissionMode;
+  expected_supervisor_dispatch_inheritance: boolean;
 }
 
 export class SessionPermissionContractError extends Error {
@@ -886,6 +887,7 @@ export interface SessionSummary {
   permission_mode?: SessionPermissionMode;
   /** An index hint to refresh permission detail. */
   supervisor_permission_etag?: string;
+  supervisor_dispatch_inherits_permission_mode?: boolean;
 }
 
 export interface RunningSessionEntry {
@@ -1671,11 +1673,15 @@ export class AgentClient {
     sessionId: string,
     mode: SessionPermissionMode,
     etag: string,
+    expectedDispatchInheritance = false,
   ): Promise<SessionPermissionSnapshot> {
     if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) {
       throw new SessionPermissionContractError();
     }
-    const request: PatchSessionPermissionRequest = { permission_mode: mode };
+    const request: PatchSessionPermissionRequest = {
+      permission_mode: mode,
+      expected_supervisor_dispatch_inheritance: expectedDispatchInheritance,
+    };
     const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "If-Match": etag },

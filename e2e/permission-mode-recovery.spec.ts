@@ -87,11 +87,14 @@ test("Supervisor uses one permission mode for its new execution sessions", async
   await testInfo.attach("supervisor-permission-inheritance", { body: await confirmation.screenshot(), contentType: "image/png" })
   await confirmation.getByRole("button", { name: "启用 Auto" }).click()
   await expect(mode).toHaveText("Auto")
-  expect(writes).toEqual([{ permission_mode: "auto" }])
+  expect(writes).toEqual([{ permission_mode: "auto", expected_supervisor_dispatch_inheritance: true }])
   await mode.click()
   await page.getByRole("option", { name: "Bypass", exact: true }).click()
   await expect(mode).toHaveText("Bypass")
   await expect(confirmation).toHaveCount(0)
-  expect(writes).toEqual([{ permission_mode: "auto" }, { permission_mode: "bypass" }])
+  expect(writes).toEqual([
+    { permission_mode: "auto", expected_supervisor_dispatch_inheritance: true },
+    { permission_mode: "bypass", expected_supervisor_dispatch_inheritance: true },
+  ])
   expect(observation.pageErrors).toEqual([])
 })
