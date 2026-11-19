@@ -2992,6 +2992,69 @@ describe("run diagnostics entry and canonical error isolation", () => {
     expect(JSON.stringify(report)).not.toContain("legacy upstream")
     expect(chat.retry).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
   })
+  it.each(["question", "child approval"] as const)("puts a pending %s ahead of earlier diagnostic recovery", async (kind) => {
+    const send = vi.fn<Send>(), retry = vi.fn()
+    const detail = "Automatic retry time budget exhausted"
+    const failure = { kind: "generation-failed" as const, operationId: 4, sessionId: a, message: detail }
+    const chat = { ...createChat(send, a, "suspended"), retry, sendFailure: failure }
+    await mount(send, a)
+    const root = roots.at(-1)!
+    const pending: Partial<ChatPaneProps["chat"]> = kind === "question" ? {
+      pendingQuestion: { has_pending_question: true, interaction_kind: "clarification", question: "Keep going?",
+        options: ["Yes"], allow_custom: false, tool_call_id: "pending-root-question" },
+    } : {
+      pendingApproval: { childSessionId: "waiting-child", requestId: "pending-child-approval",
+        toolName: "Write", permission: "write" },
+    }
+    const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((element) => element.textContent?.trim() === label)
+
+    await act(async () => root.render(pane({ ...chat, ...pending })))
+    expect(document.querySelector(kind === "question" ? "[data-parent-question]" : "[data-child-approval]")).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain(detail)
+    expect(button(uiText("run_diagnostics_open"))).toBeUndefined()
+    expect(button(uiText("retry_generation_37960b38"))).toBeUndefined()
+    expect(retry).not.toHaveBeenCalled()
+
+    await act(async () => root.render(pane(chat)))
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(detail)
+    expect(button(uiText("run_diagnostics_open"))).toBeDefined()
+    await act(async () => button(uiText("retry_generation_37960b38"))?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith(failure)
+  })
+  it.each([
+    ["pending-question recovery", { activity: "waiting_user" }],
+    ["Plan approval", { planMode: { status: "awaiting_approval",
+      entered_at: "2026-01-01T00:00:00Z", pre_permission_mode: "default" } }],
+  ] as const)("holds a persisted generation error during %s", async (_label, currentWait) => {
+    const send = vi.fn<Send>(), retry = vi.fn()
+    const detail = "Automatic retry time budget exhausted"
+    const chat = { ...createChat(send, a, "error", detail), retry }
+    await mount(send, a)
+    const root = roots.at(-1)!
+
+    await act(async () => root.render(pane({
+      ...chat, currentChat: { ...chat.currentChat!, ...currentWait },
+    })))
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(retry).not.toHaveBeenCalled()
+
+    await act(async () => root.render(pane(chat)))
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(detail)
+  })
+  it("keeps draft recovery visible during an independent pending interaction", async () => {
+    const send = vi.fn<Send>()
+    const chat = createChat(send, a, "suspended")
+    await mount(send, a)
+    await act(async () => roots.at(-1)!.render(pane({
+      ...chat, currentChat: { ...chat.currentChat!, activity: "waiting_user" },
+      sendFailure: { kind: "submission-unconfirmed", operationId: 4,
+        sessionId: a, message: "Submission did not complete" },
+    })))
+    const notice = document.querySelector('[role="alert"]')
+    expect(notice?.textContent).toContain("Submission did not complete")
+    expect(notice?.textContent).toContain(uiText("continue_editing_fd4b9e3b"))
+  })
   it("closes an old preview when navigation changes and ignores a foreign local failure", async () => {
     const send = vi.fn<Send>()
     await mount(send, a)
