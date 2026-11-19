@@ -131,6 +131,7 @@ vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => 
   selectRootMode: vi.fn(),
   recoverRootMode: vi.fn(),
   compactSessionContext: vi.fn(),
+  applySessionLoop: vi.fn(),
   sendMessage: vi.fn().mockImplementation(async (request) => ({ session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true } })),
   execute: vi.fn().mockResolvedValue(undefined),
 } }))
@@ -365,6 +366,9 @@ beforeEach(() => {
   }) as Awaited<ReturnType<typeof agentClient.sendMessage>>)
   vi.mocked(agentClient.compactSessionContext).mockReset().mockImplementation(async (session_id) => ({
     session_id, status: "unchanged",
+  }))
+  vi.mocked(agentClient.applySessionLoop).mockReset().mockImplementation(async (session_id) => ({
+    session_id, loop: null,
   }))
   vi.mocked(agentClient.execute).mockReset().mockResolvedValue({ session_id: "root-session", status: "started", events_url: "" })
   runtime.queueSend.mockClear()
@@ -1979,6 +1983,202 @@ it("dispatches one compaction request and leaves a newer draft intact", async ()
     totalTokens: 24500, maxContextTokens: 100000,
   }), { fromSnapshot: true })
   expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_applied", { before: "73", after: "24.5" }))
+})
+
+it.each([
+  ["/loop 5m 检查部署\nKeep  spacing", { action: "start", interval_seconds: 300, prompt: "检查部署\nKeep  spacing" }],
+  ["/LOOP STATUS", { action: "status" }],
+  ["/loop status?", { action: "status" }],
+  ["/loop stop！", { action: "stop" }],
+  ["/loop RESUME。", { action: "resume" }],
+  ["/loop resume", { action: "resume" }],
+] as const)("sends %s through the Session loop API", async (draft, request) => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.applySessionLoop).mockResolvedValueOnce({
+    session_id: "loop-chat", loop: { state: "scheduled", next_fire_at: "2026-11-19T13:00:00Z", last_run_status: "failed" },
+  })
+  const input = await mount(send, "loop-chat")
+  change(input, draft)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", request)
+  expect(runtime.toastProps?.toast?.message).toContain(uiText("session_loop_scheduled"))
+  expect(runtime.toastProps?.toast?.message).toContain(uiText("session_loop_last_result", { result: uiText("session_loop_run_failed") }))
+  expect(input.value).toBe("")
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("stops the scheduled loop while a running turn keeps its normal Stop control", async () => {
+  const send = vi.fn<Send>()
+  const request = deferred<Awaited<ReturnType<typeof agentClient.applySessionLoop>>>()
+  vi.mocked(agentClient.applySessionLoop).mockReturnValueOnce(request.promise)
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, "/loop stop")
+  expect(composer().sending).toBe(true)
+  expect(composer().sendWhileRunning).toBe(true)
+  expect(composer().onQueueModeChange).toBeUndefined()
+  act(() => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("busy-loop-chat", { action: "stop" })
+
+  change(input, "keep this newer draft")
+  await act(async () => request.resolve({
+    session_id: "busy-loop-chat", loop: { state: "stopped", next_fire_at: null, last_run_status: null },
+  }))
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_stopped"))
+  expect(input.value).toBe("keep this newer draft")
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(runtime.liveRetry.cancelForStop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("schedules a task-only /loop while a turn is running and keeps an unconfirmed draft", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.applySessionLoop)
+    .mockRejectedValueOnce(new Error("No adaptive acknowledgement"))
+    .mockResolvedValueOnce({
+      session_id: "busy-loop-chat", loop: { mode: "adaptive", state: "scheduled", next_fire_at: null, last_run_status: null },
+    })
+  const input = await mount(send, "busy-loop-chat", true)
+  const command = "/loop 检查部署\nKeep  spacing"
+  change(input, command)
+  await act(async () => composer().onSubmit())
+  expect(input.value).toBe(command)
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_unconfirmed"))
+
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledTimes(2)
+  expect(agentClient.applySessionLoop).toHaveBeenLastCalledWith("busy-loop-chat", {
+    action: "start_adaptive", prompt: "检查部署\nKeep  spacing",
+  })
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_adaptive_scheduled"))
+  expect(input.value).toBe("")
+  expect(composer().sending).toBe(true)
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("allows status and stop in Ultra while keeping start and resume in Standard", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
+    session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
+  }) as Awaited<ReturnType<typeof agentClient.getSession>>)
+  const input = await mount(send, "ultra-loop-chat")
+  expect(runtime.reasoningPicker?.thinkingMode).toBe("ultra")
+
+  for (const action of ["status", "stop"] as const) {
+    change(input, `/loop ${action}`)
+    await act(async () => composer().onSubmit())
+    expect(agentClient.applySessionLoop).toHaveBeenLastCalledWith("ultra-loop-chat", { action })
+    expect(input.value).toBe("")
+  }
+  for (const command of ["/loop 5m check", "/loop check the build", "/loop resume"]) {
+    change(input, command)
+    await act(async () => composer().onSubmit())
+    expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_standard_only"))
+    expect(input.value).toBe(command)
+  }
+  expect(agentClient.applySessionLoop).toHaveBeenCalledTimes(2)
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+})
+
+it("keeps a reserved /loop draft out of the transcript when the older backend has no route", async () => {
+  vi.mocked(agentClient.applySessionLoop).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "old-bamboo-chat")
+  change(input, "/loop 5m check")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledOnce()
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("session_loop_backend_unavailable") })
+  expect(input.value).toBe("/loop 5m check")
+})
+
+it("sends natural /loop text intact as an ordinary turn in the open session", async () => {
+  const send = vi.fn<Send>().mockResolvedValue({
+    kind: "accepted", operationId: 1, sessionId: "loop-chat", navigated: false,
+  })
+  const input = await mount(send, "loop-chat")
+  const prompt = "/loop 每隔五分钟检查构建"
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", { action: "status" })
+  expect(send).toHaveBeenCalledExactlyOnceWith(prompt, expect.any(Object))
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
+})
+
+it("keeps a spoken /loop draft out of ordinary chat when the backend lacks loop support", async () => {
+  vi.mocked(agentClient.applySessionLoop).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "old-bamboo-chat")
+  const prompt = "/loop 每隔五分钟检查构建"
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("old-bamboo-chat", { action: "status" })
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("session_loop_backend_unavailable") })
+  expect(input.value).toBe(prompt)
+})
+
+it.each(["edit", "navigation", "running"])("rechecks %s after confirming a spoken /loop", async (changeDuringProbe) => {
+  const status = deferred<Awaited<ReturnType<typeof agentClient.applySessionLoop>>>()
+  vi.mocked(agentClient.applySessionLoop).mockReturnValueOnce(status.promise)
+  const send = vi.fn<Send>()
+  const pane = await mountWorktreeChat(send)
+  let navigationVersion = 0
+  await pane.render({ chat: createChat(send, "loop-chat"), getNavigationVersion: () => navigationVersion })
+  const prompt = "/loop 每隔五分钟检查构建"
+  act(() => write("loop-chat", prompt))
+  act(() => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", { action: "status" })
+  if (changeDuringProbe === "edit") act(() => write("loop-chat", "newer draft"))
+  if (changeDuringProbe === "navigation") navigationVersion += 2
+  if (changeDuringProbe === "running") await pane.render({ chat: { ...createChat(send, "loop-chat"), sending: true, streaming: "" } })
+  await act(async () => status.resolve({ session_id: "loop-chat", loop: null }))
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.state.inputStates["loop-chat"]?.content).toBe(changeDuringProbe === "edit" ? "newer draft" : prompt)
+})
+
+it.each([
+  "/loop every five minutes check the build",
+  "/loop check the build every 90 seconds",
+  "/loop 每隔九十秒检查构建",
+  "/loop 5 minutes between checks",
+  "/loop 恢复这个循环。",
+  "/loop when will this loop run next?",
+])("keeps a natural request %s local until the busy session finishes", async (prompt) => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_wait_for_session"))
+  expect(input.value).toBe(prompt)
+})
+
+it.each(["/loop", "/loop 30s check", "/loop 1.5h check", "/loop stop extra", "/loop stop! extra"])(
+  "keeps malformed fixed syntax %s local even in a running session", async (command) => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, command)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_usage"))
+  expect(input.value).toBe(command)
 })
 
 it("preserves the compaction draft if the backend route is unavailable", async () => {
