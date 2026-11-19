@@ -3,6 +3,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 import { expectComposerText } from "./support/composer.js"
 import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.js"
+import { ticketSnapshot } from "../src/services/tickets/testFixtures.js"
 
 const supervisor = "bamboo-default-supervisor"
 const incarnation = "11111111-1111-4111-8111-111111111111"
@@ -148,6 +149,44 @@ async function openWork(page: Page) {
   await expect(page.getByRole("menu")).toHaveCount(0)
   return workbench
 }
+
+test("Work panel reviews and marks the exact oldest chat message", async ({ page }, testInfo) => {
+  await fixture(page, "v1-ready")
+  const { scope } = ticketSnapshot()
+  scope.binding = { scope_id: "supervisor/" + incarnation, supervisor_session_id: supervisor, binding_revision: 41 }
+  scope.overview.data = { ticket_count: 0, work_count: 0, states: {}, open_questions: 0,
+    open_approvals: 0, needs_acceptance: 0, pending_ingress: { count: 1, oldest: { message_id: "old-chat", proposal_saved: false } } }
+  const preview = { message_id: "old-chat", proposal_saved: false, text: "Hello, Supervisor." }
+  let read = 0, dismissed = 0
+  await page.route("**/api/v1/tickets/scope", (route) => route.fulfill({ json: scope }))
+  await page.route("**/api/v1/tickets/{search,changes}", (route) => route.fulfill({ json: { ...scope.overview, data: [] } }))
+  await page.route("**/api/v1/tickets/ingress/old-chat", (route) => {
+    expect(route.request().method()).toBe("GET")
+    read++
+    return route.fulfill({ json: preview })
+  })
+  await page.route("**/api/v1/tickets/ingress/old-chat/dismiss", (route) => {
+    expect(route.request().method()).toBe("POST")
+    expect(route.request().postDataJSON()).toEqual({ binding: scope.binding })
+    dismissed++
+    scope.overview.snapshot = { ...scope.overview.snapshot, seq: scope.overview.snapshot.seq + 1, commit: "dismissed-chat" }
+    scope.overview.index_seq = scope.overview.snapshot.seq
+    scope.overview.data.pending_ingress = { count: 0, oldest: null }
+    return route.fulfill({ json: { message_id: "old-chat" } })
+  })
+  const overview = (await openWork(page)).getByTestId("ticket-work-overview")
+  await expect(overview.getByText("1 条消息等待工作处理", { exact: true })).toBeVisible()
+  await expect(overview.getByText(preview.text, { exact: true })).toHaveCount(0)
+  expect(read).toBe(0)
+  await overview.getByRole("button", { name: "查看最早的消息", exact: true }).click()
+  await expect(overview.getByText(preview.text, { exact: true })).toBeVisible()
+  await overview.screenshot({ path: testInfo.outputPath("pending-work-message.png") })
+  await overview.getByRole("button", { name: "标记为聊天", exact: true }).click()
+  await expect(overview.getByText("1 条消息等待工作处理", { exact: true })).toHaveCount(0)
+  await expect(overview).toContainText("此工作范围还没有记录工作")
+  expect(read).toBe(1)
+  expect(dismissed).toBe(1)
+})
 
 test("System settings save independent Work flags and the Supervisor shows the confirmed state", async ({ page }, testInfo) => {
   const features = { ticket_mutation: false, ticket_dispatch: false, provider_model_ref: true }

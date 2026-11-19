@@ -1,9 +1,10 @@
 import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
 import { useEffect, useRef, useState } from "react"
+import { getErrorMessage } from "@services/api"
 import { ticketClient } from "@services/tickets/client"
 import { artifactDownloadName } from "@services/tickets/artifactDownload"
 import { effectiveStatus, type TicketState } from "@services/tickets/state"
-import type { AssignmentState, PendingRequest, WorkView } from "@services/tickets/types"
+import type { AssignmentState, IngressPreview, PendingIngressMessage, PendingRequest, ScopeBinding, WorkView } from "@services/tickets/types"
 import type { useTicketWork } from "@/hooks/useTicketWork"
 import { ticketWorkStatusLabel, workExecutionRecord } from "./ticketWorkLabels"
 
@@ -66,6 +67,48 @@ function ExecutionRecord({ view }: { view: WorkView }) {
   </dl>
 }
 
+function IngressReview({ binding, oldest, controller }: {
+  binding: ScopeBinding; oldest: PendingIngressMessage; controller: Controller
+}) {
+  const [message, setMessage] = useState<IngressPreview | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const review = async () => {
+    setBusy(true)
+    setError(null)
+    try { setMessage(await ticketClient.inspectIngress(oldest.message_id)) }
+    catch (failure) { setError(getErrorMessage(failure)) }
+    finally { setBusy(false) }
+  }
+  const dismiss = async () => {
+    if (!message || !controller.canSendIngress || message.proposal_saved || oldest.proposal_saved || busy || dismissed) return
+    setBusy(true)
+    setError(null)
+    try {
+      await ticketClient.dismissIngress(binding, message.message_id)
+      setDismissed(true)
+    } catch (failure) {
+      setError(getErrorMessage(failure))
+    } finally {
+      await controller.refresh()
+      setBusy(false)
+    }
+  }
+  return <div className="mt-2 text-sm">
+    {message ? <>
+      <p className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-2">{message.text}</p>
+      <code className="my-1 block break-all text-xs text-muted-foreground">{message.message_id}</code>
+      {oldest.proposal_saved || message.proposal_saved
+        ? <p className="text-muted-foreground">{uiText("supervisor_work_ingress_saved_proposal")}</p>
+        : <button type="button" className="underline disabled:opacity-50" disabled={!controller.canSendIngress || busy || dismissed}
+            onClick={() => void dismiss()}>{uiText(dismissed ? "supervisor_work_ingress_marked" : "supervisor_work_ingress_mark_chat")}</button>}
+    </> : <button type="button" className="underline disabled:opacity-50" disabled={!controller.connected || busy}
+      onClick={() => void review()}>{uiText("supervisor_work_ingress_review")}</button>}
+    {error ? <p role="alert" className="mt-1 text-destructive">{error}</p> : null}
+  </div>
+}
+
 export function TicketWorkPanel({ controller, onReference, selectedWorkId, onShowAll, onReady }: {
   controller: Controller; onReference?: (request: PendingRequest) => void
   selectedWorkId?: string | null; onShowAll?: () => void; onReady?: () => void
@@ -80,6 +123,8 @@ export function TicketWorkPanel({ controller, onReference, selectedWorkId, onSho
   if (!state) return null
   const selected = selectedWorkId && !state.works[selectedWorkId]?.ticket.archived ? state.works[selectedWorkId]?.ticket : undefined
   const overview = state.current.scope.overview.data
+  const pending = overview.pending_ingress
+  const binding = state.current.scope.binding
   const open = Object.values(state.requests).filter((q) => effectiveStatus(state, q) === "open")
   const visibleWorks = Object.values(state.works).filter((view) => !view.ticket.archived)
   const history = Object.values(state.requests).filter((q) => effectiveStatus(state, q) !== "open")
@@ -93,6 +138,11 @@ export function TicketWorkPanel({ controller, onReference, selectedWorkId, onSho
     {!state.current.scope.mutation_enabled ? <p role="status" className="text-sm text-muted-foreground">{uiText("supervisor_work_mutation_disabled")}</p> : null}
     {state.current.scope.health !== "writable" ? <p role="status" className="text-sm text-muted-foreground">{uiText(state.current.scope.health === "read_only" ? "supervisor_work_storage_read_only" : "supervisor_work_storage_unconfirmed")}</p> : null}
     {!state.current.scope.dispatch_enabled ? <p role="status" className="text-sm text-muted-foreground">{uiText("supervisor_work_dispatch_disabled")}</p> : null}
+    {pending && pending.count > 0 ? <div className="my-3 rounded-lg border bg-background p-3">
+      <p role="status" className="text-sm">{uiText("supervisor_work_pending_ingress", { count: pending.count })}</p>
+      {pending.oldest ? <IngressReview key={JSON.stringify([binding.scope_id, binding.binding_revision, pending.oldest.message_id])}
+        binding={binding} oldest={pending.oldest} controller={controller} /> : null}
+    </div> : null}
     {state.current.complete && controller.connected && overview.ticket_count === 0 && visibleWorks.length === 0 ? <p role="status" className="my-2 text-sm text-muted-foreground">{uiText("supervisor_work_empty")}</p> : null}
     {controller.error ? <p role="alert" className="my-2 text-sm text-destructive">{controller.error}</p> : null}
     <div className="grid gap-3">
