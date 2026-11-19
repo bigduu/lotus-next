@@ -83,4 +83,16 @@ describe("session compatibility report and explicit refusal", () => {
     completeSessionCompatibilityRead("session-a", earlier, { session: { id: "session-a", execution_compatibility: report("compatible") } })
     expect(isSessionExecutionBlocked("session-a")).toBe(true)
   })
+  it("keeps the saved Work effort from the latest matching detail read", () => {
+    const id = `ticket-${"a".repeat(32)}`
+    const at = "2026-11-19T00:00:00Z"
+    const session = { id, kind: "child", parent_session_id: "bamboo-default-supervisor", created_at: at, updated_at: at }
+    const earlier = beginSessionCompatibilityRead(id)
+    const latest = beginSessionCompatibilityRead(id)
+    completeSessionCompatibilityRead(id, latest, { session: { ...session, reasoning_effort: "max" } })
+    completeSessionCompatibilityRead(id, earlier, { session: { ...session, reasoning_effort: "low" } })
+    expect(getSessionCompatibilitySnapshot(id).workReasoning).toEqual({
+      createdAt: at, updatedAtMs: Date.parse(at), requestedAtMs: expect.any(Number), effort: "max",
+    })
+  })
 })

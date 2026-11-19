@@ -628,13 +628,18 @@ export function ChatPane({
   const inputReasoningSelection = useAppStore(
     (s) => s.inputStates[draftKey]?.reasoningEffort,
   )
+  const workReasoning = chat.executionCompatibility?.workReasoning
+  const cachedEffort = currentChat?.config?.reasoningEffort ?? currentChat?.config?.model_ref?.reasoning_effort
+  // The detail also has the saved effort when a cached list row omits it.
+  // A local edit made during the read can be newer than the returned detail.
+  const savedEffort = workReasoning && workReasoning.createdAt === currentChat?.createdAtExact
+    && (!currentChat.updatedAt || Date.parse(currentChat.updatedAt) <= Math.max(workReasoning.updatedAtMs, workReasoning.requestedAtMs))
+    ? workReasoning.effort : cachedEffort
   // A new composer mirrors the Chat-role setting exactly. Provider-instance
   // defaults are intentionally not resolved into the selection: that is what
   // Auto delegates to Bamboo. Existing sessions show their durable override.
   const reasoningSelection: ReasoningEffortSelection = currentSessionId
-    ? currentChat?.config?.reasoningEffort ??
-      currentChat?.config?.model_ref?.reasoning_effort ??
-      "auto"
+    ? savedEffort ?? "auto"
     : inputReasoningSelection ?? chatReasoningEffort ?? "auto"
   const clearInputReasoningEffort = useAppStore((s) => s.clearInputReasoningEffort)
   const rootMode = useRootThinkingMode({
