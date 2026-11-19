@@ -44,7 +44,7 @@ import { cn } from "@/lib/utils"
 import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
 import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import type { Message } from "@shared/types/chatMessages"
-import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
+import type { SubAgentCard } from "@/hooks/useSubAgentView"
 import type { LiveSegment, PendingUserMessageView } from "@/hooks/useChat"
 
 // Synthesize Message-shaped rows from a live tools segment so the in-run
@@ -649,7 +649,7 @@ export const MessageList = memo(function MessageList({
   onScroll: () => void
   messages: Message[]
   timelineAttachments?: readonly TimelineAttachment[]
-  mergedSubAgents: Record<string, ChildProgress>
+  mergedSubAgents: Record<string, SubAgentCard>
   subAgentError?: string | null
   onRefreshSubAgents?: () => void
   sending: boolean
@@ -716,8 +716,7 @@ export const MessageList = memo(function MessageList({
   const [openTurnKeys, setOpenTurnKeys] = useState<Set<string>>(() => new Set())
   // Keep child choices above virtual rows and the live/history handoff.
   const [openSubAgentIds, setOpenSubAgentIds] = useState<Set<string>>(() => new Set())
-  // Cleared-transcript history entry: one collapsed line, presentation state only.
-  const [clearedSubAgentsOpen, setClearedSubAgentsOpen] = useState(false)
+  const [foldedSubAgentsOpen, setFoldedSubAgentsOpen] = useState(false)
   const historyEntriesRef = useRef(historyEntries)
   const openProcessKeysRef = useRef(openProcessKeys)
   const openToolKeysRef = useRef(openToolKeys)
@@ -728,6 +727,10 @@ export const MessageList = memo(function MessageList({
   openTurnKeysRef.current = openTurnKeys
 
   const scrollElementRef = useRef<HTMLDivElement | null>(null)
+  const historyPrefixRef = useRef<HTMLDivElement | null>(null)
+  const historyListRef = useRef<HTMLDivElement | null>(null)
+  const [historyScrollMargin, setHistoryScrollMargin] = useState(0)
+  const hasHistory = historyEntries.length > 0
   const setScrollElement = useCallback((node: HTMLDivElement | null) => {
     scrollElementRef.current = node
     assignRef(scrollRef, node)
@@ -753,6 +756,7 @@ export const MessageList = memo(function MessageList({
     getScrollElement,
     getItemKey,
     estimateSize,
+    scrollMargin: historyScrollMargin,
     gap: HISTORY_ROW_GAP,
     overscan: 6,
     initialRect: INITIAL_VIRTUAL_RECT,
@@ -763,6 +767,25 @@ export const MessageList = memo(function MessageList({
     // already-delivered ancestor again in the same browser frame.
     useAnimationFrameWithResizeObserver: true,
   })
+
+  // The scroller includes the Subagent cards before the virtualized history.
+  // Their height changes when they load or expand, shifting its scroll origin.
+  useLayoutEffect(() => {
+    const scroller = scrollElementRef.current
+    const prefix = historyPrefixRef.current
+    const history = historyListRef.current
+    if (!hasHistory || !scroller || !prefix || !history) return
+    const update = () => {
+      const margin = history.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+        + scroller.scrollTop - scroller.clientTop
+      setHistoryScrollMargin(Math.max(0, Math.round(margin)))
+    }
+    update()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(update)
+    observer.observe(prefix)
+    return () => observer.disconnect()
+  }, [hasHistory])
 
   const previousExpansionStateRef = useRef({
     openProcessKeys,
@@ -847,19 +870,17 @@ export const MessageList = memo(function MessageList({
     () => collectSubAgentOrigins(subAgentToolGroups(liveItems), historyOrigins),
     [liveItems, historyOrigins],
   )
+  const firstConversationMessage = useMemo(() => messages.find((message) => message.role !== "system"), [messages])
+  const firstMessageAt = firstConversationMessage?.createdAt ?? null
   // Placement is a cheap step over the transcript-derived candidates, so child
   // status churn re-associates cards without re-scanning or re-parsing history.
   const subAgentGroups = useMemo(() => {
     renderProbe.count("subagent.place")
-    return placeSubAgents(subAgentCandidates, mergedSubAgents)
-  }, [subAgentCandidates, mergedSubAgents])
+    return placeSubAgents(subAgentCandidates, mergedSubAgents, firstMessageAt)
+  }, [subAgentCandidates, mergedSubAgents, firstMessageAt])
+  const foldedSubAgentCount = Object.keys(subAgentGroups.folded).length
 
-  // A cleared transcript keeps at most one retained system message; with no
-  // streaming, pending user or live segments there is no visible body at all.
-  // Unplaced children then lose every provenance match, so fold them behind a
-  // single history entry line instead of stacking the cards above the fold.
-  const onlySystemMessages = useMemo(() => messages.every((message) => message.role === "system"), [messages])
-  const transcriptCleared = onlySystemMessages && !streaming && !hasPendingUser && liveSegments.length === 0
+  const transcriptCleared = !firstConversationMessage && !streaming && !hasPendingUser && liveSegments.length === 0
 
   const renderImages = (imgs: readonly { url?: string; base64?: string; type?: string }[] | undefined) => imgs?.length ? (
     <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -1114,44 +1135,42 @@ export const MessageList = memo(function MessageList({
           transition: "transform var(--motion-normal) var(--motion-ease)",
         }}
       >
-        {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
-          {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
-        </div> : null}
-        {transcriptCleared ? (
-          // Cleared transcript: provenance is gone, so unplaced children become
-          // one collapsed history entry. Presentation state only — the cards
-          // themselves still render through the unchanged SubAgents contract.
-          Object.keys(subAgentGroups.unplaced).length > 0 ? (
+        <div ref={historyPrefixRef} className="flex flex-col gap-2 empty:hidden">
+          {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
+            {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
+          </div> : null}
+          {foldedSubAgentCount > 0 && (
             <div data-cleared-subagents>
               <button
                 type="button"
                 data-cleared-subagents-toggle
-                aria-expanded={clearedSubAgentsOpen}
-                onClick={() => setClearedSubAgentsOpen(!clearedSubAgentsOpen)}
+                aria-expanded={foldedSubAgentsOpen}
+                onClick={() => setFoldedSubAgentsOpen((open) => !open)}
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", clearedSubAgentsOpen && "rotate-90")} />
+                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", foldedSubAgentsOpen && "rotate-90")} />
                 <span data-cleared-subagents-brief className="min-w-0 truncate">
-                  {uiText("cleared_session_subagents", { count: Object.keys(subAgentGroups.unplaced).length })}
+                  {subAgentGroups.hasUnconfirmedAge ? `${uiText("subagents_76d97a95")}${foldedSubAgentCount})`
+                    : uiText("cleared_session_subagents", { count: foldedSubAgentCount })}
                 </span>
               </button>
-              {clearedSubAgentsOpen ? (
-                <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
-              ) : null}
+              {foldedSubAgentsOpen && (
+                <SubAgents agents={subAgentGroups.folded} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+              )}
             </div>
-          ) : null
-        ) : (
+          )}
           <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
-        )}
-        {transcriptCleared && (
-          <div className="flex flex-col items-center gap-2 py-20 text-center">
-            <BrandMark className="size-10 text-primary" />
-            <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
-          </div>
-        )}
+          {transcriptCleared && (
+            <div className="flex flex-col items-center gap-2 py-20 text-center">
+              <BrandMark className="size-10 text-primary" />
+              <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
+            </div>
+          )}
+        </div>
 
-        {historyEntries.length > 0 ? (
+        {hasHistory ? (
           <div
+            ref={historyListRef}
             data-virtual-history
             className="relative w-full"
             style={{ height: virtualizer.getTotalSize() }}
@@ -1172,7 +1191,7 @@ export const MessageList = memo(function MessageList({
                       entry.item.m.role === "user" &&
                       "pt-2",
                   )}
-                  style={{ transform: `translateY(${virtualItem.start}px)` }}
+                  style={{ transform: `translateY(${virtualItem.start - historyScrollMargin}px)` }}
                 >
                   {renderHistoryEntry(entry)}
                 </div>

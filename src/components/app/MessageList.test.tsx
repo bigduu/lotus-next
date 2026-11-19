@@ -982,26 +982,22 @@ describe("cleared transcript subagent history", () => {
     { id: "retained-system", role: "system", content: "cleared conversation", createdAt: "2026-11-02T00:00:00Z" },
   ]
   const children = { "child-1": { status: "completed" }, "child-2": { status: "error" } }
-  const renderCleared = (messages: Message[], agents: Record<string, { status: string }>) => {
+  const renderCleared = (messages: Message[], agents: Record<string, { status: string; createdAt?: string }>) => {
     const host = document.createElement("div"); document.body.appendChild(host)
     const root = createRoot(host); mountedRoots.push(root)
-    act(() => {
-      root.render(
-        <MessageList
-          scrollRef={createRef()} contentRef={createRef()} onScroll={vi.fn()}
-          messages={messages} mergedSubAgents={agents} sending={false}
-          latestRunFinished={true} streaming={null} streamingActive={false}
-          streamingReasoning={null} liveSegments={[]} streamStatus={null}
-          pendingUserText={null} forking={false}
-          onSelectSubAgent={vi.fn()} onPreviewImage={vi.fn()} onRegenerate={vi.fn()}
-          onFork={vi.fn()} onDelete={vi.fn()} onEditMessage={vi.fn()}
-        />,
-      )
-    })
-    return host
+    const props: Parameters<typeof MessageList>[0] = {
+      scrollRef: createRef(), contentRef: createRef(), onScroll: vi.fn(),
+      messages, mergedSubAgents: agents, sending: false, latestRunFinished: true,
+      streaming: null, streamingActive: false, streamingReasoning: null, liveSegments: [],
+      streamStatus: null, pendingUserText: null, forking: false, onSelectSubAgent: vi.fn(),
+      onPreviewImage: vi.fn(), onRegenerate: vi.fn(), onFork: vi.fn(), onDelete: vi.fn(), onEditMessage: vi.fn(),
+    }
+    const render = (updates: Partial<typeof props> = {}) => act(() => root.render(<MessageList {...props} {...updates} />))
+    render()
+    return { host, render }
   }
   it("folds cleared-transcript children into one collapsed history line that expands to the cards", () => {
-    const host = renderCleared(systemOnly, children)
+    const { host } = renderCleared(systemOnly, children)
     // Collapsed by default: one line, no stacked cards, empty state still visible.
     const entry = host.querySelector<HTMLElement>("[data-cleared-subagents]")
     expect(entry).not.toBeNull()
@@ -1026,22 +1022,50 @@ describe("cleared transcript subagent history", () => {
     expect(host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.getAttribute("aria-expanded")).toBe("false")
   })
   it("keeps the cleared fold off an empty transcript without children", () => {
-    const host = renderCleared([], {})
+    const { host } = renderCleared([], {})
     expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
     expect(host.querySelector("[data-subagent-group]")).toBeNull()
     expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
   })
-  it("keeps unplaced cards directly rendered while normal messages exist", () => {
-    const host = renderCleared([
+  it("keeps unplaced cards born within the retained transcript directly visible", () => {
+    const createdAt = "2026-11-02T00:00:01Z"
+    const { host } = renderCleared([
       { id: "user-1", role: "user", content: "question", createdAt: "2026-11-02T00:00:00Z" },
       { id: "assistant-1", role: "assistant", type: "text", content: "answer", createdAt: "2026-11-02T00:00:01Z" },
-    ], children)
+    ], { "child-1": { ...children["child-1"], createdAt }, "child-2": { ...children["child-2"], createdAt } })
     expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
     const group = host.querySelector("[data-subagent-group]")
     expect(group).not.toBeNull()
     expect([...group!.querySelectorAll("[data-subagent-id]")].map((node) => node.getAttribute("data-subagent-id")))
       .toEqual(["child-1", "child-2"])
     expect(host.textContent).not.toContain(uiText("start_a_new_conversation_bab6ab18"))
+  })
+
+  it("keeps earlier children folded during send, after readback, and on a fresh mount", () => {
+    const old = { status: "completed", createdAt: "2026-11-02T00:00:01.000100Z" }
+    const fresh = { status: "running", createdAt: "2026-11-02T00:00:03Z" }
+    const messages: Message[] = [...systemOnly,
+      { id: "new-turn", role: "user", content: "New conversation", createdAt: "2026-11-02T00:00:01.000900Z" }]
+    const { host, render } = renderCleared(systemOnly, { old })
+    const folded = (container: HTMLElement) => {
+      expect(container.querySelector("[data-cleared-subagents-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+      expect(container.querySelector('[data-subagent-id="old"]')).toBeNull()
+    }
+    render({ pendingUserText: "New conversation", sending: true })
+    folded(host)
+    render({ messages, mergedSubAgents: { old, fresh }, sending: true })
+    folded(host)
+    expect(host.querySelector('[data-subagent-id="fresh"]')).not.toBeNull()
+
+    const { host: reopened, render: hydrate } = renderCleared(messages, { old: { status: old.status }, fresh })
+    folded(reopened)
+    expect(reopened.querySelector("[data-cleared-subagents-brief]")?.textContent).toBe(`${uiText("subagents_76d97a95")}1)`)
+    hydrate({ mergedSubAgents: { old, fresh } })
+    folded(reopened)
+    expect(reopened.querySelector("[data-cleared-subagents-brief]")?.textContent).toBe(uiText("cleared_session_subagents", { count: 1 }))
+    act(() => reopened.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.click())
+    expect(reopened.querySelector('[data-cleared-subagents] [data-subagent-id="old"]')).not.toBeNull()
+    expect(reopened.querySelector('[data-cleared-subagents] [data-subagent-id="fresh"]')).toBeNull()
   })
 })
 

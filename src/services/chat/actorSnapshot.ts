@@ -1,4 +1,5 @@
 import { uiText } from "@shared/i18n/ui"
+import { compareRfc3339Instants } from "@shared/utils/compareRfc3339Instants"
 import { apiClient } from "@services/api"
 import type { ActorTreeData, ActorTreeNode } from "./actorTreeView"
 
@@ -64,14 +65,6 @@ export function actorTreeCursorCovers(snapshot: string | null, required: string 
   return observed !== null && gap !== null && observed.scope === gap.scope && observed.revision >= gap.revision
 }
 
-/** Compare producer-validated RFC3339 instants without discarding nanoseconds. */
-const compareEvidenceTime = (left: string, right: string): number => {
-  const milliseconds = Date.parse(left) - Date.parse(right)
-  if (milliseconds !== 0) return milliseconds
-  const fraction = (value: string) => /\.(\d{1,9})(?:Z|[+-])/.exec(value)?.[1].padEnd(9, "0") ?? "000000000"
-  return fraction(left).localeCompare(fraction(right))
-}
-
 /** These are observation fences only; no diagnostic authorizes control or replacement. */
 const localTaskRegresses = (prior: PublicLocalTaskObservation | null | undefined,
   next: PublicLocalTaskObservation | null | undefined): boolean => {
@@ -82,11 +75,11 @@ const localTaskRegresses = (prior: PublicLocalTaskObservation | null | undefined
     if (prior.reason === "execution_stop_unconfirmed" && next.state !== "stopped" &&
       (next.state !== "stop_unconfirmed" || next.reason !== prior.reason)) return true
     if (prior.reason === "lease_expired_without_stop" && next.state === "running" &&
-      (!prior.lease_expires_at || !next.lease_expires_at || compareEvidenceTime(next.lease_expires_at, prior.lease_expires_at) <= 0)) return true
+      (!prior.lease_expires_at || !next.lease_expires_at || compareRfc3339Instants(next.lease_expires_at, prior.lease_expires_at) <= 0)) return true
   }
   if (!next || next.state !== prior.state || next.reason !== prior.reason) return false
-  return prior.observed_at !== null && next.observed_at !== null && compareEvidenceTime(next.observed_at, prior.observed_at) < 0
-    || prior.lease_expires_at !== null && next.lease_expires_at !== null && compareEvidenceTime(next.lease_expires_at, prior.lease_expires_at) < 0
+  return prior.observed_at !== null && next.observed_at !== null && compareRfc3339Instants(next.observed_at, prior.observed_at) < 0
+    || prior.lease_expires_at !== null && next.lease_expires_at !== null && compareRfc3339Instants(next.lease_expires_at, prior.lease_expires_at) < 0
 }
 
 /**
@@ -196,9 +189,11 @@ export function parseActorSnapshot(value: unknown, rootId: string, subtreeId = r
         || !oneOf(sourceActivation.status, ["reserved", "running", "succeeded", "failed", "cancelled"])) return invalid()
       activation = { activation_id: sourceActivation.activation_id, attempt: sourceActivation.attempt, status: sourceActivation.status }
     }
-    if (revision.actor_directory_revision === null && (row.logical_state !== null || activation !== null || row.placement_class !== null)
-      || row.logical_state === null && revision.actor_directory_revision !== null
-      || activation === null && row.placement_class !== null) return invalid()
+    // Bamboo preserves historical directory revisions without current runtime
+    // evidence. Activation still requires current logical state.
+    if (row.logical_state !== null && revision.actor_directory_revision === null
+      || activation !== null && row.logical_state === null
+      || row.placement_class !== null && activation === null) return invalid()
     let localTask: PublicLocalTaskObservation | null = null
     if (version === 2 && row.local_task !== null) {
       const task = object(row.local_task, ["state", "reason", "observed_at", "lease_expires_at"])
@@ -286,9 +281,8 @@ const sameTreeNode = (left: ActorTreeNode, right: ActorTreeNode): boolean =>
 
 /** Show the last durable activation outcome when the logical actor is idle. */
 export const actorSnapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
-  if (node.logical_state === "retired" || node.logical_state === "failed" || node.logical_state === null) {
-    return node.logical_state ?? "unknown"
-  }
+  if (node.logical_state === null) return node.revision.actor_directory_revision === null ? "unknown" : "unconfirmed"
+  if (node.logical_state === "retired" || node.logical_state === "failed") return node.logical_state
   if (node.logical_state === "active") {
     if (node.local_task && node.local_task.state !== "running") return "unknown"
     if (node.activation?.status === "reserved") return "queued"

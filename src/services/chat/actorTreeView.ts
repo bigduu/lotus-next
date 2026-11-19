@@ -7,7 +7,7 @@ export interface ActorTreeNode {
   depth: number
   title: string
   role: string | null
-  lifecycle: ActorLifecycle | "active" | "unknown"
+  lifecycle: ActorLifecycle | "active" | "unknown" | "unconfirmed"
   placement: ActorPlacement | "docker" | "ssh" | "schedulable"
   /** Why the snapshot cannot report execution placement; never a guessed host. */
   placementUnavailableReason?: "no_activation" | "native_task" | "not_reported" | null
