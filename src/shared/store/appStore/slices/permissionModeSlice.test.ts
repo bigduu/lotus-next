@@ -105,7 +105,7 @@ describe("server-authoritative session permission state", () => {
 
   it("rejects a stale confirmation scope even with the current revision", async () => {
     const store = harness();
-    read.mockResolvedValueOnce({ ...snapshot(), supervisorDispatchInheritsPermissionMode: true });
+    read.mockResolvedValueOnce({ ...snapshot("default"), supervisorDispatchInheritsPermissionMode: true });
     await store.getState().refreshSessionPermissionMode("a");
     await store.getState().changeSessionPermissionMode("a", "auto", '"7"', false);
     expect(read).toHaveBeenCalledTimes(1);
