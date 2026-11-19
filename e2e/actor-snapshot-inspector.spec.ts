@@ -49,6 +49,22 @@ async function openInspector(page: Page) {
   return page.locator("[data-actor-snapshot-panel]")
 }
 
+test("Inspector shows historical actors as unconfirmed beside current actors", async ({ page }, info) => {
+  const { observation } = await prepare(page)
+  const source = actorSnapshotFixture(rootId, 2)
+  Object.assign(source.nodes[2], { title: "Historical child", revision: { session_metadata_version: 3, actor_directory_revision: 2 } })
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, (route) => route.fulfill({ json: source }))
+
+  await page.goto(standaloneScenario.entryUrl)
+  const panel = await openInspector(page)
+  await expect(panel.getByRole("tree")).toBeVisible()
+  await expect(panel.locator('[data-actor-id="actor-1"]')).toHaveAttribute("aria-label", /Historical child.*未确认/)
+  await expect(panel.locator('[data-actor-id="actor-0"] [data-actor-status]')).toHaveAttribute("data-actor-status", "running")
+  await expect(panel.getByRole("alert")).toHaveCount(0)
+  expect(observation.pageErrors).toEqual([])
+  await page.screenshot({ path: info.outputPath("historical-actor-inspector.png"), animations: "disabled" })
+})
+
 test("normal tree refreshes keep Inspector and child side-chat content stationary", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "shared desktop right-pane regression")
   await prepare(page)
