@@ -283,7 +283,7 @@ export interface ChatItem {
     /** Exact detail/PATCH ETag, held in memory only and never a browser preference. */
     permissionModeEtag?: string;
     /** Canonical Supervisor opt-in read with the permission mode and ETag. */
-    supervisorAutoDispatch?: boolean;
+    supervisorDispatchInheritsPermissionMode?: true;
     goldConfig?: GoldConfig | null;
     goalState?: GoalState | null;
     tokenUsage?: TokenUsage;

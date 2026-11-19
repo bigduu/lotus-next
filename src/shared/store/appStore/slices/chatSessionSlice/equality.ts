@@ -85,7 +85,7 @@ const areChatConfigsEquivalent = (a: ChatItem["config"], b: ChatItem["config"]):
     a.bypassPermissions === b.bypassPermissions &&
     a.permissionMode === b.permissionMode &&
     a.permissionModeEtag === b.permissionModeEtag &&
-    a.supervisorAutoDispatch === b.supervisorAutoDispatch &&
+    a.supervisorDispatchInheritsPermissionMode === b.supervisorDispatchInheritsPermissionMode &&
     JSON.stringify(a.goldConfig ?? null) === JSON.stringify(b.goldConfig ?? null) &&
     JSON.stringify(a.goalState ?? null) === JSON.stringify(b.goalState ?? null) &&
     areTokenUsagesEqual(a.tokenUsage, b.tokenUsage) &&
