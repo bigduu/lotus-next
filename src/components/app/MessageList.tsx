@@ -847,7 +847,7 @@ export const MessageList = memo(function MessageList({
     [liveItems, historyOrigins],
   )
   const firstConversationMessage = useMemo(() => messages.find((message) => message.role !== "system"), [messages])
-  const firstMessageAt = firstConversationMessage ? Date.parse(firstConversationMessage.createdAt) : null
+  const firstMessageAt = firstConversationMessage?.createdAt ?? null
   // Placement is a cheap step over the transcript-derived candidates, so child
   // status churn re-associates cards without re-scanning or re-parsing history.
   const subAgentGroups = useMemo(() => {

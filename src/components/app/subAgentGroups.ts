@@ -1,6 +1,7 @@
 import type { Message } from "@shared/types/chatMessages"
 import type { SubAgentCard } from "@/hooks/useSubAgentView"
 import { renderProbe } from "@/lib/renderProbe"
+import { compareRfc3339Instants } from "@shared/utils/compareRfc3339Instants"
 
 const subAgentTool = (name: unknown) => typeof name === "string" && name.toLowerCase().replace(/[_-]/g, "") === "subagent"
 
@@ -110,7 +111,7 @@ export function collectSubAgentOrigins(groups: readonly ToolGroup[], history?: S
 export function placeSubAgents(
   candidates: readonly SubAgentOrigin[],
   agents: Record<string, SubAgentCard>,
-  firstMessageAt?: number | null,
+  firstMessageAt?: string | null,
 ) {
   const origins = new Map<string, string>()
   for (const candidate of candidates) {
@@ -130,10 +131,11 @@ export function placeSubAgents(
     if (origins.has(id)) continue
     // Actor snapshots and Child summaries arrive independently. Until there is
     // a birth time to compare, keep unanchored cards behind the fold.
-    const ageUnconfirmed = firstMessageAt != null &&
-      (!Number.isFinite(firstMessageAt) || agent.createdAt === undefined)
-    const predatesHistory = firstMessageAt === null ||
-      (firstMessageAt !== undefined && agent.createdAt !== undefined && agent.createdAt < firstMessageAt)
+    const age = firstMessageAt && agent.createdAt
+      ? compareRfc3339Instants(agent.createdAt, firstMessageAt)
+      : Number.NaN
+    const ageUnconfirmed = firstMessageAt != null && Number.isNaN(age)
+    const predatesHistory = firstMessageAt === null || age < 0
     hasUnconfirmedAge ||= ageUnconfirmed
     const group = predatesHistory || ageUnconfirmed ? folded : unplaced
     group[id] = agent

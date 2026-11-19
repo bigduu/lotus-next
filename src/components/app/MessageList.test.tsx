@@ -982,7 +982,7 @@ describe("cleared transcript subagent history", () => {
     { id: "retained-system", role: "system", content: "cleared conversation", createdAt: "2026-11-02T00:00:00Z" },
   ]
   const children = { "child-1": { status: "completed" }, "child-2": { status: "error" } }
-  const renderCleared = (messages: Message[], agents: Record<string, { status: string; createdAt?: number }>) => {
+  const renderCleared = (messages: Message[], agents: Record<string, { status: string; createdAt?: string }>) => {
     const host = document.createElement("div"); document.body.appendChild(host)
     const root = createRoot(host); mountedRoots.push(root)
     const props: Parameters<typeof MessageList>[0] = {
@@ -1028,7 +1028,7 @@ describe("cleared transcript subagent history", () => {
     expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
   })
   it("keeps unplaced cards born within the retained transcript directly visible", () => {
-    const createdAt = Date.parse("2026-11-02T00:00:01Z")
+    const createdAt = "2026-11-02T00:00:01Z"
     const { host } = renderCleared([
       { id: "user-1", role: "user", content: "question", createdAt: "2026-11-02T00:00:00Z" },
       { id: "assistant-1", role: "assistant", type: "text", content: "answer", createdAt: "2026-11-02T00:00:01Z" },
@@ -1042,10 +1042,10 @@ describe("cleared transcript subagent history", () => {
   })
 
   it("keeps earlier children folded during send, after readback, and on a fresh mount", () => {
-    const old = { status: "completed", createdAt: Date.parse("2026-11-02T00:00:01Z") }
-    const fresh = { status: "running", createdAt: Date.parse("2026-11-02T00:00:03Z") }
+    const old = { status: "completed", createdAt: "2026-11-02T00:00:01.000100Z" }
+    const fresh = { status: "running", createdAt: "2026-11-02T00:00:03Z" }
     const messages: Message[] = [...systemOnly,
-      { id: "new-turn", role: "user", content: "New conversation", createdAt: "2026-11-02T00:00:02Z" }]
+      { id: "new-turn", role: "user", content: "New conversation", createdAt: "2026-11-02T00:00:01.000900Z" }]
     const { host, render } = renderCleared(systemOnly, { old })
     const folded = (container: HTMLElement) => {
       expect(container.querySelector("[data-cleared-subagents-toggle]")?.getAttribute("aria-expanded")).toBe("false")
