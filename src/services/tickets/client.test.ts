@@ -5,6 +5,20 @@ import { ApiError, apiClient } from "@services/api"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), post: vi.fn(), postOnce: vi.fn() } }))
 beforeEach(() => { vi.resetAllMocks() })
 
+it("reads and dismisses only the exact pending message and requires its acknowledgement", async () => {
+  const { binding } = ticketSnapshot().scope
+  const message = { message_id: "old chat", proposal_saved: false, text: "Hi" }
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ ...message, message_id: "different" }).mockResolvedValueOnce(message)
+  await expect(ticketClient.inspectIngress("old chat")).rejects.toThrow()
+  await expect(ticketClient.inspectIngress("old chat")).resolves.toEqual(message)
+  expect(apiClient.get).toHaveBeenLastCalledWith("tickets/ingress/old%20chat")
+  vi.mocked(apiClient.postOnce).mockResolvedValueOnce({ message_id: "different" })
+    .mockResolvedValueOnce({ message_id: "old chat" })
+  await expect(ticketClient.dismissIngress(binding, "old chat")).rejects.toThrow()
+  await expect(ticketClient.dismissIngress(binding, "old chat")).resolves.toBeUndefined()
+  expect(apiClient.postOnce).toHaveBeenLastCalledWith("tickets/ingress/old%20chat/dismiss", { binding })
+})
+
 it("preserves distinct unsupported and unbound negotiation outcomes", async () => {
   const value = ticketSnapshot()
   vi.mocked(apiClient.get).mockRejectedValueOnce(new ApiError("old backend", 404, "Not Found"))

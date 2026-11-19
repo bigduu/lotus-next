@@ -12,7 +12,10 @@ import type { Assignment, ResponseCommand, TicketSnapshot } from "@services/tick
 import { ApiError } from "@services/api"
 import { changeLocale } from "@shared/i18n"
 
-vi.mock("@services/tickets/client", () => ({ ticketClient: { load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), initialize: vi.fn(), artifact: vi.fn() } }))
+vi.mock("@services/tickets/client", () => ({ ticketClient: {
+  load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), initialize: vi.fn(), artifact: vi.fn(),
+  inspectIngress: vi.fn(), dismissIngress: vi.fn(),
+} }))
 let root: Root, container: HTMLDivElement, controller: ReturnType<typeof useTicketWork>
 let snapshot = ticketSnapshot()
 let loseAck = false
@@ -55,6 +58,24 @@ afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMock
 const mount = async (session = "root", ownerAccess = true, authorityKey = "", authorityBlocked = false, deferRead = false) => {
   await act(async () => root.render(<OwnerAccessContext value={ownerAccess}><Harness session={session} authorityKey={authorityKey} authorityBlocked={authorityBlocked} deferRead={deferRead} /></OwnerAccessContext>))
 }
+
+it.each(["read-only", "saved proposal"])("allows reviewing the oldest pending message with a %s but keeps it intact", async (reason) => {
+  await changeLocale("zh-CN")
+  const oldest = { message_id: "old-chat", proposal_saved: reason === "saved proposal" }
+  snapshot.scope.overview.data.pending_ingress = { count: 2, oldest }
+  if (reason === "read-only") snapshot.scope.health = "read_only"
+  vi.mocked(ticketClient.inspectIngress).mockResolvedValue({ ...oldest, text: "Hello there" })
+  await mount()
+  const button = (text: string) => [...container.querySelectorAll("button")].find((node) => node.textContent === text)
+  expect(container.textContent).toContain("2 条消息等待工作处理")
+  expect(ticketClient.inspectIngress).not.toHaveBeenCalled()
+  await act(async () => button("查看最早的消息")!.click())
+  expect(ticketClient.inspectIngress).toHaveBeenCalledExactlyOnceWith("old-chat")
+  expect(container.textContent).toContain("Hello there")
+  if (reason === "read-only") expect(button("标记为聊天")?.disabled).toBe(true)
+  else expect(button("标记为聊天")).toBeUndefined()
+  expect(ticketClient.dismissIngress).not.toHaveBeenCalled()
+})
 
 it("shows an active Work with no admitted Runtime as waiting for dispatch confirmation", async () => {
   await changeLocale("zh-CN")
