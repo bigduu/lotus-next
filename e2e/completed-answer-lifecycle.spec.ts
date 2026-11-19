@@ -37,7 +37,7 @@ const gate = () => {
   return { promise, release }
 }
 
-async function prepare(page: Page) {
+async function prepare(page: Page, options: { waitingForCommand?: boolean } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", "all-surface-session")
@@ -45,7 +45,10 @@ async function prepare(page: Page) {
     localStorage.setItem("copilot_ui_theme_v1", "light")
   })
   const observation = await installArtifactRuntime(page, standaloneScenario)
-  const histories: Record<string, FixtureMessage[]> = { [primary]: [], [other]: otherHistory }
+  const histories: Record<string, FixtureMessage[]> = {
+    [primary]: options.waitingForCommand ? [item("wait-user", "user", prompts[0]), ...toolHistory(1)] : [],
+    [other]: otherHistory,
+  }
   let running = false, socket: WebSocketRoute | undefined, seq = 0, feedSeq = 0, subscriptions = 0
   let holdNextHistory = false, delayedHistoryRequests = 0, releasedHistoryResponses = 0
   let heldSnapshot: FixtureMessage[] = []
@@ -55,7 +58,10 @@ async function prepare(page: Page) {
     id, title, title_version: 1, kind: "root", root_session_id: id, parent_session_id: null,
     model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
     created_at: at, updated_at: at, last_activity_at: at, message_count: histories[id].length,
-    is_running: id === primary && running, last_run_status: id === primary && running ? "running" : "completed",
+    is_running: id === primary && running,
+    ...(id === primary && options.waitingForCommand
+      ? { last_run_status: "suspended", activity: "waiting_bash" }
+      : { last_run_status: id === primary && running ? "running" : "completed" }),
     permission_mode: "default", has_pending_question: false, spawn_depth: 0, pinned: false,
     bypass_permissions: false, root_orchestration_only: false, thinking_mode: "standard", reasoning_effort: "medium",
     root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
@@ -193,6 +199,15 @@ async function captureShellNotifications(page: Page) {
     testShellNotifications: Array<{ title: string; body?: string }>
   }).testShellNotifications)
 }
+
+test("server-projected command wait keeps observation active and shows the right status", async ({ page }, info) => {
+  const f = await prepare(page, { waitingForCommand: true })
+  await expect(page.getByText("正在等待后台命令完成…", { exact: true })).toBeVisible()
+  await expect(page.getByText("等待子会话完成", { exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "停止生成", exact: true })).toHaveCount(0)
+  await expect.poll(() => f.channels.has(`agent.${primary}`)).toBe(true)
+  await page.screenshot({ path: info.outputPath("waiting-for-command.png") })
+})
 
 test("the final background shell delivers its backend notification after the answer settles", async ({ page }) => {
   const messages = await captureShellNotifications(page)

@@ -354,41 +354,24 @@ export function ChatPane({
     })
     return entries
   }, [permissionTimeline, supervisorApprovalTimeline, actionableApproval, respondApproval, approvalSubmitting, approvalError])
-  // A background-exec wait keeps the run live from the user's perspective: the
-  // runtime suspended the session while the monitored command still executes,
-  // and its result returns automatically. Keep the running presentation until
-  // the completion injection resumes the run (is_running flips back true) or
-  // the transcript grows past the wait notice.
-  const backgroundExecWaiting = currentChat?.lastRunStatus === "suspended"
-    && currentChat?.isRunning !== true
-    && backgroundExecWaitActive(
-      (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
-    )
-  // A yielded run stays live from the user's perspective: the runtime suspended
-  // the session while delegated children or a monitored command still execute,
-  // and the result returns automatically. `is_running` cannot see that, so prefer
-  // the server's own `activity` label, which also covers the gap between the last
-  // child finishing and this Root resuming.
-  //
-  // The local signals are kept as a fallback for backends that predate `activity`,
-  // and `backgroundExecWaitActive` still carries the transcript-notice case where
-  // no wait was ever persisted.
-  //
-  // Deliberately narrower than `currentlyRunning`: Stop and the composer input
-  // lock stay tied to `currentlyRunning`, because a yielded Root has no runner to
-  // cancel — offering Stop there would only fail.
-  const yieldedActivity = currentChat?.activity === "waiting_children"
-    || currentChat?.activity === "waiting_bash"
-  // A terminal verdict always wins, exactly as `applySummaryInner` decides it: a
-  // lingering wait or child count must never keep a finished parent presented
-  // (and controlled) as an active run, which would suppress its
-  // error/diagnostic surface and route ordinary submissions into the queue.
-  // The server already applies that precedence to `activity`, so this only
-  // guards the local fallbacks.
-  const delegationWaiting = currentChat?.isRunning !== true
+  const activity = currentChat?.activity
+  const suspended = currentChat?.lastRunStatus === "suspended"
+  const canPresentWait = currentChat?.isRunning !== true
     && !isTerminalRunStatus(currentChat?.lastRunStatus)
-    && (yieldedActivity || (currentChat?.runningChildCount ?? 0) > 0)
-  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
+    && !pendingQuestion && !pendingApproval
+  const monitoredCommandWaiting = canPresentWait && suspended
+    && (activity === undefined || activity === "waiting_bash")
+    && backgroundExecWaitActive((currentChat?.messages ?? []).slice(-1).map((message) => ({
+      metadata: (message as { metadata?: { runtime_kind?: unknown } }).metadata,
+      content: "content" in message ? message.content : undefined,
+    })))
+  const backgroundExecWaiting = monitoredCommandWaiting || (canPresentWait && activity === "waiting_bash")
+  const delegationWaiting = canPresentWait && (activity === "waiting_children"
+    || (activity === undefined && (currentChat?.runningChildCount ?? 0) > 0))
+  const yieldedWaiting = delegationWaiting || backgroundExecWaiting
+  // A projected wait keeps the transcript live, but does not itself supply a
+  // runner that Stop can cancel. Retain the existing monitored command path.
+  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || monitoredCommandWaiting
   const managedHistoryStatus = useAppStore((state) => currentSessionId
     ? state.managedHistoryBindings?.[currentSessionId]?.status : undefined)
   const managedHistoryStale = managedHistoryStatus === "stale"
@@ -854,7 +837,7 @@ export function ChatPane({
       || ticketScope?.binding.supervisor_session_id === currentSessionId) return uiText("compact_root_only")
     if (executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked
       || rootSessionUnsafe()) return uiText("compact_session_unavailable")
-    if (currentlyRunning || delegationWaiting || currentChat?.lastRunStatus === "suspended"
+    if (currentlyRunning || yieldedWaiting || currentChat?.lastRunStatus === "suspended"
       || pendingApproval || pendingQuestion || questionLoading || questionSubmitting
       || submissionActiveRef.current || goalRequestActive.current || compactionRequests.current.has(currentSessionId)
       || submissionPending
@@ -994,7 +977,7 @@ export function ChatPane({
         submitLoopCommand(currentSessionId, loopCommand, draftAtSubmit?.contentRevision ?? 0)
         return
       }
-      if (currentlyRunning || delegationWaiting || currentChat?.lastRunStatus === "suspended"
+      if (currentlyRunning || yieldedWaiting || currentChat?.lastRunStatus === "suspended"
         || pendingApproval || pendingQuestion || queue.busy || queue.hasUnconfirmed) {
         showToast(uiText("session_loop_wait_for_session"))
         return
@@ -1533,10 +1516,10 @@ export function ChatPane({
           mergedSubAgents={mergedSubAgents}
           subAgentError={subAgentView.error}
           onRefreshSubAgents={subAgentView.refresh}
-          sending={currentlyRunning || delegationWaiting}
+          sending={currentlyRunning || yieldedWaiting}
           latestRunFinished={
             !currentlyRunning &&
-            !delegationWaiting &&
+            !yieldedWaiting &&
             streamPhase === null &&
             currentChat?.lastRunStatus === "completed"
           }
@@ -1546,8 +1529,7 @@ export function ChatPane({
           liveSegments={liveSegments}
           streamStatus={streamStatus}
           backgroundExecWaiting={backgroundExecWaiting}
-          delegationWaiting={delegationWaiting && currentChat?.lastRunStatus === "suspended"
-            && !pendingQuestion && !pendingApproval && !backgroundExecWaiting}
+          delegationWaiting={delegationWaiting && (suspended || activity === "waiting_children") && !backgroundExecWaiting}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}

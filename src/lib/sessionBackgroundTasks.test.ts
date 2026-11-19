@@ -104,7 +104,7 @@ describe("sidebar live-work predicate", () => {
     expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_children" }, undefined, {})).toBe(true)
     expect(sessionHasLiveWork({ isRunning: false, activity: "running" }, undefined, {})).toBe(true)
     // Parked on a person reads as blocked, not busy.
-    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_user" }, undefined, {})).toBe(false)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_user", runningChildCount: 1 }, undefined, {})).toBe(false)
     expect(sessionHasLiveWork({ isRunning: false, activity: "terminal" }, undefined, {})).toBe(false)
     expect(sessionHasLiveWork({ isRunning: false, activity: "idle" }, undefined, {})).toBe(false)
     // Older backends omit the field entirely; the local derivation must still run.

@@ -770,7 +770,7 @@ const applySummaryInner = (
   // a lingering wait can never keep a finished session pulsing. A question this
   // session is waiting on keeps its own phase too.
   const yieldedActivity = summary.activity === "waiting_children" || summary.activity === "waiting_bash";
-  const childrenStillRunning = (runningChildCount ?? 0) > 0;
+  const childrenStillRunning = summary.activity === undefined && (runningChildCount ?? 0) > 0;
   if (
     (yieldedActivity || childrenStillRunning) &&
     lastRunStatus === null &&

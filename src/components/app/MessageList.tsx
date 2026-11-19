@@ -1198,10 +1198,8 @@ export const MessageList = memo(function MessageList({
         ))}
         {renderTimelineAttachments(timelineTail)}
 
-        {/* While the chat pane confirms a live background-exec wait (suspended
-            run + wait notice still latest), keep a visible running hint instead
-            of an abruptly idle transcript. Execution-gated so a cancelled or
-            errored run never leaves a stale spinner behind. */}
+        {/* Keep the wait visible while the backend or the legacy wait notice
+            identifies a suspended background command. */}
         {!streaming && backgroundExecWaiting ? (
           <BackgroundExecWaitHint className="px-1 py-1" />
         ) : null}

@@ -279,16 +279,23 @@ async function mount(
 }
 
 it.each([
-  ["suspended", 1, false, true],
-  ["suspended", 0, false, false],
-  ["suspended", 1, true, false],
-  [null, 1, false, false],
-  ["completed", 1, false, false],
-  ["cancelled", 1, false, false],
-  ["error", 1, false, false],
-] as const)("presents child wait only for confirmed suspension (%s, children=%s, running=%s)", async (status, children, running, expected) => {
+  ["suspended", 1, false, undefined, true, false],
+  ["suspended", 0, false, undefined, false, false],
+  ["suspended", 1, true, undefined, false, false],
+  [null, 1, false, undefined, false, false],
+  ["completed", 1, false, undefined, false, false],
+  ["cancelled", 1, false, undefined, false, false],
+  ["error", 1, false, undefined, false, false],
+  ["suspended", 0, false, "waiting_children", true, false],
+  [null, 0, false, "waiting_children", true, false],
+  ["suspended", 1, false, "waiting_bash", false, true],
+  ["suspended", 1, false, "waiting_user", false, false],
+  ["completed", 1, false, "terminal", false, false],
+] as const)("presents the correct wait (%s, children=%s, running=%s, activity=%s)", async (
+  status, children, running, activity, waitingForChildren, waitingForCommand,
+) => {
   const chat = createChat(vi.fn<Send>(), "parent-wait", status)
-  Object.assign(chat.currentChat!, { runningChildCount: children, isRunning: running })
+  Object.assign(chat.currentChat!, { runningChildCount: children, isRunning: running, activity })
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container)
   roots.push(root)
@@ -297,7 +304,8 @@ it.each([
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
-  expect(runtime.messageList?.delegationWaiting).toBe(expected)
+  expect(runtime.messageList?.delegationWaiting).toBe(waitingForChildren)
+  expect(runtime.messageList?.backgroundExecWaiting).toBe(waitingForCommand)
   expect(runtime.composer?.sending).toBe(running)
 })
 

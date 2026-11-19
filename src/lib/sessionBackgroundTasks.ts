@@ -123,7 +123,7 @@ export function sessionHasLiveWork(
 ): boolean {
   if (session.isRunning) return true
   if (session.activity && LIVE_ACTIVITY.has(session.activity)) return true
-  if ((session.runningChildCount ?? 0) > 0) return true
+  if (session.activity === undefined && (session.runningChildCount ?? 0) > 0) return true
   if (execution) {
     if (isBusyPhase(execution.phase)) return true
     if (execution.children.runningCount > 0) return true
