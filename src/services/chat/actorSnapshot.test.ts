@@ -42,6 +42,25 @@ describe("authorized actor snapshot DTO", () => {
     expect(node).not.toHaveProperty("host")
   })
 
+  it.each([1, 2] as const)("accepts v%i historical topology alongside current activation evidence", (version) => {
+    const source = version === 1 ? actorSnapshotFixture("root", 2) : actorSnapshotV2Fixture()
+    if (source.schema_version === 2) {
+      source.nodes.push({ ...source.nodes[1], actor_id: "actor-1", title: "Historical child" })
+    }
+    const historical = source.nodes[2]
+    Object.assign(historical, {
+      title: "Historical child", logical_state: null, placement_class: null, activation: null,
+      revision: { session_metadata_version: 3, actor_directory_revision: 2 },
+      ...(version === 2 ? { local_task: null } : {}),
+    })
+    const parsed = parseActorSnapshot(source, "root")
+    const tree = actorSnapshotTree(parsed)
+    expect(parsed.nodes[2]).toEqual(historical)
+    expect(tree.childrenById.root).toEqual(["actor-0", "actor-1"])
+    expect(tree.byId["actor-0"].lifecycle).toBe("running")
+    expect(tree.byId["actor-1"].lifecycle).toBe("unconfirmed")
+  })
+
   it.each([
     ["active", "reserved", "queued"],
     ["active", "running", "running"],
@@ -192,6 +211,8 @@ describe("authorized actor snapshot DTO", () => {
     ["unsafe revision", (source: any) => { source.nodes[0].revision.session_metadata_version = Number.MAX_SAFE_INTEGER + 1 }],
     ["invented zero directory", (source: any) => { source.nodes[0].revision.actor_directory_revision = 0 }],
     ["invented activation", (source: any) => { source.nodes[1].revision.actor_directory_revision = null }],
+    ["historical state claiming an activation", (source: any) => { source.nodes[1].logical_state = null }],
+    ["historical state claiming placement", (source: any) => { source.nodes[1].logical_state = null; source.nodes[1].activation = null }],
     ["unsupported lifecycle", (source: any) => { source.nodes[1].logical_state = "online" }],
     ["wrong placement enum", (source: any) => { source.nodes[1].placement_class = "container" }],
     ["too many nodes", (source: any) => { source.nodes = actorSnapshotFixture("root", 256).nodes }],
