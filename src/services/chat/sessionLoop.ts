@@ -4,6 +4,7 @@ const SPOKEN_INTERVAL = /\bevery\s+(?:[a-z]+(?:[- ][a-z]+)?\s+|[0-9]+\s+)?(?:sec
 const LEADING_INTERVAL = /^[0-9]+\s+(?:seconds?|minutes?|hours?|days?)\b/i
 const SPOKEN_CONTROL = /^(?:(?:please |(?:can|could|would|will) you (?:please )?)?(?:stop|cancel|disable|end|resume|restart|re-enable) (?:this |the |my )?(?:recurring )?(?:loop|scheduled task)(?: please)?|(?:麻烦|请|帮我)?(?:停止|取消|结束|关闭|停掉|恢复|继续|重新开启)(?:一下|这个|当前的?|刚才的|我的)?(?:循环|定时任务)(?:吧)?)$/i
 const SPOKEN_STATUS = /^(?:when (?:will|does) (?:this|the|my) loop (?:run next|next run)|这个循环下次什么时候运行)[。！!？?]?$/i
+const TRAILING_CONTROL_PUNCTUATION = /[.。!！?？]+$/
 const INTERVAL_SECONDS = { s: 1, m: 60, h: 3_600, d: 86_400 } as const
 const LOOP_STATES = ["scheduled", "paused", "stopped", "expired"] as const
 
@@ -38,12 +39,12 @@ export function parseSessionLoopCommand(text: string): SessionLoopCommand | "inv
   const firstSpace = args.search(/\s/)
   const token = firstSpace === -1 ? args : args.slice(0, firstSpace)
   const prompt = firstSpace === -1 ? "" : args.slice(firstSpace).trimStart()
-  const action = token.toLowerCase()
+  const action = token.replace(TRAILING_CONTROL_PUNCTUATION, "").toLowerCase()
   if (action === "status" || action === "stop" || action === "resume") {
     return prompt ? "invalid" : { action }
   }
   if (!FIXED_INTERVAL_SHAPE.test(token)) {
-    const control = args.replace(/[.。!！?？]+$/, "").trimEnd()
+    const control = args.replace(TRAILING_CONTROL_PUNCTUATION, "").trimEnd()
     if (SPOKEN_INTERVAL.test(args) || LEADING_INTERVAL.test(args)
       || SPOKEN_CONTROL.test(control) || SPOKEN_STATUS.test(args)) return "natural"
     return { action: "start_adaptive", prompt: args }

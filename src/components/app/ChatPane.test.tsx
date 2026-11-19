@@ -1988,6 +1988,9 @@ it("dispatches one compaction request and leaves a newer draft intact", async ()
 it.each([
   ["/loop 5m 检查部署\nKeep  spacing", { action: "start", interval_seconds: 300, prompt: "检查部署\nKeep  spacing" }],
   ["/LOOP STATUS", { action: "status" }],
+  ["/loop status?", { action: "status" }],
+  ["/loop stop！", { action: "stop" }],
+  ["/loop RESUME。", { action: "resume" }],
   ["/loop resume", { action: "resume" }],
 ] as const)("sends %s through the Session loop API", async (draft, request) => {
   const send = vi.fn<Send>()
@@ -2131,7 +2134,7 @@ it.each([
   expect(input.value).toBe(prompt)
 })
 
-it.each(["/loop", "/loop 30s check", "/loop 1.5h check", "/loop stop extra"])(
+it.each(["/loop", "/loop 30s check", "/loop 1.5h check", "/loop stop extra", "/loop stop! extra"])(
   "keeps malformed fixed syntax %s local even in a running session", async (command) => {
   const send = vi.fn<Send>()
   const input = await mount(send, "busy-loop-chat", true)
