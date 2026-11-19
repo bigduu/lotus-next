@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { expectComposerText } from "./support/composer.js"
 
-test("manages a loop from a busy chat without posting or queuing a turn", async ({ page }) => {
+test("manages a loop from a busy chat without posting or queuing a turn", async ({ page }, testInfo) => {
   const sessionId = "all-surface-session"
   const endpoint = `/api/v1/sessions/${sessionId}/loop`
   await page.addInitScript((id) => {
@@ -45,7 +45,7 @@ test("manages a loop from a busy chat without posting or queuing a turn", async 
       mode: command?.action === "start_adaptive" ? "adaptive" : "fixed",
       state: stopped ? "stopped" : "scheduled",
       next_fire_at: stopped ? null : "2026-11-19T13:00:00Z",
-      last_run_status: "failed",
+      last_run_status: command?.action === "start_adaptive" ? null : "failed",
     } } })
   })
 
@@ -85,6 +85,9 @@ test("manages a loop from a busy chat without posting or queuing a turn", async 
   await expect(page.getByText(/已安排自动间隔循环。 下次运行时间 .+/)).toBeVisible()
   await expectComposerText(input, "")
   await expect(activeTurnStop).toBeVisible()
+  const screenshot = testInfo.outputPath("adaptive-loop-notice.png")
+  await page.screenshot({ path: screenshot, animations: "disabled" })
+  await testInfo.attach("Adaptive loop scheduled during an active turn", { path: screenshot, contentType: "image/png" })
   expect(controls).toEqual([
     { action: "start", interval_seconds: 300, prompt: "检查部署" },
     { action: "start", interval_seconds: 300, prompt: "检查部署" },

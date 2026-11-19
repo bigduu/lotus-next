@@ -30,6 +30,22 @@ it("posts the typed command once to the session loop endpoint", async () => {
   expect(mock.getOnce).not.toHaveBeenCalled()
 })
 
+it("confirms a fixed start only from a scheduled fixed or legacy acknowledgement", async () => {
+  const command = { action: "start", interval_seconds: 300, prompt: "Check the build" } as const
+  const loop = { state: "scheduled", next_fire_at: "2026-11-20T00:00:00Z", last_run_status: null }
+  mock.postOnce
+    .mockResolvedValueOnce({ session_id: sessionId, loop: null })
+    .mockResolvedValueOnce({ session_id: sessionId, loop: { ...loop, mode: "adaptive" } })
+    .mockResolvedValueOnce({ session_id: sessionId, loop: { ...loop, mode: "fixed", state: "stopped" } })
+  const receipt = { session_id: sessionId, loop: { ...loop, mode: "fixed" } }
+  mock.postOnce.mockResolvedValueOnce(receipt)
+
+  for (let index = 0; index < 3; index++) {
+    await expect(agentClient.applySessionLoop(sessionId, command)).rejects.toThrow(/acknowledgement/)
+  }
+  await expect(agentClient.applySessionLoop(sessionId, command)).resolves.toBe(receipt)
+})
+
 it("confirms an automatic loop only from an adaptive start acknowledgement", async () => {
   const command = { action: "start_adaptive", prompt: "Check the build" } as const
   const loop = { state: "scheduled", next_fire_at: "2026-11-20T00:00:00Z", last_run_status: null }

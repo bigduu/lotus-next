@@ -37,7 +37,7 @@ import { useRootThinkingMode } from "@/hooks/useRootThinkingMode"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
-import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopMode, type SessionLoopState } from "@services/chat/sessionLoop"
+import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopMode, type SessionLoopState, type SessionLoopStatus } from "@services/chat/sessionLoop"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
@@ -133,6 +133,8 @@ type EnvironmentPreference = "auto" | "open" | "closed"
 const MESSAGE_WORKSPACE_WIDTH = 1152
 const ENVIRONMENT_OCCUPIED_WIDTH = 332
 const COMPACT_COMMAND = "/compact"
+
+type LoopCapabilityConfirmation = { sessionId: string; revision: number }
 
 function sessionLoopStatusText(state?: SessionLoopState, mode?: SessionLoopMode): string {
   switch (state) {
@@ -499,6 +501,7 @@ export function ChatPane({
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
   const loopDraft = isSessionLoopCommand(draft)
   const loopRequests = useRef(new Set<string>())
+  const latestSubmit = useRef<(confirmation?: LoopCapabilityConfirmation) => void>(() => {})
   const composerInputRef = useRef<ComposerInputHandle>(null)
   const submissionActiveRef = useRef(false)
   const [preparationPending, setPreparationPending] = useState(false)
@@ -913,11 +916,25 @@ export function ChatPane({
     }).finally(() => setCompactionPending(sessionId, false))
   }
 
-  const submitLoopCommand = (sessionId: string, command: SessionLoopCommand, revision: number) => {
+  const requestSessionLoop = (
+    sessionId: string,
+    command: SessionLoopCommand,
+    onConfirmed: (status: SessionLoopStatus) => void,
+  ) => {
     if (loopRequests.current.has(sessionId)) return
     loopRequests.current.add(sessionId)
     setMenusDismissed(true)
-    void agentClient.applySessionLoop(sessionId, command).then(({ loop }) => {
+    void agentClient.applySessionLoop(sessionId, command).then(onConfirmed, (error) => {
+      observeSessionExecutionConflict(sessionId, error)
+      if (!mountedRef.current) return
+      const unavailable = isApiError(error) && (error.status === 404 || error.status === 405)
+      showToast(uiText(unavailable ? "session_loop_backend_unavailable" : "session_loop_unconfirmed"),
+        "error", unavailable ? undefined : getErrorMessage(error))
+    }).finally(() => { loopRequests.current.delete(sessionId) })
+  }
+
+  const submitLoopCommand = (sessionId: string, command: SessionLoopCommand, revision: number) => {
+    requestSessionLoop(sessionId, command, ({ loop }) => {
       useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
       if (!mountedRef.current) return
       const details = []
@@ -931,13 +948,7 @@ export function ChatPane({
       }
       const summary = sessionLoopStatusText(loop?.state, loop?.mode)
       showToast(details.length ? `${summary} ${details.join(" · ")}` : summary)
-    }, (error) => {
-      observeSessionExecutionConflict(sessionId, error)
-      if (!mountedRef.current) return
-      const unavailable = isApiError(error) && (error.status === 404 || error.status === 405)
-      showToast(uiText(unavailable ? "session_loop_backend_unavailable" : "session_loop_unconfirmed"),
-        "error", unavailable ? undefined : getErrorMessage(error))
-    }).finally(() => { loopRequests.current.delete(sessionId) })
+    })
   }
 
   const loopSubmissionAllowed = (sessionId: string, startsLoop: boolean): boolean => {
@@ -963,7 +974,7 @@ export function ChatPane({
     return true
   }
 
-  const submit = () => {
+  const submit = (loopConfirmation?: LoopCapabilityConfirmation) => {
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
@@ -994,6 +1005,22 @@ export function ChatPane({
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
+    }
+    if (loopCommand === "natural" && currentSessionId) {
+      const sessionId = currentSessionId
+      const revision = draftAtSubmit?.contentRevision ?? 0
+      if (loopConfirmation?.sessionId !== sessionId || loopConfirmation.revision !== revision) {
+        const navigationVersion = getNavigationVersion?.()
+        requestSessionLoop(sessionId, { action: "status" }, () => {
+          if (!mountedRef.current || toastScopeRef.current !== toastScope
+            || getNavigationVersion?.() !== navigationVersion
+            || useAppStore.getState().inputStates[draftKey]?.contentRevision !== revision) return
+          // Recheck live composer and run eligibility after probing an older
+          // backend. The current draft is still the original slash request.
+          latestSubmit.current({ sessionId, revision })
+        })
+        return
+      }
     }
     const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
@@ -1233,6 +1260,7 @@ export function ChatPane({
     // grows and as the streaming→markdown swap relayouts.
     pinToBottom()
   }
+  latestSubmit.current = submit
 
   const pickSkill = (skill: SkillDefinition) => {
     changeTypedWorkflow(null)
@@ -1649,7 +1677,7 @@ export function ChatPane({
           outputRate={outputRate}
           onDraftChange={setDraft}
           executionBlocked={executionBlocked}
-          onSubmit={submit}
+          onSubmit={() => submit()}
           onStop={stopWithLiveFence}
           sending={currentlyRunning}
           queueMode={queue.mode}

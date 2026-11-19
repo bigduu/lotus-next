@@ -61,10 +61,12 @@ export function readSessionLoopStatus(value: unknown, sessionId: string, command
   const status = value as SessionLoopStatus | null
   if (status?.session_id === sessionId) {
     const loop = status.loop
+    const fixedStart = command.action === "start"
     const adaptiveStart = command.action === "start_adaptive"
-    if (loop === null && !adaptiveStart) return status
+    if (loop === null && !fixedStart && !adaptiveStart) return status
     if (loop && LOOP_STATES.includes(loop.state)
       && (loop.mode === undefined || loop.mode === "fixed" || loop.mode === "adaptive")
+      && (!fixedStart || (loop.mode !== "adaptive" && loop.state === "scheduled"))
       && (!adaptiveStart || (loop.mode === "adaptive" && loop.state === "scheduled"))
       && (loop.last_run_status === null || typeof loop.last_run_status === "string") && (
       loop.next_fire_at === null

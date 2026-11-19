@@ -2109,10 +2109,44 @@ it("sends natural /loop text intact as an ordinary turn in the open session", as
   const prompt = "/loop 每隔五分钟检查构建"
   change(input, prompt)
   await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", { action: "status" })
   expect(send).toHaveBeenCalledExactlyOnceWith(prompt, expect.any(Object))
-  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
   expect(runtime.queueSend).not.toHaveBeenCalled()
   expect(input.value).toBe("")
+})
+
+it("keeps a spoken /loop draft out of ordinary chat when the backend lacks loop support", async () => {
+  vi.mocked(agentClient.applySessionLoop).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "old-bamboo-chat")
+  const prompt = "/loop 每隔五分钟检查构建"
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("old-bamboo-chat", { action: "status" })
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("session_loop_backend_unavailable") })
+  expect(input.value).toBe(prompt)
+})
+
+it.each(["edit", "navigation", "running"])("rechecks %s after confirming a spoken /loop", async (changeDuringProbe) => {
+  const status = deferred<Awaited<ReturnType<typeof agentClient.applySessionLoop>>>()
+  vi.mocked(agentClient.applySessionLoop).mockReturnValueOnce(status.promise)
+  const send = vi.fn<Send>()
+  const pane = await mountWorktreeChat(send)
+  let navigationVersion = 0
+  await pane.render({ chat: createChat(send, "loop-chat"), getNavigationVersion: () => navigationVersion })
+  const prompt = "/loop 每隔五分钟检查构建"
+  act(() => write("loop-chat", prompt))
+  act(() => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", { action: "status" })
+  if (changeDuringProbe === "edit") act(() => write("loop-chat", "newer draft"))
+  if (changeDuringProbe === "navigation") navigationVersion += 2
+  if (changeDuringProbe === "running") await pane.render({ chat: { ...createChat(send, "loop-chat"), sending: true, streaming: "" } })
+  await act(async () => status.resolve({ session_id: "loop-chat", loop: null }))
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.state.inputStates["loop-chat"]?.content).toBe(changeDuringProbe === "edit" ? "newer draft" : prompt)
 })
 
 it.each([
