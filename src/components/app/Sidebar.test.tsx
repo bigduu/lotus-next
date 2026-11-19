@@ -425,7 +425,7 @@ describe("Sidebar project grouping", () => {
     expect(props.onNewChat).toHaveBeenCalledWith("p2")
   })
 
-  it("folds a project group's sessions beyond seven behind an expand button", () => {
+  it("remembers an expanded or folded project session preview across remounts", () => {
     render({
       chats: Array.from({ length: 10 }, (_, index) =>
         chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
@@ -436,21 +436,35 @@ describe("Sidebar project grouping", () => {
     expect(container.textContent).toContain("展开 3 个")
     act(() => button("展开 3 个").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(10)
+    act(() => root.unmount())
+    root = createRoot(container)
+    render()
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(10)
+    render({ currentSessionId: "p-session-8" })
     expect(button("收起")).toBeDefined()
     act(() => button("收起").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+    expect(row("p-session-8")).toBeNull()
+    act(() => root.unmount())
+    root = createRoot(container)
+    render()
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+    expect(button("展开 3 个")).toBeDefined()
   })
 
   it("reveals all matching sessions during search in project mode", () => {
     render({
       chats: Array.from({ length: 9 }, (_, index) =>
-        chat(`day-${index}-s`, 5, { title: `s${index}`, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
+        chat(`p-task-${index}`, 5, { title: `Investigation ${index}`, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
     act(() => buttonByLabel("切换为项目视图").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
-    search("s")
+    search("investigation")
     expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
     expect(container.textContent).not.toContain("展开")
+    search("  TASK-8  ")
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(1)
+    expect(row("p-task-8")).not.toBeNull()
   })
 
   it("auto-reveals an active session beyond the project preview fold", () => {

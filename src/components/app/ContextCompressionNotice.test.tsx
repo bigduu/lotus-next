@@ -1,9 +1,11 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { afterEach, beforeEach, expect, it } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { changeLocale } from "@shared/i18n"
 import { uiText } from "@shared/i18n/ui"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
+import { resetBackendFeatures, setBackendFeatures } from "@/lib/backendFeatures"
+import { agentClient } from "@services/chat/AgentService"
 import { ContextCompressionNotice } from "./ContextCompressionNotice"
 
 let root: Root
@@ -16,16 +18,20 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   host.remove()
+  resetBackendFeatures()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 })
-const render = async (feedback?: ContextCompressionFeedback | null) => {
-  await act(async () => root.render(<ContextCompressionNotice feedback={feedback} />))
+const render = async (feedback?: ContextCompressionFeedback | null, sessionId?: string) => {
+  await act(async () => root.render(<ContextCompressionNotice feedback={feedback} sessionId={sessionId} />))
 }
 const cases: { feedback: ContextCompressionFeedback; key: Parameters<typeof uiText>[0] }[] = [
   { feedback: { status: "running" }, key: "context_compression_notice_running" },
   { feedback: { status: "completed", awaitingUsage: true }, key: "context_compression_notice_completed_waiting" },
   { feedback: { status: "completed", awaitingUsage: false }, key: "context_compression_notice_completed" },
   { feedback: { status: "failed", reason: "candidate_plan" }, key: "context_compression_notice_failed_candidate" },
+  { feedback: { status: "failed", reason: "empty_summary" }, key: "context_compression_notice_empty_summary" },
   { feedback: { status: "failed", reason: "postcondition" }, key: "context_compression_notice_failed_postcondition" },
   { feedback: { status: "failed", reason: "other" }, key: "context_compression_notice_failed" },
   { feedback: { status: "deferred", reason: "tool_protocol" }, key: "context_compression_notice_deferred_tool" },
@@ -50,6 +56,7 @@ it.each(["en-US", "zh-CN"] as const)("announces distinct safe outcome messages i
     messages.push(notice.textContent!)
   }
   expect(new Set(messages).size).toBe(cases.length)
+  expect(uiText("context_compression_notice_empty_summary")).toContain(locale === "zh-CN" ? "推理强度" : "lower the reasoning effort")
   expect(uiText("context_compression_notice_failed_postcondition")).toContain(locale === "zh-CN" ? "未采用" : "not used")
   expect(uiText("context_compression_notice_completed_waiting")).toContain(locale === "zh-CN" ? "下一次提示词" : "next prompt")
   expect(uiText("context_compression_notice_completed")).toContain(locale === "zh-CN" ? "指令、工具和近期消息" : "instructions, tools, and recent messages")
@@ -110,4 +117,67 @@ it("never includes diagnostic suffixes, summary bodies, model names or paths fro
     for (const value of Object.values(extra)) expect(host.textContent).not.toContain(value)
     expect(host.querySelector("script")).toBeNull()
   }
+})
+
+it("uses durable readback to clear a stale running event without promoting the configured strategy", async () => {
+  await changeLocale("en-US")
+  setBackendFeatures(["session_compaction_status"])
+  vi.spyOn(agentClient, "getSessionCompactionStatus").mockResolvedValue({
+    session_id: "chat",
+    configured_strategy: "message_summary",
+    active: null,
+    applied: { id: "previous", strategy: "summary" },
+  })
+  await render({ status: "running" }, "chat")
+  expect(host.querySelector("svg")).toBeNull()
+  expect(host.textContent).toContain(uiText("compact_status_applied", {
+    strategy: uiText("context_full_summary_label"),
+  }))
+  expect(host.textContent).toContain(uiText("compact_status_pending_strategy", {
+    strategy: uiText("context_message_summary_label"),
+  }))
+})
+
+it("rediscovers a running compaction after transient errors on reopen", async () => {
+  await changeLocale("en-US")
+  vi.useFakeTimers()
+  setBackendFeatures(["session_compaction_status"])
+  const readback = vi.spyOn(agentClient, "getSessionCompactionStatus")
+    .mockRejectedValueOnce(new Error("temporary failure"))
+    .mockRejectedValueOnce(new Error("temporary failure"))
+    .mockResolvedValue({
+      session_id: "chat",
+      configured_strategy: "message_summary",
+      active: { id: "attempt", strategy: "message_summary", phase: "summarizing", part: 2, total: 3, elapsed_ms: 8000 },
+      applied: null,
+    })
+
+  await render(undefined, "chat")
+  expect(readback).toHaveBeenCalledTimes(1)
+  expect(host.textContent).toBe("")
+
+  await act(async () => vi.advanceTimersByTimeAsync(4_000))
+  expect(readback).toHaveBeenCalledTimes(3)
+  expect(host.textContent).toContain(uiText("compact_status_summarizing", { part: 2, total: 3 }))
+})
+
+it("bounds background discovery retries and reads again on focus", async () => {
+  vi.useFakeTimers()
+  setBackendFeatures(["session_compaction_status"])
+  const readback = vi.spyOn(agentClient, "getSessionCompactionStatus").mockRejectedValue(new Error("offline"))
+
+  await render(undefined, "chat")
+  await act(async () => vi.advanceTimersByTimeAsync(20_000))
+  expect(readback).toHaveBeenCalledTimes(3)
+
+  readback.mockResolvedValue({
+    session_id: "chat",
+    configured_strategy: "message_summary",
+    active: null,
+    applied: { id: "attempt", strategy: "message_summary" },
+  })
+  await act(async () => { window.dispatchEvent(new Event("focus")) })
+  expect(host.textContent).toContain(uiText("compact_status_applied", {
+    strategy: uiText("context_message_summary_label"),
+  }))
 })

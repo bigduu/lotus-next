@@ -1,4 +1,4 @@
-import type { TicketScope, TicketSnapshot, WorkView } from "./types"
+import type { TicketScope, TicketSnapshot, WorkView } from "./types.js"
 
 export function ticketSnapshot(seq = 10): TicketSnapshot {
   const stamp = { seq, authority_epoch: 1, commit: "commit-" + seq }

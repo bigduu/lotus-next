@@ -2,6 +2,7 @@ import { ChatItem, Message } from "@shared/types/chat";
 import type { HistoryResponse, ReasoningEffort, SessionSummary } from "@services/chat/AgentService";
 import type { ConversationClearFailure } from "@services/chat/conversationClear";
 import type { ManagedSessionSelection } from "@services/supervisorScope/managedSessions";
+import type { ProviderModelRef } from "@shared/types/providerModelRef";
 
 export interface ConversationClearState {
   busy: boolean;
@@ -48,7 +49,8 @@ export interface ChatSlice {
   addChat: (chat: Omit<ChatItem, "id">) => Promise<string>;
   selectSession: (sessionId: string | null) => void;
   deleteSession: (sessionId: string) => Promise<void>;
-  getSessionNavigationRevision: () => number;
+  /** Current deletion revision, optionally scoped to the sessions a navigation uses. */
+  getSessionNavigationRevision: (sessionIds?: Iterable<string>) => number;
   invalidateSessionNavigation: (sessionId?: string) => void;
   deleteSessions: (sessionIds: string[]) => Promise<void>;
   updateSession: (
@@ -57,7 +59,7 @@ export interface ChatSlice {
     options?: { skipBackendPatch?: boolean },
   ) => void;
   /** Persist a model choice before showing it as the session's active model. */
-  changeSessionModel: (sessionId: string, model: string) => Promise<void>;
+  changeSessionModel: (sessionId: string, model: ProviderModelRef) => Promise<void>;
   /** Persist a session reasoning override; null restores inherited/Auto mode. */
   changeSessionReasoningEffort: (
     sessionId: string,

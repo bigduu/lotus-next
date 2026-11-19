@@ -99,6 +99,12 @@ const ADVANCED_ROLES = [
     get description() { return uiText("used_for_code_review_and_pr_analysis_falls_back_to_fast_5273eb65") },
     required: false,
   },
+  {
+    key: "work_review",
+    get label() { return uiText("work_review_model_purpose") },
+    get description() { return uiText("work_review_model_description") },
+    required: false,
+  },
 ] as const satisfies readonly ModelRoleDefinition[]
 
 const ROLES: readonly ModelRoleDefinition[] = [...PRIMARY_ROLES, ...ADVANCED_ROLES]

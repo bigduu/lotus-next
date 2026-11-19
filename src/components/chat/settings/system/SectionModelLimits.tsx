@@ -19,6 +19,7 @@ import { ConfirmDialog } from "./ConfirmDialog"
 import { StatusLine } from "./StatusLine"
 import {
   FALLBACK_DEFAULT,
+  UNLIMITED_OUTPUT,
   buildLimitRows,
   formatTokenCount,
   nextModelLimitRowId,
@@ -99,6 +100,7 @@ function EditableValueCombobox({
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const [filtering, setFiltering] = useState(false)
+  const inputValue = options.find((option) => option.value === value)?.label ?? value
   const filtered = useMemo(() => {
     if (!filtering) return options
     const query = value.trim().toLocaleLowerCase()
@@ -154,7 +156,7 @@ function EditableValueCombobox({
             }
             autoComplete="off"
             inputMode={inputMode}
-            value={value}
+            value={inputValue}
             placeholder={placeholder}
             disabled={disabled}
             className={cn("h-8 text-xs", options.length > 0 && !disabled && "pr-8")}
@@ -267,6 +269,9 @@ export function SectionModelLimits({
   )
   const catalogModels = useProviderStore((state) => state.catalog?.models)
   const [globalDefault, setGlobalDefault] = useState<GlobalDefault>(FALLBACK_DEFAULT)
+  const [supportsUnlimitedOutput, setSupportsUnlimitedOutput] = useState(
+    () => config.model_limits?.some((row) => row.unlimited_output === true) ?? false,
+  )
   const [usedModels, setUsedModels] = useState<string[]>(getUsedModels)
   // Seed once: another section save must not clobber in-progress edits.
   const [rows, setRows] = useState<LimitRowDraft[]>(() =>
@@ -284,6 +289,7 @@ export function SectionModelLimits({
       .then((response) => {
         if (cancelled) return
         const defaults = parseGlobalDefault(response)
+        if (response.supports_unlimited_output === true) setSupportsUnlimitedOutput(true)
         setGlobalDefault(defaults)
         setRows((current) =>
           current.map((row) =>
@@ -302,6 +308,17 @@ export function SectionModelLimits({
       cancelled = true
     }
   }, [])
+
+  const unlimitedLabel = uiText("unlimited_model_output")
+  const unlimitedDescription = uiText("unlimited_model_output_description")
+  const outputPresets = useMemo(() => (
+    supportsUnlimitedOutput
+      ? [
+          { value: UNLIMITED_OUTPUT, label: unlimitedLabel, description: unlimitedDescription },
+          ...MAX_OUTPUT_PRESETS,
+        ]
+      : MAX_OUTPUT_PRESETS
+  ), [supportsUnlimitedOutput, unlimitedLabel, unlimitedDescription])
 
   const knownModelOptions = useMemo<ComboOption[]>(() => {
     const ordered: string[] = []
@@ -328,6 +345,7 @@ export function SectionModelLimits({
     add(defaults?.planning?.model)
     add(defaults?.search?.model)
     add(defaults?.code_review?.model)
+    add(defaults?.work_review?.model)
     add(defaults?.sub_agent?.model)
     Object.values(defaults?.subagent_models ?? {}).forEach((reference) => add(reference.model))
 
@@ -379,7 +397,7 @@ export function SectionModelLimits({
   }
 
   const save = async () => {
-    const result = validateLimitRows(rows)
+    const result = validateLimitRows(rows, supportsUnlimitedOutput)
     if ("error" in result) {
       setMsg({ kind: "error", text: result.error })
       return
@@ -481,10 +499,12 @@ export function SectionModelLimits({
                 <td>
                   <EditableValueCombobox
                     ariaLabel={uiText("maximum_output_5e8920ca", { v0: row.model_pattern || uiText("new_model") })}
-                    value={row.max_output_tokens}
+                    value={row.max_output_tokens ?? ""}
                     onChange={(value) => updateRow(row.id, { max_output_tokens: value })}
-                    options={MAX_OUTPUT_PRESETS}
-                    placeholder={uiText("e_g_16k_or_32k_95dea87b")}
+                    options={outputPresets}
+                    placeholder={uiText(row.max_output_tokens === null
+                      ? "automatic_model_output"
+                      : "e_g_16k_or_32k_95dea87b")}
                     disabled={!row.customized}
                     inputMode="decimal"
                   />

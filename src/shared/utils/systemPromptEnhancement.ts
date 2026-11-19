@@ -1,10 +1,6 @@
 import { getMermaidEnhancementPrompt, isMermaidEnhancementEnabled } from "./mermaidUtils";
 import { getTaskEnhancementPrompt, isTaskEnhancementEnabled } from "./taskEnhancementUtils";
 import { getOSInfoEnhancementPrompt } from "./osInfoUtils";
-import {
-  getCopilotConclusionWithOptionsEnhancementPrompt,
-  isCopilotConclusionWithOptionsEnhancementEnabled,
-} from "./copilotConclusionWithOptionsEnhancementUtils";
 
 const SYSTEM_PROMPT_ENHANCEMENT_KEY = "bamboo_system_prompt_enhancement";
 
@@ -68,7 +64,7 @@ export const setSystemPromptEnhancement = (value: string): void => {
   }
 };
 
-export const getSystemPromptEnhancementPipeline = (currentProvider?: string): string[] => {
+export const getSystemPromptEnhancementPipeline = (): string[] => {
   const pipeline: string[] = [];
 
   // OS info enhancement is ALWAYS included first (user cannot disable)
@@ -89,16 +85,11 @@ export const getSystemPromptEnhancementPipeline = (currentProvider?: string): st
     pipeline.push(getTaskEnhancementPrompt().trim());
   }
 
-  const normalizedProvider = (currentProvider ?? "").trim().toLowerCase();
-  if (normalizedProvider === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled()) {
-    pipeline.push(getCopilotConclusionWithOptionsEnhancementPrompt().trim());
-  }
-
   return pipeline;
 };
 
-export const getSystemPromptEnhancementText = (currentProvider?: string): string => {
-  return joinPromptSegments(getSystemPromptEnhancementPipeline(currentProvider));
+export const getSystemPromptEnhancementText = (): string => {
+  return joinPromptSegments(getSystemPromptEnhancementPipeline());
 };
 
 export const buildEnhancedSystemPrompt = (basePrompt: string, enhancement?: string): string => {
@@ -108,11 +99,10 @@ export const buildEnhancedSystemPrompt = (basePrompt: string, enhancement?: stri
 export const getEffectiveSystemPrompt = (
   basePrompt: string,
   workspacePath?: string,
-  currentProvider?: string,
 ): string => {
   const enhanced = buildEnhancedSystemPrompt(
     basePrompt,
-    getSystemPromptEnhancementText(currentProvider),
+    getSystemPromptEnhancementText(),
   );
   return appendPromptSegment(enhanced, buildWorkspaceContextSegment(workspacePath));
 };

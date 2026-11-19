@@ -1,14 +1,18 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
-test("an existing session saves its model before the next request", async ({ page }, testInfo) => {
+test("an existing session saves a different provider before the next request", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop composer workflow")
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const observation = await installArtifactRuntime(page, standaloneScenario, [], {
     providerInstancesResponse: {
       default_provider_instance_id: "fixture-provider",
-      instances: [{ id: "fixture-provider", type: "openai", label: "Fixture provider", enabled: true,
-        config: { model: "fixture-model", runtime_models: ["fixture-model", "grok-4.7"] } }],
+      instances: [
+        { id: "fixture-provider", type: "openai", label: "Fixture provider", enabled: true,
+          config: { model: "fixture-model", runtime_models: ["fixture-model", "grok-4.7"] } },
+        { id: "other-provider", type: "openai", label: "Alternate relay", enabled: true,
+          config: { runtime_models: ["grok-4.7"] } },
+      ],
       defaults: { chat: { provider: "fixture-provider", model: "fixture-model" } },
       features: { provider_model_ref: true },
     },
@@ -23,15 +27,15 @@ test("an existing session saves its model before the next request", async ({ pag
     last_activity_at: "2026-09-25T00:00:00Z", message_count: 0, has_attachments: false,
     is_running: false, last_run_status: "completed", permission_mode: "default",
   }
-  const descriptor = (model: string) => ({
-    reference: { provider: "fixture-provider", model }, display_name: model,
-    provider_display_name: "Fixture provider",
+  const descriptor = (model: string, provider = "fixture-provider", label = "Fixture provider") => ({
+    reference: { provider, model }, display_name: model,
+    provider_display_name: label,
     capabilities: { supports_tools: true, supports_vision: false, supports_reasoning: true },
   })
-  const models = [descriptor("fixture-model"), descriptor("grok-4.7")]
-  await page.route("**/api/v1/bamboo/provider-catalog/fetch-models", (route) =>
-    route.fulfill({ json: { fetched: [{ provider: "fixture-provider", models }] } }),
-  )
+  const models = [
+    descriptor("fixture-model"), descriptor("grok-4.7"),
+    descriptor("grok-4.7", "other-provider", "Alternate relay"),
+  ]
   await page.route("**/api/v1/bamboo/provider-catalog", (route) =>
     route.fulfill({ json: { providers: [], models } }),
   )
@@ -46,7 +50,7 @@ test("an existing session saves its model before the next request", async ({ pag
       patches.push(route.request().postDataJSON() as Record<string, unknown>)
       await patchGate
       session.model = "grok-4.7"
-      session.model_ref = { provider: "fixture-provider", model: "grok-4.7" }
+      session.model_ref = { provider: "other-provider", model: "grok-4.7" }
     }
     await route.fulfill({ json: { session }, headers: { ETag: '"2"' } })
   })
@@ -67,15 +71,23 @@ test("an existing session saves its model before the next request", async ({ pag
     await expect(currentModel).toBeVisible()
     await currentModel.click()
     await page.getByTestId("model-picker-model").click()
-    await page.getByRole("searchbox", { name: "搜索模型" }).fill("grok")
-    await page.locator("[data-model-option]").filter({ hasText: "grok-4.7" }).click()
+    const search = page.getByRole("searchbox", { name: "搜索模型" })
+    await search.fill("grok")
+    await expect(page.getByRole("button", { name: "grok-4.7", exact: true })).toHaveCount(2)
+    await testInfo.attach("models-grouped-by-provider", {
+      body: await page.locator(".model-effort-panel").screenshot({ animations: "disabled" }), contentType: "image/png",
+    })
+    await search.fill("alternate")
+    await expect(page.getByRole("group", { name: "Fixture provider" })).toHaveCount(0)
+    await page.getByRole("group", { name: "Alternate relay" })
+      .getByRole("button", { name: "grok-4.7", exact: true }).click()
 
     await expect.poll(() => patches.length).toBe(1)
     expect(patches[0]).toMatchObject({
-      model: "grok-4.7", provider: "fixture-provider",
-      model_ref: { provider: "fixture-provider", model: "grok-4.7" },
+      model: "grok-4.7", provider: "other-provider",
+      model_ref: { provider: "other-provider", model: "grok-4.7" },
     })
-    await expect(currentModel).toContainText("fixture-model")
+    await expect(currentModel.getByText("fixture-model", { exact: true })).toBeVisible()
     await currentModel.click()
     await expect(page.getByTestId("model-picker-model")).toBeDisabled()
     await page.keyboard.press("Escape")
@@ -83,17 +95,17 @@ test("an existing session saves its model before the next request", async ({ pag
 
     releasePatch()
     await expect(currentModel).toBeEnabled()
-    await expect(currentModel).toContainText("grok-4.7")
+    await expect(currentModel.getByText("grok-4.7", { exact: true })).toBeVisible()
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("Continue with the selected model")
     await page.getByRole("button", { name: "发送消息", exact: true }).click()
     await expect.poll(() => chatRequests.length).toBe(1)
     await expect.poll(() => executeRequests.length).toBe(1)
     expect(chatRequests[0]).toMatchObject({
       session_id: session.id, model: "grok-4.7",
-      model_ref: { provider: "fixture-provider", model: "grok-4.7" },
+      model_ref: { provider: "other-provider", model: "grok-4.7" },
     })
     expect(executeRequests[0]).toMatchObject({
-      model: "grok-4.7", model_ref: { provider: "fixture-provider", model: "grok-4.7" },
+      model: "grok-4.7", model_ref: { provider: "other-provider", model: "grok-4.7" },
     })
     await testInfo.attach("session-model-selected", {
       body: await page.screenshot(), contentType: "image/png",

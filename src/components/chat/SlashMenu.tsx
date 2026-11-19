@@ -10,15 +10,14 @@ import { useMenuKeyboardNav } from "./useMenuKeyboardNav"
 type Entry =
   | { kind: "typed"; id: string; name: string; description: string; entry: WorkflowCatalogEntry }
   | { kind: "catalog"; id: string; name: string; description: string }
-  | { kind: "goal"; id: string; name: string; description: string }
+  | { kind: "command"; id: string; name: string; description: string; action: () => void; unavailable?: string | null }
   | { kind: "skill"; id: string; name: string; description: string; skill: SkillDefinition }
   | { kind: "workflow"; id: string; name: string; description: string; command: CommandItem }
 
 /**
  * Slash-command picker shown above the composer when the draft starts with "/".
- * Lists skills AND workflows filtered by the text after the slash; picking one
- * (click or ↑↓ + Enter/Tab) attaches it to the next send — a skill via
- * selected_skill_ids, a workflow by expanding its content into the message.
+ * Built-in commands run directly. Picking a skill or workflow instead
+ * prepares it for the next send.
  * Escape dismisses the menu without touching the draft.
  */
 export function SlashMenu({
@@ -28,6 +27,8 @@ export function SlashMenu({
   onPick,
   onPickWorkflow,
   onPickGoal,
+  onPickCompact,
+  compactUnavailable,
   onPickCatalog,
   onDismiss,
   inputId,
@@ -45,6 +46,8 @@ export function SlashMenu({
   onPick: (skill: SkillDefinition) => void
   onPickWorkflow: (command: CommandItem) => void
   onPickGoal?: () => void
+  onPickCompact?: () => void
+  compactUnavailable?: string | null
   onPickCatalog?: () => void
   onDismiss?: () => void
 }) {
@@ -57,8 +60,14 @@ export function SlashMenu({
     (!q || matches(uiText("catalog_workflows_b3caa7b0"), uiText("choose_an_executable_workflow_from_the_bamboo_catalog_b7020d54")) || "workflow".includes(q))
     ? [{ kind: "catalog", id: "builtin-catalog", name: uiText("catalog_workflows_b3caa7b0"), description: uiText("open_the_workflow_catalog_to_choose_a_workflow_and_argu_4359980e") }]
     : []
+  const compactDescription = uiText("compact_context_command")
+  const compactEntry: Entry | null = onPickCompact && matches("compact", compactDescription)
+    ? { kind: "command", id: "builtin-compact", name: "compact", description: compactDescription,
+        action: onPickCompact, unavailable: compactUnavailable }
+    : null
   const entries: Entry[] = [
-    ...(onPickGoal && matches("goal", uiText("set_session_goal_98fa0b0f")) ? [{ kind: "goal" as const, id: "builtin-goal", name: "goal", description: uiText("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8") }] : []),
+    ...(onPickGoal && matches("goal", uiText("set_session_goal_98fa0b0f")) ? [{ kind: "command" as const, id: "builtin-goal", name: "goal", description: uiText("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8"), action: onPickGoal }] : []),
+    ...(compactEntry ? [compactEntry] : []),
     ...skills
       .filter((s) => matches(s.name, s.description))
       .map((s) => ({
@@ -82,9 +91,12 @@ export function SlashMenu({
     .filter((entry) => !q || matches(entry.name, entry.description) || entry.id.toLowerCase().includes(q) || entry.source.includes(q))
     .map((entry) => ({ kind: "typed", id: `catalog:${entry.source}:${entry.id}:${entry.revision}`, name: entry.name, description: entry.description, entry }))
   entries.push(...typedEntries, ...catalogEntry)
+  // The exact built-in command is reserved, including when it is unavailable.
+  const shownEntries = q === "compact" && compactEntry ? [compactEntry] : entries
   const disabledReason = (entry: Entry) => entry.kind === "typed"
-    ? workflowUnavailableReason(entry.entry) || (catalogDisabled ? uiText("workflow_selection_is_currently_unavailable_94a186a4") : null) : null
-  const selectable = entries.filter((entry) => !disabledReason(entry))
+    ? workflowUnavailableReason(entry.entry) || (catalogDisabled ? uiText("workflow_selection_is_currently_unavailable_94a186a4") : null)
+    : entry.kind === "command" ? entry.unavailable : null
+  const selectable = shownEntries.filter((entry) => !disabledReason(entry))
 
   const pick = (e: Entry) => {
     if (disabledReason(e)) return
@@ -92,7 +104,7 @@ export function SlashMenu({
     else if (e.kind === "skill") onPick(e.skill)
     else if (e.kind === "workflow") onPickWorkflow(e.command)
     else if (e.kind === "catalog") onPickCatalog?.()
-    else onPickGoal?.()
+    else e.action()
   }
 
   const active = useMenuKeyboardNav(
@@ -115,10 +127,10 @@ export function SlashMenu({
     <div className="mx-auto mb-2 w-full max-w-6xl overflow-hidden rounded-xl border bg-popover shadow-lg">
       <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">{uiText("commands_skills_workflows_1abfc720")}</div>
       <div className="max-h-64 overflow-y-auto p-1">
-        {entries.map((e, i) => (
+        {shownEntries.map((e, i) => (
           <div key={e.id}>
-          {(i === 0 || entries[i - 1].kind !== e.kind) && <div className="px-3 pb-1 pt-2 text-[10px] text-muted-foreground">
-            {e.kind === "typed" ? uiText("catalog_workflow_this_message_4bad8776") : e.kind === "workflow" ? uiText("text_expansion_workflow_8362c042") : e.kind === "skill" ? uiText("skills_99aea2f9") : e.kind === "goal" ? uiText("command_6ee4a9a8") : uiText("catalog_management_8dd26df6")}
+          {(i === 0 || shownEntries[i - 1].kind !== e.kind) && <div className="px-3 pb-1 pt-2 text-[10px] text-muted-foreground">
+            {e.kind === "typed" ? uiText("catalog_workflow_this_message_4bad8776") : e.kind === "workflow" ? uiText("text_expansion_workflow_8362c042") : e.kind === "skill" ? uiText("skills_99aea2f9") : e.kind === "command" ? uiText("command_6ee4a9a8") : uiText("catalog_management_8dd26df6")}
           </div>}
           <button
             ref={selectable[active]?.id === e.id ? activeItemRef : undefined}
@@ -140,7 +152,7 @@ export function SlashMenu({
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {e.kind === "typed" ? `${e.entry.source} · r${e.entry.revision}` : e.kind === "goal" ? uiText("command_6ee4a9a8") : e.kind === "catalog" ? uiText("catalog_selection_a07f95c4") : e.kind === "workflow" ? uiText("text_expansion_96adb387") : uiText("skills_99aea2f9")}
+                {e.kind === "typed" ? `${e.entry.source} · r${e.entry.revision}` : e.kind === "command" ? uiText("command_6ee4a9a8") : e.kind === "catalog" ? uiText("catalog_selection_a07f95c4") : e.kind === "workflow" ? uiText("text_expansion_96adb387") : uiText("skills_99aea2f9")}
               </span>
             </span>
             {(disabledReason(e) || e.description) ? (

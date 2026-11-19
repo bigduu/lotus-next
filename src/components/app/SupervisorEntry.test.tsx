@@ -1,9 +1,14 @@
 import { act } from "react"
 import { createRoot } from "react-dom/client"
-import { expect, it } from "vitest"
+import { expect, it, vi } from "vitest"
 import { uiText } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { SupervisorEntry } from "./SupervisorEntry"
+
+vi.mock("@/components/chat/SupervisorManagedSessions", () => ({
+  SupervisorManagedSessionsDialog: () => { throw new Error("fixture crash") },
+  SupervisorManagedSessionsPanel: () => { throw new Error("fixture crash") },
+}))
 
 const chat = (overrides: Partial<ChatItem>): ChatItem =>
   ({ id: "supervisor", title: "Supervisor", ...overrides }) as ChatItem
@@ -56,4 +61,23 @@ it("announces failure and unread independently instead of letting one replace th
   expect(described.some((text) => text.includes(uiText("unread_messages_519491f4")))).toBe(true)
   expect(described.some((text) => text.includes(uiText("session_last_run_failed_hint")))).toBe(true)
   view.cleanup()
+})
+
+it("reports a crashed managed sessions dialog as a render failure", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {})
+  const view = render(chat({}))
+  try {
+    await act(async () => view.host.querySelector("button")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    ))
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find((node) => node.textContent?.trim() === uiText("supervisor_sessions_manage"))!.click())
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain(uiText("supervisor_sessions_render_failed"))
+    expect(dialog.textContent).not.toContain(uiText("supervisor_sessions_unavailable"))
+    expect(dialog.textContent).not.toContain(uiText("supervisor_sessions_read_failed"))
+  } finally {
+    view.cleanup()
+    error.mockRestore()
+  }
 })

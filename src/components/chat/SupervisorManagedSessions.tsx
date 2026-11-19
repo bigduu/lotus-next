@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import { useSupervisorManagedSessions, type ManagedSessionsDependencies } from "@/hooks/useSupervisorManagedSessions"
 import type { ManagedSessionSelection, ManagedSessionsResponse } from "@services/supervisorScope/managedSessions"
+import type { ScopeProblem } from "@services/supervisorScope/types"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { SupervisorProjectScopeDialog } from "./SupervisorProjectScopeDialog"
@@ -21,14 +22,17 @@ function usePagingFocus(loading: boolean, cursor: string | number | null) {
 }
 const statusKeys = { current_user: "supervisor_sessions_current_user_status", authorized: "supervisor_sessions_authorized", reconfirm: "supervisor_sessions_reconfirm", detached: "supervisor_sessions_detached", available: "supervisor_sessions_available", unavailable: "supervisor_sessions_unverified" } as const
 const problemKeys = { unsupported: "supervisor_sessions_unsupported", missing: "supervisor_sessions_missing", authentication: "supervisor_scope_access_required", forbidden: "supervisor_scope_forbidden",
-  conflict: "supervisor_sessions_conflict", unavailable: "supervisor_sessions_unavailable", invalid: "supervisor_sessions_invalid", error: "supervisor_sessions_unavailable" } as const
+  conflict: "supervisor_sessions_conflict", unavailable: "supervisor_sessions_unavailable", invalid: "supervisor_sessions_invalid", error: "supervisor_sessions_read_failed" } as const
+/** A vanished Project is a stable state, not a transient read failure; other error-kind reads stay generic. */
+const problemTextKey = (problem: ScopeProblem) => problem.kind === "error" && problem.code === "project_unavailable"
+  ? "supervisor_sessions_project_unavailable" : problemKeys[problem.kind]
 const noticeKeys = { saved: "supervisor_sessions_saved", unknown: "supervisor_sessions_unknown", conflict: "supervisor_sessions_conflict", rejected: "supervisor_sessions_rejected" } as const
 
 function StateMessages({ controller }: { controller: Controller }) {
   const t = useUiText()
   return <>
     {controller.loading || !controller.observation && !controller.problem ? <p role="status" className="text-xs text-muted-foreground">{t("supervisor_sessions_loading")}</p> : null}
-    {controller.problem ? <p role="alert" className="text-xs text-destructive">{t(problemKeys[controller.problem.kind])}</p> : null}
+    {controller.problem ? <p role="alert" className="text-xs text-destructive">{t(problemTextKey(controller.problem))}</p> : null}
     {controller.notice ? <p role={controller.notice === "saved" ? "status" : "alert"} className="text-xs text-muted-foreground">{t(noticeKeys[controller.notice])}</p> : null}
     {controller.catalogError ? <p role="alert" className="text-xs text-muted-foreground">{t("supervisor_sessions_catalog_failed")}</p> : null}
     {controller.observation && !controller.observation.owner_authorization.available ? <p role="status" className="text-xs text-muted-foreground">{t("supervisor_scope_access_required")}</p> : null}

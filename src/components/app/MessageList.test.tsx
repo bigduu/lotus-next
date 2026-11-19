@@ -156,6 +156,46 @@ it.each([false, true])("keeps completed compressed=%s assistant bodies outside c
     expect(body).not.toBeNull(); expect(body?.closest("[data-process-activity]")).toBeNull()
   }
 })
+it("keeps recorded deliveries visible without offering regeneration of their shared user turn", async () => {
+  const at = "2026-11-08T06:50:00Z"
+  const raw = [
+    { id: "c-user", role: "user" as const, content: "Dispatch C", created_at: at },
+    { id: "c-dispatch", role: "assistant" as const, phase: "final_answer", content: "C dispatched", created_at: at },
+    { id: "recover-call", role: "assistant" as const, phase: "commentary", content: "Checking why C stopped", created_at: at,
+      tool_calls: [{ id: "inspect-c", type: "function", function: { name: "session_history", arguments: "{}" } }] },
+    { id: "recover-result", role: "tool" as const, content: "C failed on startup", tool_call_id: "inspect-c", created_at: at },
+    { id: "c-recovery", role: "assistant" as const, phase: "final_answer", content: "C restarted", created_at: at },
+    { id: "b-delivery", role: "assistant" as const, phase: "final_answer", content: "B delivered", created_at: at },
+    { id: "a-delivery", role: "assistant" as const, phase: "final_answer", content: "A delivered", created_at: at },
+    { id: "c-delivery", role: "assistant" as const, phase: "final_answer", content: "C delivered", created_at: at },
+  ]
+  const container = renderMessageList(mapHistoryMessagesToUi("supervisor", raw), true)
+  const replies = [...container.querySelectorAll("[data-assistant-content]")]
+    .filter((body) => !body.closest("[data-turn-collapse]"))
+    .map((body) => body.getAttribute("data-assistant-content"))
+  expect(replies).toEqual(["C dispatched", "C restarted", "B delivered", "A delivered", "C delivered"])
+  const recovery = container.querySelector('[data-turn-collapse="collapsed-turn-c-recovery"]')
+  expect(recovery?.querySelector("[data-turn-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+  for (const id of ["c-dispatch", "c-delivery"]) {
+    const row = container.querySelector(`[data-message-actions="${id}"]`)!
+    expect(row.querySelector(`[aria-label="${uiText("fork_from_here_28321cb9")}"]`)).not.toBeNull()
+    const trigger = row.querySelector('[aria-haspopup="menu"]')!
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+    const menu = document.querySelector('[role="menu"]')!
+    expect(menu.textContent).toContain(uiText("delete_2f9daa82"))
+    expect(menu.textContent).not.toContain(uiText("regenerate_3221a042"))
+    await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  }
+})
+it("offers regeneration for the ordinary latest reply", async () => {
+  const container = renderMessageList([
+    { id: "user", role: "user", content: "Question", createdAt: "" },
+    { id: "answer", role: "assistant", type: "text", phase: "final_answer", content: "Reply", createdAt: "" },
+  ], true)
+  const trigger = container.querySelector('[data-message-actions="answer"] [aria-haspopup="menu"]')!
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+  expect(document.querySelector('[role="menu"]')?.textContent).toContain(uiText("regenerate_3221a042"))
+})
 it("renders a completed handoff as body without offering server actions for its local ID", () => {
   const messages = projectCompletedAnswers([{ id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" }], [{
     sessionId: "synthetic", operationId: 1, text: "Synthetic handoff body", acknowledgedMessageId: "synthetic-user",
@@ -201,6 +241,35 @@ it("renders message-only previews without transcript actions", () => {
 })
 
 describe("MessageList assistant streaming ownership", () => {
+  it("shows a yielded parent's child wait without thinking and restores real model activity on resume", () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    mountedRoots.push(root)
+    const props: Parameters<typeof MessageList>[0] & { delegationWaiting?: boolean } = {
+      scrollRef: createRef<HTMLDivElement>(), contentRef: createRef<HTMLDivElement>(),
+      onScroll: vi.fn(), messages: [], mergedSubAgents: {}, sending: true,
+      latestRunFinished: false, streaming: "", streamingActive: false,
+      streamingReasoning: null, liveSegments: [], streamStatus: null,
+      pendingUserText: null, forking: false, delegationWaiting: true,
+      onSelectSubAgent: vi.fn(), onPreviewImage: vi.fn(), onRegenerate: vi.fn(),
+      onFork: vi.fn(), onDelete: vi.fn(), onEditMessage: vi.fn(),
+    }
+    const render = (updates: Partial<typeof props> = {}) => act(() => {
+      root.render(<MessageList {...props} {...updates} />)
+    })
+    render()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(uiText("process_waiting_for_subagents"))
+    expect(container.querySelector("[data-process-shimmer]")).toBeNull()
+    expect(container.querySelector("[data-process-toggle]")).toBeNull()
+
+    render({ delegationWaiting: false, streamingActive: true })
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(uiText("thinking_64088d8c"))
+    expect(container.querySelector("[data-process-shimmer]")).not.toBeNull()
+
+    render({ delegationWaiting: false, sending: false, streaming: null, latestRunFinished: true })
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
+
   it("keeps the optimistic user visible while admission has no inspectable activity", () => {
     const container = document.createElement("div")
     document.body.appendChild(container)
@@ -905,6 +974,75 @@ describe("subagent transcript provenance", () => {
     expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("collapsed-turn-answer")
   })
 
+})
+
+
+describe("cleared transcript subagent history", () => {
+  const systemOnly: Message[] = [
+    { id: "retained-system", role: "system", content: "cleared conversation", createdAt: "2026-11-02T00:00:00Z" },
+  ]
+  const children = { "child-1": { status: "completed" }, "child-2": { status: "error" } }
+  const renderCleared = (messages: Message[], agents: Record<string, { status: string }>) => {
+    const host = document.createElement("div"); document.body.appendChild(host)
+    const root = createRoot(host); mountedRoots.push(root)
+    act(() => {
+      root.render(
+        <MessageList
+          scrollRef={createRef()} contentRef={createRef()} onScroll={vi.fn()}
+          messages={messages} mergedSubAgents={agents} sending={false}
+          latestRunFinished={true} streaming={null} streamingActive={false}
+          streamingReasoning={null} liveSegments={[]} streamStatus={null}
+          pendingUserText={null} forking={false}
+          onSelectSubAgent={vi.fn()} onPreviewImage={vi.fn()} onRegenerate={vi.fn()}
+          onFork={vi.fn()} onDelete={vi.fn()} onEditMessage={vi.fn()}
+        />,
+      )
+    })
+    return host
+  }
+  it("folds cleared-transcript children into one collapsed history line that expands to the cards", () => {
+    const host = renderCleared(systemOnly, children)
+    // Collapsed by default: one line, no stacked cards, empty state still visible.
+    const entry = host.querySelector<HTMLElement>("[data-cleared-subagents]")
+    expect(entry).not.toBeNull()
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    const toggle = entry!.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    expect(entry!.querySelector("[data-cleared-subagents-brief]")?.textContent)
+      .toBe(uiText("cleared_session_subagents", { count: 2 }))
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+
+    // Expanding reveals the same SubAgents card list (shared renderer, no copy).
+    act(() => toggle.click())
+    expect(host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.getAttribute("aria-expanded")).toBe("true")
+    const group = host.querySelector("[data-subagent-group]")
+    expect(group).not.toBeNull()
+    expect([...group!.querySelectorAll("[data-subagent-id]")].map((node) => node.getAttribute("data-subagent-id")))
+      .toEqual(["child-1", "child-2"])
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+
+    act(() => host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.click())
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    expect(host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.getAttribute("aria-expanded")).toBe("false")
+  })
+  it("keeps the cleared fold off an empty transcript without children", () => {
+    const host = renderCleared([], {})
+    expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+  })
+  it("keeps unplaced cards directly rendered while normal messages exist", () => {
+    const host = renderCleared([
+      { id: "user-1", role: "user", content: "question", createdAt: "2026-11-02T00:00:00Z" },
+      { id: "assistant-1", role: "assistant", type: "text", content: "answer", createdAt: "2026-11-02T00:00:01Z" },
+    ], children)
+    expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
+    const group = host.querySelector("[data-subagent-group]")
+    expect(group).not.toBeNull()
+    expect([...group!.querySelectorAll("[data-subagent-id]")].map((node) => node.getAttribute("data-subagent-id")))
+      .toEqual(["child-1", "child-2"])
+    expect(host.textContent).not.toContain(uiText("start_a_new_conversation_bab6ab18"))
+  })
 })
 
 

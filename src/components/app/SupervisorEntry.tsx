@@ -130,7 +130,7 @@ export function SupervisorEntry({ chat, active, unread, busy, running, disabled,
     </div>
   </Dialog>
     {sessionsOpen ? <ErrorBoundary name="Supervisor sessions" fallback={() => <Dialog open onOpenChange={setSessionsOpen}><DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); scopeTrigger.current?.focus() }}>
-      <DialogHeader><DialogTitle>{uiText("supervisor_sessions_title")}</DialogTitle><DialogDescription>{uiText("supervisor_sessions_unavailable")}</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{uiText("supervisor_sessions_title")}</DialogTitle><DialogDescription>{uiText("supervisor_sessions_render_failed")}</DialogDescription></DialogHeader>
     </DialogContent></Dialog>}><Suspense fallback={<Dialog open onOpenChange={setSessionsOpen}><DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); scopeTrigger.current?.focus() }}>
       <DialogHeader><DialogTitle>{uiText("supervisor_sessions_title")}</DialogTitle><DialogDescription>{uiText("supervisor_sessions_loading")}</DialogDescription></DialogHeader>
     </DialogContent></Dialog>}><ManagedSessionsDialog open onOpenChange={setSessionsOpen} returnFocus={() => scopeTrigger.current?.focus()} /></Suspense></ErrorBoundary> : null}

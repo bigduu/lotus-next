@@ -2,11 +2,13 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import i18n from "@shared/i18n"
 import {
   Fragment,
+  memo,
   useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from "react"
 import {
@@ -36,7 +38,7 @@ import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
 import { RuntimeNoticeCard, BackgroundExecWaitHint } from "@/components/chat/RuntimeNoticeCard"
 import { runtimeNoticeFromMetadata } from "@/components/chat/runtimeNotices"
-import { collectSubAgentOrigins, placeSubAgents } from "./subAgentGroups"
+import { collectSubAgentOrigins, indexSubAgentOrigins, placeSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
@@ -92,6 +94,11 @@ function messageText(m: Message): string {
   return ""
 }
 
+function messageRuntimeNotice(m: Message, text = messageText(m)) {
+  if (m.role !== "assistant") return null
+  return runtimeNoticeFromMetadata("metadata" in m ? m.metadata : undefined, text)
+}
+
 function isToolMessage(m: Message): boolean {
   const t = (m as { type?: string }).type
   return t === "tool_call" || t === "tool_result"
@@ -128,12 +135,70 @@ type TurnCollapseItem = {
 type RenderItem = { kind: "msg"; m: Message; streaming?: boolean } | ProcessItem
 type DisplayItem = RenderItem | TurnCollapseItem
 
-type HistoryEntry = {
+function subAgentToolGroups(items: readonly RenderItem[]) {
+  return items.flatMap((item) => {
+    if (item.kind !== "process") return []
+    const messages = item.parts.flatMap((part) => part.kind === "tools" ? part.items : [])
+    return messages.length ? [{ key: item.key, messages }] : []
+  })
+}
+
+type MessageHistoryEntry = {
   key: string
   item: DisplayItem
   itemIndex: number
 }
+type HistoryEntry = MessageHistoryEntry | { key: string; attachment: TimelineAttachment; item?: never }
 
+export type TimelineAttachment = {
+  key: string
+  afterMessageId?: string | null
+  node: ReactNode
+}
+
+function placeTimelineAttachments(history: MessageHistoryEntry[], attachments: readonly TimelineAttachment[]): {
+  entries: HistoryEntry[]
+  tail: TimelineAttachment[]
+} {
+  const byMessage = new Map<string, string>()
+  if (attachments.some((attachment) => typeof attachment.afterMessageId === "string")) {
+    for (const { key, item } of history) {
+      const members = item.kind === "collapsedTurn" ? item.items : [item]
+      for (const member of members) {
+        if (member.kind === "msg") byMessage.set(member.m.id, key)
+        else for (const part of member.parts) {
+          if (part.kind === "tools") for (const message of part.items) byMessage.set(message.id, key)
+        }
+      }
+    }
+  }
+  const after = new Map<string, TimelineAttachment[]>()
+  const tail: TimelineAttachment[] = []
+  for (const attachment of attachments) {
+    const id = attachment.afterMessageId
+    const key = id ? byMessage.get(id) : undefined
+    if (key) {
+      const group = after.get(key) ?? []
+      group.push(attachment)
+      after.set(key, group)
+    } else {
+      tail.push(attachment)
+    }
+  }
+  // An attachment has its own measured virtual row. Growing a message row
+  // underneath the cached history offsets can make later rows cover the card.
+  const entries = after.size ? history.flatMap<HistoryEntry>((entry) => [
+    entry,
+    ...(after.get(entry.key) ?? []).map((attachment) => ({ key: `timeline-${attachment.key}`, attachment })),
+  ]) : history
+  return { entries, tail }
+}
+
+function renderTimelineAttachments(attachments: readonly TimelineAttachment[]) {
+  return attachments.map(({ key, node }) => <Fragment key={key}>{node}</Fragment>)
+}
+
+const EMPTY_TIMELINE_ATTACHMENTS: readonly TimelineAttachment[] = []
 const HISTORY_ROW_GAP = 8
 const INITIAL_VIRTUAL_RECT = { width: 1024, height: 720 }
 
@@ -261,8 +326,14 @@ function formatElapsedDuration(durationMs: number): string | null {
 
 function isFinalAssistantResponse(item: RenderItem): boolean {
   if (item.kind !== "msg" || item.m.role !== "assistant") return false
+  if (item.m.type === "text" && item.m.phase === "commentary") return false
   const images = (item.m as { images?: unknown[] }).images
   return Boolean(messageText(item.m).trim() || images?.length)
+}
+
+function isRecordedFinal(item: DisplayItem): boolean {
+  return item.kind === "msg" && item.m.role === "assistant" && item.m.type === "text"
+    && item.m.phase === "final_answer"
 }
 
 function buildActionableAssistantIndexes(
@@ -280,11 +351,30 @@ function buildActionableAssistantIndexes(
       continue
     }
     if (item.kind === "collapsedTurn") continue
-    if (isFinalAssistantResponse(item)) candidate = index
+    if (isRecordedFinal(item)) {
+      indexes.add(index)
+      candidate = null
+    } else if (isFinalAssistantResponse(item)) {
+      candidate = index
+    }
   }
 
   if (includeTrailingAssistant && candidate !== null) indexes.add(candidate)
   return indexes
+}
+
+// Regenerate truncates after the latest user message. A turn with several
+// independently recorded answers has no single supported regeneration target.
+function findRegenerableAssistantIndex(items: DisplayItem[]): number {
+  const tailIndex = items.length - 1
+  const tail = items[tailIndex]
+  if (tail?.kind !== "msg" || !isFinalAssistantResponse(tail)) return -1
+  for (let index = tailIndex - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item.kind === "msg" && item.m.role === "user") return tailIndex
+    if (isRecordedFinal(item)) return -1
+  }
+  return -1
 }
 
 /** Fold a completed turn's middle behind one divider. Runs only for turns whose
@@ -294,60 +384,55 @@ function buildDisplayItems(
   items: RenderItem[],
   collapseLastTurn: boolean,
 ): DisplayItem[] {
-  const turns: { start: number; end: number; summary: number | null }[] = []
-  let start = 0
-  const isUserBoundary = (item: RenderItem) => item.kind === "msg" && item.m.role === "user"
+  const collapses = new Map<number, TurnCollapseItem>()
+  let boundary = 0
   for (let index = 0; index <= items.length; index += 1) {
-    // A new user message (or the transcript end) closes the current turn.
-    if (index < items.length && !isUserBoundary(items[index])) continue
-    let summary: number | null = null
-    // The conclusion must be the turn's last item; a trailing process has no
-    // recorded summary yet and the whole turn stays in reading flow.
-    for (let scan = index - 1; scan > start; scan -= 1) {
-      if (isFinalAssistantResponse(items[scan])) { summary = scan; break }
-      if (items[scan].kind === "process") break
-    }
-    turns.push({ start, end: index, summary })
-    start = index
-  }
-  const excluded = new Set<number>()
-  const collapses: TurnCollapseItem[] = []
-  for (let t = 0; t < turns.length; t += 1) {
-    const { start: boundary, end, summary } = turns[t]
-    if (summary == null || summary !== end - 1) continue
-    if (!collapseLastTurn && t === turns.length - 1) continue
+    const next = items[index]
+    const nextIsUser = next?.kind === "msg" && next.m.role === "user"
+    const summary = index - 1
+    const conclusion = items[summary]
+    // Background wait notices can carry a final phase in persisted history.
+    const runtimeNotice = conclusion?.kind === "msg" && messageRuntimeNotice(conclusion.m)
+    const recorded = summary >= 0 && !runtimeNotice && isRecordedFinal(conclusion)
+    if (next && !nextIsUser && !recorded) continue
+
+    const first = boundary + 1
+    boundary = nextIsUser ? index : summary
+    // A committed answer closes its own reply even if an internal wake
+    // started another reply without adding a visible user message.
+    if (summary < first || runtimeNotice || !isFinalAssistantResponse(conclusion)) continue
+    if (!next && !collapseLastTurn && !recorded) continue
     const indexes: number[] = []
-    for (let index = boundary + 1; index < summary; index += 1) indexes.push(index)
-    if (!indexes.length || !indexes.some((index) => items[index].kind === "process")) continue
+    for (let itemIndex = first; itemIndex < summary; itemIndex += 1) indexes.push(itemIndex)
+    if (!indexes.some((itemIndex) => items[itemIndex].kind === "process")) continue
     const timestamps = indexes.flatMap((index) => {
       const item = items[index]
       return item.kind === "msg" ? [item.m.createdAt] : item.parts.flatMap((part) =>
         part.kind === "tools" ? part.items.map((message) => message.createdAt) : [part.createdAt])
     })
-    const first = timestamps.map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
-    const last = [...timestamps].reverse().map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
-    for (const index of indexes) excluded.add(index)
-    collapses.push({
+    const startedAt = timestamps.map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
+    const finishedAt = [...timestamps].reverse().map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
+    collapses.set(first, {
       kind: "collapsedTurn",
-      key: `collapsed-turn-${items[summary].kind === "msg" ? items[summary].m.id : boundary}`,
+      key: `collapsed-turn-${items[summary].kind === "msg" ? items[summary].m.id : first}`,
       finalId: items[summary].kind === "msg" ? items[summary].m.id : "",
       items: indexes.map((index) => items[index]),
       indexes,
-      toolCalls: toolCallCount(items.slice(boundary + 1, summary)),
-      startedAt: first ?? null,
-      finishedAt: last ?? null,
+      toolCalls: toolCallCount(items.slice(first, summary)),
+      startedAt: startedAt ?? null,
+      finishedAt: finishedAt ?? null,
     })
   }
-  if (!collapses.length) return items
+  if (!collapses.size) return items
   const out: DisplayItem[] = []
   for (let index = 0; index < items.length; index += 1) {
-    const collapse = collapses.find((c) => c.indexes[0] === index)
+    const collapse = collapses.get(index)
     if (collapse) {
       out.push(collapse)
       index = collapse.indexes[collapse.indexes.length - 1]
       continue
     }
-    if (!excluded.has(index)) out.push(items[index])
+    out.push(items[index])
   }
   return out
 }
@@ -370,7 +455,7 @@ function renderItemKey(item: RenderItem, index: number): string {
   return item.key || `activity-${index}`
 }
 
-function buildHistoryEntries(items: DisplayItem[]): HistoryEntry[] {
+function buildHistoryEntries(items: DisplayItem[]): MessageHistoryEntry[] {
   return items.map((item, itemIndex) => {
     if (item.kind === "collapsedTurn") return { key: item.key, item, itemIndex }
     return { key: renderItemKey(item, itemIndex), item, itemIndex }
@@ -384,6 +469,7 @@ function estimateHistoryEntrySize(
   turnOpen: boolean,
 ): number {
   if (!entry) return 120
+  if ("attachment" in entry) return 172
   if (entry.item.kind === "collapsedTurn") return turnOpen ? 96 + entry.item.items.length * 40 : 24
   if (entry.item.kind === "process") return processOpen ? 96 + entry.item.parts.length * (toolOpen ? 160 : 40) : 36
   return entry.item.m.role === "user" ? 112 : 220
@@ -434,7 +520,7 @@ function MessageActions({
   forking: boolean
   onEdit: () => void
   executionBlocked: boolean
-  onRegenerate: () => void
+  onRegenerate?: () => void
   onFork: () => void
   onDelete: () => void
 }) {
@@ -511,12 +597,12 @@ function MessageActions({
             <DropdownMenuItem disabled={executionBlocked} onClick={onEdit}>
               <Pencil />
               {uiText("edit_and_resend_f857c444")}</DropdownMenuItem>
-          ) : (
+          ) : onRegenerate ? (
             <DropdownMenuItem disabled={sending || executionBlocked} onClick={onRegenerate}>
               <RotateCcw />
               {uiText("regenerate_3221a042")}</DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
+          ) : null}
+          {isUser || onRegenerate ? <DropdownMenuSeparator /> : null}
           <DropdownMenuItem variant="destructive" onClick={onDelete}>
             <Trash2 />
             {uiText("delete_2f9daa82")}</DropdownMenuItem>
@@ -526,11 +612,12 @@ function MessageActions({
   )
 }
 
-export function MessageList({
+export const MessageList = memo(function MessageList({
   scrollRef,
   contentRef,
   onScroll,
   messages,
+  timelineAttachments = EMPTY_TIMELINE_ATTACHMENTS,
   mergedSubAgents,
   subAgentError,
   onRefreshSubAgents,
@@ -542,6 +629,7 @@ export function MessageList({
   liveSegments,
   streamStatus,
   backgroundExecWaiting = false,
+  delegationWaiting = false,
   pendingUserText,
   pendingUserImages = [],
   pendingUserMessages,
@@ -560,6 +648,7 @@ export function MessageList({
   contentRef: Ref<HTMLDivElement>
   onScroll: () => void
   messages: Message[]
+  timelineAttachments?: readonly TimelineAttachment[]
   mergedSubAgents: Record<string, ChildProgress>
   subAgentError?: string | null
   onRefreshSubAgents?: () => void
@@ -574,6 +663,8 @@ export function MessageList({
   /** Execution-gated background-wait state from the chat pane: true only while
    *  the run is actually suspended waiting on a monitored background command. */
   backgroundExecWaiting?: boolean
+  /** A confirmed suspended parent with executing children, supplied by the pane. */
+  delegationWaiting?: boolean
   pendingUserText: string | null
   pendingUserImages?: readonly { url?: string; base64?: string; type?: string }[]
   pendingUserMessages?: readonly PendingUserMessageView[]
@@ -598,21 +689,26 @@ export function MessageList({
     ? [{ operationId: 0, text: pendingUserText ?? "", images: pendingUserImages }] : [])
   const hasPendingUser = pendingUsers.length > 0
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
+  const activityStatus = delegationWaiting ? uiText("process_waiting_for_subagents") : streamStatus
   const liveItems = useMemo(
-    () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, streamStatus),
-    [liveSegments, sending, streamStatus, streaming, streamingActive, streamingReasoning],
+    () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, activityStatus),
+    [activityStatus, liveSegments, sending, streaming, streamingActive, streamingReasoning],
   )
   // The turn still being streamed stays fully visible; every finished turn with
   // a recorded conclusion folds its middle into one divider.
-  const displayItems = useMemo(
-    () => buildDisplayItems(renderItems, !(sending || liveItems.length > 0)),
-    [renderItems, sending, liveItems.length],
-  )
+  const foldLatestTurn = !sending && liveItems.length === 0
+  const displayItems = useMemo(() => buildDisplayItems(renderItems, foldLatestTurn), [renderItems, foldLatestTurn])
   const actionableAssistantIndexes = useMemo(
     () => buildActionableAssistantIndexes(displayItems, !sending),
     [displayItems, sending],
   )
-  const historyEntries = useMemo(() => buildHistoryEntries(displayItems), [displayItems])
+  const regenerableAssistantIndex = useMemo(
+    () => findRegenerableAssistantIndex(displayItems),
+    [displayItems],
+  )
+  const messageEntries = useMemo(() => buildHistoryEntries(displayItems), [displayItems])
+  const { entries: historyEntries, tail: timelineTail } = useMemo(
+    () => placeTimelineAttachments(messageEntries, timelineAttachments), [messageEntries, timelineAttachments])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
   const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
   // A finished turn's divider key → expanded. Expanded turns stay expanded while
@@ -620,6 +716,8 @@ export function MessageList({
   const [openTurnKeys, setOpenTurnKeys] = useState<Set<string>>(() => new Set())
   // Keep child choices above virtual rows and the live/history handoff.
   const [openSubAgentIds, setOpenSubAgentIds] = useState<Set<string>>(() => new Set())
+  // Cleared-transcript history entry: one collapsed line, presentation state only.
+  const [clearedSubAgentsOpen, setClearedSubAgentsOpen] = useState(false)
   const historyEntriesRef = useRef(historyEntries)
   const openProcessKeysRef = useRef(openProcessKeys)
   const openToolKeysRef = useRef(openToolKeys)
@@ -644,7 +742,7 @@ export function MessageList({
     return estimateHistoryEntrySize(
       entry,
       Boolean(entry && openProcessKeysRef.current.has(entry.key)),
-      entry?.item.kind === "process" && entry.item.parts.some((part) =>
+      entry?.item?.kind === "process" && entry.item.parts.some((part) =>
         part.kind === "tools" && openToolKeysRef.current.has(`tools-${part.items[0]?.id}`),
       ),
       Boolean(entry && openTurnKeysRef.current.has(entry.key)),
@@ -680,13 +778,12 @@ export function MessageList({
   // a 724px report now renders and every later row lands inside it. Whenever
   // the entry sequence changes in any way (identity at a position, or count),
   // re-measure every mounted row.
-  const previousEntryKeysRef = useRef(historyEntries.map((entry) => entry.key))
+  const previousEntryKeysRef = useRef<string[] | null>(null)
   useLayoutEffect(() => {
     const previous = previousEntryKeysRef.current
     previousEntryKeysRef.current = historyEntries.map((entry) => entry.key)
-    const changed = previous.length !== historyEntries.length
-      || previous.some((key, index) => key !== historyEntries[index]?.key)
-    if (!changed) return
+    if (!previous || previous.length === historyEntries.length
+      && previous.every((key, index) => key === historyEntries[index]?.key)) return
     const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>("[data-history-entry-key]")
     for (const row of rows ?? []) {
       const index = virtualizer.indexFromElement(row)
@@ -745,19 +842,24 @@ export function MessageList({
     return ref
   }
 
-  const subAgentCandidates = useMemo(() => {
-    renderProbe.count("subagent.origins.memo")
-    return collectSubAgentOrigins([...renderItems, ...liveItems]
-      .flatMap((item) => item.kind === "process" ? [{ key: item.key,
-        messages: item.parts.flatMap((part) => part.kind === "tools" ? part.items : []),
-      }] : []))
-  }, [renderItems, liveItems])
+  const historyOrigins = useMemo(() => indexSubAgentOrigins(subAgentToolGroups(renderItems)), [renderItems])
+  const subAgentCandidates = useMemo(
+    () => collectSubAgentOrigins(subAgentToolGroups(liveItems), historyOrigins),
+    [liveItems, historyOrigins],
+  )
   // Placement is a cheap step over the transcript-derived candidates, so child
   // status churn re-associates cards without re-scanning or re-parsing history.
   const subAgentGroups = useMemo(() => {
     renderProbe.count("subagent.place")
     return placeSubAgents(subAgentCandidates, mergedSubAgents)
   }, [subAgentCandidates, mergedSubAgents])
+
+  // A cleared transcript keeps at most one retained system message; with no
+  // streaming, pending user or live segments there is no visible body at all.
+  // Unplaced children then lose every provenance match, so fold them behind a
+  // single history entry line instead of stacking the cards above the fold.
+  const onlySystemMessages = useMemo(() => messages.every((message) => message.role === "system"), [messages])
+  const transcriptCleared = onlySystemMessages && !streaming && !hasPendingUser && liveSegments.length === 0
 
   const renderImages = (imgs: readonly { url?: string; base64?: string; type?: string }[] | undefined) => imgs?.length ? (
     <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -909,9 +1011,7 @@ export function MessageList({
     const isUser = m.role === "user"
     // Runtime-authored notices (e.g. background exec wait) render as a
     // localized status card instead of their raw English machine text.
-    const runtimeNotice = !isUser
-      ? runtimeNoticeFromMetadata((m as { metadata?: Record<string, unknown> }).metadata, text)
-      : null
+    const runtimeNotice = messageRuntimeNotice(m, text)
     const showMessageActions = !readOnly && !options?.live && !isCompletedAnswerHandoff(m) && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length) return null
@@ -958,7 +1058,7 @@ export function MessageList({
         sending={sending}
         forking={forking}
         onEdit={() => setEditingMsg({ id: m.id, text })}
-        onRegenerate={onRegenerate}
+        onRegenerate={idx === regenerableAssistantIndex ? onRegenerate : undefined}
         executionBlocked={executionBlocked}
         onFork={() => onFork(m.id)}
         onDelete={() => onDelete(m.id)}
@@ -998,7 +1098,8 @@ export function MessageList({
     )
   }
 
-  const renderHistoryEntry = (entry: HistoryEntry) => renderItem(entry.item, entry.itemIndex)
+  const renderHistoryEntry = (entry: HistoryEntry) => "attachment" in entry
+    ? entry.attachment.node : renderItem(entry.item, entry.itemIndex)
 
   const virtualItems = virtualizer.getVirtualItems()
 
@@ -1016,8 +1117,33 @@ export function MessageList({
         {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
           {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
         </div> : null}
-        <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
-        {messages.length === 0 && !streaming && !hasPendingUser && liveSegments.length === 0 && (
+        {transcriptCleared ? (
+          // Cleared transcript: provenance is gone, so unplaced children become
+          // one collapsed history entry. Presentation state only — the cards
+          // themselves still render through the unchanged SubAgents contract.
+          Object.keys(subAgentGroups.unplaced).length > 0 ? (
+            <div data-cleared-subagents>
+              <button
+                type="button"
+                data-cleared-subagents-toggle
+                aria-expanded={clearedSubAgentsOpen}
+                onClick={() => setClearedSubAgentsOpen(!clearedSubAgentsOpen)}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", clearedSubAgentsOpen && "rotate-90")} />
+                <span data-cleared-subagents-brief className="min-w-0 truncate">
+                  {uiText("cleared_session_subagents", { count: Object.keys(subAgentGroups.unplaced).length })}
+                </span>
+              </button>
+              {clearedSubAgentsOpen ? (
+                <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+              ) : null}
+            </div>
+          ) : null
+        ) : (
+          <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+        )}
+        {transcriptCleared && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <BrandMark className="size-10 text-primary" />
             <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
@@ -1042,7 +1168,7 @@ export function MessageList({
                   className={cn(
                     "absolute left-0 top-0 w-full",
                     virtualItem.index > 0 &&
-                      entry.item.kind === "msg" &&
+                      entry.item?.kind === "msg" &&
                       entry.item.m.role === "user" &&
                       "pt-2",
                   )}
@@ -1070,6 +1196,7 @@ export function MessageList({
             {renderItem(item, index, { live: true })}
           </Fragment>
         ))}
+        {renderTimelineAttachments(timelineTail)}
 
         {/* While the chat pane confirms a live background-exec wait (suspended
             run + wait notice still latest), keep a visible running hint instead
@@ -1081,4 +1208,4 @@ export function MessageList({
       </div>
     </div>
   )
-}
+})

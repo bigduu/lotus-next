@@ -59,8 +59,6 @@ describe("provider instance authority", () => {
     expect(state.getFastModel()).toBe("gpt-5.6-luna");
     expect(state.getVisionModel()).toBe("gpt-5.6-sol");
     expect(state.isProviderModelRefEnabled()).toBe(true);
-    expect(state.getProviderType("work")).toBe("openai");
-    expect(state.getProviderType("openai")).toBeUndefined();
   });
 
   it("loads Bamboo null role defaults as ready and retains exact first-instance admission", async () => {
@@ -78,8 +76,8 @@ describe("provider instance authority", () => {
     expect(state.providerSnapshot?.defaults).toBeUndefined();
     expect(state.providerRepairIssues).toEqual([]);
     expect(state.catalog).toBeNull();
-    expect(resolveNewChatModelRef(state.providerSnapshot, "vendor:custom-name")).toEqual({ provider: "work", model: "vendor:custom-name" });
-    expect(state.getProviderType("openai")).toBeUndefined();
+    const selected = { provider: "work", model: "vendor:custom-name" };
+    expect(resolveNewChatModelRef(state.providerSnapshot, selected)).toEqual(selected);
     expect(state.isProviderModelRefEnabled()).toBe(false);
   });
 

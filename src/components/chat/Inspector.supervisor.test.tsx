@@ -2,6 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, expect, it, vi } from "vitest"
 import { useAppStore } from "@shared/store/appStore"
+import { createInitialExecutionState } from "@shared/store/appStore/slices/executionStateSlice/reducer"
 import { agentClient, type SessionSummary } from "@services/chat/AgentService"
 import { managedSessionsClient } from "@services/supervisorScope/managedSessions"
 import { currentUserManagedSessionsFixture } from "@services/supervisorScope/testFixtures"
@@ -227,4 +228,66 @@ it("refreshes a stale Child Project through its Root tree even when the child co
     ? { ...chat, kind: "child", rootSessionId: target.root_session_id, parentSessionId: target.parent_session_id, createdAt: Date.parse(target.created_at), createdAtExact: target.created_at, config: { ...chat.config, projectId: "p1" } } : chat) })))
   await act(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(true) })
   expect(stage).toHaveBeenCalledExactlyOnceWith(detail); expect(useAppStore.getState().currentSessionId).toBe("target")
+})
+
+it.each([
+  { event: "unrelated deletion", opens: true },
+  { event: "target deletion", opens: false },
+  { event: "root deletion", opens: false },
+  { event: "cold sibling deletion", opens: false },
+  { event: "account-wide invalidation", opens: false },
+  { event: "unchanged execution summary", opens: true },
+  { event: "new execution", opens: false },
+])("handles $event while staging a managed Child tree", async ({ event, opens }) => {
+  await navigation()
+  const fixture = currentUserManagedSessionsFixture()
+  const child = fixture.sessions[1]!.current_user_target!
+  const root = summaryFor({ ...child, session_id: child.root_session_id, kind: "root", parent_session_id: null })
+  const detail = summaryFor(child)
+  const sibling = { ...detail, id: "cold-sibling" }
+  const staged = deferred<SessionSummary[]>()
+  const stage = vi.fn(() => staged.promise)
+  const load = stagedHistory()
+  const execution = createInitialExecutionState(root.id)
+  vi.spyOn(managedSessionsClient, "read").mockResolvedValue(fixture)
+  vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: detail })
+  act(() => useAppStore.setState({
+    stageSessionForNavigation: stage,
+    loadChatHistory: load,
+    executionBySession: { [root.id]: execution },
+  }))
+
+  let opening!: Promise<boolean>
+  await act(async () => {
+    opening = managed.select!(child.session_id, { target: child, supervisor: fixture.scope.supervisor })
+    await vi.waitFor(() => expect(stage).toHaveBeenCalledOnce())
+  })
+  act(() => {
+    if (event === "unchanged execution summary" || event === "new execution") {
+      useAppStore.setState({
+        executionBySession: {
+          [root.id]: {
+            ...execution,
+            ...(event === "new execution" ? { generation: 1, phase: "starting" } : {}),
+            backend: { ...execution.backend, syncedAt: "2026-11-01T00:00:00Z" },
+          },
+        },
+      })
+    } else {
+      const deletedId = {
+        "unrelated deletion": "other-root",
+        "target deletion": child.session_id,
+        "root deletion": root.id,
+        "cold sibling deletion": sibling.id,
+        "account-wide invalidation": undefined,
+      }[event]
+      useAppStore.getState().invalidateSessionNavigation(deletedId)
+    }
+  })
+  await act(async () => {
+    staged.resolve([root, detail, sibling])
+    expect(await opening).toBe(opens)
+  })
+  expect(useAppStore.getState().currentSessionId).toBe(opens ? child.session_id : supervisor)
+  expect(load).toHaveBeenCalledTimes(opens ? 1 : 0)
 })

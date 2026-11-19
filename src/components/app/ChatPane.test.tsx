@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { CommandItem } from "@services/command"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { ReasoningEffort } from "@services/chat/AgentService"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 
@@ -13,7 +14,7 @@ type MessageListProps = ComponentProps<(typeof import("./MessageList"))["Message
 type ModelEffortPickerProps = ComponentProps<
   (typeof import("@/components/chat/ModelEffortPicker"))["ModelEffortPicker"]
 >
-type ModelPickerProps = Pick<ModelEffortPickerProps, "models" | "menuPlacement" | "menuAlign"> & {
+type ModelPickerProps = Pick<ModelEffortPickerProps, "modelGroups" | "modelProvider" | "menuPlacement" | "menuAlign"> & {
   value: string
   onChange: ModelEffortPickerProps["onModelChange"]
   disabled?: boolean
@@ -33,18 +34,20 @@ type State = {
   getInputState(id: string): State["inputStates"][string]
   setInputThinkingMode(id: string, mode: "standard" | "ultra"): boolean
   tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort?: ReasoningEffortSelection; thinkingMode?: "standard" | "ultra"; thinkingModeRevision?: number }>
-  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string | undefined
+  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: ProviderModelRef | undefined
   setInputContent(id: string, content: string): void
   setInputContentIfRevision(id: string, revision: number, content: string): boolean
   moveInputContentIfRevision(source: string, revision: number, target: string): boolean
-  setSelectedModel(model: string): void
-  changeSessionModel(id: string, model: string): Promise<void>
+  setSelectedModel(model: ProviderModelRef): void
+  changeSessionModel(id: string, model: ProviderModelRef): Promise<void>
   setInputReasoningEffort(id: string, effort: ReasoningEffortSelection): void
   clearInputReasoningEffort(id: string): void
   clearInputThinkingModeIfRevision(id: string, revision: number): boolean
   changeSessionReasoningEffort(id: string, effort: ReasoningEffort | null): Promise<void>
   refreshChatsNow(): Promise<void>
-  loadChatHistory(id: string): Promise<void>
+  loadChatHistory: ReturnType<typeof vi.fn>
+  updateTokenUsage: ReturnType<typeof vi.fn>
+  setTruncationInfo: ReturnType<typeof vi.fn>
 }
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
@@ -124,8 +127,11 @@ vi.mock("@/components/app/NewChatWorktreeControl", () => ({
 vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
   patchSession: vi.fn().mockResolvedValue(undefined),
   getSession: vi.fn(),
+  listSupervisorApprovals: vi.fn().mockResolvedValue([]),
   selectRootMode: vi.fn(),
   recoverRootMode: vi.fn(),
+  compactSessionContext: vi.fn(),
+  applySessionLoop: vi.fn(),
   sendMessage: vi.fn().mockImplementation(async (request) => ({ session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true } })),
   execute: vi.fn().mockResolvedValue(undefined),
 } }))
@@ -135,8 +141,8 @@ vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
 vi.mock("@/components/chat/Dialogs", () => ({
   QuestionDialog: ({ q, onAnswer }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["QuestionDialog"]>) =>
     <div data-parent-question>{q.question}<button onClick={() => onAnswer("main answer")}>Answer parent</button></div>,
-  ApprovalDialog: ({ a, onRespond, submitting, error }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ApprovalDialog"]>) =>
-    <div role="dialog" data-child-approval={a.childSessionId}>
+  ChildApprovalCard: ({ a, onRespond, submitting, error }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ChildApprovalCard"]>) =>
+    <div data-child-approval={a.childSessionId}>
       {error ? <p role="alert">{error}</p> : null}
       <button disabled={submitting} onClick={() => onRespond(true)}>Approve child</button>
       <button disabled={submitting} onClick={() => onRespond(false)}>Deny child</button>
@@ -152,7 +158,7 @@ vi.mock("@/components/app/HomeDashboard", () => ({
 vi.mock("@/components/app/MessageList", () => ({
   MessageList: (props: MessageListProps) => {
     runtime.messageList = props
-    return null
+    return <>{props.timelineAttachments?.map((entry) => <div key={entry.key}>{entry.node}</div>)}</>
   },
 }))
 vi.mock("@/components/app/Toasts", () => ({ Toasts: (props: ComponentProps<(typeof import("./Toasts"))["Toasts"]>) => { runtime.toastProps = props; return null } }))
@@ -164,7 +170,7 @@ vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <s
 vi.mock("@/components/chat/ModelEffortPicker", () => ({
   ModelEffortPicker: (props: ModelEffortPickerProps) => {
     runtime.modelPicker = {
-      models: props.models, value: props.model, onChange: props.onModelChange,
+      modelGroups: props.modelGroups, modelProvider: props.modelProvider, value: props.model, onChange: props.onModelChange,
       disabled: props.modelDisabled, menuPlacement: props.menuPlacement, menuAlign: props.menuAlign,
     }
     runtime.reasoningPicker = {
@@ -271,6 +277,30 @@ async function mount(
   const textarea = container.querySelector<HTMLTextAreaElement>("textarea"); if (!textarea) throw new Error("textarea did not render")
   return textarea
 }
+
+it.each([
+  ["suspended", 1, false, true],
+  ["suspended", 0, false, false],
+  ["suspended", 1, true, false],
+  [null, 1, false, false],
+  ["completed", 1, false, false],
+  ["cancelled", 1, false, false],
+  ["error", 1, false, false],
+] as const)("presents child wait only for confirmed suspension (%s, children=%s, running=%s)", async (status, children, running, expected) => {
+  const chat = createChat(vi.fn<Send>(), "parent-wait", status)
+  Object.assign(chat.currentChat!, { runningChildCount: children, isRunning: running })
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container)
+  roots.push(root)
+  await act(async () => {
+    root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+  })
+  expect(runtime.messageList?.delegationWaiting).toBe(expected)
+  expect(runtime.composer?.sending).toBe(running)
+})
+
 it("shows a refresh-and-reselect alert only for a stale managed session", async () => {
   runtime.state.managedHistoryBindings = { "managed": { status: "active" } }
   await mount(vi.fn<Send>(), "managed")
@@ -334,6 +364,12 @@ beforeEach(() => {
   vi.mocked(agentClient.sendMessage).mockReset().mockImplementation(async (request) => ({
     session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true },
   }) as Awaited<ReturnType<typeof agentClient.sendMessage>>)
+  vi.mocked(agentClient.compactSessionContext).mockReset().mockImplementation(async (session_id) => ({
+    session_id, status: "unchanged",
+  }))
+  vi.mocked(agentClient.applySessionLoop).mockReset().mockImplementation(async (session_id) => ({
+    session_id, loop: null,
+  }))
   vi.mocked(agentClient.execute).mockReset().mockResolvedValue({ session_id: "root-session", status: "started", events_url: "" })
   runtime.queueSend.mockClear()
   runtime.queueSend.mockResolvedValue({ kind: "accepted", operationId: 0, sessionId: "queue-chat", navigated: false })
@@ -365,9 +401,10 @@ beforeEach(() => {
     chats: [], getInputState: (id) => runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 },
     setInputThinkingMode: (id, thinkingMode) => { runtime.state.inputStates = { ...runtime.state.inputStates, [id]: { ...runtime.state.getInputState(id), thinkingMode, thinkingModeRevision: ++runtime.revision } }; notify(); return true },
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
-    selectedModel: "test-model",
+    selectedModel: { provider: "easycli", model: "test-model" },
     refreshChatsNow: vi.fn().mockResolvedValue(undefined),
     loadChatHistory: vi.fn().mockResolvedValue(undefined),
+    updateTokenUsage: vi.fn(), setTruncationInfo: vi.fn(),
     changeSessionReasoningEffort: vi.fn().mockResolvedValue(undefined),
     changeSessionModel: vi.fn().mockResolvedValue(undefined),
     setSelectedModel: (model) => { runtime.state.selectedModel = model; notify() },
@@ -523,6 +560,30 @@ describe("ChatPane section-scoped new session", () => {
     await flush()
     expect(send).toHaveBeenCalledOnce()
     expect(onNewSessionInProjectSection).not.toHaveBeenCalled()
+  })
+
+  it("persists the assignment when navigating away during a pending prepared send", async () => {
+    const acknowledgement = deferred<Awaited<ReturnType<Send>>>()
+    const send = vi.fn<Send>().mockReturnValueOnce(acknowledgement.promise)
+    const onNewSessionInProjectSection = vi.fn()
+    const pane = await mountWorktreeChat(send)
+    let navigationVersion = 0
+    await pane.render({ onNewSessionInProjectSection, getNavigationVersion: () => navigationVersion })
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "from section header") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(send).toHaveBeenCalledOnce()
+    // A worktree countdown is now pending; the user navigates to another section.
+    navigationVersion += 1
+    await act(async () => {
+      acknowledgement.resolve({ kind: "accepted", operationId: 1, sessionId: "created-session", navigated: false })
+    })
+    await flush()
+    // The session already exists, so its durable section assignment is not an
+    // abandoned-composer update and must outlive the navigation.
+    expect(onNewSessionInProjectSection).toHaveBeenCalledExactlyOnceWith("created-session")
+    // The stale-navigation guard still suppresses the abandoned composer's writes.
+    expect(runtime.state.inputStates[""]?.content).toBe("from section header")
   })
 })
 
@@ -917,38 +978,43 @@ describe("ChatPane composer acknowledgement", () => {
     expect(runtime.modelPicker?.value).toBe("gpt-5.6-luna")
   })
 
-  it("saves an idle session's model before showing the new selection", async () => {
+  it("saves an idle session's provider switch even when the model name matches", async () => {
     const pending = deferred<void>()
     runtime.state.changeSessionModel = vi.fn().mockReturnValue(pending.promise)
     runtime.state.models = ["gpt-6-sol", "grok-4.7"]
     runtime.providerState.providerSnapshot = {
       default_provider_instance_id: "easycli",
-      instances: [{ id: "easycli", type: "openai", label: "Easycli", enabled: true, config: { runtime_models: ["gpt-6-sol", "grok-4.7"] } }],
+      instances: [
+        { id: "easycli", type: "openai", label: "Easycli", enabled: true, config: { runtime_models: ["gpt-6-sol"] } },
+        { id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["gpt-6-sol"] } },
+      ],
       defaults: { chat: { provider: "easycli", model: "gpt-6-sol" } },
       features: { provider_model_ref: true },
     }
     await mount(vi.fn<Send>(), "session-1")
     expect(runtime.modelPicker?.value).toBe("gpt-6-sol")
 
-    act(() => runtime.modelPicker?.onChange("grok-4.7"))
-    expect(runtime.state.changeSessionModel).toHaveBeenCalledExactlyOnceWith("session-1", "grok-4.7")
+    const next = { provider: "other", model: "gpt-6-sol" }
+    act(() => runtime.modelPicker?.onChange(next))
+    expect(runtime.state.changeSessionModel).toHaveBeenCalledExactlyOnceWith("session-1", next)
     expect(runtime.modelPicker?.value).toBe("gpt-6-sol")
     expect(runtime.modelPicker?.disabled).toBe(true)
     expect(composer().submissionPending).toBe(true)
-    expect(runtime.state.selectedModel).toBe("test-model")
+    expect(runtime.state.selectedModel).toEqual({ provider: "easycli", model: "test-model" })
 
     await act(async () => { pending.resolve(); await pending.promise })
     expect(runtime.modelPicker?.disabled).toBe(false)
     expect(composer().submissionPending).toBe(false)
   })
 
-  it("uses this session provider's saved admission and excludes other providers and historical ids", async () => {
+  it("lists saved models from enabled providers and excludes historical ids", async () => {
     runtime.state.models = ["old-global", "other-only"]
     runtime.providerState.providerSnapshot = {
       default_provider_instance_id: "other",
       instances: [
         { id: "work", type: "openai", label: "Work", enabled: true, config: { runtime_models: ["newly-added", "vendor:custom-name"] } },
         { id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["other-only"] } },
+        { id: "off", type: "openai", label: "Disabled", enabled: false, config: { runtime_models: ["disabled-model"] } },
       ],
       defaults: { chat: { provider: "other", model: "other-only" } },
     }
@@ -960,22 +1026,27 @@ describe("ChatPane composer acknowledgement", () => {
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
-    expect(runtime.modelPicker?.models).toEqual(["newly-added", "vendor:custom-name"])
+    expect(runtime.modelPicker?.modelGroups).toEqual([
+      { provider: "work", label: "Work", models: ["newly-added", "vendor:custom-name"] },
+      { provider: "other", label: "Other", models: ["other-only"] },
+    ])
     expect(runtime.modelPicker?.value).toBe("historical-removed")
+    expect(runtime.modelPicker?.modelProvider).toBe("work")
   })
 
-  it("shows the new Chat default after a provider switch leaves a cached choice from the previous provider", async () => {
+  it("shows the new Chat default after the selected provider is disabled", async () => {
     const snapshot = runtime.providerState.providerSnapshot!
     snapshot.instances.push({ id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["other-default", "other-custom"] } })
     await mount(vi.fn<Send>(), null)
     expect(runtime.modelPicker?.value).toBe("test-model")
+    snapshot.instances[0].enabled = false
     runtime.providerState.providerSnapshot = { ...snapshot, defaults: { chat: { provider: "other", model: "other-default" } } }
     await act(async () => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
-    expect(runtime.state.selectedModel).toBe("test-model")
-    expect(runtime.modelPicker?.models).toEqual(["other-default", "other-custom"])
+    expect(runtime.state.selectedModel).toEqual({ provider: "easycli", model: "test-model" })
+    expect(runtime.modelPicker?.modelGroups).toEqual([{ provider: "other", label: "Other", models: ["other-default", "other-custom"] }])
     expect(runtime.modelPicker?.value).toBe("other-default")
   })
 
@@ -983,7 +1054,9 @@ describe("ChatPane composer acknowledgement", () => {
     runtime.providerState.providerSnapshot!.defaults = undefined
     runtime.providerState.providerSnapshot!.instances[0].config.model = "test-model"
     await mount(vi.fn<Send>(), null)
-    expect(runtime.modelPicker?.models).toEqual(["test-model", "gpt-6-sol", "grok-4.7"])
+    expect(runtime.modelPicker?.modelGroups).toEqual([
+      { provider: "easycli", label: "Easycli", models: ["test-model", "gpt-6-sol", "grok-4.7"] },
+    ])
     expect(runtime.modelPicker?.value).toBe("test-model")
   })
 
@@ -992,16 +1065,16 @@ describe("ChatPane composer acknowledgement", () => {
     runtime.providerState.providerSnapshot!.instances[0].config.runtime_models = []
     if (mode === "unavailable") runtime.providerState.providerStatus = "unavailable"
     await mount(vi.fn<Send>(), null)
-    expect(runtime.modelPicker?.models).toEqual([])
+    expect(runtime.modelPicker?.modelGroups).toEqual([])
   })
 
   it("does not accept a model change during a live run", async () => {
     runtime.state.models = ["gpt-6-sol", "grok-4.7"]
     await mount(vi.fn<Send>(), "session-1", true)
     expect(runtime.modelPicker?.disabled).toBe(true)
-    act(() => runtime.modelPicker?.onChange("grok-4.7"))
+    act(() => runtime.modelPicker?.onChange({ provider: "easycli", model: "grok-4.7" }))
     expect(runtime.state.changeSessionModel).not.toHaveBeenCalled()
-    expect(runtime.state.selectedModel).toBe("test-model")
+    expect(runtime.state.selectedModel).toEqual({ provider: "easycli", model: "test-model" })
   })
 
   it("puts the next-session permission selector in a blank composer", async () => {
@@ -1877,6 +1950,327 @@ it("handles a goal command without sending it to the conversation", async () => 
   expect(input.value).toBe("")
 })
 
+it("dispatches one compaction request and leaves a newer draft intact", async () => {
+  const request = deferred<Awaited<ReturnType<typeof agentClient.compactSessionContext>>>()
+  vi.mocked(agentClient.compactSessionContext).mockReturnValueOnce(request.promise)
+  const send = vi.fn<Send>()
+  const input = await mount(send, "compact-chat")
+  change(input, " /COMPACT  ")
+  act(() => {
+    composer().onSubmit()
+    composer().onSubmit()
+  })
+  expect(agentClient.compactSessionContext).toHaveBeenCalledExactlyOnceWith("compact-chat")
+  expect(composer().submissionPending).toBe(true)
+  expect(document.body.textContent).toContain(uiText("compact_in_progress"))
+  expect(send).not.toHaveBeenCalled()
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+
+  change(input, "new message")
+  await act(async () => request.resolve({
+    session_id: "compact-chat", status: "compacted",
+    usage_before_percent: 73, usage_after_percent: 24.5,
+    token_usage: { total_tokens: 24500, max_context_tokens: 100000, system_tokens: 500, summary_tokens: 500,
+      window_tokens: 23500, budget_limit: 96000, truncation_occurred: false, segments_removed: 0 },
+  }))
+
+  expect(composer().submissionPending).toBe(false)
+  expect(input.value).toBe("new message")
+  expect(runtime.state.loadChatHistory).toHaveBeenCalledWith("compact-chat", { mode: "monotonic" })
+  expect(runtime.state.updateTokenUsage).toHaveBeenCalledWith("compact-chat", expect.objectContaining({
+    totalTokens: 24500, maxContextTokens: 100000,
+  }), { fromSnapshot: true })
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_applied", { before: "73", after: "24.5" }))
+})
+
+it.each([
+  ["/loop 5m 检查部署\nKeep  spacing", { action: "start", interval_seconds: 300, prompt: "检查部署\nKeep  spacing" }],
+  ["/LOOP STATUS", { action: "status" }],
+  ["/loop status?", { action: "status" }],
+  ["/loop stop！", { action: "stop" }],
+  ["/loop RESUME。", { action: "resume" }],
+  ["/loop resume", { action: "resume" }],
+] as const)("sends %s through the Session loop API", async (draft, request) => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.applySessionLoop).mockResolvedValueOnce({
+    session_id: "loop-chat", loop: { state: "scheduled", next_fire_at: "2026-11-19T13:00:00Z", last_run_status: "failed" },
+  })
+  const input = await mount(send, "loop-chat")
+  change(input, draft)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", request)
+  expect(runtime.toastProps?.toast?.message).toContain(uiText("session_loop_scheduled"))
+  expect(runtime.toastProps?.toast?.message).toContain(uiText("session_loop_last_result", { result: uiText("session_loop_run_failed") }))
+  expect(input.value).toBe("")
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("stops the scheduled loop while a running turn keeps its normal Stop control", async () => {
+  const send = vi.fn<Send>()
+  const request = deferred<Awaited<ReturnType<typeof agentClient.applySessionLoop>>>()
+  vi.mocked(agentClient.applySessionLoop).mockReturnValueOnce(request.promise)
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, "/loop stop")
+  expect(composer().sending).toBe(true)
+  expect(composer().sendWhileRunning).toBe(true)
+  expect(composer().onQueueModeChange).toBeUndefined()
+  act(() => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("busy-loop-chat", { action: "stop" })
+
+  change(input, "keep this newer draft")
+  await act(async () => request.resolve({
+    session_id: "busy-loop-chat", loop: { state: "stopped", next_fire_at: null, last_run_status: null },
+  }))
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_stopped"))
+  expect(input.value).toBe("keep this newer draft")
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(runtime.liveRetry.cancelForStop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("schedules a task-only /loop while a turn is running and keeps an unconfirmed draft", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.applySessionLoop)
+    .mockRejectedValueOnce(new Error("No adaptive acknowledgement"))
+    .mockResolvedValueOnce({
+      session_id: "busy-loop-chat", loop: { mode: "adaptive", state: "scheduled", next_fire_at: null, last_run_status: null },
+    })
+  const input = await mount(send, "busy-loop-chat", true)
+  const command = "/loop 检查部署\nKeep  spacing"
+  change(input, command)
+  await act(async () => composer().onSubmit())
+  expect(input.value).toBe(command)
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_unconfirmed"))
+
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledTimes(2)
+  expect(agentClient.applySessionLoop).toHaveBeenLastCalledWith("busy-loop-chat", {
+    action: "start_adaptive", prompt: "检查部署\nKeep  spacing",
+  })
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_adaptive_scheduled"))
+  expect(input.value).toBe("")
+  expect(composer().sending).toBe(true)
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("allows status and stop in Ultra while keeping start and resume in Standard", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
+    session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
+  }) as Awaited<ReturnType<typeof agentClient.getSession>>)
+  const input = await mount(send, "ultra-loop-chat")
+  expect(runtime.reasoningPicker?.thinkingMode).toBe("ultra")
+
+  for (const action of ["status", "stop"] as const) {
+    change(input, `/loop ${action}`)
+    await act(async () => composer().onSubmit())
+    expect(agentClient.applySessionLoop).toHaveBeenLastCalledWith("ultra-loop-chat", { action })
+    expect(input.value).toBe("")
+  }
+  for (const command of ["/loop 5m check", "/loop check the build", "/loop resume"]) {
+    change(input, command)
+    await act(async () => composer().onSubmit())
+    expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_standard_only"))
+    expect(input.value).toBe(command)
+  }
+  expect(agentClient.applySessionLoop).toHaveBeenCalledTimes(2)
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+})
+
+it("keeps a reserved /loop draft out of the transcript when the older backend has no route", async () => {
+  vi.mocked(agentClient.applySessionLoop).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "old-bamboo-chat")
+  change(input, "/loop 5m check")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledOnce()
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("session_loop_backend_unavailable") })
+  expect(input.value).toBe("/loop 5m check")
+})
+
+it("sends natural /loop text intact as an ordinary turn in the open session", async () => {
+  const send = vi.fn<Send>().mockResolvedValue({
+    kind: "accepted", operationId: 1, sessionId: "loop-chat", navigated: false,
+  })
+  const input = await mount(send, "loop-chat")
+  const prompt = "/loop 每隔五分钟检查构建"
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", { action: "status" })
+  expect(send).toHaveBeenCalledExactlyOnceWith(prompt, expect.any(Object))
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
+})
+
+it("keeps a spoken /loop draft out of ordinary chat when the backend lacks loop support", async () => {
+  vi.mocked(agentClient.applySessionLoop).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "old-bamboo-chat")
+  const prompt = "/loop 每隔五分钟检查构建"
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("old-bamboo-chat", { action: "status" })
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("session_loop_backend_unavailable") })
+  expect(input.value).toBe(prompt)
+})
+
+it.each(["edit", "navigation", "running"])("rechecks %s after confirming a spoken /loop", async (changeDuringProbe) => {
+  const status = deferred<Awaited<ReturnType<typeof agentClient.applySessionLoop>>>()
+  vi.mocked(agentClient.applySessionLoop).mockReturnValueOnce(status.promise)
+  const send = vi.fn<Send>()
+  const pane = await mountWorktreeChat(send)
+  let navigationVersion = 0
+  await pane.render({ chat: createChat(send, "loop-chat"), getNavigationVersion: () => navigationVersion })
+  const prompt = "/loop 每隔五分钟检查构建"
+  act(() => write("loop-chat", prompt))
+  act(() => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", { action: "status" })
+  if (changeDuringProbe === "edit") act(() => write("loop-chat", "newer draft"))
+  if (changeDuringProbe === "navigation") navigationVersion += 2
+  if (changeDuringProbe === "running") await pane.render({ chat: { ...createChat(send, "loop-chat"), sending: true, streaming: "" } })
+  await act(async () => status.resolve({ session_id: "loop-chat", loop: null }))
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.state.inputStates["loop-chat"]?.content).toBe(changeDuringProbe === "edit" ? "newer draft" : prompt)
+})
+
+it.each([
+  "/loop every five minutes check the build",
+  "/loop check the build every 90 seconds",
+  "/loop 每隔九十秒检查构建",
+  "/loop 5 minutes between checks",
+  "/loop 恢复这个循环。",
+  "/loop when will this loop run next?",
+])("keeps a natural request %s local until the busy session finishes", async (prompt) => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_wait_for_session"))
+  expect(input.value).toBe(prompt)
+})
+
+it.each(["/loop", "/loop 30s check", "/loop 1.5h check", "/loop stop extra", "/loop stop! extra"])(
+  "keeps malformed fixed syntax %s local even in a running session", async (command) => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, command)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_usage"))
+  expect(input.value).toBe(command)
+})
+
+it("preserves the compaction draft if the backend route is unavailable", async () => {
+  vi.mocked(agentClient.compactSessionContext).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "compact-chat")
+  change(input, "/compact")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledOnce()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("compact_context_not_found") })
+  expect(input.value).toBe("/compact")
+})
+
+it("keeps a failed compact menu selection ready to retry as a command", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.compactSessionContext).mockRejectedValueOnce(new Error("offline"))
+  const input = await mount(send, "compact-chat")
+  change(input, "/co")
+  await act(async () => composer().onPickCompact?.())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledExactlyOnceWith("compact-chat")
+  expect(input.value).toBe("/compact")
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_unconfirmed"))
+
+  await act(async () => composer().onSubmit())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledTimes(2)
+  expect(runtime.state.loadChatHistory).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_unchanged"))
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
+})
+
+it.each(["running", "attachment"] as const)("keeps /compact local when blocked by %s", async (block) => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "compact-chat", block === "running")
+  if (block === "attachment") await addImage("keep.png")
+  change(input, "/compact")
+  await act(async () => composer().onSubmit())
+  const reason = uiText(block === "running" ? "compact_wait_for_session" : "compact_send_alone")
+  expect(composer().compactUnavailable).toBe(reason)
+  expect(runtime.toastProps?.toast?.message).toBe(reason)
+  expect(agentClient.compactSessionContext).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(input.value).toBe("/compact")
+  if (block === "attachment") expect(composer().attachments).toHaveLength(1)
+})
+
+it.each(["child", "managed", "supervisor"] as const)("blocks compaction for a known %s session", async (kind) => {
+  const send = vi.fn<Send>()
+  const id = kind === "supervisor" ? "bamboo-default-supervisor" : "compact-chat"
+  if (kind === "managed") runtime.state.managedHistoryBindings = { [id]: { status: "active" } }
+  if (kind === "child") vi.mocked(agentClient.getSession).mockResolvedValueOnce({
+    session: { id, kind: "child" },
+  } as Awaited<ReturnType<typeof agentClient.getSession>>)
+  const input = await mount(send, id)
+  change(input, "/compact")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.compactSessionContext).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("/compact")
+  expect(composer().compactUnavailable).toBe(uiText("compact_root_only"))
+})
+
+it("keeps compaction feedback and draft clearing scoped to the originating session", async () => {
+  const request = deferred<Awaited<ReturnType<typeof agentClient.compactSessionContext>>>()
+  vi.mocked(agentClient.compactSessionContext).mockReturnValueOnce(request.promise)
+  const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const render = (id: string) => act(async () => {
+    root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+  })
+  await render("origin")
+  change(container.querySelector("textarea")!, "/compact")
+  act(() => composer().onSubmit())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledExactlyOnceWith("origin")
+
+  await render("other")
+  change(container.querySelector("textarea")!, "draft in other session")
+  expect(document.body.textContent).not.toContain(uiText("compact_in_progress"))
+  expect(composer().submissionPending).toBe(false)
+  await act(async () => composer().onSubmit())
+  expect(send).toHaveBeenCalledExactlyOnceWith("draft in other session", expect.anything())
+  await act(async () => request.resolve({ session_id: "origin", status: "unchanged" }))
+  expect(runtime.state.inputStates.origin.content).toBe("")
+  expect(container.querySelector("textarea")?.value).toBe("draft in other session")
+  expect(runtime.toastProps?.toast).toBeNull()
+})
+
 it("retains a goal command when saving fails", async () => {
   vi.mocked(agentClient.sendMessage).mockRejectedValueOnce(new Error("offline"))
   const send = vi.fn<Send>()
@@ -2303,7 +2697,7 @@ describe("scoped notifications", () => {
     const pending = new Promise<void>((_, fail) => { reject = fail })
     runtime.state.changeSessionModel = vi.fn().mockReturnValue(pending)
     await mount(vi.fn<Send>(), "session-1")
-    act(() => { void runtime.modelPicker!.onChange("different-model") })
+    act(() => { void runtime.modelPicker!.onChange({ provider: "easycli", model: "grok-4.7" }) })
     const renderSession = async (id: string) => act(async () => roots.at(-1)!.render(
       <ChatPane chat={createChat(vi.fn<Send>(), id)} pickedWorkspace="/picked"
         onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}

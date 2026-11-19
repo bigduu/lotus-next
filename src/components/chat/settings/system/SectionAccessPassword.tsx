@@ -8,25 +8,23 @@ import { ConfirmDialog } from "./ConfirmDialog"
 import { StatusLine } from "./StatusLine"
 import type { SectionMessage, SystemConfigApi } from "./useSystemConfig"
 
-/**
- * 访问密码 — set / change via `POST /v1/bamboo/access/password`
- * (`current_password` is enforced by the backend for a non-local change),
- * disable via a `access_control.password_enabled=false` config patch
- * (the backend has no dedicated clear route).
- */
+/** Manage the access password at the revision returned by the server. */
 export function SectionAccessPassword({
   saveSection,
   configReady,
+  onChange,
 }: {
   saveSection: SystemConfigApi["saveSection"]
   /** Config loaded — required for the disable path (config patch). */
   configReady: boolean
+  onChange?: () => void
 }) {
   useUiLocale()
   const [statusLoading, setStatusLoading] = useState(true)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [localBypass, setLocalBypass] = useState(false)
+  const [revision, setRevision] = useState<number>()
 
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
@@ -47,6 +45,7 @@ export function SectionAccessPassword({
       const status = await serviceFactory.getAccessStatus()
       setPasswordEnabled(status.password_enabled)
       setLocalBypass(status.local_bypass)
+      setRevision(status.revision)
     } catch (e) {
       setStatusError(getErrorMessage(e))
     } finally {
@@ -76,6 +75,7 @@ export function SectionAccessPassword({
     setMsg(null)
     try {
       await serviceFactory.updateAccessPassword({
+        expected_revision: revision,
         current_password: currentPassword.trim() || undefined,
         new_password: next,
       })
@@ -83,9 +83,11 @@ export function SectionAccessPassword({
       setNewPassword("")
       setConfirmPassword("")
       setMsg({ kind: "ok", text: passwordEnabled ? uiText("password_updated_326400c7") : uiText("password_enabled_750d3be9") })
+      onChange?.()
       await loadStatus()
     } catch (e) {
       setMsg({ kind: "error", text: getErrorMessage(e) })
+      await loadStatus()
     } finally {
       setBusy(false)
     }
@@ -95,12 +97,23 @@ export function SectionAccessPassword({
     setDisableBusy(true)
     setDisableError(null)
     try {
-      await saveSection({ access_control: { password_enabled: false } })
+      if (revision === undefined) {
+        await saveSection({ access_control: { password_enabled: false } })
+      } else {
+        await serviceFactory.updateAccessPassword({
+          expected_revision: revision,
+          action: "clear",
+          current_password: currentPassword.trim() || undefined,
+        })
+      }
+      setCurrentPassword("")
       setConfirmDisable(false)
       setMsg({ kind: "ok", text: uiText("access_password_disabled_44121148") })
+      onChange?.()
       await loadStatus()
     } catch (e) {
       setDisableError(getErrorMessage(e))
+      await loadStatus()
     } finally {
       setDisableBusy(false)
     }
@@ -124,7 +137,7 @@ export function SectionAccessPassword({
             ? localBypass
               ? uiText("enabled_password_entry_is_not_required_for_local_or_lan_3daa946f")
               : uiText("enabled_a_password_is_required_for_remote_access_65f39105")
-            : uiText("disabled_remote_access_does_not_require_a_password_sett_1458bac4")}
+            : uiText("access_password_off")}
         </p>
       )}
 
@@ -132,7 +145,7 @@ export function SectionAccessPassword({
         {requiresCurrent ? (
           <div className="space-y-1">
             <div className="text-xs text-muted-foreground">{uiText("current_password_a114cfb6")}</div>
-            <Input
+            <Input aria-label={uiText("current_password_a114cfb6")}
               type="password"
               autoComplete="current-password"
               value={currentPassword}
@@ -144,7 +157,7 @@ export function SectionAccessPassword({
           <div className="text-xs text-muted-foreground">
             {passwordEnabled ? uiText("new_password_at_least_4_characters_d91d6a45") : uiText("set_password_at_least_4_characters_51a6ae54")}
           </div>
-          <Input
+          <Input aria-label={uiText(passwordEnabled ? "new_password_at_least_4_characters_d91d6a45" : "set_password_at_least_4_characters_51a6ae54")}
             type="password"
             autoComplete="new-password"
             value={newPassword}
@@ -153,7 +166,7 @@ export function SectionAccessPassword({
         </div>
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground">{uiText("confirm_password_81b17bc0")}</div>
-          <Input
+          <Input aria-label={uiText("confirm_password_81b17bc0")}
             type="password"
             autoComplete="new-password"
             value={confirmPassword}
@@ -169,7 +182,8 @@ export function SectionAccessPassword({
             <Button
               size="sm"
               variant="secondary"
-              disabled={!configReady || busy}
+              disabled={statusLoading || !!statusError || (revision === undefined && !configReady)
+                || busy || (requiresCurrent && !currentPassword.trim())}
               onClick={() => {
                 setDisableError(null)
                 setConfirmDisable(true)
@@ -177,7 +191,7 @@ export function SectionAccessPassword({
             >
               {uiText("disable_password_a9e26288")}</Button>
           ) : null}
-          <Button size="sm" onClick={submit} disabled={busy || !newPassword.trim()}>
+          <Button size="sm" onClick={submit} disabled={busy || statusLoading || !!statusError || !newPassword.trim()}>
             {busy ? uiText("saving_ff509c9b") : passwordEnabled ? uiText("update_password_82817084") : uiText("enable_password_fe979237")}
           </Button>
         </div>
@@ -187,7 +201,7 @@ export function SectionAccessPassword({
         open={confirmDisable}
         onOpenChange={setConfirmDisable}
         title={uiText("disable_access_password_eaa845c9")}
-        description={uiText("remote_access_will_no_longer_require_password_verificat_036abd84")}
+        description={uiText("access_password_clear_tailscale")}
         confirmLabel={uiText("disable_password_a9e26288")}
         busy={disableBusy}
         error={disableError}

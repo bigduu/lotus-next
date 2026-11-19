@@ -1,6 +1,7 @@
 import type { ProjectSidebar, ProjectSummary } from "@services/project"
 
 const PINNED_PROJECTS_STORAGE_KEY = "lotus.sidebar.pinned-projects.v1"
+const PROJECT_DISCLOSURE_STORAGE_PREFIX = "lotus.sidebar.project-disclosure.v1:"
 
 const normalizeProjectIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) return []
@@ -26,6 +27,32 @@ export const writePinnedProjectIds = (projectIds: ReadonlySet<string>): void => 
 }
 
 export { PINNED_PROJECTS_STORAGE_KEY }
+
+export function readProjectDisclosures(): Map<string, boolean> {
+  const disclosures = new Map<string, boolean>()
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (!key?.startsWith(PROJECT_DISCLOSURE_STORAGE_PREFIX)) continue
+      const value = localStorage.getItem(key)
+      if (value === "true" || value === "false") {
+        disclosures.set(key.slice(PROJECT_DISCLOSURE_STORAGE_PREFIX.length), value === "true")
+      }
+    }
+  } catch {
+    // The sidebar can still fold and expand when storage is unavailable.
+  }
+  return disclosures
+}
+
+export function writeProjectDisclosure(key: string, expanded: boolean): void {
+  try {
+    // Separate entries let tabs change different folds independently.
+    localStorage.setItem(PROJECT_DISCLOSURE_STORAGE_PREFIX + key, String(expanded))
+  } catch {
+    // This is a best-effort browser preference.
+  }
+}
 
 export const PROJECT_SECTIONS_STORAGE_KEY = "lotus.sidebar.project-sections.v1"
 export const LEGACY_PROJECT_SECTION_ID = "legacy"

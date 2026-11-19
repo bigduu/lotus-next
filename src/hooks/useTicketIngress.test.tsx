@@ -2,7 +2,7 @@ import { clearSessionCompatibilityObservations, observeSessionExecutionConflict 
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { ApiError, apiClient } from "@services/api"
+import { ApiError, apiClient, RequestTimeoutError } from "@services/api"
 import { beginRootModeOperation, finishRootModeOperation } from "@/lib/rootModeTransitionFence"
 import { agentClient, type ChatRequest, type ChatResponse } from "@services/chat/AgentService"
 import { useTicketIngress } from "./useTicketIngress"
@@ -71,9 +71,46 @@ it("does not send when the recovery receipt cannot be persisted", async () => {
   storage.mockRestore()
 })
 
-it("keeps a confirmed message accepted when execute fails and retries only the idempotent activation", async () => {
-  await mount(); vi.mocked(agentClient.execute).mockRejectedValueOnce(new Error("activation timeout"))
-  await act(async () => { expect((await ingress.send(request)).kind).toBe("accepted") })
+it("acknowledges a saved Human message while activation is pending and keeps its admission locked", async () => {
+  let confirm!: (value: Awaited<ReturnType<typeof agentClient.execute>>) => void
+  vi.mocked(agentClient.execute).mockReturnValueOnce(new Promise((resolve) => { confirm = resolve }))
+  await mount()
+  let accepted: Awaited<ReturnType<typeof ingress.send>> | undefined
+  await act(async () => { void ingress.send(request).then((result) => { accepted = result }) })
+  try {
+    expect(accepted).toMatchObject({ kind: "accepted", sessionId: "ticket-root" })
+    expect(ingress.busy).toBe(true)
+    expect(ingress.starting).toBe(true)
+    expect(ingress.error).toBeNull()
+    expect(ingress.canRetryStart).toBe(false)
+    expect(JSON.parse(sessionStorage.getItem("lotus-next.ticket-human.ticket-root")!).phase).toBe("activation")
+    await act(async () => { expect((await ingress.send({ ...request, message: "next instruction" })).kind).toBe("busy") })
+    expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+    expect(agentClient.execute).toHaveBeenCalledTimes(1)
+  } finally {
+    await act(async () => { confirm({ session_id: "ticket-root", status: "started", events_url: "/events" }) })
+  }
+  expect(ingress.busy).toBe(false)
+  expect(ingress.starting).toBe(false)
+  expect(ingress.hasPending("ticket-root")).toBe(false)
+})
+
+it("shows an unconfirmed start only after the activation request times out and retries only activation", async () => {
+  let reject!: (failure: Error) => void
+  vi.mocked(agentClient.execute).mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail }))
+  await mount()
+  let sending!: ReturnType<typeof ingress.send>
+  await act(async () => { sending = ingress.send(request) })
+  expect(ingress.starting).toBe(true)
+  expect(ingress.error).toBeNull()
+  expect(ingress.canRetryStart).toBe(false)
+  await act(async () => {
+    reject(new RequestTimeoutError())
+    expect((await sending).kind).toBe("accepted")
+  })
+  expect(ingress.starting).toBe(false)
+  expect(ingress.error).not.toBeNull()
+  expect(ingress.canRetryStart).toBe(true)
   expect(ingress.executePending).toBe("ticket-root")
   expect(JSON.parse(sessionStorage.getItem("lotus-next.ticket-human.ticket-root")!).phase).toBe("activation")
   await act(async () => root.render(null)); await mount()
@@ -82,6 +119,7 @@ it("keeps a confirmed message accepted when execute fails and retries only the i
   await act(async () => { expect(await ingress.retryExecute()).toBe(true) })
   expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
   expect(agentClient.execute).toHaveBeenCalledTimes(2)
+  expect(ingress.error).toBeNull()
   expect(ingress.hasPending("ticket-root")).toBe(false)
 })
 
@@ -222,15 +260,20 @@ it("refreshes the owned receipt and admission after navigating A to B to A", asy
   let sending!: ReturnType<typeof ingress.send>
   await act(async () => { sending = ingress.send(request) })
   await navigate("B"); expect(ingress.executePending).toBe("B")
+  expect(ingress.starting).toBe(false)
+  expect(ingress.canRetryStart).toBe(true)
   await navigate("ticket-root")
   expect(ingress.executePending).toBe("ticket-root")
   expect(ingress.busy).toBe(true)
+  expect(ingress.starting).toBe(true)
+  expect(ingress.error).toBeNull()
   await act(async () => {
     release({ session_id: "ticket-root", status: "already_running", events_url: "/events" })
     expect((await sending).kind).toBe("accepted")
   })
   expect(ingress.executePending).toBeNull()
   expect(ingress.error).toBeNull()
+  expect(ingress.starting).toBe(false)
   expect(ingress.busy).toBe(false)
   expect(ingress.hasPending("ticket-root")).toBe(false)
   await navigate("B")
@@ -269,6 +312,7 @@ it("preserves acknowledged Human ingress when activation has a typed version con
   await mount(); vi.mocked(agentClient.execute).mockRejectedValueOnce(versionRefusal())
   await act(async () => { expect((await ingress.send(request)).kind).toBe("accepted") })
   expect(ingress.executePending).toBe("ticket-root")
+  expect(ingress.canRetryStart).toBe(false)
   await act(async () => { expect(await ingress.retryExecute()).toBe(false) })
   expect(apiClient.postOnce).toHaveBeenCalledTimes(1); expect(agentClient.execute).toHaveBeenCalledTimes(1)
 })

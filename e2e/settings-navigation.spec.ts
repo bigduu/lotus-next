@@ -65,3 +65,145 @@ test("published baseline Settings helper retains the explicit modal contract", a
   await expect(settings.getByRole("heading", { name: "系统设置", exact: true })).toBeVisible();
   await closeSettings(settings, "dialog");
 });
+
+test("Tailscale settings connect, require a password, and manage the private address", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+  });
+  const observation = await installArtifactRuntime(page, standaloneScenario);
+  const address = "https://bamboo.example.ts.net:8443/";
+  let connected = false;
+  let passwordSet = false;
+  let enabled = false;
+  const actions: string[] = [];
+  await page.route("**/api/v1/bamboo/tailscale", (route) => {
+    let loginRequested = false;
+    if (route.request().method() === "POST") {
+      const { action } = route.request().postDataJSON();
+      actions.push(action);
+      if (action === "connect") loginRequested = true;
+      if (action === "enable") enabled = true;
+      if (action === "disable") enabled = false;
+    }
+    const state = !connected ? "login_required" : !passwordSet ? "password_required" : enabled ? "active" : "ready";
+    return route.fulfill({ json: {
+      state,
+      enabled,
+      tailnet: connected ? "example.ts.net" : null,
+      url: enabled ? address : null,
+      action_url: loginRequested && !connected ? "https://login.tailscale.com/a/test-fixture" : null,
+    } });
+  });
+  await page.route("**/api/v1/bamboo/access/status", (route) => route.fulfill({ json: {
+    password_enabled: passwordSet, local_bypass: true, requires_password: false, revision: passwordSet ? 8 : 7,
+  } }));
+  await page.route("**/api/v1/bamboo/access/password", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ expected_revision: 7, new_password: "fixture-password" });
+    passwordSet = true;
+    return route.fulfill({ json: { success: true, password_enabled: true, revision: 8 } });
+  });
+
+  await page.goto(standaloneScenario.entryUrl);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  await selectSettingsCategory(settings, "system", "系统");
+  const section = settings.getByRole("region", { name: "Tailscale 远程访问" });
+  await section.getByRole("button", { name: "连接这台电脑" }).click();
+  await expect(section.getByRole("link", { name: "登录 Tailscale" }))
+    .toHaveAttribute("href", "https://login.tailscale.com/a/test-fixture");
+  await page.waitForResponse((response) => response.url().endsWith("/api/v1/bamboo/tailscale")
+    && response.request().method() === "GET");
+  await expect(section.getByRole("link", { name: "登录 Tailscale" }))
+    .toHaveAttribute("href", "https://login.tailscale.com/a/test-fixture");
+  connected = true;
+  await section.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(section.getByText("请先在下方设置 Bamboo 访问密码", { exact: false })).toBeVisible();
+  await expect(section.getByRole("button", { name: "开启远程访问" })).toHaveCount(0);
+
+  await settings.getByLabel(/^设置密码/).fill("fixture-password");
+  await settings.getByLabel(/^确认密码/).fill("fixture-password");
+  await settings.getByRole("button", { name: "启用密码", exact: true }).click();
+  await section.getByRole("button", { name: "开启远程访问" }).click();
+  await expect(section.getByRole("link", { name: address })).toHaveAttribute("href", address);
+  await expect(section.getByRole("button", { name: "复制地址" })).toBeVisible();
+  await settings.getByRole("button", { name: "关闭密码", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "关闭访问密码" });
+  await expect(confirm.getByText(/Tailscale 分享会暂停/)).toBeVisible();
+  await confirm.getByRole("button", { name: "取消" }).click();
+  if (testInfo.project.name !== "tablet-chromium") {
+    await testInfo.attach("Tailscale remote access", { body: await section.screenshot(), contentType: "image/png" });
+  }
+  await section.getByRole("button", { name: "关闭远程访问" }).click();
+  await expect(section.getByRole("link", { name: address })).toHaveCount(0);
+  await expect(section.getByRole("button", { name: "开启远程访问" })).toBeEnabled();
+  expect(actions).toEqual(["connect", "enable", "disable"]);
+  expect(observation.errorResponses).toEqual([]);
+  expect(observation.pageErrors).toEqual([]);
+});
+
+test("maximum output can switch between unlimited and a fixed limit", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+  });
+  const observation = await installArtifactRuntime(page, standaloneScenario);
+  const fixed = {
+    model_pattern: "fixture-model",
+    max_context_tokens: 256_000,
+    max_output_tokens: 32_000,
+  };
+  let modelLimits = [{ ...fixed }];
+  await page.route("**/api/v1/bamboo/model-limits/defaults", (route) => route.fulfill({
+    json: {
+      supports_unlimited_output: true,
+      model_limits: [{ max_context_tokens: 1_000_000, max_output_tokens: 64_000, safety_margin: 10_000 }],
+    },
+  }));
+  await page.route("**/api/v1/bamboo/config", (route) => {
+    if (route.request().method() === "POST") {
+      modelLimits = route.request().postDataJSON().model_limits;
+    }
+    return route.fulfill({ json: { proxy_auth_mode: "auto", model_limits: modelLimits } });
+  });
+  await page.goto(standaloneScenario.entryUrl);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  await selectSettingsCategory(settings, "model-limits", "模型限额");
+  const output = settings.getByRole("combobox", { name: "fixture-model 最大输出" });
+  const expandOutput = settings.getByRole("button", { name: "展开fixture-model 最大输出选项" });
+  const save = settings.getByRole("button", { name: "保存", exact: true });
+
+  await expect(output).toHaveValue("32K");
+  await expandOutput.click();
+  const unlimited = page.getByRole("option", { name: /^不限/ });
+  await expect(unlimited).toBeVisible();
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("Unlimited maximum output option", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  }
+  await unlimited.click();
+  await expect(output).toHaveValue("不限");
+  await save.click();
+  await expect(settings.getByText("已保存", { exact: true })).toBeVisible();
+  expect(modelLimits).toEqual([{ ...fixed, max_output_tokens: null, unlimited_output: true }]);
+
+  await selectSettingsCategory(settings, "general", "通用");
+  await selectSettingsCategory(settings, "model-limits", "模型限额");
+  await expect(output).toHaveValue("不限");
+  await expandOutput.click();
+  await page.getByRole("option", { name: /^32K/ }).click();
+  await save.click();
+  await expect(settings.getByText("已保存", { exact: true })).toBeVisible();
+  expect(modelLimits).toEqual([fixed]);
+  expect(observation.errorResponses).toEqual([]);
+  expect(observation.pageErrors).toEqual([]);
+});

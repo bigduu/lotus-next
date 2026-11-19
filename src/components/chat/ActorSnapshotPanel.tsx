@@ -27,8 +27,8 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
   return (
     <section className="rounded-lg border" data-actor-snapshot-panel aria-busy={state.loading}>
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground">
-        <span>{uiText("saved_agent_state_health_and_queue_information_unavaila_f82ce646")}</span>
-        {rootId ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label={uiText("refresh_agent_structure_277bb85d")}><RefreshCw /></Button> : null}
+        <span>{uiText("actor_saved_state")}</span>
+        {rootId && !state.error ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label={uiText("refresh_agent_structure_277bb85d")}><RefreshCw /></Button> : null}
       </div>
       {state.gapReason ? <p role="status" data-actor-gap={state.gapReason} data-actor-gap-origin={state.gapActorId ?? undefined} className="px-3 pb-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
         {state.gapReason === "snapshot_regression"
@@ -38,7 +38,7 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
             : uiText("there_is_a_gap_in_agent_events_state_was_reloaded_but_e_0c545fcb")}
       </p> : null}
       {rootId ? <ActorTree topology={tree} selectedActorId={selectedActorId} onSelectActor={onSelectActor}
-        error={state.error} onRetry={() => { void state.refresh() }} />
+        error={state.error} onRetry={() => { void state.refresh() }} retryable={state.retryable} />
         : <p className="px-3 py-4 text-sm text-muted-foreground">{uiText("select_a_root_session_to_load_agent_structure_abe1ec98")}</p>}
     </section>
   )

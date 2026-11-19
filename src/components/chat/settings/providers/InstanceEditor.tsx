@@ -1,9 +1,9 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
-import type { DefaultsConfig, ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
+import type { DefaultsConfig, NewProviderKind, ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
-import { getRuntimeModelIds, PROVIDER_LABELS } from "@shared/types/providerConfig"
+import { getRuntimeModelIds, PROVIDER_KINDS, PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { getErrorMessage } from "@services/api"
 import { isMaskedSecret } from "@/lib/secrets"
 import { VENDOR_PRESETS } from "@/lib/providerPresets"
@@ -18,11 +18,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { CopilotAuth } from "./CopilotAuth"
 import { EditableModelCombobox } from "./EditableModelCombobox"
 import { RuntimeModelsEditor, type ModelDiscoveryNotice } from "./RuntimeModelsEditor"
 
-const PROVIDER_TYPES: ProviderKind[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
 const REASONING_EFFORTS = [
   { value: "none", get label() { return uiText("reasoning_none") } },
   { value: "low", get label() { return uiText("low_aa9e366f") } },
@@ -37,7 +35,6 @@ const API_KEY_PLACEHOLDER: Record<ProviderKind, string> = {
   anthropic: "sk-ant-…",
   openai: "sk-…",
   gemini: "AIza…",
-  copilot: "",
   bodhi: "bhi_sk_…",
 }
 
@@ -63,7 +60,6 @@ interface Draft {
   modelCapabilities: NonNullable<ProviderInstance["config"]["model_capabilities"]>
   reasoningEffort: string
   responsesOnlyModels: string
-  headlessAuth: boolean
   targetProvider: string
   requestOverridesJson: string
 }
@@ -88,7 +84,6 @@ function draftFromInstance(inst: ProviderInstance | null): Draft {
     responsesOnlyModels: Array.isArray(cfg.responses_only_models)
       ? (cfg.responses_only_models as unknown[]).map(str).filter(Boolean).join("\n")
       : "",
-    headlessAuth: cfg.headless_auth === true,
     targetProvider: str(cfg.target_provider),
     requestOverridesJson:
       cfg.request_overrides != null ? JSON.stringify(cfg.request_overrides, null, 2) : "",
@@ -126,20 +121,18 @@ function buildPayload(
     else if (isEdit) config[key] = null
   }
 
-  if (type !== "copilot") {
-    const apiKey = draft.apiKey.trim()
-    if (apiKey && isMaskedSecret(apiKey)) {
-      if (!(isEdit && hasStoredApiKey)) {
-        return { error: uiText("a_masked_api_key_cannot_be_used_2b50d591") }
-      }
-    } else if (apiKey) {
-      config.api_key = apiKey
-    } else if (!(isEdit && hasStoredApiKey)) {
-      return { error: uiText("api_key_is_required_91482829") }
+  const apiKey = draft.apiKey.trim()
+  if (apiKey && isMaskedSecret(apiKey)) {
+    if (!(isEdit && hasStoredApiKey)) {
+      return { error: uiText("a_masked_api_key_cannot_be_used_2b50d591") }
     }
-    // Empty while editing a configured instance: omit api_key = keep stored key.
-    setOrClear("base_url", draft.baseUrl.trim(), draft.baseUrl.trim() !== "")
+  } else if (apiKey) {
+    config.api_key = apiKey
+  } else if (!(isEdit && hasStoredApiKey)) {
+    return { error: uiText("api_key_is_required_91482829") }
   }
+  // Empty while editing a configured instance: omit api_key = keep stored key.
+  setOrClear("base_url", draft.baseUrl.trim(), draft.baseUrl.trim() !== "")
 
   setOrClear("model", draft.model.trim(), draft.model.trim() !== "")
   if (draft.fastModel !== null) {
@@ -154,16 +147,12 @@ function buildPayload(
   // projection hardcodes it to None (bamboo provider_registry.rs), so an
   // instance-level max_tokens would be accepted but silently inert.
 
-  if (type === "openai" || type === "copilot") {
+  if (type === "openai") {
     const models = draft.responsesOnlyModels
       .split(/[\s,]+/)
       .map((m) => m.trim())
       .filter(Boolean)
     if (models.length > 0 || isEdit) config.responses_only_models = models
-  }
-
-  if (type === "copilot") {
-    config.headless_auth = draft.headlessAuth
   }
 
   if (type === "bodhi") {
@@ -364,7 +353,7 @@ export function InstanceEditor({
           onValueChange={(v) => {
             // A preset implies a type — manual type edits detach the preset.
             setPresetId("")
-            patch({ type: v as ProviderKind })
+            patch({ type: v as NewProviderKind })
           }}
           disabled={isEdit}
         >
@@ -372,7 +361,7 @@ export function InstanceEditor({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PROVIDER_TYPES.map((t) => (
+            {(isEdit ? [type] : PROVIDER_KINDS).map((t) => (
               <SelectItem key={t} value={t}>
                 {PROVIDER_LABELS[t] ?? t}
               </SelectItem>
@@ -388,33 +377,27 @@ export function InstanceEditor({
         <Switch checked={draft.enabled} onCheckedChange={(v) => patch({ enabled: v })} />
       </div>
 
-      {type === "copilot" ? (
-        <CopilotAuth />
-      ) : (
-        <>
-          <Field
-            label="API Key"
-            value={draft.apiKey}
-            onChange={(v) => patch({ apiKey: v })}
-            type="password"
-            placeholder={hasStoredApiKey ? uiText("configured_leave_blank_to_keep_f3805ede") : API_KEY_PLACEHOLDER[type]}
-          />
-          <Field
-            label={uiText("base_url_optional_0ae73047")}
-            value={draft.baseUrl}
-            onChange={(v) => patch({ baseUrl: v })}
-            placeholder={
-              type === "anthropic"
-                ? "https://api.anthropic.com"
-                : type === "openai"
-                  ? "https://api.openai.com/v1"
-                  : type === "gemini"
-                    ? "https://generativelanguage.googleapis.com/v1beta"
-                    : "http://localhost:8080"
-            }
-          />
-        </>
-      )}
+      <Field
+        label="API Key"
+        value={draft.apiKey}
+        onChange={(v) => patch({ apiKey: v })}
+        type="password"
+        placeholder={hasStoredApiKey ? uiText("configured_leave_blank_to_keep_f3805ede") : API_KEY_PLACEHOLDER[type]}
+      />
+      <Field
+        label={uiText("base_url_optional_0ae73047")}
+        value={draft.baseUrl}
+        onChange={(v) => patch({ baseUrl: v })}
+        placeholder={
+          type === "anthropic"
+            ? "https://api.anthropic.com"
+            : type === "openai"
+              ? "https://api.openai.com/v1"
+              : type === "gemini"
+                ? "https://generativelanguage.googleapis.com/v1beta"
+                : "http://localhost:8080"
+        }
+      />
 
       {type === "bodhi" ? (
         <label className="block">
@@ -434,16 +417,6 @@ export function InstanceEditor({
             </SelectContent>
           </Select>
         </label>
-      ) : null}
-
-      {type === "copilot" ? (
-        <div className="flex items-center justify-between rounded-md border bg-background px-2.5 py-2">
-          <div>
-            <div className="text-sm">{uiText("headless_authorization_b4707eb5")}</div>
-            <div className="text-xs text-muted-foreground">{uiText("print_the_sign_in_url_in_the_console_without_opening_a__55e7a61e")}</div>
-          </div>
-          <Switch checked={draft.headlessAuth} onCheckedChange={(v) => patch({ headlessAuth: v })} />
-        </div>
       ) : null}
 
       <RuntimeModelsEditor
@@ -525,7 +498,7 @@ export function InstanceEditor({
               ) : null}
             </fieldset>
           ) : null}
-          {type === "openai" || type === "copilot" ? (
+          {type === "openai" ? (
             <label className="block">
               <span className="mb-1 block text-xs text-muted-foreground">
                 {uiText("responses_only_models_optional_separate_with_spaces_com_ff7e394c")}</span>

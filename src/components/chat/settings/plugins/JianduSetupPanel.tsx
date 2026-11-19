@@ -1,4 +1,4 @@
-import { Copy, Download } from "lucide-react"
+import { Copy, Download, ShieldCheck } from "lucide-react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { JianduSetupReport } from "@services/plugin"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,7 @@ const reasonKeys: Record<string, Parameters<typeof uiText>[0]> = {
   unsupported_host: "plugin_jiandu_unsupported",
   glibc_2_35_required: "plugin_jiandu_glibc",
   publisher_not_trusted: "plugin_jiandu_untrusted",
-  source_not_trusted: "plugin_jiandu_untrusted",
+  source_not_trusted: "plugin_jiandu_source_untrusted",
   artifact_unavailable: "plugin_jiandu_unavailable_detail",
   incomplete_install: "plugin_jiandu_incomplete",
   already_installed: "plugin_jiandu_unverified",
@@ -19,7 +19,7 @@ const reasonKeys: Record<string, Parameters<typeof uiText>[0]> = {
   invalid_managed_files: "plugin_jiandu_unverified",
 }
 
-export function JianduSetupPanel({ report, error, disabled, installing, copying, copiedConfiguration, copyError, onInstall, onCopy }: {
+export function JianduSetupPanel({ report, error, disabled, installing, copying, copiedConfiguration, copyError, onInstall, onCopy, onReviewTrust }: {
   report: JianduSetupReport | null
   error: JianduSetupError
   disabled: boolean
@@ -29,12 +29,15 @@ export function JianduSetupPanel({ report, error, disabled, installing, copying,
   copyError: string | null
   onInstall: () => void
   onCopy: () => void
+  onReviewTrust: () => void
 }) {
   useUiLocale()
   const ready = report?.installed.state === "ready"
   const configuration = ready && report.external_client
     ? JSON.stringify({ mcpServers: { jiandu: report.external_client } }, null, 2) : null
-  const reason = report?.host.reason ?? report?.trust.reason ?? report?.installed.reason ?? report?.install.reason
+  const trustActionReason = report?.trust.trusted || report?.trust_action?.reason === "publisher_already_trusted"
+    ? null : report?.trust_action?.reason
+  const reason = report?.host.reason ?? trustActionReason ?? report?.trust.reason ?? report?.installed.reason ?? report?.install.reason
   const memoryRootStatus = reason === "memory_root_unavailable" || reason === "memory_root_overlaps_plugin" ? reasonKeys[reason] : null
   const status = error === "loading" ? "loading_4927a53b" : error === "legacy" ? "plugin_jiandu_legacy" : error
     ? "plugin_jiandu_unknown" : ready ? "plugin_jiandu_ready" : memoryRootStatus ?? (report?.installed.state === "installing"
@@ -46,12 +49,17 @@ export function JianduSetupPanel({ report, error, disabled, installing, copying,
       {uiText("plugin_jiandu_host", { os: report.host.os, arch: report.host.arch })}
       {report.release ? ` · v${report.release.version}` : null}
     </p> : null}
+    {report?.trust.reason === "publisher_not_trusted" && !report.trust_action ?
+      <p className="text-xs text-muted-foreground">{uiText("plugin_jiandu_trust_unsupported")}</p> : null}
     {ready ? <>
       <p className="text-xs leading-relaxed text-muted-foreground">{uiText("plugin_jiandu_same_host")}</p>
       <pre aria-label={uiText("plugin_jiandu_config")} className="whitespace-pre-wrap break-all rounded-lg border bg-muted/30 p-3 text-xs">{configuration}</pre>
     </> : null}
     {copyError ? <p role="alert" className="text-xs text-destructive">{copyError}</p> : null}
     <div className="flex flex-wrap items-center justify-end gap-2">
+      {report?.trust_action?.available ? <Button size="sm" variant="outline" disabled={disabled || error !== null} onClick={onReviewTrust}>
+        <ShieldCheck className="size-4" />{uiText("plugin_jiandu_review_trust")}
+      </Button> : null}
       {configuration && copiedConfiguration === configuration ? <span role="status" className="text-xs text-primary">{uiText("plugin_jiandu_copied")}</span> : null}
       <Button size="sm" variant={ready ? "secondary" : "default"} onClick={ready ? onCopy : onInstall}
         disabled={disabled || error !== null || (!ready && !report?.install.available)}>

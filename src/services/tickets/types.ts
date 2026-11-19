@@ -14,7 +14,10 @@ export interface ReadEnvelope<T> {
 export interface Overview {
   ticket_count: number; work_count: number; states: Partial<Record<WorkState, number>>
   open_questions: number; open_approvals: number; needs_acceptance: number
+  pending_ingress?: { count: number; oldest: PendingIngressMessage | null }
 }
+export interface PendingIngressMessage { message_id: string; proposal_saved: boolean }
+export interface IngressPreview extends PendingIngressMessage { text: string }
 export interface TicketScope {
   available: boolean; reason?: string; health?: string; binding?: ScopeBinding
   availability?: TicketScopeAvailability; readable?: boolean; can_initialize?: boolean; initialization?: TicketInitialization | null
@@ -34,6 +37,7 @@ export interface PendingRequest {
   contract_revision: number; prompt_revision: number; updated_seq: number
   kind: { kind: "question" } | { kind: "approval"; fingerprint: string; action: Action }
   prompt: string; status: RequestStatus; answer: string | null
+  worker_packet_hash?: string | null
 }
 export type AssignmentState = "planned" | "dispatch_pending" | "admitted" | "running" | "submitted" | "blocked" | "failed" | "cancelling" | "cancelled" | "outcome_unknown"
 export interface Assignment {

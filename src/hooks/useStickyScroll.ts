@@ -22,7 +22,7 @@ export function useStickyScroll(currentSessionId: string | null | undefined) {
     setAtBottom(true)
   }, [scrollElement])
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     if (!scrollElement) return
     const near = scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight <= 2
     if (near) stickRef.current = true
@@ -34,7 +34,7 @@ export function useStickyScroll(currentSessionId: string | null | undefined) {
     }
     lastScrollTop.current = scrollElement.scrollTop
     setAtBottom(stickRef.current)
-  }
+  }, [scrollElement, followBottom])
 
   const pinToBottom = () => {
     stickRef.current = true

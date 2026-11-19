@@ -107,6 +107,7 @@ export interface AssistantTextMessage extends BaseMessage {
   role: "assistant";
   type: "text";
   content: string;
+  phase?: "commentary" | "final_answer";
   model?: string;
   finishReason?: "stop" | "length" | "error";
   tokenUsage?: { promptTokens: number; completionTokens: number };
@@ -153,6 +154,13 @@ export interface AssistantToolResultMessage extends BaseMessage {
   toolCallId: string;
   result: ToolExecutionResult;
   isError: boolean;
+  permissionHistory?: {
+    requestId: string;
+    generation: string;
+    operation: string;
+    workingDirectory?: string;
+    decision?: "allow_once" | "allow_session" | "allow_workspace" | "allow_global" | "deny_once" | "deny_session";
+  };
   /** Images returned by the tool (e.g. an MCP screenshot), for inline preview. */
   images?: MessageImage[];
 }
@@ -274,6 +282,8 @@ export interface ChatItem {
     permissionMode?: import("@services/chat/AgentService").SessionPermissionMode | null;
     /** Exact detail/PATCH ETag, held in memory only and never a browser preference. */
     permissionModeEtag?: string;
+    /** Canonical Supervisor opt-in read with the permission mode and ETag. */
+    supervisorAutoDispatch?: boolean;
     goldConfig?: GoldConfig | null;
     goalState?: GoalState | null;
     tokenUsage?: TokenUsage;

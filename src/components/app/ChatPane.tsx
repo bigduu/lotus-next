@@ -3,7 +3,7 @@ import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiLanguage, uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useRenderProbe } from "@/lib/renderProbe"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
@@ -26,7 +26,7 @@ import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { workspaceService } from "@services/workspace"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
-import { QuestionDialog, ApprovalDialog } from "@/components/chat/Dialogs"
+import { QuestionDialog, ChildApprovalCard } from "@/components/chat/Dialogs"
 import { downloadMarkdown } from "@/lib/exportMarkdown"
 import { downloadPdf } from "@/lib/exportPdf"
 import type { useChat } from "@/hooks/useChat"
@@ -37,12 +37,16 @@ import { useRootThinkingMode } from "@/hooks/useRootThinkingMode"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
+import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopMode, type SessionLoopState, type SessionLoopStatus } from "@services/chat/sessionLoop"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
-import { getErrorMessage } from "@services/api/errors"
+import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
+import { tokenBudgetRevision } from "@shared/store/appStore/slices/tokenBudgetSlice"
+import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { useSubAgentView } from "@/hooks/useSubAgentView"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getRuntimeModelIds, resolveNewChatModelRef } from "@shared/types/providerConfig"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
@@ -59,6 +63,8 @@ import { useTicketIngress } from "@/hooks/useTicketIngress"
 import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
 import { LazyTicketWorkPanel } from "@/components/chat/LazyTicketWorkPanel"
 import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
+import type { OpenRecordedSession } from "@/components/chat/SupervisorApprovalCards"
+import { usePermissionTimeline, useSupervisorApprovalTimeline } from "@/hooks/useApprovalTimeline"
 import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
@@ -126,6 +132,31 @@ type EnvironmentPreference = "auto" | "open" | "closed"
 
 const MESSAGE_WORKSPACE_WIDTH = 1152
 const ENVIRONMENT_OCCUPIED_WIDTH = 332
+const COMPACT_COMMAND = "/compact"
+
+type LoopCapabilityConfirmation = { sessionId: string; revision: number }
+
+function sessionLoopStatusText(state?: SessionLoopState, mode?: SessionLoopMode): string {
+  switch (state) {
+    case "scheduled": return uiText(mode === "adaptive" ? "session_loop_adaptive_scheduled" : "session_loop_scheduled")
+    case "paused": return uiText("session_loop_paused")
+    case "stopped": return uiText("session_loop_stopped")
+    case "expired": return uiText("session_loop_expired")
+    default: return uiText("session_loop_absent")
+  }
+}
+
+function sessionLoopOutcomeText(status: string): string {
+  switch (status) {
+    case "completed": return uiText("session_loop_run_completed")
+    case "failed": return uiText("session_loop_run_failed")
+    case "cancelled": return uiText("session_loop_run_cancelled")
+    case "suspended": return uiText("session_loop_run_suspended")
+    case "dispatch_failed": return uiText("session_loop_run_dispatch_failed")
+    case "running": return uiText("session_loop_run_running")
+    default: return uiText("session_loop_run_unconfirmed")
+  }
+}
 
 // Only auto-open Environment when a 72rem chat pane still fits beside it.
 // Reserve its space in the layout so the chat can expand without being shifted
@@ -179,6 +210,7 @@ function fileToAttachment(file: File): Promise<Attachment> {
 }
 
 type ChatState = ReturnType<typeof useChat>
+const EMPTY_PENDING_USER_IMAGES = [] as const
 
 /**
  * A self-contained chat column: header + messages + composer + this pane's
@@ -201,6 +233,7 @@ export function ChatPane({
   onOpenWorkspacePicker,
   onOpenInspector,
   onOpenReview,
+  onOpenRecordedSession,
   workPanelTarget,
   onOpenWork,
   onWorkReference,
@@ -231,6 +264,7 @@ export function ChatPane({
   onOpenWorkspacePicker: () => void
   onOpenInspector: () => void
   onOpenReview?: () => void
+  onOpenRecordedSession?: OpenRecordedSession
   workPanelTarget?: HTMLElement | null
   onOpenWork?: () => void
   onWorkReference?: () => void
@@ -263,7 +297,7 @@ export function ChatPane({
     contextCompression,
     outputRate,
     pendingUserText,
-    pendingUserImages = [],
+    pendingUserImages = EMPTY_PENDING_USER_IMAGES,
     pendingUserMessages,
     sending,
     submissionPending,
@@ -292,6 +326,34 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const executionBlocked = chat.executionCompatibility?.blocked === true
+  const questionControls = useMemo(() => ({
+    onAnswer: answerQuestion,
+    onRefresh: refreshQuestion,
+    onRetry: retryQuestion,
+    loading: questionLoading,
+    submitting: questionSubmitting,
+    unavailable: questionUnavailable,
+    error: questionError,
+    canRetry: questionCanRetry,
+  }), [answerQuestion, refreshQuestion, retryQuestion, questionLoading, questionSubmitting,
+    questionUnavailable, questionError, questionCanRetry])
+  const permissionTimeline = usePermissionTimeline(messages,
+    !executionBlocked && pendingQuestion?.interaction_kind === "permission" ? pendingQuestion : null,
+    chat.recordedPermission, currentChat?.config?.workspacePath, questionControls)
+  const supervisorApprovalTimeline = useSupervisorApprovalTimeline(
+    !secondary && !historyBlocked && pageVisible !== false && !!currentChat && isDefaultSupervisor(currentChat),
+    messages.at(-1)?.id ?? null, onOpenRecordedSession)
+  const actionableApproval = chat.approvalCompatibility?.blocked ? null : pendingApproval
+  const { approvalSubmitting, approvalError } = chat
+  const timelineAttachments = useMemo(() => {
+    const entries = [...permissionTimeline, ...supervisorApprovalTimeline]
+    if (actionableApproval) entries.push({
+      key: JSON.stringify(["child-approval", actionableApproval.childSessionId, actionableApproval.requestId]),
+      node: <ChildApprovalCard a={actionableApproval} onRespond={respondApproval}
+        submitting={approvalSubmitting} error={approvalError} />,
+    })
+    return entries
+  }, [permissionTimeline, supervisorApprovalTimeline, actionableApproval, respondApproval, approvalSubmitting, approvalError])
   // A background-exec wait keeps the run live from the user's perspective: the
   // runtime suspended the session while the monitored command still executes,
   // and its result returns automatically. Keep the running presentation until
@@ -327,8 +389,9 @@ export function ChatPane({
     && !isTerminalRunStatus(currentChat?.lastRunStatus)
     && (yieldedActivity || (currentChat?.runningChildCount ?? 0) > 0)
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
-  const managedHistoryStale = useAppStore((state) => currentSessionId
-    ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)
+  const managedHistoryStatus = useAppStore((state) => currentSessionId
+    ? state.managedHistoryBindings?.[currentSessionId]?.status : undefined)
+  const managedHistoryStale = managedHistoryStatus === "stale"
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -442,6 +505,9 @@ export function ChatPane({
   // main pane's and a split pane's empty composers don't share one draft.
   const draftKey = currentSessionId ?? (secondary ? "__new_chat_pane2__" : "")
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
+  const loopDraft = isSessionLoopCommand(draft)
+  const loopRequests = useRef(new Set<string>())
+  const latestSubmit = useRef<(confirmation?: LoopCapabilityConfirmation) => void>(() => {})
   const composerInputRef = useRef<ComposerInputHandle>(null)
   const submissionActiveRef = useRef(false)
   const [preparationPending, setPreparationPending] = useState(false)
@@ -458,6 +524,17 @@ export function ChatPane({
   const [dragOver, setDragOver] = useState(false)
   const [goalSaving, setGoalSaving] = useState(false)
   const goalRequestActive = useRef(false)
+  const [compactingSessions, setCompactingSessions] = useState<ReadonlySet<string>>(() => new Set())
+  // The ref claims immediately. Render state follows the selected session.
+  const compactionRequests = useRef(compactingSessions)
+  const compacting = Boolean(currentSessionId && compactingSessions.has(currentSessionId))
+  const setCompactionPending = (id: string, pending: boolean) => {
+    const sessions = new Set(compactionRequests.current)
+    if (pending) sessions.add(id)
+    else sessions.delete(id)
+    compactionRequests.current = sessions
+    if (mountedRef.current) setCompactingSessions(sessions)
+  }
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null)
   // Workflow commands for the slash menu; the picked one expands into the
   // message on send (content + user input).
@@ -510,9 +587,9 @@ export function ChatPane({
   toastScopeRef.current = toastScope
   useEffect(() => { setToast(null); setForking(false) }, [currentSessionId])
   const toastId = useRef(0)
-  const showToast = (message: string, kind: ToastNotice["kind"] = "info", details?: string) => {
+  const showToast = useCallback((message: string, kind: ToastNotice["kind"] = "info", details?: string) => {
     if (toastScopeRef.current === toastScope) setToast({ id: ++toastId.current, message, kind, details })
-  }
+  }, [toastScope])
 
   // NOTE: the background-shell completion NOTIFICATION is no longer fired here.
   // It arrives as a backend `notification` event (deduped + preference-gated,
@@ -536,18 +613,25 @@ export function ChatPane({
   const mergedSubAgents = subAgentView.agents
   const providerSnapshot = useProviderStore((s) => s.providerSnapshot)
   const providerStatus = useProviderStore((s) => s.providerStatus)
-  const modelProviderId = currentChat?.config?.model_ref?.provider
-    ?? providerSnapshot?.defaults?.chat.provider ?? providerSnapshot?.default_provider_instance_id
-  const modelProvider = providerSnapshot?.instances.find((instance) => instance.id === modelProviderId)
-  const models = useMemo(() =>
-    providerStatus === "ready" && modelProvider?.enabled
-      ? getRuntimeModelIds(modelProvider, providerSnapshot?.defaults)
-      : [],
-  [providerStatus, modelProvider, providerSnapshot?.defaults])
+  const modelGroups = useMemo(() => {
+    if (providerStatus !== "ready" || !providerSnapshot) return []
+    const groups = providerSnapshot.instances.filter((instance) => instance.enabled)
+      .map((instance) => ({
+        provider: instance.id,
+        label: instance.label || instance.id,
+        models: getRuntimeModelIds(instance, providerSnapshot.defaults),
+      }))
+      .filter((group) => group.models.length > 0)
+    return groups.map((group) =>
+      groups.some((other) => other.provider !== group.provider && other.label === group.label)
+        ? { ...group, label: `${group.label} (${group.provider})` }
+        : group,
+    )
+  }, [providerSnapshot, providerStatus])
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
   const changeSessionModel = useAppStore((s) => s.changeSessionModel)
-  const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
+  const defaultChatRef = providerSnapshot?.defaults?.chat
   const chatReasoningEffort = useProviderStore(
     (s) => s.providerSnapshot?.defaults?.chat?.reasoning_effort,
   )
@@ -565,23 +649,26 @@ export function ChatPane({
   const clearInputReasoningEffort = useAppStore((s) => s.clearInputReasoningEffort)
   const rootMode = useRootThinkingMode({
     sessionId: currentSessionId, draftKey, ordinarySelection: reasoningSelection, root: rootAuthority,
-    disabled: submissionPending || currentlyRunning || queue.busy || queue.hasUnconfirmed,
+    disabled: submissionPending || compacting || currentlyRunning || queue.busy || queue.hasUnconfirmed,
   })
-  const rootSessionUnsafe = () => rootMode.busy || rootMode.blocked
-    || Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
+  const rootSessionUnsafe = useCallback(() => rootMode.busy || rootMode.blocked
+    || Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear"),
+  [currentSessionId, rootMode.busy, rootMode.blocked])
   const skillModeConflict = selectedSkill && rootMode.selected === true && !rootMode.child
     ? uiText("the_selected_skill_is_incompatible_with_ultra_orchestra_fd2e7fa6")
     : null
   // Existing sessions display their durable model. The global selection is
   // only a draft for a new session and cannot relabel a running session.
-  const activeModel = currentSessionId
-    ? currentChat?.config?.model_ref?.model || currentChat?.config?.model || defaultChatModel || ""
-    : resolveNewChatModelRef(providerSnapshot, selectedModel)?.model || ""
+  const legacyModel = currentSessionId ? currentChat?.config?.model : undefined
+  const activeModelRef = currentSessionId
+    ? currentChat?.config?.model_ref ?? (legacyModel ? undefined : defaultChatRef)
+    : resolveNewChatModelRef(providerSnapshot, selectedModel)
+  const activeModel = activeModelRef?.model || legacyModel || ""
   const [modelSaving, setModelSaving] = useState(false)
-  const modelControlDisabled = modelSaving || currentlyRunning || submissionPending
+  const modelControlDisabled = modelSaving || compacting || currentlyRunning || submissionPending
     || queue.busy || queue.hasUnconfirmed
-  const handleModelChange = async (model: string) => {
-    if (modelControlDisabled || model === activeModel) return
+  const handleModelChange = async (model: ProviderModelRef) => {
+    if (modelControlDisabled || (model.provider === activeModelRef?.provider && model.model === activeModel)) return
     if (!currentSessionId) {
       setSelectedModel(model)
       return
@@ -761,17 +848,186 @@ export function ChatPane({
       })
   }, [slashQuery])
 
-  const submit = () => {
+  const compactionUnavailableReason = () => {
+    if (!currentSessionId) return uiText("compact_open_session")
+    if (rootMode.child || managedHistoryStatus || (currentChat && isDefaultSupervisor(currentChat))
+      || ticketScope?.binding.supervisor_session_id === currentSessionId) return uiText("compact_root_only")
+    if (executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked
+      || rootSessionUnsafe()) return uiText("compact_session_unavailable")
+    if (currentlyRunning || delegationWaiting || currentChat?.lastRunStatus === "suspended"
+      || pendingApproval || pendingQuestion || questionLoading || questionSubmitting
+      || submissionActiveRef.current || goalRequestActive.current || compactionRequests.current.has(currentSessionId)
+      || submissionPending
+      || modelSaving || queue.busy || queue.hasUnconfirmed || queue.pending.length
+      || ticketIngress.busy || pendingTicketMessage) return uiText("compact_wait_for_session")
+    if (attachments.length || selectedSkill || selectedWorkflow || typedWorkflow) {
+      return uiText("compact_send_alone")
+    }
+    return null
+  }
+
+  const compactDraft = (revision: number, fromMenu = false) => {
+    const unavailable = compactionUnavailableReason()
+    if (!currentSessionId || unavailable) {
+      if (unavailable) showToast(unavailable)
+      return
+    }
+    const sessionId = currentSessionId
+    let commandRevision = revision
+    if (fromMenu) {
+      if (!useAppStore.getState().setInputContentIfRevision(draftKey, revision, COMPACT_COMMAND)) return
+      const normalized = useAppStore.getState().inputStates[draftKey]
+      if (normalized?.content !== COMPACT_COMMAND) return
+      commandRevision = normalized.contentRevision
+      menuDraftRef.current = { key: draftKey, text: COMPACT_COMMAND }
+    }
+    const tokenRevision = tokenBudgetRevision(useAppStore.getState, sessionId)
+    setCompactionPending(sessionId, true)
+    setMenusDismissed(true)
+    composerInputRef.current?.focus()
+    void agentClient.compactSessionContext(sessionId).then((receipt) => {
+      const store = useAppStore.getState()
+      store.setInputContentIfRevision(draftKey, commandRevision, "")
+      if (receipt.status === "unchanged") {
+        if (mountedRef.current) showToast(uiText("compact_context_unchanged"))
+        return
+      }
+      const currentTokenRevision = tokenBudgetRevision(useAppStore.getState, sessionId)
+      const usage = mapTokenBudgetUsage(receipt.token_usage)
+      if (usage && tokenRevision.usage === currentTokenRevision.usage) {
+        store.updateTokenUsage(sessionId, usage, { fromSnapshot: true })
+      }
+      if (tokenRevision.truncation === currentTokenRevision.truncation) {
+        store.setTruncationInfo(sessionId, receipt.token_usage.truncation_occurred,
+          receipt.token_usage.segments_removed, { fromSnapshot: true })
+      }
+      if (mountedRef.current) {
+        const percent = new Intl.NumberFormat(uiLanguage(), { maximumFractionDigits: 1 })
+        showToast(uiText("compact_context_applied", {
+          before: percent.format(receipt.usage_before_percent),
+          after: percent.format(receipt.usage_after_percent),
+        }))
+      }
+      // A slow history refresh must not keep the finished operation pending.
+      void store.loadChatHistory(sessionId, { mode: "monotonic" }).catch(() => {})
+    }, (error) => {
+      observeSessionExecutionConflict(sessionId, error)
+      if (!mountedRef.current) return
+      if (isApiError(error) && error.status === 422 && getApiErrorCode(error) === "context_summary_empty") {
+        showToast(uiText("context_compression_notice_empty_summary"), "error")
+        return
+      }
+      showToast(uiText(isApiError(error) && error.status === 404
+        ? "compact_context_not_found" : "compact_context_unconfirmed"), "error", getErrorMessage(error))
+    }).finally(() => setCompactionPending(sessionId, false))
+  }
+
+  const requestSessionLoop = (
+    sessionId: string,
+    command: SessionLoopCommand,
+    onConfirmed: (status: SessionLoopStatus) => void,
+  ) => {
+    if (loopRequests.current.has(sessionId)) return
+    loopRequests.current.add(sessionId)
+    setMenusDismissed(true)
+    void agentClient.applySessionLoop(sessionId, command).then(onConfirmed, (error) => {
+      observeSessionExecutionConflict(sessionId, error)
+      if (!mountedRef.current) return
+      const unavailable = isApiError(error) && (error.status === 404 || error.status === 405)
+      showToast(uiText(unavailable ? "session_loop_backend_unavailable" : "session_loop_unconfirmed"),
+        "error", unavailable ? undefined : getErrorMessage(error))
+    }).finally(() => { loopRequests.current.delete(sessionId) })
+  }
+
+  const submitLoopCommand = (sessionId: string, command: SessionLoopCommand, revision: number) => {
+    requestSessionLoop(sessionId, command, ({ loop }) => {
+      useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
+      if (!mountedRef.current) return
+      const details = []
+      if (loop?.next_fire_at) {
+        const time = new Intl.DateTimeFormat(uiLanguage(), { dateStyle: "medium", timeStyle: "short" })
+          .format(new Date(loop.next_fire_at))
+        details.push(uiText("session_loop_next_run", { time }))
+      }
+      if (loop?.last_run_status) {
+        details.push(uiText("session_loop_last_result", { result: sessionLoopOutcomeText(loop.last_run_status) }))
+      }
+      const summary = sessionLoopStatusText(loop?.state, loop?.mode)
+      showToast(details.length ? `${summary} ${details.join(" · ")}` : summary)
+    })
+  }
+
+  const loopSubmissionAllowed = (sessionId: string, startsLoop: boolean): boolean => {
+    if (rootMode.child || managedHistoryStatus
+      || (currentChat && isDefaultSupervisor(currentChat))
+      || ticketScope?.binding.supervisor_session_id === sessionId) {
+      showToast(uiText("session_loop_ordinary_only"))
+      return false
+    }
+    if (rootMode.selected === true && startsLoop) {
+      showToast(uiText("session_loop_standard_only"))
+      return false
+    }
+    if (executionBlocked || isSessionExecutionBlocked(sessionId) || historyBlocked
+      || rootSessionUnsafe() || semanticComposer || ticketIngress.busy) {
+      showToast(uiText("session_loop_session_unavailable"))
+      return false
+    }
+    if (attachments.length || selectedSkill || selectedWorkflow || typedWorkflow) {
+      showToast(uiText("session_loop_send_alone"))
+      return false
+    }
+    return true
+  }
+
+  const submit = (loopConfirmation?: LoopCapabilityConfirmation) => {
+    const storeAtSubmit = useAppStore.getState()
+    const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
+    const text = draftAtSubmit?.content ?? ""
+    const loopCommand = parseSessionLoopCommand(text)
+    if (loopCommand !== null) {
+      if (loopCommand === "invalid") { showToast(uiText("session_loop_usage")); return }
+      if (!currentSessionId) { showToast(uiText("session_loop_open_session")); return }
+      const startsLoop = loopCommand === "natural" || (loopCommand.action !== "status" && loopCommand.action !== "stop")
+      if (!loopSubmissionAllowed(currentSessionId, startsLoop)) return
+      if (loopCommand !== "natural") {
+        submitLoopCommand(currentSessionId, loopCommand, draftAtSubmit?.contentRevision ?? 0)
+        return
+      }
+      if (currentlyRunning || delegationWaiting || currentChat?.lastRunStatus === "suspended"
+        || pendingApproval || pendingQuestion || queue.busy || queue.hasUnconfirmed) {
+        showToast(uiText("session_loop_wait_for_session"))
+        return
+      }
+    }
+    if (text.trim().toLowerCase() === COMPACT_COMMAND) {
+      compactDraft(draftAtSubmit?.contentRevision ?? 0)
+      return
+    }
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionActiveRef.current || executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (submissionActiveRef.current || executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current
+      || (currentSessionId && compactionRequests.current.has(currentSessionId))) return
     if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
     }
-    const storeAtSubmit = useAppStore.getState()
-    const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
-    const text = draftAtSubmit?.content ?? ""
+    if (loopCommand === "natural" && currentSessionId) {
+      const sessionId = currentSessionId
+      const revision = draftAtSubmit?.contentRevision ?? 0
+      if (loopConfirmation?.sessionId !== sessionId || loopConfirmation.revision !== revision) {
+        const navigationVersion = getNavigationVersion?.()
+        requestSessionLoop(sessionId, { action: "status" }, () => {
+          if (!mountedRef.current || toastScopeRef.current !== toastScope
+            || getNavigationVersion?.() !== navigationVersion
+            || useAppStore.getState().inputStates[draftKey]?.contentRevision !== revision) return
+          // Recheck live composer and run eligibility after probing an older
+          // backend. The current draft is still the original slash request.
+          latestSubmit.current({ sessionId, revision })
+        })
+        return
+      }
+    }
     const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
     if (goalCommand && !pendingTicketMessage && (currentSessionId || !goalCommand[1]?.trim())) {
@@ -951,17 +1207,18 @@ export function ChatPane({
           return
         }
         if (result.kind !== "accepted") return
+        // A section-scoped creation intent applies to exactly this new session;
+        // the callback owns clearing it, so later sends never re-apply it. An
+        // accepted result already proves the session exists, so this durable
+        // metadata outlives navigation: the guard below abandons this composer's
+        // UI updates, not the session the acknowledgement already created.
+        if (!currentSessionId && snapshot.projectId && onNewSessionInProjectSection) {
+          onNewSessionInProjectSection(result.sessionId)
+        }
         if (prepareWorktree && (!mountedRef.current
           || getNavigationVersion?.() !== originNavigationVersion
           || (!result.navigated && !isOriginCurrent()))) return
         if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
-        // A section-scoped creation intent applies to exactly this new session;
-        // the callback owns clearing it, so later sends never re-apply it. Even
-        // a send whose navigation was interrupted still created the session.
-        if (!currentSessionId && snapshot.projectId && onNewSessionInProjectSection) {
-          onNewSessionInProjectSection(result.sessionId)
-        }
-
         // Commit only fields that still have the exact mutation revision captured
         // by this submission. A late acknowledgement must never erase edits or a
         // same-value re-selection made while the request was in flight.
@@ -1009,6 +1266,7 @@ export function ChatPane({
     // grows and as the streaming→markdown swap relayouts.
     pinToBottom()
   }
+  latestSubmit.current = submit
 
   const pickSkill = (skill: SkillDefinition) => {
     changeTypedWorkflow(null)
@@ -1033,7 +1291,7 @@ export function ChatPane({
       })
   }
 
-  const handleFork = (id: string) => {
+  const handleFork = useCallback((id: string) => {
     if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_forking_is_un_ca51f044")); return }
     const draftKey = currentDraftKeyRef.current
     setForking(true)
@@ -1052,7 +1310,19 @@ export function ChatPane({
       if (toastScopeRef.current === toastScope) setForking(false)
       showToast(uiText("operation_failed_0c3b4cf7"), "error", getErrorMessage(error))
     })
-  }
+  }, [fork, rootSessionUnsafe, showToast, toastScope])
+  const handleRegenerate = useCallback(() => {
+    if (executionBlocked) return
+    if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_regeneration__134c0a98")); return }
+    if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
+    void regenerate()
+  }, [executionBlocked, modelSaving, regenerate, rootSessionUnsafe, showToast])
+  const handleEditMessage = useCallback((id: string, text: string) => {
+    if (executionBlocked) return
+    if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_editing_and_r_45b99ff9")); return }
+    if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
+    void editMessage(id, text)
+  }, [editMessage, executionBlocked, modelSaving, rootSessionUnsafe, showToast])
 
   const launchWorkbench = (action: () => void) => {
     action()
@@ -1259,9 +1529,10 @@ export function ChatPane({
           contentRef={contentRef}
           onScroll={handleScroll}
           messages={messages}
+          timelineAttachments={timelineAttachments}
           mergedSubAgents={mergedSubAgents}
           subAgentError={subAgentView.error}
-          onRefreshSubAgents={() => { void subAgentView.refresh() }}
+          onRefreshSubAgents={subAgentView.refresh}
           sending={currentlyRunning || delegationWaiting}
           latestRunFinished={
             !currentlyRunning &&
@@ -1275,29 +1546,19 @@ export function ChatPane({
           liveSegments={liveSegments}
           streamStatus={streamStatus}
           backgroundExecWaiting={backgroundExecWaiting}
+          delegationWaiting={delegationWaiting && currentChat?.lastRunStatus === "suspended"
+            && !pendingQuestion && !pendingApproval && !backgroundExecWaiting}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}
           forking={forking}
           executionBlocked={executionBlocked}
-          onSelectSubAgent={(childId) => {
-            selectSubAgentInPane(childId)
-          }}
+          onSelectSubAgent={selectSubAgentInPane}
           onPreviewImage={setPreview}
-          onRegenerate={() => {
-            if (executionBlocked) return
-            if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_regeneration__134c0a98")); return }
-            if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
-            void regenerate()
-          }}
+          onRegenerate={handleRegenerate}
           onFork={handleFork}
-          onDelete={(id) => void deleteMessage(id)}
-          onEditMessage={(id, text) => {
-            if (executionBlocked) return
-            if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_editing_and_r_45b99ff9")); return }
-            if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
-            void editMessage(id, text)
-          }}
+          onDelete={deleteMessage}
+          onEditMessage={handleEditMessage}
         />
         )}
 
@@ -1387,8 +1648,11 @@ export function ChatPane({
           <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? uiText("supervisor_work_tab") })}</span>
           <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>{uiText("ticket_clear_reference_b2e538a2")}</button>
         </div> : null}
-        {semanticComposer && (ticketIngress.error || pendingTicketMessage) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? uiText("ticket_the_previous_message_is_not_confirmed_retry_w_7369504e")}
-          {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>{uiText("ticket_retry_start_47d5cd3e")}</button> : null}
+        {semanticComposer && ticketIngress.starting ? <p role="status" className="mx-4 mb-2 text-xs text-muted-foreground">
+          {uiText("ticket_starting")}
+        </p> : null}
+        {semanticComposer && !ticketIngress.starting && (ticketIngress.error || pendingTicketMessage && !ticketIngress.busy) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? uiText("ticket_the_previous_message_is_not_confirmed_retry_w_7369504e")}
+          {ticketIngress.canRetryStart ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>{uiText("ticket_retry_start_47d5cd3e")}</button> : null}
         </div> : null}
         <div data-composer-region className="relative shrink-0">
           {/* Keep the jump control centered on the available chat column. */}
@@ -1407,19 +1671,24 @@ export function ChatPane({
             </div>
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
-          <ContextCompressionNotice feedback={contextCompression} />
+          <ContextCompressionNotice
+            feedback={contextCompression}
+            sessionId={pageVisible && !historyBlocked && currentChat?.kind === "root" ? currentSessionId : null}
+            manualPending={compacting}
+            runActive={currentlyRunning}
+          />
           <Composer
           draft={draft}
           draftKey={draftKey}
           outputRate={outputRate}
           onDraftChange={setDraft}
           executionBlocked={executionBlocked}
-          onSubmit={submit}
+          onSubmit={() => submit()}
           onStop={stopWithLiveFence}
           sending={currentlyRunning}
           queueMode={queue.mode}
-          onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
-          sendWhileRunning={semanticComposer}
+          onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer && !loopDraft ? queue.setMode : undefined}
+          sendWhileRunning={semanticComposer || loopDraft}
           queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
           workspaceControl={!currentSessionId && !secondary ? <Suspense fallback={null}>
             <NewChatWorktreeControl projectId={pendingProjectId ?? null}
@@ -1490,8 +1759,9 @@ export function ChatPane({
                 />
               ) : null}
               <ModelEffortPicker
-                models={models}
+                modelGroups={modelGroups}
                 model={activeModel}
+                modelProvider={activeModelRef?.provider}
                 onModelChange={(model) => void handleModelChange(model)}
                 modelDisabled={modelControlDisabled}
                 value={rootMode.ordinaryValue}
@@ -1504,7 +1774,7 @@ export function ChatPane({
               />
             </>
           )}
-          submissionPending={submissionPending || preparationPending || goalSaving || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
+          submissionPending={submissionPending || preparationPending || goalSaving || compacting || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}
@@ -1523,6 +1793,13 @@ export function ChatPane({
           onOpenCatalog={() => openWorkflowPicker("composer")}
           onPickCatalog={() => { openWorkflowPicker("composer"); if (slashQuery !== null) setDraft("") }}
           onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
+          onPickCompact={() => {
+            const latest = useAppStore.getState().inputStates[draftKey]
+            if (currentDraftKeyRef.current === draftKey && latest?.content === draft) {
+              compactDraft(latest.contentRevision ?? 0, true)
+            }
+          }}
+          compactUnavailable={compactionUnavailableReason()}
           slashQuery={slashQuery}
           onMentionQueryChange={setAtQuery}
           displayWorkspace={displayWorkspace}
@@ -1565,7 +1842,9 @@ export function ChatPane({
       {clearTarget ? <ConversationClearDialog key={clearTarget.id} sessionId={clearTarget.id} title={clearTarget.title}
         onClose={() => setClearTarget(null)} /> : null}
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
-        sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
+        sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId}
+        projectId={currentChat?.config?.projectId} projectName={currentProjectName}
+        onClose={() => setWorkflowRunsOpen(false)} /> : null}
 
       <ImageLightbox src={preview} onClose={() => setPreview(null)} />
 
@@ -1578,10 +1857,8 @@ export function ChatPane({
         </div>
       ) : null}
 
-      {pendingApproval && !chat.approvalCompatibility?.blocked ? (
-        <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)}
-          submitting={chat.approvalSubmitting} error={chat.approvalError} />
-      ) : !executionBlocked && pendingQuestion ? (
+      {!executionBlocked && pendingQuestion?.interaction_kind === "clarification"
+          && (!pendingApproval || chat.approvalCompatibility?.blocked) ? (
         <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)}
           loading={questionLoading} submitting={questionSubmitting} unavailable={questionUnavailable}
           error={questionError} canRetry={questionCanRetry}

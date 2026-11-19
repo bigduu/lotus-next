@@ -604,6 +604,70 @@ test("completed history merges tools and reasoning while preserving each assista
   expect(observation.consoleErrors).toEqual([])
 })
 
+test("saved background progress stays visible on reload until the final answer", async ({ page }, testInfo) => {
+  const progressBody = "The artifact is building in the background."
+  const finalBody = "The artifact passed verification."
+  const history = [
+    { id: "background-user", role: "user", content: "Build and verify the artifact.", created_at: at },
+    {
+      id: "background-progress", role: "assistant", phase: "commentary",
+      content: progressBody, created_at: "2026-10-06T00:00:01.000Z",
+    },
+    {
+      id: "background-tool", role: "assistant", content: "", created_at: "2026-10-06T00:00:02.000Z",
+      tool_calls: [{ id: "read-build-output", function: { name: "write_stdin", arguments: "{}" } }],
+    },
+    {
+      id: "background-result", role: "tool", tool_call_id: "read-build-output",
+      content: "running", created_at: "2026-10-06T00:00:03.000Z",
+    },
+    {
+      id: "background-wait", role: "assistant", phase: "final_answer",
+      content: "The build moved to background monitoring.", created_at: "2026-10-06T00:00:04.000Z",
+      metadata: { runtime_kind: "background_exec_wait", source: "runtime", exec_session_id: "fixture-build" },
+    },
+  ]
+  const observation = await openProcessFixture(page, history)
+  const transcript = page.locator("[data-message-list-content]").first()
+  const progress = transcript.locator('[data-message-row="background-progress"]')
+  const notice = transcript.locator('[data-runtime-notice="background_exec_wait"]')
+  const divider = transcript.locator("[data-turn-toggle]")
+
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(notice).toBeVisible()
+  await expect(progress).toBeVisible()
+  await expect(divider).toHaveCount(0)
+
+  await page.reload()
+  await expect(notice).toBeVisible()
+  await expect(progress).toBeVisible()
+  await expect(divider).toHaveCount(0)
+  await testInfo.attach("Progress visible after reload", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
+
+  history.push({
+    id: "background-final", role: "assistant", phase: "final_answer",
+    content: finalBody, created_at: "2026-10-06T00:00:05.000Z",
+  })
+  await page.reload()
+  const fold = transcript.locator('[data-turn-collapse="collapsed-turn-background-final"]')
+  await expect(fold).toHaveCount(1)
+  await expect(divider).toHaveCount(1)
+  await expect(divider).toHaveAttribute("aria-expanded", "false")
+  await expect(fold.locator('[data-message-row="background-progress"]')).toHaveCount(1)
+  await expect(transcript.getByText(finalBody, { exact: true })).toBeVisible()
+  await testInfo.attach("Progress folded after the final reply", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
+  await divider.click()
+  await expect(progress).toBeVisible()
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
 for (const motion of ["normal", "reduced", "VDI"] as const) {
   test(`reasoning disclosure preserves inspection and keyboard focus in ${motion} motion mode`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: motion === "reduced" ? "reduce" : "no-preference" })

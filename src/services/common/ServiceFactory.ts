@@ -93,6 +93,11 @@ export interface ModelLimitDefault {
   note?: string;
 }
 
+interface ModelLimitDefaultsResponse {
+  model_limits: ModelLimitDefault[];
+  supports_unlimited_output?: boolean;
+}
+
 /**
  * Generic API success response
  */
@@ -114,12 +119,15 @@ export interface AccessStatusResponse {
   password_enabled: boolean;
   local_bypass: boolean;
   requires_password: boolean;
+  revision?: number;
 }
 
-export interface UpdateAccessPasswordRequest {
+export type UpdateAccessPasswordRequest = {
   current_password?: string;
-  new_password: string;
-}
+} & (
+  | { expected_revision?: number; new_password: string }
+  | { expected_revision: number; action: "clear" }
+);
 
 export interface UpdateAccessPasswordResponse {
   success: boolean;
@@ -145,7 +153,7 @@ export interface UtilityService {
   /**
    * Get backend built-in model limit defaults.
    */
-  getModelLimitDefaults(): Promise<{ model_limits: ModelLimitDefault[] }>;
+  getModelLimitDefaults(): Promise<ModelLimitDefaultsResponse>;
 
   /**
    * Set Bamboo config
@@ -250,9 +258,9 @@ class HttpUtilityService implements UtilityService {
     }
   }
 
-  async getModelLimitDefaults(): Promise<{ model_limits: ModelLimitDefault[] }> {
+  async getModelLimitDefaults(): Promise<ModelLimitDefaultsResponse> {
     try {
-      return await apiClient.get<{ model_limits: ModelLimitDefault[] }>(
+      return await apiClient.get<ModelLimitDefaultsResponse>(
         "bamboo/model-limits/defaults",
       );
     } catch (error) {
@@ -380,7 +388,7 @@ class HttpUtilityService implements UtilityService {
   async updateAccessPassword(
     payload: UpdateAccessPasswordRequest,
   ): Promise<UpdateAccessPasswordResponse> {
-    return apiClient.post<UpdateAccessPasswordResponse>("bamboo/access/password", payload);
+    return apiClient.postOnce<UpdateAccessPasswordResponse>("bamboo/access/password", payload);
   }
 }
 

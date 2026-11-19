@@ -12,6 +12,18 @@ import type {
 } from "@shared/types/providerConfig";
 import type { ProviderCatalog, ProviderModelDescriptor } from "@shared/types/providerModelRef";
 
+export interface TailscaleAccessStatus {
+  state: "not_installed" | "unavailable" | "disconnected" | "login_required"
+    | "device_approval_required" | "password_required" | "https_required" | "ready"
+    | "starting" | "active" | "port_in_use" | "tailnet_changed" | "serve_failed";
+  enabled: boolean;
+  tailnet: string | null;
+  url: string | null;
+  action_url: string | null;
+}
+
+export type TailscaleAccessAction = "connect" | "enable" | "disable";
+
 // ── Fetch Models response types ─────────────────────────────────
 
 export interface ProviderFetchResult {
@@ -87,6 +99,7 @@ export type SessionPermissionModeValue = "default" | "bypass" | "auto";
 
 export interface DefaultSessionPermissionMode {
   mode: SessionPermissionModeValue;
+  supervisor_approval_handoff_enabled?: boolean;
   /** Store revision for CAS on update. */
   revision: number;
   loaded_at: string;
@@ -188,39 +201,19 @@ export interface ClusterUpsertRequest {
 }
 
 /**
- * Copilot authentication status
- */
-export interface CopilotAuthStatus {
-  authenticated: boolean;
-  message?: string;
-}
-
-/**
- * Device code information for Copilot authentication
- */
-export interface DeviceCodeInfo {
-  device_code: string; // The actual device code for polling (not the user code!)
-  user_code: string; // The code user enters in browser
-  verification_uri: string;
-  expires_in: number;
-  interval?: number; // Polling interval in seconds
-}
-
-/**
- * Complete authentication request
- */
-export interface CompleteAuthRequest {
-  device_code: string;
-  interval: number;
-  expires_in: number;
-}
-
-/**
  * Settings Service
  *
  * Handles all settings-related API calls to the backend.
  */
 export class SettingsService {
+  getTailscaleAccess(signal?: AbortSignal): Promise<TailscaleAccessStatus> {
+    return apiClient.getOnce("/bamboo/tailscale", { signal });
+  }
+
+  setTailscaleAccess(action: TailscaleAccessAction): Promise<TailscaleAccessStatus> {
+    return apiClient.postOnce("/bamboo/tailscale", { action }, { logicalTimeoutMs: 25_000 });
+  }
+
   /**
    * Reload configuration (apply changes)
    */
@@ -253,7 +246,7 @@ export class SettingsService {
    * ("default" | "bypass" | "auto") from the durable permission policy.
    */
   async getDefaultSessionPermissionMode(): Promise<DefaultSessionPermissionMode> {
-    return apiClient.get<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode");
+    return apiClient.get<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode", { cache: "no-store" });
   }
 
   /**
@@ -270,39 +263,14 @@ export class SettingsService {
     });
   }
 
-  /**
-   * Check Copilot authentication status
-   */
-  async getCopilotAuthStatus(): Promise<CopilotAuthStatus> {
-    return apiClient.post<CopilotAuthStatus>("/bamboo/copilot/auth/status");
-  }
-
-  /**
-   * Start Copilot authentication - get device code
-   */
-  async startCopilotAuth(): Promise<DeviceCodeInfo> {
-    return apiClient.post<DeviceCodeInfo>("/bamboo/copilot/auth/start");
-  }
-
-  /**
-   * Complete Copilot authentication with device code
-   */
-  async completeCopilotAuth(request: CompleteAuthRequest): Promise<void> {
-    return apiClient.post<void>("/bamboo/copilot/auth/complete", request);
-  }
-
-  /**
-   * Trigger Copilot authentication flow (legacy)
-   */
-  async authenticateCopilot(): Promise<void> {
-    return apiClient.post<void>("/bamboo/copilot/authenticate");
-  }
-
-  /**
-   * Logout from Copilot (delete cached token)
-   */
-  async logoutCopilot(): Promise<void> {
-    return apiClient.post<void>("/bamboo/copilot/logout");
+  async updateSupervisorApprovalHandoff(
+    enabled: boolean,
+    expectedRevision: number,
+  ): Promise<DefaultSessionPermissionMode> {
+    return apiClient.put<DefaultSessionPermissionMode>("/bamboo/permission/supervisor-handoff", {
+      enabled,
+      expected_revision: expectedRevision,
+    });
   }
 
   /**

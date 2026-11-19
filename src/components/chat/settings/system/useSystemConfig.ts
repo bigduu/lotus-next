@@ -12,6 +12,7 @@ export interface ModelLimitOverride {
   model_pattern: string
   max_context_tokens: number
   max_output_tokens?: number | null
+  unlimited_output?: boolean
   safety_margin?: number | null
 }
 
@@ -30,11 +31,17 @@ export interface ContextManagementConfig {
   retrieval_window?: RetrievalWindowConfig
 }
 
+export interface WorkFeatureFlags {
+  ticket_mutation: boolean
+  ticket_dispatch: boolean
+}
+
 /**
  * BambooConfig with the extra sections this panel edits typed out
  * (the base interface only carries an index signature for them).
  */
 export interface SystemBambooConfig extends BambooConfig {
+  features?: Partial<WorkFeatureFlags>
   memory?: BambooMemoryConfig & { auto_dream_interval_secs?: number }
   hooks?: { image_fallback?: { enabled?: boolean; mode?: string } }
   model_limits?: ModelLimitOverride[]

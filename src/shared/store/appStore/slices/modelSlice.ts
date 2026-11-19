@@ -3,6 +3,7 @@ import { StateCreator } from "zustand";
 import { modelService, ProxyAuthRequiredError } from "@services/chat/ModelService";
 import { serviceFactory } from "@services/common/ServiceFactory";
 import { useBambooConfigStore } from "@shared/store/bambooConfigStore";
+import type { ProviderModelRef } from "@shared/types/providerModelRef";
 import type { AppState } from "../";
 
 let fetchModelsInFlight: Promise<void> | null = null;
@@ -11,7 +12,7 @@ let modelLoadRevision = 0;
 export interface ModelSlice {
   // Model Management State
   models: string[];
-  selectedModel: string | undefined;
+  selectedModel: ProviderModelRef | undefined;
   isLoadingModels: boolean;
   modelsError: string | null;
   configModel: string | undefined; // model from config.json
@@ -20,7 +21,7 @@ export interface ModelSlice {
   fetchModels: () => Promise<void>;
   /** Publish saved runtime IDs locally, invalidating earlier catalog-backed reads. */
   setSavedModelOptions: (models: string[]) => void;
-  setSelectedModel: (modelId: string) => void;
+  setSelectedModel: (model: ProviderModelRef) => void;
   loadConfigModel: () => Promise<void>;
 }
 
@@ -36,16 +37,16 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
     modelLoadRevision += 1;
     fetchModelsInFlight = null;
     const admitted = [...new Set(models)].sort();
-    set((state) => ({
+    set({
       models: admitted,
-      selectedModel: state.selectedModel && admitted.includes(state.selectedModel) ? state.selectedModel : undefined,
+      selectedModel: undefined,
       configModel: undefined, isLoadingModels: false, modelsError: null,
-    }));
+    });
   },
 
   // Model Management Actions
-  setSelectedModel: (modelId) => {
-    set({ selectedModel: modelId });
+  setSelectedModel: (model) => {
+    set({ selectedModel: model });
   },
 
   // Load model from config.json
@@ -95,26 +96,11 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
         if (revision !== modelLoadRevision) return;
         const availableModels = await modelService.getModels();
         if (revision !== modelLoadRevision) return;
-        set((state) => {
-          const currentSelected = state.selectedModel;
-
-          let newSelectedModel = state.selectedModel;
-
-          if (currentSelected && availableModels.includes(currentSelected)) {
-            // Current selection is valid, do nothing
-          } else {
-            // No explicit pick (or an invalid one) → leave it unset so the app
-            // falls back to the configured global default model instead of
-            // arbitrarily pinning availableModels[0].
-            newSelectedModel = undefined;
-          }
-
-          return {
-            ...state,
-            models: availableModels,
-            selectedModel: newSelectedModel,
-            modelsError: availableModels.length > 0 ? null : "No available model options",
-          };
+        // This catalog contains bare model IDs. The composer validates its
+        // provider-qualified choice against the saved provider snapshot.
+        set({
+          models: availableModels,
+          modelsError: availableModels.length > 0 ? null : "No available model options",
         });
 
         if (get().models.length === 0) {
@@ -126,24 +112,17 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
         console.error("Failed to fetch models:", err);
 
         if (err instanceof ProxyAuthRequiredError) {
-          set((state) => {
-            return {
-              ...state,
-              models: state.models,
-              selectedModel: state.selectedModel,
-              modelsError:
-                errorMessage || "Proxy authentication required. Please configure proxy auth.",
-            };
+          set({
+            modelsError:
+              errorMessage || "Proxy authentication required. Please configure proxy auth.",
           });
           return;
         }
 
-        set((state) => ({
-          ...state,
+        set({
           models: [],
-          selectedModel: state.selectedModel,
           modelsError: errorMessage,
-        }));
+        });
       } finally {
         if (revision === modelLoadRevision) set({ isLoadingModels: false });
       }

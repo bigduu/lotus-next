@@ -1,6 +1,8 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { useContext, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
 import { useExperienceModeStore } from "@shared/store/experienceModeStore"
 import { useSystemConfig } from "./system/useSystemConfig"
 import { SectionProxy } from "./system/SectionProxy"
@@ -9,9 +11,11 @@ import { SectionMemory } from "./system/SectionMemory"
 import { SectionSubagents } from "./system/SectionSubagents"
 import { SectionTools } from "./system/SectionTools"
 import { SectionAccessPassword } from "./system/SectionAccessPassword"
+import { SectionTailscale } from "./system/SectionTailscale"
 import { SectionHooks } from "./system/SectionHooks"
 import { SectionSessions } from "./system/SectionSessions"
 import { SectionApp } from "./system/SectionApp"
+import { SectionWork } from "./system/SectionWork"
 
 /**
  * 系统 — consolidates lotus's system/config/app/sessions tabs:
@@ -24,7 +28,11 @@ import { SectionApp } from "./system/SectionApp"
 export function SettingsSystem() {
   useUiLocale()
   const { config, loading, loadError, reload, saveSection } = useSystemConfig()
+  const ownerAccess = useContext(OwnerAccessContext)
+  const [passwordRevision, setPasswordRevision] = useState(0)
   const isAdvanced = useExperienceModeStore((s) => s.isAdvanced)
+  const workMutation = config?.features?.ticket_mutation
+  const workDispatch = config?.features?.ticket_dispatch
 
   return (
     <div className="space-y-3">
@@ -42,6 +50,9 @@ export function SettingsSystem() {
         </section>
       ) : config ? (
         <>
+          {ownerAccess && typeof workMutation === "boolean" && typeof workDispatch === "boolean" ? (
+            <SectionWork flags={{ ticket_mutation: workMutation, ticket_dispatch: workDispatch }} />
+          ) : null}
           {isAdvanced ? (
             <>
               <SectionProxy config={config} saveSection={saveSection} />
@@ -55,11 +66,14 @@ export function SettingsSystem() {
         </>
       ) : null}
 
-      {isAdvanced ? (
-        <>
-          <SectionAccessPassword saveSection={saveSection} configReady={!!config} />
-        </>
-      ) : null}
+      {ownerAccess && <SectionTailscale passwordRevision={passwordRevision} />}
+      {(ownerAccess || isAdvanced) && (
+        <SectionAccessPassword
+          saveSection={saveSection}
+          configReady={!!config}
+          onChange={() => setPasswordRevision((revision) => revision + 1)}
+        />
+      )}
       <SectionSessions advanced={isAdvanced} />
       <SectionApp />
     </div>

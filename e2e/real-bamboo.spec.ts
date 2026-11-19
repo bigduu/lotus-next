@@ -8,6 +8,7 @@ import {
 } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { unexpectedFailedRequests } from "./support/failedRequestPolicy.ts";
 import { observePage, type PageObservation, type FrameObservation } from "./support/pageObservation.ts";
 import { restartRealBamboo } from "./support/restartRealBamboo.ts";
 import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.ts";
@@ -503,8 +504,16 @@ const assertCleanPage = async (
   expect(errorResponses, `${observation.label}: HTTP error responses`).toEqual(
     [],
   );
-  expect(
+  // Only the deliberate `/api/v1/tickets/scope` cancellation is admitted; the
+  // observation keeps recording every failure, and any other failure still
+  // fails here. See `support/failedRequestPolicy.ts` for the exact boundary.
+  const failedRequests = unexpectedFailedRequests(
     observation.failedRequests,
+    new URL(baseOrigin).origin,
+  );
+
+  expect(
+    failedRequests,
     `${observation.label}: failed requests`,
   ).toEqual([]);
   expect(observation.pageErrors, `${observation.label}: page errors`).toEqual(

@@ -4,6 +4,18 @@ import type { AssignmentHealthCopy } from "@/components/app/project-work/assignm
 // Call in parent render after useUiLocale().
 export const makeAssignmentHealthCopy = (): AssignmentHealthCopy => ({
   title: uiText("assignment_health_title"),
+  runtimeTitle: uiText("assignment_health_runtime_title"),
+  runtimeSnapshot: uiText("assignment_health_runtime_snapshot"),
+  taskEntry: uiText("assignment_health_task_entry"),
+  progressSequence: uiText("assignment_health_progress_sequence"),
+  waitIssued: uiText("assignment_health_wait_issued"),
+  diagnosticAllowance: uiText("assignment_health_diagnostic_allowance"),
+  user: uiText("assignment_health_wait_user"),
+  dependency: uiText("assignment_health_wait_dependency"),
+  running_tool: uiText("assignment_health_wait_running_tool"),
+  outcomeUnknown: uiText("assignment_health_outcome_unknown"),
+  runtimeDenied: uiText("assignment_health_runtime_denied"),
+  runtimeUnavailable: uiText("assignment_health_runtime_unavailable"),
   updatedAt: uiText("assignment_health_updated_at"),
   available: uiText("assignment_health_available"),
   unsupported: uiText("assignment_health_unsupported"),

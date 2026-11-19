@@ -66,23 +66,24 @@ function collectBackgroundBashIds(messages: readonly Message[]): string[] {
  */
 const launchedIdsCache = new WeakMap<readonly Message[], string[]>()
 
-/**
- * True when a background shell launched by this transcript has no recorded
- * terminal outcome. `backgroundBash` is the store slice keyed by `bash_id`; a
- * missing entry means the shell is still running. Read reactively by the
- * caller, so a terminal outcome flips this without rescanning messages.
- */
-export function sessionHasRunningBackgroundBash(
-  messages: readonly Message[] | undefined,
-  backgroundBash: Readonly<Record<string, unknown>>,
-): boolean {
-  if (!messages || messages.length === 0) return false
+const noLaunches: readonly string[] = []
+
+export function backgroundBashIds(messages: readonly Message[] | undefined): readonly string[] {
+  if (!messages || messages.length === 0) return noLaunches
   let ids = launchedIdsCache.get(messages)
   if (ids === undefined) {
     ids = collectBackgroundBashIds(messages)
     launchedIdsCache.set(messages, ids)
   }
-  return ids.some((bashId) => backgroundBash[bashId] === undefined)
+  return ids
+}
+
+/** True while a background launch in this transcript has no recorded outcome. */
+export function sessionHasRunningBackgroundBash(
+  messages: readonly Message[] | undefined,
+  backgroundBash: Readonly<Record<string, unknown>>,
+): boolean {
+  return backgroundBashIds(messages).some((bashId) => backgroundBash[bashId] === undefined)
 }
 
 /**
@@ -93,9 +94,8 @@ export function sessionHasRunningBackgroundBash(
  *
  * A background launch only counts while this client holds an execution entry
  * for the session, i.e. it actually engaged with it. `BashCompleted` is
- * replayable session state, so an engaged session is re-delivered the outcome
- * as soon as it is observed again (see `selectShouldObserve`, which keeps such
- * sessions observed on purpose). Without that fence a transcript launch with no
+ * replayable session state, so an engaged session can recover the outcome
+ * through background observation. Without that fence a transcript launch with no
  * recorded outcome would pulse forever for a session this client never watches.
  */
 export function sessionHasLiveWork(

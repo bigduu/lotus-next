@@ -1,6 +1,7 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
+import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { AgentEvent, ContextSummaryInfo, PermissionDecisionResult, ReasoningEffort, TokenBudgetUsage } from "@services/chat/AgentService"
 import type { TokenUsage } from "@shared/types/tokenBudget"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
@@ -33,7 +34,7 @@ const mocks = vi.hoisted(() => {
     currentSessionId: null as string | null,
     sessionIndexRevision: 0,
     executionBySession: {},
-    selectedModel: "test-model" as string | undefined,
+    selectedModel: undefined as ProviderModelRef | undefined,
     inputStates: {} as Record<string, { reasoningEffort?: string }>,
     lastSelectedPromptId: null as string | null,
     systemPrompts: [] as Array<{ id: string; content?: string; isDefault?: boolean }>,
@@ -55,6 +56,7 @@ const mocks = vi.hoisted(() => {
     subscribeToEvents: vi.fn(),
     truncateSessionMessages: vi.fn(),
     stopGeneration: vi.fn(),
+    getRunningSessions: vi.fn(),
     deleteSessionMessage: vi.fn(),
     patchSessionMessage: vi.fn(),
     restoreSessionState: vi.fn(),
@@ -69,11 +71,9 @@ const mocks = vi.hoisted(() => {
     providerState: {
       providerSnapshot: null,
       catalog: null,
-      getProviderType: vi.fn<(instanceId: string) => ProviderKind | undefined>(() => undefined),
     } as {
       providerSnapshot: ProviderInstancesConfig | null
       catalog: unknown
-      getProviderType: ReturnType<typeof vi.fn<(instanceId: string) => ProviderKind | undefined>>
     },
   }
 })
@@ -104,6 +104,7 @@ vi.mock("@services/chat/AgentService", () => ({
     subscribeToEvents: mocks.subscribeToEvents,
     truncateSessionMessages: mocks.truncateSessionMessages,
     stopGeneration: mocks.stopGeneration,
+    getRunningSessions: mocks.getRunningSessions,
     deleteSessionMessage: mocks.deleteSessionMessage,
     patchSessionMessage: mocks.patchSessionMessage,
     restoreSessionState: mocks.restoreSessionState,
@@ -123,12 +124,9 @@ vi.mock("@services/api", () => ({
 vi.mock("@/lib/taskTemplates", () => ({
   acknowledgePendingTemplatePrompt: mocks.acknowledgeTemplate,
 }))
-vi.mock("@/lib/notify", () => ({ notify: vi.fn() }))
+vi.mock("@/lib/notify", () => ({ notify: vi.fn(), isNotifyEnabled: () => false, notifyPermission: () => "denied" }))
 vi.mock("@shared/utils/systemPromptEnhancement", () => ({
   getSystemPromptEnhancementText: () => "",
-}))
-vi.mock("@shared/utils/copilotConclusionWithOptionsEnhancementUtils", () => ({
-  isCopilotConclusionWithOptionsEnhancementEnabled: () => false,
 }))
 import { useChat, type GenerationFailure, type SendSubmissionResult } from "./useChat"
 import { invalidateCompletedAnswers, resetCompletedAnswerHandoffsForTest } from "@/lib/completedAnswerHandoffRegistry"
@@ -146,6 +144,7 @@ type HookProps =
       onSessionCreated?: (sessionId: string) => void
     }
 type SubscriptionHandlers = {
+  onExecutionStarted(runId: string, startedAt?: string): void
   onToken(content: string): void
   onToolStart(toolCallId: string, toolName: string, args: Record<string, unknown>): void
   onToolToken(toolCallId: string, content: string): void
@@ -294,7 +293,7 @@ beforeEach(() => {
   mocks.appState.chats = []
   mocks.appState.currentSessionId = null
   mocks.appState.sessionIndexRevision = 0
-  mocks.appState.selectedModel = "test-model"
+  mocks.appState.selectedModel = { provider: "test-provider", model: "test-model" }
   mocks.appState.inputStates = {}
   mocks.appState.lastSelectedPromptId = null
   mocks.appState.systemPrompts = []
@@ -304,8 +303,6 @@ beforeEach(() => {
     defaults: { chat: { provider: "test-provider", model: "test-model" } },
   }
   mocks.providerState.catalog = null
-  mocks.providerState.getProviderType.mockReset()
-  mocks.providerState.getProviderType.mockReturnValue(undefined)
   for (const mock of [
     mocks.appState.selectSession,
     mocks.appState.loadSubagentSessions,
@@ -322,6 +319,7 @@ beforeEach(() => {
     mocks.subscribeToEvents,
     mocks.truncateSessionMessages,
     mocks.stopGeneration,
+    mocks.getRunningSessions,
     mocks.deleteSessionMessage,
     mocks.patchSessionMessage,
     mocks.restoreSessionState,
@@ -336,6 +334,7 @@ beforeEach(() => {
     mock.mockReset()
   }
   mocks.initializeStore.mockResolvedValue(undefined)
+  mocks.getRunningSessions.mockResolvedValue({ sessions: [] })
   mocks.appState.selectSession.mockImplementation((sessionId: string | null) => {
     mocks.appState.currentSessionId = sessionId
   })
@@ -367,10 +366,13 @@ afterEach(() => {
 describe("useChat two-phase send lifecycle", () => {
   const fenceRoot = (enabled = false) => beginRootModeOperation("root-session", 0, "a".repeat(64), enabled)
 
-  it("submits and executes a saved custom model with its provider before catalog metadata loads", async () => {
-    const customRef = { provider: "test-provider", model: "vendor:custom-name" }
-    mocks.providerState.providerSnapshot!.instances[0].config.runtime_models!.push(customRef.model)
-    mocks.appState.selectedModel = customRef.model
+  it("submits and executes a non-default provider's custom model before catalog metadata loads", async () => {
+    const customRef = { provider: "other-provider", model: "vendor:custom-name" }
+    mocks.providerState.providerSnapshot!.instances.push({
+      id: customRef.provider, type: "openai", label: "Other", enabled: true,
+      config: { runtime_models: [customRef.model] },
+    })
+    mocks.appState.selectedModel = customRef
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "custom-session" })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
     const hook = await mountUseChat({ mode: "bound", sessionId: null })
@@ -388,7 +390,7 @@ describe("useChat two-phase send lifecycle", () => {
     snapshot.features = { provider_model_ref: false }
     snapshot.instances[0].config.model = "test-model"
     snapshot.instances[0].config.runtime_models = ["test-model", "custom-model"]
-    mocks.appState.selectedModel = selected
+    mocks.appState.selectedModel = { provider: "test-provider", model: selected }
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "instance-only-session" })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
     const hook = await mountUseChat({ mode: "bound", sessionId: null })
@@ -398,7 +400,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.execute).toHaveBeenCalledWith("instance-only-session", expectedModel, undefined, undefined, expectedRef)
   })
 
-  it("resolves a cached new-chat submission against the current provider and freezes that ref for execute", async () => {
+  it("revalidates a disabled draft provider at submission and freezes the fallback for execute", async () => {
     const snapshot = mocks.providerState.providerSnapshot!
     snapshot.instances.push({ id: "second-provider", type: "openai", label: "Second", enabled: true, config: { runtime_models: ["second-default"] } })
     const response = deferred<{ session_id: string }>()
@@ -406,7 +408,7 @@ describe("useChat two-phase send lifecycle", () => {
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
     const hook = await mountUseChat({ mode: "bound", sessionId: null })
     const cachedSend = hook.current.send
-    // The global cached choice still belongs to the previous provider.
+    snapshot.instances[0].enabled = false
     snapshot.defaults = { chat: { provider: "second-provider", model: "second-default" } }
     let sending!: Promise<SendSubmissionResult>
     act(() => { sending = cachedSend("use the newly configured provider") })
@@ -414,6 +416,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ model: expectedRef.model, model_ref: expectedRef }))
 
     // A later preference change must not reroute the acknowledged session.
+    snapshot.instances[0].enabled = true
     snapshot.defaults = { chat: { provider: "test-provider", model: "test-model" } }
     await hook.rerender({ mode: "bound", sessionId: null })
     await act(async () => { response.resolve({ session_id: "switched-session" }); await sending })
@@ -1178,7 +1181,6 @@ describe("useChat two-phase send lifecycle", () => {
       },
       features: { provider_model_ref: true },
     }
-    mocks.providerState.getProviderType.mockReturnValue("openai")
     mocks.appState.chats = [{
       id: "provider-session",
       messages: [],
@@ -1206,12 +1208,11 @@ describe("useChat two-phase send lifecycle", () => {
       undefined,
       { provider: "instance-openai", model: "gpt-authoritative" },
     )
-    expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("instance-openai")
   })
   it("keeps an existing child session bound to its own provider and model", async () => {
     const sessionId = "child-session"
     // A draft selected in another pane must not override this bound session.
-    mocks.appState.selectedModel = "grok-4.7"
+    mocks.appState.selectedModel = { provider: "test-provider", model: "grok-4.7" }
     mocks.appState.chats = [{
       id: sessionId,
       messages: [],
@@ -1234,7 +1235,6 @@ describe("useChat two-phase send lifecycle", () => {
       },
       features: { provider_model_ref: true },
     }
-    mocks.providerState.getProviderType.mockReturnValue("openai")
     mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
 
@@ -1257,7 +1257,6 @@ describe("useChat two-phase send lifecycle", () => {
       undefined,
       { provider: "easycli", model: "gpt-5.6-luna" },
     )
-    expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("easycli")
   })
   it.each(["complete", "error"] as const)(
     "waits for %s terminal settlement after the transport closes",
@@ -1602,7 +1601,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
   })
   it("continues with the session's saved model instead of another pane's draft choice", async () => {
-    mocks.appState.selectedModel = "gpt-6-sol"
+    mocks.appState.selectedModel = { provider: "test-provider", model: "gpt-6-sol" }
     mocks.appState.chats = [{
       id: "resumed-session",
       messages: [],
@@ -2398,7 +2397,7 @@ describe("owned streams without a terminal frame", () => {
     expect(mocks.getSession).toHaveBeenCalledExactlyOnceWith(sessionId)
     mocks.getSession.mockClear()
     await act(async () => { await hook.current.send("inspect the worktree") })
-    return { hook, controller: mocks.subscribeToEvents.mock.calls[0][2] as AbortController, closeSubscription: subscription.resolve }
+    return { hook, controller: mocks.subscribeToEvents.mock.calls[0][2] as AbortController }
   }
   async function advance(ms: number) {
     await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
@@ -2591,13 +2590,13 @@ describe("owned streams without a terminal frame", () => {
     expect(mocks.getSession).toHaveBeenCalledTimes(1)
   })
 
-  it("ignores an idle status response when a terminal event arrives during the read", async () => {
-    const { hook, controller, closeSubscription } = await start()
+  it("closes on Complete and ignores an idle status response still in flight", async () => {
+    const { hook, controller } = await start()
     const status = deferred<unknown>()
     mocks.getSession.mockReturnValueOnce(status.promise)
     await advance(5_000)
     const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
-    await act(async () => { handlers.onComplete(); closeSubscription(); await Promise.resolve() })
+    await act(async () => { handlers.onComplete() })
     const historyReads = mocks.appState.loadChatHistory.mock.calls.length
     await act(async () => {
       status.resolve({ session: { id: sessionId, is_running: false } })
@@ -2609,7 +2608,8 @@ describe("owned streams without a terminal frame", () => {
     expect(mocks.appState.refreshChatsNow).not.toHaveBeenCalled()
     expect(hook.current.sendFailure).toBeNull()
     expect(hook.current.sending).toBe(false)
-    expect(controller.signal.aborted).toBe(false)
+    expect(controller.signal.aborted).toBe(true)
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
   })
 })
 
@@ -4415,7 +4415,13 @@ describe("explicit continuous upstream retry", () => {
   const refusedResume = (sessionId: string) => new ApiError("synthetic private server detail", 409, "Conflict", JSON.stringify({
     session_id: sessionId, error: { code: "retry_resume_not_prepared", message: "synthetic private server detail" },
   }))
-  const abortableSubscription = (_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+  const abortableSubscription = (
+    _sid: string, _h: SubscriptionHandlers, controller: AbortController,
+    observation?: { beforeAttachment: Promise<string | null>; acceptRunId: (runId: string) => void },
+  ) => {
+    if (observation) void observation.beforeAttachment.then((runId) => {
+      if (runId && !controller.signal.aborted) observation.acceptRunId(runId)
+    })
     const sub = deferred<void>()
     controller.signal.addEventListener("abort", () => sub.resolve(), { once: true })
     return sub.promise
@@ -4604,6 +4610,196 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.upstreamRetryStatus).toBe("identity_unsaved")
     blocked.mockRestore()
   })
+  it.each(["completed", "already_running"] as const)("streams before Execute reports %s and stops the observed Root", async (status) => {
+    allow()
+    const target = `inbox-stop-${status}`
+    const prior = beginOrdinaryRetryFence("https://fixture.test/api/v1", target, { ensureGuard: true })
+    if (prior.kind !== "reserved") throw new Error("Previous run was not reserved")
+    expect(confirmContinuousRetryFence(prior.reservation, "previous-run")).toBe(true)
+    const ack = deferred<{ session_id: string; status: typeof status }>()
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockReturnValue(ack.promise)
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("Start the synthetic Root") })
+    expect(mocks.subscribeToEvents).toHaveBeenCalledExactlyOnceWith(
+      target, expect.any(Object), expect.any(AbortController),
+    )
+    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    await act(async () => {
+      handlers.onExecutionStarted("inbox-run")
+      handlers.onToken("Output before Execute acknowledges")
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(hook.current.streaming).toBe("Output before Execute acknowledges")
+
+    await act(async () => { ack.resolve({ session_id: target, status }) })
+    await act(async () => { hook.current.stop(); hook.current.stop() })
+    await flushMicrotasks()
+
+    expect(mocks.getRunningSessions).not.toHaveBeenCalled()
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "inbox-run")
+    expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_requested")
+  })
+
+  it("uses an already-running Execute receipt without consulting the active list", async () => {
+    allow()
+    const target = "already-running-receipt"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValue({ session_id: target, status: "already_running", run_id: "acknowledged-run" })
+    mocks.getRunningSessions.mockResolvedValue({ sessions: [{ session_id: target, run_id: "successor-run" }] })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("Continue the synthetic Root") })
+    await act(async () => { hook.current.stop() })
+    await flushMicrotasks()
+
+    expect(mocks.getRunningSessions).not.toHaveBeenCalled()
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "acknowledged-run")
+  })
+
+  it("stops an externally started run using the identity captured while attaching", async () => {
+    allow()
+    const target = "observed-exact-stop"
+    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, config: { model: "test-model" } }]
+    mocks.shouldObserve = true
+    mocks.getRunningSessions.mockResolvedValue({ sessions: [{ session_id: target, run_id: "observed-run" }] })
+    mocks.stopGeneration.mockRejectedValue(new ApiError("Run is no longer current", 409, "Conflict"))
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await flushMicrotasks()
+
+    // A Stop must use the observed ID even if a successor would answer a
+    // fresh running-snapshot request by the time the user clicks.
+    mocks.shouldObserve = false
+    mocks.getRunningSessions.mockResolvedValue({ sessions: [{ session_id: target, run_id: "successor-run" }] })
+    await act(async () => { hook.current.stop() })
+    await flushMicrotasks()
+
+    expect(mocks.getRunningSessions).toHaveBeenCalledTimes(1)
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "observed-run")
+    expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+  })
+
+  it("does not dispatch Stop using a run identity received after the click", async () => {
+    allow()
+    const target = "late-observation-stop"
+    const running = deferred<{ sessions: Array<{ session_id: string; run_id: string }> }>()
+    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, config: { model: "test-model" } }]
+    mocks.shouldObserve = true
+    mocks.getRunningSessions.mockReturnValue(running.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    mocks.shouldObserve = false
+
+    await act(async () => {
+      hook.current.stop()
+      running.resolve({ sessions: [{ session_id: target, run_id: "late-run" }] })
+    })
+    await flushMicrotasks()
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+  })
+
+  it("ignores a late running snapshot after the observer attaches", async () => {
+    allow()
+    const target = "successor-before-stop"
+    const running = deferred<{ sessions: Array<{ session_id: string; run_id: string }> }>()
+    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, config: { model: "test-model" } }]
+    mocks.shouldObserve = true
+    mocks.getRunningSessions.mockReturnValue(running.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    const [, handlers, , observation] = mocks.subscribeToEvents.mock.lastCall! as Parameters<typeof abortableSubscription>
+    expect(await observation!.beforeAttachment).toBeNull()
+    await act(async () => {
+      handlers.onToken("Output from the previous run")
+      running.resolve({ sessions: [{ session_id: target, run_id: "successor-run" }] })
+    })
+    await flushMicrotasks()
+    mocks.shouldObserve = false
+    await act(async () => { hook.current.stop() })
+    await flushMicrotasks()
+
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+  })
+
+  it("does not use a non-start Execute receipt that arrives after the Stop click", async () => {
+    allow()
+    const target = "later-nonstart-receipt"
+    const ack = deferred<{ session_id: string; status: "already_running"; run_id: string }>()
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockReturnValue(ack.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("Observe a synthetic run") })
+    await vi.waitFor(() => expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1))
+    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    await act(async () => {
+      handlers.onExecutionStarted("observed-run")
+      hook.current.stop()
+      ack.resolve({ session_id: target, status: "already_running", run_id: "successor-run" })
+    })
+    await flushMicrotasks()
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "observed-run")
+  })
+
+  it.each([false, true])("keeps text before a tool through repeated Stop clicks and history supersession=%s", async (superseded) => {
+    allow()
+    const target = "exact-stop-tool-checkpoint"
+    const history = deferred<void>()
+    const stopReceipt = deferred<void>()
+    const text = "Partial answer before a tool"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "owned-run" })
+    mocks.stopGeneration.mockReturnValue(stopReceipt.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("Start an ordinary turn") })
+    await flushMicrotasks()
+    const handlers = mocks.subscribeToEvents.mock.lastCall![1] as SubscriptionHandlers
+    mocks.appState.loadChatHistory.mockClear().mockReturnValue(history.promise)
+    if (superseded) mocks.appState.loadChatHistory.mockRejectedValueOnce(new DOMException("Superseded by the feed", "AbortError"))
+    mocks.shouldObserve = true
+    await act(async () => {
+      handlers.onToken(text)
+      handlers.onToolStart("tool-id", "Bash", {})
+      hook.current.stop()
+      hook.current.stop()
+    })
+    await flushMicrotasks()
+
+    expect(hook.current.liveSegments).toContainEqual(expect.objectContaining({ kind: "text", text }))
+    expect(hook.current.sending).toBe(false)
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "owned-run")
+    expect(mocks.appState.loadChatHistory).not.toHaveBeenCalled()
+    await act(async () => { stopReceipt.resolve() })
+    await flushMicrotasks()
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledTimes(superseded ? 2 : 1)
+    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(target, expect.objectContaining({
+      mode: "monotonic", waitForAssistant: true, throwOnError: true,
+    }))
+    expect(hook.current.liveSegments).toContainEqual(expect.objectContaining({ kind: "text", text }))
+    mocks.shouldObserve = false
+    await act(async () => { history.resolve() })
+    await flushMicrotasks()
+    expect(hook.current.liveSegments).toEqual([])
+  })
+
   it("does not let an unowned observer borrow a later run's Stop identity", async () => {
     allow()
     const target = "unowned-observer"

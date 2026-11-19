@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const stream = vi.hoisted(() => ({
   event: {} as Record<string, unknown>,
+  fresh: true,
 }))
 
 vi.mock("./v2Stream", () => ({
   subscribeAgent: vi.fn((_sessionId, handlers, dispatch) => {
     dispatch(stream.event, handlers)
-    return { promise: Promise.resolve(), close: vi.fn() }
+    return { promise: Promise.resolve(), close: vi.fn(), fresh: stream.fresh }
   }),
   stopAgent: vi.fn(() => false),
 }))
@@ -18,17 +19,35 @@ import { diagnosticFixture, diagnosticFixtureError, timeoutDiagnosticFixture, ti
 describe("AgentClient session event routing", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    stream.fresh = true
     stream.event = {
       type: "message_appended",
       session_id: "session-1",
       message_id: "queued-user",
       role: "user",
+      correlation_id: "session-guidance",
       content: "apply this next",
       created_at: "2026-09-21T00:00:00Z",
     }
   })
 
-  it("routes an admitted queued message instead of treating it as unknown", async () => {
+  it.each([true, false])("uses the pre-attachment run ID only for a fresh subscription (%s)", async (fresh) => {
+    stream.fresh = fresh
+    const acceptRunId = vi.fn()
+    await new AgentClient().subscribeToEvents("session-1", {}, undefined, {
+      beforeAttachment: Promise.resolve("snapshot-run"), acceptRunId,
+    })
+    if (fresh) expect(acceptRunId).toHaveBeenCalledExactlyOnceWith("snapshot-run")
+    else expect(acceptRunId).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { role: "user", correlationId: "session-guidance", interjection: true },
+    { role: "user", correlationId: "session-guidance-after-run:run-1", interjection: false },
+    { role: "user", correlationId: undefined, interjection: false },
+    { role: "assistant", correlationId: "session-guidance", interjection: false },
+  ])("routes $role appends with correlation $correlationId", async ({ role, correlationId, interjection }) => {
+    stream.event = { ...stream.event, role, correlation_id: correlationId }
     const onMessageAppended = vi.fn()
 
     await new AgentClient().subscribeToEvents("session-1", { onMessageAppended })
@@ -36,7 +55,24 @@ describe("AgentClient session event routing", () => {
     expect(onMessageAppended).toHaveBeenCalledExactlyOnceWith(
       "session-1",
       "queued-user",
+      interjection,
     )
+  })
+
+  it("retains the version on a full Task event for reconnect reconciliation", async () => {
+    const taskList = {
+      session_id: "work-child",
+      title: "Worker handoff",
+      items: [],
+      created_at: "2026-11-07T02:39:39Z",
+      updated_at: "2026-11-07T02:45:11Z",
+    }
+    stream.event = { type: "task_list_updated", task_list: taskList, version: 48 }
+    const onTaskListUpdated = vi.fn()
+
+    await new AgentClient().subscribeToEvents("work-child", { onTaskListUpdated })
+
+    expect(onTaskListUpdated).toHaveBeenCalledExactlyOnceWith({ ...taskList, version: 48 })
   })
 
   it.each([

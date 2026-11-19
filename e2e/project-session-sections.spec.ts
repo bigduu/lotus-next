@@ -903,7 +903,45 @@ test("failed and conflicting section creation retains the draft until the server
   expect(observation.errorResponses.map((response) => response.split(" ")[0])).toEqual(["503", "412"])
 })
 
-test("search reveals folded project sections and selecting a result reveals its active path", async ({ page }, testInfo) => {
+test("reload restores Project and Section folds around the active session", async ({ page }, testInfo) => {
+  const { observation, projectWrites } = await installSectionFixture(page)
+  await page.goto(standaloneScenario.entryUrl)
+  const phone = testInfo.project.name === "phone-chromium"
+  await openSidebar(page, phone)
+  const alpha = project(page, alphaId)
+  const alphaLegacy = section(alpha, "legacy")
+  const beta = project(page, betaId)
+  const activeRow = row(alphaLegacy, "all-surface-session")
+  await expect(activeRow.locator('[aria-current="page"]')).toBeVisible()
+  await disclosure(alphaLegacy).click()
+  await disclosure(alpha).click()
+
+  await page.reload()
+  await openSidebar(page, phone)
+  await expect(page.locator("header").getByText("Alpha current", { exact: true })).toBeVisible()
+  await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "false")
+  await expect(disclosure(beta)).toHaveAttribute("aria-expanded", "true")
+  await expect(disclosure(section(beta, "legacy"))).toHaveAttribute("aria-expanded", "true")
+  await expect(activeRow).toHaveCount(0)
+  const screenshot = testInfo.outputPath("project-fold-restored.png")
+  await page.screenshot({ path: screenshot, animations: "disabled" })
+  await testInfo.attach("Project fold after reload", { path: screenshot, contentType: "image/png" })
+
+  await disclosure(alpha).click()
+  await expect(disclosure(alphaLegacy)).toHaveAttribute("aria-expanded", "false")
+  await disclosure(alphaLegacy).click()
+  await expect(activeRow.locator('[aria-current="page"]')).toBeVisible()
+  await page.reload()
+  await openSidebar(page, phone)
+  await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "true")
+  await expect(disclosure(alphaLegacy)).toHaveAttribute("aria-expanded", "true")
+  await expect(activeRow.locator('[aria-current="page"]')).toBeVisible()
+  expect(projectWrites).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
+test("search by title or session ID reveals folded project sections", async ({ page }, testInfo) => {
   const { observation } = await installSectionFixture(page)
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
@@ -925,7 +963,12 @@ test("search reveals folded project sections and selecting a result reveals its 
   await search.fill("")
   await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "false")
   await expect(target).toHaveCount(0)
-  await search.fill("Alpha searchable")
+  await search.fill("  ALPHA-SEARCH  ")
+  await expect(target).toBeVisible()
+  await testInfo.attach("Session ID search result", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
   await target.getByRole("button", { name: "Alpha searchable investigation", exact: true }).click()
   await expect(page.locator("header").getByText("Alpha searchable investigation", { exact: true })).toBeVisible()
   if (phone) await openSidebar(page, true)

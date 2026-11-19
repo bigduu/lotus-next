@@ -55,6 +55,11 @@ export interface JianduSetupReport {
   host: { os: string; arch: string; libc: string | null; supported: boolean; reason: string | null };
   release: { version: string; manifest_url: string; sha256: string } | null;
   trust: { trusted: boolean; reason: string | null };
+  /** Optional capability: older servers cannot offer publisher adoption. */
+  trust_action?: {
+    available: boolean; reason: string | null; expected_revision: number;
+    publisher: { label: string; algorithm: "ed25519"; public_key: string };
+  } | null;
   install: { available: boolean; reason: string | null };
   installed: { state: "missing" | "installing" | "ready" | "unverified"; version: string | null; reason: string | null };
   external_client: { command: string; args: ["--data-dir", string] } | null;
@@ -118,3 +123,21 @@ export type PluginApiRecord = Partial<{
   status: string;
   registered: unknown;
 }>;
+
+export type PublisherMode = "follow_defaults" | "explicit"
+export interface OfficialPublisher {
+  id: string
+  key: { label: string; algorithm: "ed25519"; public_key: string }
+  trusted: boolean
+  revoked: boolean
+}
+export interface PublisherPolicy {
+  expected_revision: number
+  publisher_mode: PublisherMode
+  enforcement: "strict" | "off"
+  custom_key_count: number
+  publishers: OfficialPublisher[]
+}
+export type PublisherPolicyChange =
+  | { type: "set_mode"; publisher_mode: PublisherMode }
+  | { type: "revoke" | "trust"; publisher_id: string }

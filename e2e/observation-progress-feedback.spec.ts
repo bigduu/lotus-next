@@ -62,7 +62,7 @@ async function prepare(page: Page, initial: Phase) {
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
-  await expect(page.getByRole("textbox", { name: "Messages", exact: true })).toBeAttached()
+  await expect(page.locator("[data-composer-region]")).toBeAttached()
   return { observation, writes, channels, get connections() { return connections }, get pendingReads() { return pendingReads },
     setPhase(value: Phase) { phase = value; if (value === "permission") history = exhaustedHistory() },
     disconnect() { return socket!.close({ code: 1012, reason: "fixture in-place websocket reconnect" }) },
@@ -133,19 +133,25 @@ test("#2016 reconnect reads canonical generation and exhaustion metadata cannot 
   const before = f.pendingReads
   f.setPhase("permission")
   await page.reload()
-  const approval = page.locator("[data-approval-presentation]")
+  const timeline = page.locator("[data-message-list-content]")
+  const approval = timeline.getByRole("article", { name: "Action approval required", exact: true })
   await expect(approval).toContainText("Canonical permission generation 2")
   await expect(page.getByText(unfinishedSummary, { exact: true })).toHaveCount(1)
   await expect.poll(() => f.connections).toBeGreaterThanOrEqual(2)
   expect(f.pendingReads).toBeGreaterThan(before)
   await expect(approval.locator("textarea")).toHaveCount(0)
   await expect(approval.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0)
-  await expect(approval).toBeFocused()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(approval).toBeVisible()
+  const composer = page.getByRole("textbox", { name: "Messages", exact: true })
+  await composer.focus()
+  await expect(composer).toBeFocused()
   await page.keyboard.press("Enter")
   expect(f.writes).toEqual([])
   await page.screenshot({ path: info.outputPath("canonical-permission-after-reconnect.png"), animations: "disabled" })
   await approval.getByRole("button", { name: "Deny once", exact: true }).click()
   await expect(approval).toHaveCount(0)
+  await expect(timeline.getByRole("article", { name: "Denied · Session continued", exact: true })).toBeVisible()
   expect(f.writes).toEqual([{ path: `/api/v1/sessions/${sid}/permission-decisions`, body: {
     request_id: "fixture-permission-2", request_generation: "opaque-generation-2", expected_policy_revision: 9, decision: "deny_once",
   } }])

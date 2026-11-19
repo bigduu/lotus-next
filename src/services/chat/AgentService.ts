@@ -11,6 +11,7 @@ import { debugLog } from "@shared/utils/debugFlags";
  */
 import { apiClient } from "../api";
 import { isApiError } from "../api/errors";
+import { readSessionLoopStatus, type SessionLoopCommand, type SessionLoopStatus } from "./sessionLoop";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
 
@@ -82,10 +83,12 @@ export interface SessionPermissionSnapshot {
   sessionId: string;
   mode: SessionPermissionMode;
   etag: string;
+  supervisorAutoDispatch?: boolean;
 }
 
 export interface PatchSessionPermissionRequest {
   permission_mode: SessionPermissionMode;
+  supervisor_auto_dispatch?: true;
 }
 
 export class SessionPermissionContractError extends Error {
@@ -111,7 +114,14 @@ const readSessionPermissionSnapshot = async (
   ) {
     throw new SessionPermissionContractError();
   }
-  return { sessionId, mode, etag };
+  if (!("supervisor_auto_dispatch" in session)) {
+    return { sessionId, mode, etag };
+  }
+  const dispatch = session.supervisor_auto_dispatch;
+  if (typeof dispatch !== "boolean" || (dispatch && mode !== "auto")) {
+    throw new SessionPermissionContractError();
+  }
+  return { sessionId, mode, etag, supervisorAutoDispatch: dispatch };
 };
 
 export interface GoldConfig {
@@ -181,6 +191,75 @@ export interface TokenBudgetUsage {
   };
 }
 
+export type SessionCompactionReceipt =
+  | { session_id: string; status: "unchanged" }
+  | {
+      session_id: string;
+      status: "compacted";
+      usage_before_percent: number;
+      usage_after_percent: number;
+      token_usage: TokenBudgetUsage;
+    };
+
+const nonnegativeFinite = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+export type CompactionStrategy = "summary" | "message_summary" | "retrieval_window";
+
+export type ActiveCompaction = {
+  id: string;
+  elapsed_ms: number;
+  strategy: CompactionStrategy | null;
+} & (
+  | { phase: "preparing" | "validating" | "saving" }
+  | { phase: "summarizing" | "merging"; part: number; total: number }
+);
+
+export interface SessionCompactionStatus {
+  session_id: string;
+  configured_strategy: CompactionStrategy;
+  active: ActiveCompaction | null;
+  applied: {
+    id: string;
+    strategy: CompactionStrategy;
+  } | null;
+}
+
+const isCompactionStrategy = (value: unknown): value is CompactionStrategy =>
+  value === "summary" || value === "message_summary" || value === "retrieval_window";
+
+function readSessionCompactionStatus(value: unknown, sessionId: string): SessionCompactionStatus {
+  const status = value as SessionCompactionStatus | null;
+  if (!status || status.session_id !== sessionId || !isCompactionStrategy(status.configured_strategy)) {
+    throw new Error("Invalid session compaction status");
+  }
+  const { active, applied } = status;
+  if (active !== null) {
+    if (!active?.id || typeof active.id !== "string" || !nonnegativeFinite(active.elapsed_ms)
+      || (active.strategy !== null && !isCompactionStrategy(active.strategy))) {
+      throw new Error("Invalid active compaction");
+    }
+    switch (active.phase) {
+      case "preparing":
+      case "validating":
+      case "saving":
+        break;
+      case "summarizing":
+      case "merging":
+        if (Number.isSafeInteger(active.part) && Number.isSafeInteger(active.total)
+          && active.part >= 1 && active.part <= active.total) break;
+        throw new Error("Invalid compaction progress");
+      default:
+        throw new Error("Invalid compaction phase");
+    }
+  }
+  if (applied !== null && (!applied?.id || typeof applied.id !== "string"
+    || !isCompactionStrategy(applied.strategy))) {
+    throw new Error("Invalid applied compaction");
+  }
+  return status;
+}
+
 export interface ContextSummaryInfo {
   summary: string;
   messages_summarized: number;
@@ -230,6 +309,9 @@ interface TaskListSnapshotResponse {
   session_id: string;
   title: string | null;
   items: TaskItem[];
+  version?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
   progress: {
     completed: number;
     total: number;
@@ -393,7 +475,6 @@ export interface ChatRequest {
   project_id?: string;
   system_prompt?: string;
   enhance_prompt?: string;
-  copilot_conclusion_with_options_enhancement_enabled?: boolean;
   workspace_path?: string;
   selected_skill_ids?: string[];
   workflow_selection?: import("../command/workflowCatalog").WorkflowSelection;
@@ -502,6 +583,7 @@ export interface ExecuteRequest {
 }
 
 export type PermissionOnceDecision = "allow_once" | "deny_once";
+export type PermissionDecisionChoice = PermissionOnceDecision | "allow_session";
 export type PermissionRequest = {
   session_id: string;
   request_id: string;
@@ -512,6 +594,7 @@ export type PermissionRequest = {
   resource: string;
   operation_summary: string;
   allowed_decisions: string[];
+  suggested_matchers?: { id: string; kind: string }[];
 };
 type PendingQuestionFields = {
   has_pending_question: true;
@@ -524,13 +607,22 @@ type PendingQuestionFields = {
 export type PendingQuestionResponse =
   | { has_pending_question: false; tool_call_id?: never }
   | (PendingQuestionFields & { interaction_kind: "clarification"; permission_request?: null })
-  | (PendingQuestionFields & { interaction_kind: "permission"; permission_request: PermissionRequest });
+  | (PendingQuestionFields & { interaction_kind: "permission"; permission_request: PermissionRequest; tool_arguments?: unknown });
 
 export type PermissionDecisionRequest = {
   request_id: string;
   request_generation: string;
-  decision: PermissionOnceDecision;
   expected_policy_revision: number;
+} & ({ decision: PermissionOnceDecision; matcher_id?: never }
+  | { decision: "allow_session"; matcher_id: "exact_resource" });
+export type SupervisorApprovalCardData = {
+  sessionId: string;
+  createdAt: string;
+  title: string;
+  operation: string;
+  workingDirectory?: string;
+  supervisorHandoffAt?: string;
+  request: PermissionRequest;
 };
 /** A matching receipt confirms the decision independently of continuation. */
 export type PermissionDecisionResult = {
@@ -681,6 +773,7 @@ export interface HistoryResponse {
     id: string;
     role: "user" | "assistant" | "tool" | "system";
     content: string;
+    phase?: string;
     compressed?: boolean;
     compressed_by_event_id?: string;
     content_parts?: Array<
@@ -826,6 +919,10 @@ export interface SessionSummary {
   bypass_permissions?: boolean;
   /** Missing or unknown typed support must not enable permission-mode writes. */
   permission_mode?: SessionPermissionMode;
+  /** The opt-in is reported by Supervisor detail. */
+  supervisor_auto_dispatch?: boolean;
+  /** An index hint to refresh permission detail. */
+  supervisor_permission_etag?: string;
 }
 
 export interface RunningSessionEntry {
@@ -1188,7 +1285,7 @@ export interface AgentEventHandlers {
     summary?: string,
     error?: string,
   ) => void;
-  onMessageAppended?: (sessionId: string, messageId?: string) => void;
+  onMessageAppended?: (sessionId: string, messageId: string | undefined, interjection: boolean) => void;
   onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
@@ -1485,12 +1582,12 @@ export class AgentClient {
   /**
    * Get the current shared task list snapshot for a session.
    *
-   * Child sessions resolve to the root/shared task list server-side.
+   * The returned Session identity owns the snapshot, including shared Root lists.
    * Returns null when no task list currently exists.
    */
   async getTaskList(sessionId: string): Promise<TaskList | null> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    const snapshot = await apiClient.get<TaskListSnapshotResponse>(`task/${encodedSessionId}`);
+    const snapshot = await apiClient.get<TaskListSnapshotResponse>(`task/${encodedSessionId}`, { cache: "no-store" });
 
     const hasTaskList = typeof snapshot.title === "string" || snapshot.items.length > 0;
     if (!hasTaskList) {
@@ -1502,8 +1599,9 @@ export class AgentClient {
       session_id: snapshot.session_id,
       title: snapshot.title ?? "Task List",
       items: snapshot.items,
-      created_at: now,
-      updated_at: now,
+      created_at: snapshot.created_at ?? now,
+      updated_at: snapshot.updated_at ?? now,
+      ...(snapshot.version !== undefined ? { version: snapshot.version } : {}),
     };
   }
 
@@ -1518,11 +1616,44 @@ export class AgentClient {
     return parsePendingQuestion(sessionId, value);
   }
 
+  async listSupervisorApprovals(signal?: AbortSignal): Promise<SupervisorApprovalCardData[]> {
+    const value = await apiClient.get<unknown>("supervisor/default/approvals", { cache: "no-store", signal });
+    const response = interactionRecord(value);
+    if (!Array.isArray(response?.approvals) || response.approvals.length > 8) {
+      throw new PendingInteractionContractError();
+    }
+    return response.approvals.map((value) => {
+      const card = interactionRecord(value);
+      if (!nonemptyInteractionString(card?.session_id) || !nonemptyInteractionString(card.created_at)
+          || !Number.isFinite(Date.parse(card.created_at)) || typeof card.title !== "string") {
+        throw new PendingInteractionContractError();
+      }
+      const pending = parsePendingQuestion(card.session_id, card.pending);
+      if (!pending.has_pending_question || pending.interaction_kind !== "permission") {
+        throw new PendingInteractionContractError();
+      }
+      const request = pending.permission_request;
+      const args = interactionRecord(interactionRecord(card.pending)?.tool_arguments);
+      const command = request.tool_name === "exec_command" && nonemptyInteractionString(args?.cmd) ? args.cmd : null;
+      const workdir = args?.workdir ?? card.workspace_path;
+      const operation = command ?? request.operation_summary;
+      if (!nonemptyInteractionString(operation)) throw new PendingInteractionContractError();
+      return {
+        sessionId: card.session_id, createdAt: card.created_at, title: card.title,
+        operation, request,
+        workingDirectory: command && nonemptyInteractionString(workdir) ? workdir : undefined,
+        supervisorHandoffAt: typeof card.supervisor_handoff_at === "string"
+          && Number.isFinite(Date.parse(card.supervisor_handoff_at)) ? card.supervisor_handoff_at : undefined,
+      };
+    });
+  }
+
   /** One explicit attempt, without implicit replay or ordinary-text fallback. */
   async submitPermissionDecision(sessionId: string, request: PermissionDecisionRequest): Promise<PermissionDecisionResult> {
     if (!nonemptyInteractionString(request.request_id) || !nonemptyInteractionString(request.request_generation)
         || !safePolicyRevision(request.expected_policy_revision)
-        || (request.decision !== "allow_once" && request.decision !== "deny_once")) {
+        || (request.decision === "allow_session" ? request.matcher_id !== "exact_resource"
+          : (request.decision !== "allow_once" && request.decision !== "deny_once") || request.matcher_id != null)) {
       throw new PendingInteractionContractError();
     }
     const data = interactionRecord(await apiClient.post<unknown>(
@@ -1532,7 +1663,7 @@ export class AgentClient {
     const recorded = interactionRecord(receipt?.decision);
     if (data?.success !== true || typeof data.replayed !== "boolean" || receipt?.session_id !== sessionId
         || recorded?.request_id !== request.request_id || recorded?.request_generation !== request.request_generation
-        || recorded?.decision !== request.decision || recorded?.matcher_id != null
+        || recorded?.decision !== request.decision || (recorded?.matcher_id ?? null) !== (request.matcher_id ?? null)
         || (recorded?.expected_policy_revision != null && !safePolicyRevision(recorded.expected_policy_revision))
         || (recorded?.confirm_global != null && recorded.confirm_global !== false)) {
       throw new PendingInteractionContractError();
@@ -1577,11 +1708,13 @@ export class AgentClient {
     sessionId: string,
     mode: SessionPermissionMode,
     etag: string,
+    supervisorAutoDispatch?: true,
   ): Promise<SessionPermissionSnapshot> {
-    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) {
+    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null || (supervisorAutoDispatch && mode !== "auto")) {
       throw new SessionPermissionContractError();
     }
     const request: PatchSessionPermissionRequest = { permission_mode: mode };
+    if (supervisorAutoDispatch) request.supervisor_auto_dispatch = true;
     const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "If-Match": etag },
@@ -1618,6 +1751,41 @@ export class AgentClient {
     if (receipt?.success !== true || receipt.session_id !== sessionId) {
       throw new Error("Invalid conversation clear receipt");
     }
+  }
+
+  async applySessionLoop(sessionId: string, command: SessionLoopCommand): Promise<SessionLoopStatus> {
+    const path = `sessions/${encodeURIComponent(sessionId)}/loop`;
+    const response = command.action === "status"
+      ? await apiClient.getOnce<unknown>(path, { cache: "no-store" })
+      : await apiClient.postOnce<unknown>(path, command);
+    return readSessionLoopStatus(response, sessionId, command);
+  }
+
+  async getSessionCompactionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionCompactionStatus> {
+    const value = await apiClient.getOnce<unknown>(`sessions/${encodeURIComponent(sessionId)}/compact`, {
+      cache: "no-store", signal,
+    });
+    return readSessionCompactionStatus(value, sessionId);
+  }
+
+  /** Compress one idle session without submitting a chat turn. */
+  async compactSessionContext(sessionId: string): Promise<SessionCompactionReceipt> {
+    const encodedSessionId = encodeURIComponent(sessionId);
+    // Bamboo bounds summary preparation to five minutes. Allow time for the commit acknowledgement.
+    const receipt = await apiClient.postOnce<SessionCompactionReceipt>(
+      `sessions/${encodedSessionId}/compact`, undefined, { logicalTimeoutMs: 310_000 },
+    );
+    if (receipt?.session_id === sessionId) {
+      if (receipt.status === "unchanged") return receipt;
+      if (receipt.status === "compacted" && nonnegativeFinite(receipt.usage_before_percent)
+        && nonnegativeFinite(receipt.usage_after_percent)) {
+        const usage = receipt.token_usage;
+        if (usage && [usage.total_tokens, usage.system_tokens, usage.summary_tokens,
+          usage.window_tokens, usage.budget_limit, usage.segments_removed].every(nonnegativeFinite)
+          && typeof usage.truncation_occurred === "boolean") return receipt;
+      }
+    }
+    throw new Error("Invalid context compaction receipt");
   }
 
   /**
@@ -1725,9 +1893,9 @@ export class AgentClient {
    * Get a snapshot of all currently-running sessions.
    * Used by the frontend on boot/reconnect to replay active run state.
    */
-  async getRunningSessions(): Promise<RunningSessionsResponse> {
+  async getRunningSessions(signal?: AbortSignal): Promise<RunningSessionsResponse> {
     debugLog("[AgentClient]", "runs.active.request", {});
-    const response = await apiClient.get<RunningSessionsResponse>("runs/active");
+    const response = await apiClient.get<RunningSessionsResponse>("runs/active", { cache: "no-store", signal });
     debugLog("[AgentClient]", "runs.active.response", summarizeRunningSessions(response));
     return response;
   }
@@ -1779,6 +1947,7 @@ export class AgentClient {
     sessionId: string,
     handlers: AgentEventHandlers,
     abortController?: AbortController,
+    observation?: { beforeAttachment: Promise<string | null>; acceptRunId: (runId: string) => void },
   ): Promise<void> {
     const signal = abortController?.signal;
     debugLog("[AgentClient]", "events.subscribe.request", { sessionId });
@@ -1793,10 +1962,12 @@ export class AgentClient {
     // load support details must not prevent ordinary stream observation.
     const decode = await import("./runDiagnostic")
       .then((module) => module.decodeRunDiagnostic).catch(() => undefined);
+    const initialRunId = observation && await observation.beforeAttachment;
     if (signal?.aborted) return;
-    const { promise, close } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
+    const { promise, close, fresh } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
       this.handleEvent(event, h, sessionId, decode),
     );
+    if (fresh && initialRunId) observation?.acceptRunId(initialRunId);
     const abortListener = () => {
       debugLog("[AgentClient]", "events.subscribe.ws.abort", { sessionId });
       close();
@@ -1867,7 +2038,9 @@ export class AgentClient {
         break;
       case "task_list_updated":
         if (event.task_list) {
-          handlers.onTaskListUpdated?.(event.task_list);
+          handlers.onTaskListUpdated?.(
+            event.version !== undefined ? { ...event.task_list, version: event.version } : event.task_list,
+          );
         }
         break;
       case "task_list_item_progress":
@@ -2004,6 +2177,7 @@ export class AgentClient {
         }
         break;
       case "execution_started":
+        if (event.session_id !== sessionId) break;
         handlers.onExecutionStarted?.(event.run_id || "", event.started_at);
         break;
       case "runner_progress":
@@ -2063,7 +2237,11 @@ export class AgentClient {
         break;
       case "message_appended":
         if (event.session_id) {
-          handlers.onMessageAppended?.(event.session_id, event.message_id);
+          handlers.onMessageAppended?.(
+            event.session_id,
+            event.message_id,
+            event.role === "user" && event.correlation_id === "session-guidance",
+          );
         }
         break;
       case "session_history_committed":

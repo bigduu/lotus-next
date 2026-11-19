@@ -51,16 +51,32 @@ export function projectCompletedAnswers(canonical: Message[], entries: readonly 
     }
     const nextUser = anchor < 0 ? -1 : canonical.findIndex((message, index) => index > anchor && message.role === "user")
     const end = nextUser < 0 ? canonical.length : nextUser
+    // A later asynchronous delivery can already be the tail of this
+    // user turn. An exact, newly persisted final reply still confirms its
+    // own handoff. Phase-less history keeps the stricter tail proof below.
+    const start = Math.max(anchor, baseline)
+    const recorded = start >= 0 ? canonical.find((message, index) =>
+      index > start && index < end && message.role === "assistant" && message.type === "text"
+      && message.phase === "final_answer" && !entry.baselineMessageIds.has(message.id)
+      && !entry.excludedCanonicalIds?.has(message.id) && !claimed.has(message.id)
+      && matchesCompletedAnswer(message.content, entry.text),
+    ) : undefined
+    if (recorded) {
+      claimed.add(recorded.id)
+      onConfirmed?.(entry, recorded.id)
+      continue
+    }
     const tailIndex = canonical.findLastIndex((message, index) => index > anchor && index < end && message.role !== "system")
     const tail = canonical[tailIndex]
-    const partialTail = tail?.role === "assistant" && tail.type === "text" && tail.content.trim()
-      && entry.text.trim().startsWith(tail.content.trim()) && entry.text.trim() !== tail.content.trim() ? tail : null
+    const answerTail = tail?.role === "assistant" && tail.type === "text" && tail.phase !== "commentary" ? tail : null
+    const partialTail = answerTail && !answerTail.phase && answerTail.content.trim()
+      && entry.text.trim().startsWith(answerTail.content.trim()) && entry.text.trim() !== answerTail.content.trim() ? answerTail : null
     const unchangedBaseline = tail?.id === entry.baselineMessageId && typeof entry.baselineMessageText === "string"
       && matchesCompletedAnswer(entry.baselineMessageText, entry.text)
-    const confirmed = tail?.role === "assistant" && tail.type === "text" && matchesCompletedAnswer(tail.content, entry.text)
-      && (entry.acknowledgedMessageId !== null ? anchor >= 0 : !entry.baselineMessageIds.has(tail.id))
-      && !unchangedBaseline && !entry.excludedCanonicalIds?.has(tail.id) && !claimed.has(tail.id)
-    if (confirmed) { claimed.add(tail.id); onConfirmed?.(entry, tail.id); continue }
+    const confirmed = answerTail && matchesCompletedAnswer(answerTail.content, entry.text)
+      && (entry.acknowledgedMessageId !== null ? anchor >= 0 : !entry.baselineMessageIds.has(answerTail.id))
+      && !unchangedBaseline && !entry.excludedCanonicalIds?.has(answerTail.id) && !claimed.has(answerTail.id)
+    if (confirmed) { claimed.add(answerTail.id); onConfirmed?.(entry, answerTail.id); continue }
     // Only hide a newly observed prefix in the exact acknowledged turn. The
     // canonical history remains unchanged and uncertain older text stays visible.
     const superseded = partialTail && anchor >= 0 && entry.acknowledgedMessageId !== null
