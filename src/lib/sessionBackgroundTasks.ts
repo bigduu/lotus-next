@@ -1,6 +1,14 @@
 import type { Message } from "@shared/types/chatMessages"
 import { isBusyPhase, type SessionExecutionState } from "@shared/store/appStore/slices/executionStateSlice"
 
+/** The subset of the backend `SessionActivity` labels this module reads. */
+type SessionActivityLabel = import("@services/chat/AgentService").SessionActivity
+
+/** A durable wait that can resume execution without a human response. */
+export function hasSessionWorkWait(activity: SessionActivityLabel | undefined): boolean {
+  return activity === "waiting_children" || activity === "waiting_bash"
+}
+
 /**
  * Background shell (bash) launch detection for sidebar activity indicators.
  *
@@ -99,16 +107,29 @@ export function sessionHasLiveWork(
      * entry this is also known for a session this client never opened.
      */
     runningChildCount?: number
+    /**
+     * The server's own answer for "what is this session doing now?" A
+     * `waiting_children` or `waiting_bash` label is live work even though no
+     * runner is executing, which covers both waits *and* the gap between the last
+     * child finishing and this Root resuming — neither is expressible with
+     * `isRunning` or a child count alone.
+     */
+    activity?: SessionActivityLabel
   },
   execution: SessionExecutionState | undefined,
   backgroundBash: Readonly<Record<string, unknown>>,
 ): boolean {
-  if (session.isRunning) return true
-  if ((session.runningChildCount ?? 0) > 0) return true
-  if (execution) {
-    if (isBusyPhase(execution.phase)) return true
-    if (execution.children.runningCount > 0) return true
-    return sessionHasRunningBackgroundBash(session.messages, backgroundBash)
-  }
-  return false
+  if (session.isRunning || (session.runningChildCount ?? 0) > 0) return true
+  if (session.activity === "running" || hasSessionWorkWait(session.activity)) return true
+  if (!execution) return false
+
+  // The server's current child count also covers children that outlive the
+  // Root. When the Root is blocked or terminal, a cached wait or child count
+  // alone cannot keep the indicator lit.
+  const rootStopped = session.activity === "waiting_user" || session.activity === "terminal"
+  const cachedWait = execution.confidence === "summary"
+    || execution.phase === "running_children" || execution.phase === "waiting_user_answer"
+  return (isBusyPhase(execution.phase) && !(rootStopped && cachedWait))
+    || (!rootStopped && execution.children.runningCount > 0)
+    || sessionHasRunningBackgroundBash(session.messages, backgroundBash)
 }

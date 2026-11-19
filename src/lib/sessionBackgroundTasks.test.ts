@@ -97,6 +97,32 @@ describe("sidebar live-work predicate", () => {
     expect(sessionHasLiveWork({ isRunning: false, runningChildCount: 0 }, undefined, {})).toBe(false)
   })
 
+  it("counts the server's activity label, including waits no local signal can see", () => {
+    // `waiting_bash` and the post-child resume gap are invisible to `isRunning`
+    // and to a child count; only the server's label carries them.
+    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_bash" }, undefined, {})).toBe(true)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_children" }, undefined, {})).toBe(true)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "running" }, undefined, {})).toBe(true)
+    // Parked on a person reads as blocked, not busy.
+    expect(sessionHasLiveWork({ isRunning: false, activity: "waiting_user" }, undefined, {})).toBe(false)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "terminal" }, undefined, {})).toBe(false)
+    expect(sessionHasLiveWork({ isRunning: false, activity: "idle" }, undefined, {})).toBe(false)
+    // Older backends omit the field entirely; the local derivation must still run.
+    expect(sessionHasLiveWork({ isRunning: false, runningChildCount: 1 }, undefined, {})).toBe(true)
+  })
+
+  it.each(["terminal", "waiting_user"] as const)("uses fresh work evidence when the Root activity is %s", (activity) => {
+    const session = { activity, runningChildCount: 0 }
+    expect(sessionHasLiveWork(session, execution("running_children", 2), {})).toBe(false)
+    expect(sessionHasLiveWork(session, execution("waiting_user_answer", 2), {})).toBe(false)
+    expect(sessionHasLiveWork(session, { ...execution("running_tools"), confidence: "summary" }, {})).toBe(false)
+    expect(sessionHasLiveWork(session, { ...execution("streaming"), confidence: "live" }, {})).toBe(true)
+    expect(sessionHasLiveWork({ ...session, runningChildCount: 1 }, execution("completed"), {})).toBe(true)
+    const detached = { ...session, messages: [resultMessage(launch("bash-1"), "m1")] }
+    expect(sessionHasLiveWork(detached, execution("completed"), {})).toBe(true)
+    expect(sessionHasLiveWork(detached, execution("completed"), { "bash-1": { status: "completed" } })).toBe(false)
+  })
+
   it("does not classify a session this client never engaged with", () => {
     // No execution entry: nothing has been observed for it, so a transcript
     // launch alone must not pulse forever (BashCompleted replays on observe).

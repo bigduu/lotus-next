@@ -30,7 +30,7 @@ import {
 import { apiClient, getBackendStorageScope } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
 import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
-import { backgroundBashIds, parseBackgroundBashLaunch } from "@/lib/sessionBackgroundTasks"
+import { backgroundBashIds, hasSessionWorkWait, parseBackgroundBashLaunch } from "@/lib/sessionBackgroundTasks"
 import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId, discardUnsentContinuousRetryFence, restoreConfirmedUnstartedRetryFence, readContinuousRetryFence, readOrdinaryRetryFence } from "@/lib/continuousRetryFence"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import {
@@ -1886,17 +1886,18 @@ export function useChat(
   // tokens stream in instead of the transcript freezing until terminal.
   const summaryRunning = currentChat?.isRunning ?? false
   const summarySuspended = currentChat?.lastRunStatus === "suspended"
+  const summaryHasWorkWait = hasSessionWorkWait(currentChat?.activity)
   const shouldObserve = useAppStore((s) => (sid ? selectShouldObserve(sid)(s) : false))
   const stoppingInPane = upstreamRetryFeedback?.sessionId === sid && upstreamRetryFeedback?.status === "stopping"
   useEffect(() => {
-    // Active children can keep the execution rail busy while their parent is
-    // suspended. Wait for its running summary before observing another run.
-    if (!sid || !shouldObserve || summarySuspended && !summaryRunning) return
+    // A confirmed wait still tails the resumed run. Without that projection,
+    // a suspended summary can refer to an older run waiting on a person.
+    if (!sid || !shouldObserve || summarySuspended && !summaryRunning && !summaryHasWorkWait) return
     if (activeSendRef.current) return
     if (stoppingInPane) return
     if (subscribedSidRef.current === sid) return
     void runStream(sid, { resume: true })
-  }, [sid, shouldObserve, summarySuspended, summaryRunning, sending, runStream, stoppingInPane])
+  }, [sid, shouldObserve, summarySuspended, summaryRunning, summaryHasWorkWait, sending, runStream, stoppingInPane])
 
   // ── Stranded-terminal reconcile ───────────────────────────────────────
   // If the summary settles (is_running=false via the feed) while we still hold
@@ -1904,13 +1905,13 @@ export function useChat(
   // its terminal frame (e.g. frozen background WS). Give the channel a grace
   // period to deliver, then force-settle: abort + reload history.
   useEffect(() => {
-    if (!sid || summaryRunning) return
+    if (!sid || summaryRunning || summaryHasWorkWait) return
     if (subscribedSidRef.current !== sid) return
     if (sending) return // we drive this run; send() owns settling
     const timer = setTimeout(() => {
       if (subscribedSidRef.current !== sid) return
-      const stillRunning = useAppStore.getState().chats.find((c) => c.id === sid)?.isRunning
-      if (stillRunning) return
+      const latestChat = useAppStore.getState().chats.find((c) => c.id === sid)
+      if (latestChat?.isRunning || hasSessionWorkWait(latestChat?.activity)) return
       abortRef.current?.abort()
       void useAppStore
         .getState()
@@ -1918,7 +1919,7 @@ export function useChat(
         .then(() => stopStream(null))
     }, 2_000)
     return () => clearTimeout(timer)
-  }, [sid, summaryRunning, sending, stopStream])
+  }, [sid, summaryRunning, summaryHasWorkWait, sending, stopStream])
 
   // ── Pending-question rehydration ──────────────────────────────────────
   // The execution reducer retains only terminal statuses. Keep the raw pane
