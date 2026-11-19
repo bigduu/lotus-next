@@ -53,10 +53,11 @@ export function mergeSubAgentView(parentId: string | null, chats: readonly ChatI
   for (const id of order) {
     const chat = sessionById.get(id), node = nodeById.get(id)
     const lifecycle = confirmed && node ? actorSnapshotLifecycle(node) : "unknown"
+    const createdAt = chat?.createdAtExact === undefined ? chat?.createdAt : Date.parse(chat.createdAtExact)
     const projected: SubAgentCard = {
       title: node?.title || chat?.title || live[id]?.title || chat?.subagentType || undefined,
       status: lifecycle === "cold" ? "idle" : lifecycle === "active" ? "unknown" : lifecycle,
-      createdAt: chat?.createdAt,
+      createdAt: Number.isFinite(createdAt) ? createdAt : undefined,
       // Unversioned preview/error text can belong to an earlier resident run.
       placement: chat?.placement,
     }

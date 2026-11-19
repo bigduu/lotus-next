@@ -1027,11 +1027,12 @@ describe("cleared transcript subagent history", () => {
     expect(host.querySelector("[data-subagent-group]")).toBeNull()
     expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
   })
-  it("keeps unplaced cards directly rendered while normal messages exist", () => {
+  it("keeps unplaced cards born within the retained transcript directly visible", () => {
+    const createdAt = Date.parse("2026-11-02T00:00:01Z")
     const { host } = renderCleared([
       { id: "user-1", role: "user", content: "question", createdAt: "2026-11-02T00:00:00Z" },
       { id: "assistant-1", role: "assistant", type: "text", content: "answer", createdAt: "2026-11-02T00:00:01Z" },
-    ], children)
+    ], { "child-1": { ...children["child-1"], createdAt }, "child-2": { ...children["child-2"], createdAt } })
     expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
     const group = host.querySelector("[data-subagent-group]")
     expect(group).not.toBeNull()
@@ -1056,8 +1057,12 @@ describe("cleared transcript subagent history", () => {
     folded(host)
     expect(host.querySelector('[data-subagent-id="fresh"]')).not.toBeNull()
 
-    const { host: reopened } = renderCleared(messages, { old, fresh })
+    const { host: reopened, render: hydrate } = renderCleared(messages, { old: { status: old.status }, fresh })
     folded(reopened)
+    expect(reopened.querySelector("[data-cleared-subagents-brief]")?.textContent).toBe(`${uiText("subagents_76d97a95")}1)`)
+    hydrate({ mergedSubAgents: { old, fresh } })
+    folded(reopened)
+    expect(reopened.querySelector("[data-cleared-subagents-brief]")?.textContent).toBe(uiText("cleared_session_subagents", { count: 1 }))
     act(() => reopened.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.click())
     expect(reopened.querySelector('[data-cleared-subagents] [data-subagent-id="old"]')).not.toBeNull()
     expect(reopened.querySelector('[data-cleared-subagents] [data-subagent-id="fresh"]')).toBeNull()

@@ -191,12 +191,17 @@ test("Supervisor keeps retained children folded after sending and reloading", as
   await expect(newMessage).toBeVisible()
   await expect(fold).toHaveAttribute("aria-expanded", "false")
   await expect(child).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath("supervisor-history-fold.png"), animations: "disabled" })
 
+  // The saved Actor tree can still load when the independently fetched Child
+  // summaries are unavailable. Missing birth times must keep this fold closed.
+  await page.route((url) => url.pathname === "/api/v1/sessions" &&
+    url.searchParams.get("kind") === "child" && url.searchParams.get("root_session_id") === supervisor,
+    (route) => route.fulfill({ status: 503, json: { error: "Synthetic child index unavailable" } }))
   await page.reload()
   await expect(newMessage).toBeVisible()
   await expect(fold).toHaveAttribute("aria-expanded", "false")
   await expect(child).toHaveCount(0)
-  await page.screenshot({ path: info.outputPath("supervisor-history-fold.png"), animations: "disabled" })
   await fold.click()
   await expect(child).toHaveText(/Retained child/)
   expect(f.writes.filter(({ method }) => method === "DELETE")).toEqual([])

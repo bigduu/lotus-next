@@ -123,18 +123,22 @@ export function placeSubAgents(
     const group = byOrigin.get(key) ?? {}
     group[id] = agents[id]; byOrigin.set(key, group)
   }
-  const historical: Record<string, SubAgentCard> = Object.create(null)
+  const folded: Record<string, SubAgentCard> = Object.create(null)
   const unplaced: Record<string, SubAgentCard> = Object.create(null)
+  let hasUnconfirmedAge = false
   for (const [id, agent] of Object.entries(agents)) {
     if (origins.has(id)) continue
-    // A missing transcript boundary leaves chronology unconfirmed. An empty
-    // transcript or a birth before its first message puts the card in history.
+    // Actor snapshots and Child summaries arrive independently. Until there is
+    // a birth time to compare, keep unanchored cards behind the fold.
+    const ageUnconfirmed = firstMessageAt != null &&
+      (!Number.isFinite(firstMessageAt) || agent.createdAt === undefined)
     const predatesHistory = firstMessageAt === null ||
       (firstMessageAt !== undefined && agent.createdAt !== undefined && agent.createdAt < firstMessageAt)
-    const group = predatesHistory ? historical : unplaced
+    hasUnconfirmedAge ||= ageUnconfirmed
+    const group = predatesHistory || ageUnconfirmed ? folded : unplaced
     group[id] = agent
   }
-  return { byOrigin, historical, unplaced }
+  return { byOrigin, folded, unplaced, hasUnconfirmedAge }
 }
 
 /** Convenience composition used by tests and one-shot callers. */
