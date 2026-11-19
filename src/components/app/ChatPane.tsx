@@ -913,29 +913,7 @@ export function ChatPane({
     }).finally(() => setCompactionPending(sessionId, false))
   }
 
-  const submitLoopCommand = (command: SessionLoopCommand | "invalid", revision: number) => {
-    if (command === "invalid") { showToast(uiText("session_loop_usage")); return }
-    if (!currentSessionId) { showToast(uiText("session_loop_open_session")); return }
-    const sessionId = currentSessionId
-    if (rootMode.child || managedHistoryStatus
-      || (currentChat && isDefaultSupervisor(currentChat))
-      || ticketScope?.binding.supervisor_session_id === sessionId) {
-      showToast(uiText("session_loop_ordinary_only"))
-      return
-    }
-    if (rootMode.selected === true && (command.action === "start" || command.action === "resume")) {
-      showToast(uiText("session_loop_standard_only"))
-      return
-    }
-    if (executionBlocked || isSessionExecutionBlocked(sessionId) || historyBlocked
-      || rootSessionUnsafe() || semanticComposer || ticketIngress.busy) {
-      showToast(uiText("session_loop_session_unavailable"))
-      return
-    }
-    if (attachments.length || selectedSkill || selectedWorkflow || typedWorkflow) {
-      showToast(uiText("session_loop_send_alone"))
-      return
-    }
+  const submitLoopCommand = (sessionId: string, command: SessionLoopCommand, revision: number) => {
     if (loopRequests.current.has(sessionId)) return
     loopRequests.current.add(sessionId)
     setMenusDismissed(true)
@@ -962,14 +940,48 @@ export function ChatPane({
     }).finally(() => { loopRequests.current.delete(sessionId) })
   }
 
+  const loopSubmissionAllowed = (sessionId: string, startsLoop: boolean): boolean => {
+    if (rootMode.child || managedHistoryStatus
+      || (currentChat && isDefaultSupervisor(currentChat))
+      || ticketScope?.binding.supervisor_session_id === sessionId) {
+      showToast(uiText("session_loop_ordinary_only"))
+      return false
+    }
+    if (rootMode.selected === true && startsLoop) {
+      showToast(uiText("session_loop_standard_only"))
+      return false
+    }
+    if (executionBlocked || isSessionExecutionBlocked(sessionId) || historyBlocked
+      || rootSessionUnsafe() || semanticComposer || ticketIngress.busy) {
+      showToast(uiText("session_loop_session_unavailable"))
+      return false
+    }
+    if (attachments.length || selectedSkill || selectedWorkflow || typedWorkflow) {
+      showToast(uiText("session_loop_send_alone"))
+      return false
+    }
+    return true
+  }
+
   const submit = () => {
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
     const loopCommand = parseSessionLoopCommand(text)
     if (loopCommand !== null) {
-      submitLoopCommand(loopCommand, draftAtSubmit?.contentRevision ?? 0)
-      return
+      if (loopCommand === "invalid") { showToast(uiText("session_loop_usage")); return }
+      if (!currentSessionId) { showToast(uiText("session_loop_open_session")); return }
+      const startsLoop = loopCommand === "natural" || loopCommand.action === "start" || loopCommand.action === "resume"
+      if (!loopSubmissionAllowed(currentSessionId, startsLoop)) return
+      if (loopCommand !== "natural") {
+        submitLoopCommand(currentSessionId, loopCommand, draftAtSubmit?.contentRevision ?? 0)
+        return
+      }
+      if (currentlyRunning || delegationWaiting || currentChat?.lastRunStatus === "suspended"
+        || pendingApproval || pendingQuestion || queue.busy || queue.hasUnconfirmed) {
+        showToast(uiText("session_loop_wait_for_session"))
+        return
+      }
     }
     if (text.trim().toLowerCase() === COMPACT_COMMAND) {
       compactDraft(draftAtSubmit?.contentRevision ?? 0)

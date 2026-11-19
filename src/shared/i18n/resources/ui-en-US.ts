@@ -1660,6 +1660,7 @@ export const uiEnUs = {
   "session_loop_standard_only": "Start or resume a loop in a Standard chat session.",
   "session_loop_session_unavailable": "The loop is unavailable while this session cannot be read or controlled.",
   "session_loop_send_alone": "Remove attachments, skills, and workflow selections before using /loop.",
+  "session_loop_wait_for_session": "Wait for the current turn to finish before sending the loop request. Your draft was kept.",
   "session_loop_backend_unavailable": "This session is unavailable or its Bamboo version does not support /loop.",
   "session_loop_unconfirmed": "The loop command could not be confirmed. Your draft was kept.",
   "session_loop_scheduled": "Loop scheduled.",

@@ -1658,6 +1658,7 @@ export const uiZhCn = {
   "session_loop_standard_only": "请在标准模式下创建或恢复循环任务。",
   "session_loop_session_unavailable": "会话恢复为可读取、可操作状态后才能管理循环任务。",
   "session_loop_send_alone": "使用 /loop 前，请先移除附件、技能和工作流。",
+  "session_loop_wait_for_session": "请等当前轮次结束后再发送循环请求。草稿已保留。",
   "session_loop_backend_unavailable": "会话不可用，或当前 Bamboo 版本暂不支持 /loop。",
   "session_loop_unconfirmed": "未能确认循环命令的结果，草稿已保留。",
   "session_loop_scheduled": "已安排循环任务。",

@@ -2072,16 +2072,44 @@ it("keeps a reserved /loop draft out of the transcript when the older backend ha
   expect(input.value).toBe("/loop 5m check")
 })
 
-it("keeps an invalid /loop local even in a running session", async () => {
+it("sends natural /loop text intact as an ordinary turn in the open session", async () => {
+  const send = vi.fn<Send>().mockResolvedValue({
+    kind: "accepted", operationId: 1, sessionId: "loop-chat", navigated: false,
+  })
+  const input = await mount(send, "loop-chat")
+  const prompt = "/loop 每隔五分钟检查构建"
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(send).toHaveBeenCalledExactlyOnceWith(prompt, expect.any(Object))
+  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
+})
+
+it("keeps a natural /loop draft local until the busy session finishes", async () => {
   const send = vi.fn<Send>()
   const input = await mount(send, "busy-loop-chat", true)
-  change(input, "/loop 30s check")
+  const prompt = "/loop every five minutes check the build"
+  change(input, prompt)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_wait_for_session"))
+  expect(input.value).toBe(prompt)
+})
+
+it.each(["/loop", "/loop 30s check", "/loop 1.5h check", "/loop stop extra"])(
+  "keeps malformed fixed syntax %s local even in a running session", async (command) => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, command)
   await act(async () => composer().onSubmit())
   expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
   expect(send).not.toHaveBeenCalled()
   expect(runtime.queueSend).not.toHaveBeenCalled()
   expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_usage"))
-  expect(input.value).toBe("/loop 30s check")
+  expect(input.value).toBe(command)
 })
 
 it("preserves the compaction draft if the backend route is unavailable", async () => {

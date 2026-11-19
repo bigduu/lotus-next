@@ -53,6 +53,13 @@ test("manages a loop from a busy chat without posting or queuing a turn", async 
   const activeTurnStop = page.getByRole("button", { name: "停止生成", exact: true })
   await expect(activeTurnStop).toBeVisible()
   const input = page.getByRole("textbox", { name: "消息", exact: true })
+  const naturalPrompt = "/loop 每隔五分钟检查构建"
+  await input.fill(naturalPrompt)
+  await input.press("Enter")
+  await expect(page.getByText("请等当前轮次结束后再发送循环请求。草稿已保留。")).toBeVisible()
+  await expectComposerText(input, naturalPrompt)
+  expect(posts).toEqual([])
+
   await input.fill("/loop 5m 检查部署")
   await input.press("Enter")
   await expect(page.getByText("会话不可用，或当前 Bamboo 版本暂不支持 /loop。")).toBeVisible()
