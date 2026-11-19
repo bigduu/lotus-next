@@ -22,7 +22,7 @@ export interface PermissionModeSlice {
   /** Transient request state only. The one mode/ETag snapshot lives in ChatItem.config. */
   permissionModeRequests: Record<string, PermissionModeRequest>;
   refreshSessionPermissionMode: (sessionId: string) => Promise<void>;
-  changeSessionPermissionMode: (sessionId: string, mode: SessionPermissionMode, etag: string) => Promise<void>;
+  changeSessionPermissionMode: (sessionId: string, mode: SessionPermissionMode, etag: string, confirmedDispatchInheritance?: boolean) => Promise<void>;
   reconcileSessionPermissionModes: (summaries: SessionSummary[]) => void;
   resetSessionPermissionModes: (sessionIds?: string[]) => void;
 }
@@ -148,13 +148,15 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
       return operation.promise;
     },
 
-    changeSessionPermissionMode: (id, mode, etag) => {
+    changeSessionPermissionMode: (id, mode, etag, confirmedDispatchInheritance) => {
       const chat = chatFor(id);
       const request = get().permissionModeRequests[id];
       // Synchronous fence, including repeated events before React can render disabled.
       if (operations.has(id) || !chat || request?.status !== "ready" ||
         !parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) return Promise.resolve();
-      if (chat.config.permissionModeEtag !== etag) {
+      const observedInheritance = chat.config.supervisorDispatchInheritsPermissionMode;
+      if (chat.config.permissionModeEtag !== etag ||
+        (confirmedDispatchInheritance !== undefined && confirmedDispatchInheritance !== (observedInheritance === true))) {
         set((state) => ({ permissionModeRequests: {
           ...state.permissionModeRequests, [id]: { ...request, error: "changed" },
         } }));
@@ -162,7 +164,6 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
       }
       if (chat.config.permissionMode === mode) return Promise.resolve();
       const observedMode = chat.config.permissionMode;
-      const observedInheritance = chat.config.supervisorDispatchInheritsPermissionMode;
       const operation = begin(id, "saving");
       operation.promise = (async () => {
         // Other metadata (model/title) shares the revision. Recheck once before

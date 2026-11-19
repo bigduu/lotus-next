@@ -103,6 +103,16 @@ describe("server-authoritative session permission state", () => {
     expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "ready", error: undefined });
   });
 
+  it("rejects a stale confirmation scope even with the current revision", async () => {
+    const store = harness();
+    read.mockResolvedValueOnce({ ...snapshot(), supervisorDispatchInheritsPermissionMode: true });
+    await store.getState().refreshSessionPermissionMode("a");
+    await store.getState().changeSessionPermissionMode("a", "auto", '"7"', false);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(patch).not.toHaveBeenCalled();
+    expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "ready", error: "changed" });
+  });
+
   it("fences same-session re-entry synchronously and never queues a later write", async () => {
     const store = harness(); await ready(store);
     const pending = deferred<SessionPermissionSnapshot>(); patch.mockReturnValueOnce(pending.promise);

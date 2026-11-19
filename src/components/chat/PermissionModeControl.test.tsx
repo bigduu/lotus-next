@@ -115,6 +115,23 @@ describe("PermissionModeControl", () => {
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New execution sessions")
   })
 
+  it("discards an open Auto confirmation when an index refresh changes only its inheritance scope", async () => {
+    const upgraded = { ...snapshot(), supervisorDispatchInheritsPermissionMode: true as const }
+    read.mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(upgraded)
+    await mount()
+    choose("auto")
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("New execution sessions")
+    await act(async () => {
+      useAppStore.getState().reconcileSessionPermissionModes([{
+        ...summary("a"), supervisor_permission_etag: '"7"', supervisor_dispatch_inherits_permission_mode: true,
+      }])
+    })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(patch).not.toHaveBeenCalled()
+    choose("auto")
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New execution sessions")
+  })
+
   it("refreshes an upgraded Supervisor scope at the same permission mode and revision", async () => {
     const upgraded = { ...snapshot("auto"), supervisorDispatchInheritsPermissionMode: true as const }
     read.mockResolvedValueOnce(snapshot("auto")).mockResolvedValueOnce(upgraded)
