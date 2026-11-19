@@ -30,10 +30,29 @@ it("posts the typed command once to the session loop endpoint", async () => {
   expect(mock.getOnce).not.toHaveBeenCalled()
 })
 
+it("confirms an automatic loop only from an adaptive start acknowledgement", async () => {
+  const command = { action: "start_adaptive", prompt: "Check the build" } as const
+  const loop = { state: "scheduled", next_fire_at: "2026-11-20T00:00:00Z", last_run_status: null }
+  mock.postOnce
+    .mockResolvedValueOnce({ session_id: sessionId, loop })
+    .mockResolvedValueOnce({ session_id: sessionId, loop: { ...loop, mode: "fixed" } })
+    .mockResolvedValueOnce({ session_id: sessionId, loop: null })
+  const receipt = { session_id: sessionId, loop: { ...loop, mode: "adaptive" } }
+  mock.postOnce.mockResolvedValueOnce(receipt)
+
+  for (let index = 0; index < 3; index++) {
+    await expect(agentClient.applySessionLoop(sessionId, command)).rejects.toThrow(/acknowledgement/)
+  }
+  await expect(agentClient.applySessionLoop(sessionId, command)).resolves.toBe(receipt)
+  expect(mock.postOnce).toHaveBeenLastCalledWith(endpoint, command)
+  expect(mock.getOnce).not.toHaveBeenCalled()
+})
+
 it.each([
   { ...paused, session_id: "other" },
   { session_id: sessionId },
   { ...paused, loop: { ...paused.loop, state: "running" } },
+  { ...paused, loop: { ...paused.loop, mode: "invalid" } },
   { ...paused, loop: { ...paused.loop, next_fire_at: "unconfirmed" } },
   { ...paused, loop: { ...paused.loop, last_run_status: { malformed: true } } },
 ])("rejects malformed or mismatched session loop responses %#", async (receipt) => {

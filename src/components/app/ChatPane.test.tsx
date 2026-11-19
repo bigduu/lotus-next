@@ -2032,6 +2032,32 @@ it("stops the scheduled loop while a running turn keeps its normal Stop control"
   expect(runtime.queueSend).not.toHaveBeenCalled()
 })
 
+it("schedules a task-only /loop while a turn is running and keeps an unconfirmed draft", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.applySessionLoop)
+    .mockRejectedValueOnce(new Error("No adaptive acknowledgement"))
+    .mockResolvedValueOnce({
+      session_id: "busy-loop-chat", loop: { mode: "adaptive", state: "scheduled", next_fire_at: null, last_run_status: null },
+    })
+  const input = await mount(send, "busy-loop-chat", true)
+  const command = "/loop 检查部署\nKeep  spacing"
+  change(input, command)
+  await act(async () => composer().onSubmit())
+  expect(input.value).toBe(command)
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_unconfirmed"))
+
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledTimes(2)
+  expect(agentClient.applySessionLoop).toHaveBeenLastCalledWith("busy-loop-chat", {
+    action: "start_adaptive", prompt: "检查部署\nKeep  spacing",
+  })
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_adaptive_scheduled"))
+  expect(input.value).toBe("")
+  expect(composer().sending).toBe(true)
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
 it("allows status and stop in Ultra while keeping start and resume in Standard", async () => {
   const send = vi.fn<Send>()
   vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
@@ -2046,7 +2072,7 @@ it("allows status and stop in Ultra while keeping start and resume in Standard",
     expect(agentClient.applySessionLoop).toHaveBeenLastCalledWith("ultra-loop-chat", { action })
     expect(input.value).toBe("")
   }
-  for (const command of ["/loop 5m check", "/loop resume"]) {
+  for (const command of ["/loop 5m check", "/loop check the build", "/loop resume"]) {
     change(input, command)
     await act(async () => composer().onSubmit())
     expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_standard_only"))
@@ -2086,10 +2112,16 @@ it("sends natural /loop text intact as an ordinary turn in the open session", as
   expect(input.value).toBe("")
 })
 
-it("keeps a natural /loop draft local until the busy session finishes", async () => {
+it.each([
+  "/loop every five minutes check the build",
+  "/loop check the build every 90 seconds",
+  "/loop 每隔九十秒检查构建",
+  "/loop 5 minutes between checks",
+  "/loop 恢复这个循环。",
+  "/loop when will this loop run next?",
+])("keeps a natural request %s local until the busy session finishes", async (prompt) => {
   const send = vi.fn<Send>()
   const input = await mount(send, "busy-loop-chat", true)
-  const prompt = "/loop every five minutes check the build"
   change(input, prompt)
   await act(async () => composer().onSubmit())
   expect(agentClient.applySessionLoop).not.toHaveBeenCalled()

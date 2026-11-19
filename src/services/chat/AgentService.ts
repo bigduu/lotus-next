@@ -1728,7 +1728,7 @@ export class AgentClient {
     const response = command.action === "status"
       ? await apiClient.getOnce<unknown>(path, { cache: "no-store" })
       : await apiClient.postOnce<unknown>(path, command);
-    return readSessionLoopStatus(response, sessionId);
+    return readSessionLoopStatus(response, sessionId, command);
   }
 
   async getSessionCompactionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionCompactionStatus> {

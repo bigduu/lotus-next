@@ -42,6 +42,7 @@ test("manages a loop from a busy chat without posting or queuing a turn", async 
     if (controls.length === 1) return route.fulfill({ status: 404, json: { error: "Not found" } })
     const stopped = command?.action === "stop"
     return route.fulfill({ json: { session_id: sessionId, loop: {
+      mode: command?.action === "start_adaptive" ? "adaptive" : "fixed",
       state: stopped ? "stopped" : "scheduled",
       next_fire_at: stopped ? null : "2026-11-19T13:00:00Z",
       last_run_status: "failed",
@@ -78,13 +79,20 @@ test("manages a loop from a busy chat without posting or queuing a turn", async 
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect(page.getByText("循环已停止。")).toBeVisible()
   await expect(activeTurnStop).toBeVisible()
+
+  await input.fill("/loop 检查构建有无变化")
+  await input.press("Enter")
+  await expect(page.getByText(/已安排自动间隔循环。 下次运行时间 .+/)).toBeVisible()
+  await expectComposerText(input, "")
+  await expect(activeTurnStop).toBeVisible()
   expect(controls).toEqual([
     { action: "start", interval_seconds: 300, prompt: "检查部署" },
     { action: "start", interval_seconds: 300, prompt: "检查部署" },
     "status",
     { action: "stop" },
+    { action: "start_adaptive", prompt: "检查构建有无变化" },
   ])
-  expect(posts).toEqual([endpoint, endpoint, endpoint])
+  expect(posts).toEqual([endpoint, endpoint, endpoint, endpoint])
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([`404 ${standaloneScenario.origin}${endpoint}`])
 })

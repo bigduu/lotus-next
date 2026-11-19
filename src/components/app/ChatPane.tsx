@@ -37,7 +37,7 @@ import { useRootThinkingMode } from "@/hooks/useRootThinkingMode"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
-import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopState } from "@services/chat/sessionLoop"
+import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopMode, type SessionLoopState } from "@services/chat/sessionLoop"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
@@ -134,9 +134,9 @@ const MESSAGE_WORKSPACE_WIDTH = 1152
 const ENVIRONMENT_OCCUPIED_WIDTH = 332
 const COMPACT_COMMAND = "/compact"
 
-function sessionLoopStatusText(state?: SessionLoopState): string {
+function sessionLoopStatusText(state?: SessionLoopState, mode?: SessionLoopMode): string {
   switch (state) {
-    case "scheduled": return uiText("session_loop_scheduled")
+    case "scheduled": return uiText(mode === "adaptive" ? "session_loop_adaptive_scheduled" : "session_loop_scheduled")
     case "paused": return uiText("session_loop_paused")
     case "stopped": return uiText("session_loop_stopped")
     case "expired": return uiText("session_loop_expired")
@@ -929,7 +929,7 @@ export function ChatPane({
       if (loop?.last_run_status) {
         details.push(uiText("session_loop_last_result", { result: sessionLoopOutcomeText(loop.last_run_status) }))
       }
-      const summary = sessionLoopStatusText(loop?.state)
+      const summary = sessionLoopStatusText(loop?.state, loop?.mode)
       showToast(details.length ? `${summary} ${details.join(" · ")}` : summary)
     }, (error) => {
       observeSessionExecutionConflict(sessionId, error)
@@ -971,7 +971,7 @@ export function ChatPane({
     if (loopCommand !== null) {
       if (loopCommand === "invalid") { showToast(uiText("session_loop_usage")); return }
       if (!currentSessionId) { showToast(uiText("session_loop_open_session")); return }
-      const startsLoop = loopCommand === "natural" || loopCommand.action === "start" || loopCommand.action === "resume"
+      const startsLoop = loopCommand === "natural" || (loopCommand.action !== "status" && loopCommand.action !== "stop")
       if (!loopSubmissionAllowed(currentSessionId, startsLoop)) return
       if (loopCommand !== "natural") {
         submitLoopCommand(currentSessionId, loopCommand, draftAtSubmit?.contentRevision ?? 0)
