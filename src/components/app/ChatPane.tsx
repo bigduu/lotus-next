@@ -37,6 +37,7 @@ import { useRootThinkingMode } from "@/hooks/useRootThinkingMode"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
+import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopMode, type SessionLoopState, type SessionLoopStatus } from "@services/chat/sessionLoop"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
@@ -132,6 +133,30 @@ type EnvironmentPreference = "auto" | "open" | "closed"
 const MESSAGE_WORKSPACE_WIDTH = 1152
 const ENVIRONMENT_OCCUPIED_WIDTH = 332
 const COMPACT_COMMAND = "/compact"
+
+type LoopCapabilityConfirmation = { sessionId: string; revision: number }
+
+function sessionLoopStatusText(state?: SessionLoopState, mode?: SessionLoopMode): string {
+  switch (state) {
+    case "scheduled": return uiText(mode === "adaptive" ? "session_loop_adaptive_scheduled" : "session_loop_scheduled")
+    case "paused": return uiText("session_loop_paused")
+    case "stopped": return uiText("session_loop_stopped")
+    case "expired": return uiText("session_loop_expired")
+    default: return uiText("session_loop_absent")
+  }
+}
+
+function sessionLoopOutcomeText(status: string): string {
+  switch (status) {
+    case "completed": return uiText("session_loop_run_completed")
+    case "failed": return uiText("session_loop_run_failed")
+    case "cancelled": return uiText("session_loop_run_cancelled")
+    case "suspended": return uiText("session_loop_run_suspended")
+    case "dispatch_failed": return uiText("session_loop_run_dispatch_failed")
+    case "running": return uiText("session_loop_run_running")
+    default: return uiText("session_loop_run_unconfirmed")
+  }
+}
 
 // Only auto-open Environment when a 72rem chat pane still fits beside it.
 // Reserve its space in the layout so the chat can expand without being shifted
@@ -474,6 +499,9 @@ export function ChatPane({
   // main pane's and a split pane's empty composers don't share one draft.
   const draftKey = currentSessionId ?? (secondary ? "__new_chat_pane2__" : "")
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
+  const loopDraft = isSessionLoopCommand(draft)
+  const loopRequests = useRef(new Set<string>())
+  const latestSubmit = useRef<(confirmation?: LoopCapabilityConfirmation) => void>(() => {})
   const composerInputRef = useRef<ComposerInputHandle>(null)
   const submissionActiveRef = useRef(false)
   const [preparationPending, setPreparationPending] = useState(false)
@@ -888,10 +916,84 @@ export function ChatPane({
     }).finally(() => setCompactionPending(sessionId, false))
   }
 
-  const submit = () => {
+  const requestSessionLoop = (
+    sessionId: string,
+    command: SessionLoopCommand,
+    onConfirmed: (status: SessionLoopStatus) => void,
+  ) => {
+    if (loopRequests.current.has(sessionId)) return
+    loopRequests.current.add(sessionId)
+    setMenusDismissed(true)
+    void agentClient.applySessionLoop(sessionId, command).then(onConfirmed, (error) => {
+      observeSessionExecutionConflict(sessionId, error)
+      if (!mountedRef.current) return
+      const unavailable = isApiError(error) && (error.status === 404 || error.status === 405)
+      showToast(uiText(unavailable ? "session_loop_backend_unavailable" : "session_loop_unconfirmed"),
+        "error", unavailable ? undefined : getErrorMessage(error))
+    }).finally(() => { loopRequests.current.delete(sessionId) })
+  }
+
+  const submitLoopCommand = (sessionId: string, command: SessionLoopCommand, revision: number) => {
+    requestSessionLoop(sessionId, command, ({ loop }) => {
+      useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
+      if (!mountedRef.current) return
+      const details = []
+      if (loop?.next_fire_at) {
+        const time = new Intl.DateTimeFormat(uiLanguage(), { dateStyle: "medium", timeStyle: "short" })
+          .format(new Date(loop.next_fire_at))
+        details.push(uiText("session_loop_next_run", { time }))
+      }
+      if (loop?.last_run_status) {
+        details.push(uiText("session_loop_last_result", { result: sessionLoopOutcomeText(loop.last_run_status) }))
+      }
+      const summary = sessionLoopStatusText(loop?.state, loop?.mode)
+      showToast(details.length ? `${summary} ${details.join(" · ")}` : summary)
+    })
+  }
+
+  const loopSubmissionAllowed = (sessionId: string, startsLoop: boolean): boolean => {
+    if (rootMode.child || managedHistoryStatus
+      || (currentChat && isDefaultSupervisor(currentChat))
+      || ticketScope?.binding.supervisor_session_id === sessionId) {
+      showToast(uiText("session_loop_ordinary_only"))
+      return false
+    }
+    if (rootMode.selected === true && startsLoop) {
+      showToast(uiText("session_loop_standard_only"))
+      return false
+    }
+    if (executionBlocked || isSessionExecutionBlocked(sessionId) || historyBlocked
+      || rootSessionUnsafe() || semanticComposer || ticketIngress.busy) {
+      showToast(uiText("session_loop_session_unavailable"))
+      return false
+    }
+    if (attachments.length || selectedSkill || selectedWorkflow || typedWorkflow) {
+      showToast(uiText("session_loop_send_alone"))
+      return false
+    }
+    return true
+  }
+
+  const submit = (loopConfirmation?: LoopCapabilityConfirmation) => {
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
+    const loopCommand = parseSessionLoopCommand(text)
+    if (loopCommand !== null) {
+      if (loopCommand === "invalid") { showToast(uiText("session_loop_usage")); return }
+      if (!currentSessionId) { showToast(uiText("session_loop_open_session")); return }
+      const startsLoop = loopCommand === "natural" || (loopCommand.action !== "status" && loopCommand.action !== "stop")
+      if (!loopSubmissionAllowed(currentSessionId, startsLoop)) return
+      if (loopCommand !== "natural") {
+        submitLoopCommand(currentSessionId, loopCommand, draftAtSubmit?.contentRevision ?? 0)
+        return
+      }
+      if (currentlyRunning || delegationWaiting || currentChat?.lastRunStatus === "suspended"
+        || pendingApproval || pendingQuestion || queue.busy || queue.hasUnconfirmed) {
+        showToast(uiText("session_loop_wait_for_session"))
+        return
+      }
+    }
     if (text.trim().toLowerCase() === COMPACT_COMMAND) {
       compactDraft(draftAtSubmit?.contentRevision ?? 0)
       return
@@ -903,6 +1005,22 @@ export function ChatPane({
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
+    }
+    if (loopCommand === "natural" && currentSessionId) {
+      const sessionId = currentSessionId
+      const revision = draftAtSubmit?.contentRevision ?? 0
+      if (loopConfirmation?.sessionId !== sessionId || loopConfirmation.revision !== revision) {
+        const navigationVersion = getNavigationVersion?.()
+        requestSessionLoop(sessionId, { action: "status" }, () => {
+          if (!mountedRef.current || toastScopeRef.current !== toastScope
+            || getNavigationVersion?.() !== navigationVersion
+            || useAppStore.getState().inputStates[draftKey]?.contentRevision !== revision) return
+          // Recheck live composer and run eligibility after probing an older
+          // backend. The current draft is still the original slash request.
+          latestSubmit.current({ sessionId, revision })
+        })
+        return
+      }
     }
     const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
@@ -1142,6 +1260,7 @@ export function ChatPane({
     // grows and as the streaming→markdown swap relayouts.
     pinToBottom()
   }
+  latestSubmit.current = submit
 
   const pickSkill = (skill: SkillDefinition) => {
     changeTypedWorkflow(null)
@@ -1558,12 +1677,12 @@ export function ChatPane({
           outputRate={outputRate}
           onDraftChange={setDraft}
           executionBlocked={executionBlocked}
-          onSubmit={submit}
+          onSubmit={() => submit()}
           onStop={stopWithLiveFence}
           sending={currentlyRunning}
           queueMode={queue.mode}
-          onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
-          sendWhileRunning={semanticComposer}
+          onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer && !loopDraft ? queue.setMode : undefined}
+          sendWhileRunning={semanticComposer || loopDraft}
           queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
           workspaceControl={!currentSessionId && !secondary ? <Suspense fallback={null}>
             <NewChatWorktreeControl projectId={pendingProjectId ?? null}
