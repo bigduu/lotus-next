@@ -131,6 +131,7 @@ vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => 
   selectRootMode: vi.fn(),
   recoverRootMode: vi.fn(),
   compactSessionContext: vi.fn(),
+  applySessionLoop: vi.fn(),
   sendMessage: vi.fn().mockImplementation(async (request) => ({ session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true } })),
   execute: vi.fn().mockResolvedValue(undefined),
 } }))
@@ -365,6 +366,9 @@ beforeEach(() => {
   }) as Awaited<ReturnType<typeof agentClient.sendMessage>>)
   vi.mocked(agentClient.compactSessionContext).mockReset().mockImplementation(async (session_id) => ({
     session_id, status: "unchanged",
+  }))
+  vi.mocked(agentClient.applySessionLoop).mockReset().mockImplementation(async (session_id) => ({
+    session_id, loop: null,
   }))
   vi.mocked(agentClient.execute).mockReset().mockResolvedValue({ session_id: "root-session", status: "started", events_url: "" })
   runtime.queueSend.mockClear()
@@ -1979,6 +1983,105 @@ it("dispatches one compaction request and leaves a newer draft intact", async ()
     totalTokens: 24500, maxContextTokens: 100000,
   }), { fromSnapshot: true })
   expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_applied", { before: "73", after: "24.5" }))
+})
+
+it.each([
+  ["/loop 5m 检查部署\nKeep  spacing", { action: "start", interval_seconds: 300, prompt: "检查部署\nKeep  spacing" }],
+  ["/LOOP STATUS", { action: "status" }],
+  ["/loop resume", { action: "resume" }],
+] as const)("sends %s through the Session loop API", async (draft, request) => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.applySessionLoop).mockResolvedValueOnce({
+    session_id: "loop-chat", loop: { state: "scheduled", next_fire_at: "2026-11-19T13:00:00Z", last_run_status: "failed" },
+  })
+  const input = await mount(send, "loop-chat")
+  change(input, draft)
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", request)
+  expect(runtime.toastProps?.toast?.message).toContain(uiText("session_loop_scheduled"))
+  expect(runtime.toastProps?.toast?.message).toContain(uiText("session_loop_last_result", { result: uiText("session_loop_run_failed") }))
+  expect(input.value).toBe("")
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("stops the scheduled loop while a running turn keeps its normal Stop control", async () => {
+  const send = vi.fn<Send>()
+  const request = deferred<Awaited<ReturnType<typeof agentClient.applySessionLoop>>>()
+  vi.mocked(agentClient.applySessionLoop).mockReturnValueOnce(request.promise)
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, "/loop stop")
+  expect(composer().sending).toBe(true)
+  expect(composer().sendWhileRunning).toBe(true)
+  expect(composer().onQueueModeChange).toBeUndefined()
+  act(() => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("busy-loop-chat", { action: "stop" })
+
+  change(input, "keep this newer draft")
+  await act(async () => request.resolve({
+    session_id: "busy-loop-chat", loop: { state: "stopped", next_fire_at: null, last_run_status: null },
+  }))
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_stopped"))
+  expect(input.value).toBe("keep this newer draft")
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(runtime.liveRetry.cancelForStop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+})
+
+it("allows status and stop in Ultra while keeping start and resume in Standard", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
+    session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
+  }) as Awaited<ReturnType<typeof agentClient.getSession>>)
+  const input = await mount(send, "ultra-loop-chat")
+  expect(runtime.reasoningPicker?.thinkingMode).toBe("ultra")
+
+  for (const action of ["status", "stop"] as const) {
+    change(input, `/loop ${action}`)
+    await act(async () => composer().onSubmit())
+    expect(agentClient.applySessionLoop).toHaveBeenLastCalledWith("ultra-loop-chat", { action })
+    expect(input.value).toBe("")
+  }
+  for (const command of ["/loop 5m check", "/loop resume"]) {
+    change(input, command)
+    await act(async () => composer().onSubmit())
+    expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_standard_only"))
+    expect(input.value).toBe(command)
+  }
+  expect(agentClient.applySessionLoop).toHaveBeenCalledTimes(2)
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+})
+
+it("keeps a reserved /loop draft out of the transcript when the older backend has no route", async () => {
+  vi.mocked(agentClient.applySessionLoop).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "old-bamboo-chat")
+  change(input, "/loop 5m check")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).toHaveBeenCalledOnce()
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("session_loop_backend_unavailable") })
+  expect(input.value).toBe("/loop 5m check")
+})
+
+it("keeps an invalid /loop local even in a running session", async () => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "busy-loop-chat", true)
+  change(input, "/loop 30s check")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.applySessionLoop).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("session_loop_usage"))
+  expect(input.value).toBe("/loop 30s check")
 })
 
 it("preserves the compaction draft if the backend route is unavailable", async () => {

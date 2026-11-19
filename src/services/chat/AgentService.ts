@@ -11,6 +11,7 @@ import { debugLog } from "@shared/utils/debugFlags";
  */
 import { apiClient } from "../api";
 import { isApiError } from "../api/errors";
+import { readSessionLoopStatus, type SessionLoopCommand, type SessionLoopStatus } from "./sessionLoop";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
 
@@ -1720,6 +1721,14 @@ export class AgentClient {
     if (receipt?.success !== true || receipt.session_id !== sessionId) {
       throw new Error("Invalid conversation clear receipt");
     }
+  }
+
+  async applySessionLoop(sessionId: string, command: SessionLoopCommand): Promise<SessionLoopStatus> {
+    const path = `sessions/${encodeURIComponent(sessionId)}/loop`;
+    const response = command.action === "status"
+      ? await apiClient.getOnce<unknown>(path, { cache: "no-store" })
+      : await apiClient.postOnce<unknown>(path, command);
+    return readSessionLoopStatus(response, sessionId);
   }
 
   async getSessionCompactionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionCompactionStatus> {
