@@ -642,6 +642,7 @@ export function ChatPane({
   const clearInputReasoningEffort = useAppStore((s) => s.clearInputReasoningEffort)
   const rootMode = useRootThinkingMode({
     sessionId: currentSessionId, draftKey, ordinarySelection: reasoningSelection, root: rootAuthority,
+    defaultChatUltra: providerSnapshot?.features?.chat_ultra_by_default,
     disabled: submissionPending || compacting || currentlyRunning || queue.busy || queue.hasUnconfirmed,
   })
   const rootSessionUnsafe = useCallback(() => rootMode.busy || rootMode.blocked
