@@ -9,6 +9,7 @@ import {
 } from "@services/chat/AgentService";
 import { ApiError } from "@services/api";
 import { ConversationClearError, readClearedConversation, requestConversationClear } from "@services/chat/conversationClear";
+import { isWorkChildSessionId, readSessionExecutionDetail } from "@services/chat/sessionExecutionCompatibility";
 import type { AppState } from "../";
 import { useProviderStore } from "./providerSlice";
 import { tokenBudgetRevision } from "./tokenBudgetSlice";
@@ -410,7 +411,9 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           : { clear_reasoning_effort: true },
       );
     } catch (error) { writeError = error; writeFailed = true; }
-    const { session } = await agentClient.getSession(sessionId);
+    const { session } = await (isWorkChildSessionId(sessionId)
+      ? readSessionExecutionDetail(sessionId)
+      : agentClient.getSession(sessionId));
     if (session.id !== sessionId || session.reasoning_effort != null && !isReasoningEffort(session.reasoning_effort)) {
       throw new Error(uiText("the_server_did_not_return_a_valid_standard_reasoning_le_6ca8bf7b"));
     }

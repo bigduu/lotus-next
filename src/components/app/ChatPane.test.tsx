@@ -1639,6 +1639,28 @@ describe("Root orchestration-only control", () => {
     }))
   })
 
+  it("keeps the saved Work effort after the cached session title changes", async () => {
+    const chat = createChat(vi.fn<Send>(), `ticket-${"a".repeat(32)}`)
+    const createdAt = "2026-11-19T00:00:00Z"
+    const work = { ...chat.currentChat!, kind: "child" as const, createdAtExact: createdAt, updatedAt: createdAt }
+    const compatibility = {
+      report: null, observed: true, legacy: true, loading: false, readError: false, blocked: false, refresh: vi.fn(),
+      workReasoning: { createdAt, effort: "max" as const },
+    }
+    const root = createRoot(document.body.appendChild(document.createElement("div")))
+    roots.push(root)
+    const render = (currentChat: typeof work) => act(async () => root.render(
+      <ChatPane chat={{ ...chat, currentChat, executionCompatibility: compatibility }} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
+    ))
+
+    await render(work)
+    expect(runtime.reasoningPicker?.value).toBe("max")
+    await render({ ...work, title: "Renamed Work", updatedAt: "2026-11-19T00:01:00Z" })
+    expect(runtime.reasoningPicker?.value).toBe("max")
+  })
+
   it("treats a Child detail as read-only even before the list supplies kind", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
       session: { id: sessionId, kind: "child", root_orchestration_only: null },

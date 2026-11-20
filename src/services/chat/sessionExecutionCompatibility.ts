@@ -1,4 +1,7 @@
 import { isApiError } from "../api/errors"
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
+import { isReasoningEffort } from "@shared/utils/reasoningEffort"
+import { agentClient, type ReasoningEffort } from "./AgentService"
 
 export interface SessionExecutionCompatibility {
   session_version: number | null
@@ -14,10 +17,24 @@ export interface SessionCompatibilitySnapshot {
   legacy: boolean
   loading: boolean
   readError: boolean
+  workReasoning?: { createdAt: string; effort: ReasoningEffort | null }
 }
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 const u32 = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffffff
+
+// Bamboo gives native Work children deterministic ticket IDs. Work Roots
+// already read their saved effort through the Root mode authority.
+export const isWorkChildSessionId = (id: string): boolean => /^ticket-[a-f0-9]{32}$/.test(id)
+
+function readWorkReasoning(id: string, session: Record<string, unknown>): SessionCompatibilitySnapshot["workReasoning"] {
+  if (session.kind !== "child" || session.parent_session_id !== DEFAULT_SUPERVISOR_SESSION_ID
+    || !isWorkChildSessionId(id) || typeof session.created_at !== "string") return undefined
+  const effort = session.reasoning_effort ?? record(session.model_ref)?.reasoning_effort
+  if (effort != null && !isReasoningEffort(effort)) return undefined
+  return { createdAt: session.created_at, effort: effort ?? null }
+}
+
 export function decodeSessionExecutionCompatibility(value: unknown): SessionExecutionCompatibility | null {
   const body = record(value)
   if (!body || body.session_version !== null && !u32(body.session_version) || !u32(body.current_session_version)
@@ -63,12 +80,26 @@ export function completeSessionCompatibilityRead(id: string, generation: number,
   const previous = getSessionCompatibilitySnapshot(id)
   const report = decodeSessionExecutionCompatibility(session.execution_compatibility)
   const invalid = session.execution_compatibility != null && !report
+  const workReasoning = readWorkReasoning(id, session)
   publish(id, { report: report ?? (previous.report?.status === "conflict" ? previous.report : null), observed: true,
-    legacy: !report && session.session_version == null, loading: false, readError: invalid })
+    legacy: !report && session.session_version == null, loading: false, readError: invalid,
+    ...(workReasoning ? { workReasoning } : {}) })
   return !invalid
 }
 export function failSessionCompatibilityRead(id: string, generation: number) {
   if (generations.get(id) === generation) publish(id, { ...getSessionCompatibilitySnapshot(id), loading: false, readError: true })
+}
+
+export async function readSessionExecutionDetail(id: string) {
+  const generation = beginSessionCompatibilityRead(id)
+  try {
+    const detail = await agentClient.getSession(id)
+    completeSessionCompatibilityRead(id, generation, detail)
+    return detail
+  } catch (error) {
+    failSessionCompatibilityRead(id, generation)
+    throw error
+  }
 }
 /** A typed refusal invalidates older in-flight reads; a later canonical read may recover it. */
 export function observeSessionExecutionConflict(id: string | null | undefined, error: unknown): boolean {
@@ -79,7 +110,7 @@ export function observeSessionExecutionConflict(id: string | null | undefined, e
     const report = decodeSessionExecutionCompatibility(body.compatibility)
     if (report?.status !== "conflict") return false
     generations.set(id, ++sequence)
-    publish(id, { report, observed: true, legacy: false, loading: false, readError: false })
+    publish(id, { ...getSessionCompatibilitySnapshot(id), report, observed: true, legacy: false, loading: false, readError: false })
     return true
   } catch { return false }
 }
