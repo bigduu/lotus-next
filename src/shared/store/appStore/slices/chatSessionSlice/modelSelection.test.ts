@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createStore } from "zustand/vanilla";
 import { agentClient, type SessionSummary } from "@services/chat/AgentService";
+import { clearSessionCompatibilityObservations, getSessionCompatibilitySnapshot,
+  readSessionExecutionDetail } from "@services/chat/sessionExecutionCompatibility";
 import type { AppState } from "../..";
 import { createChatSlice } from "../chatSessionSlice";
 import { useProviderStore } from "../providerSlice";
@@ -41,6 +43,27 @@ describe("ordinary effort authority readback", () => {
     expect(patch).toHaveBeenCalledWith("target", { clear_reasoning_effort: true });
     expect(store.getState().chats[0].config.reasoningEffort).toBeNull();
   });
+  it.each(["low", null] as const)("shows a confirmed Work setting of %s after an older detail read returns", async (effort) => {
+    const id = `ticket-${"a".repeat(32)}`;
+    const parent = "bamboo-default-supervisor";
+    const work = { ...summary(id), kind: "child" as const, parent_session_id: parent, root_session_id: parent, spawn_depth: 1 };
+    const staleDetail = { session: { ...work, reasoning_effort: "max" as const } };
+    let release!: (detail: typeof staleDetail) => void;
+    const pending = new Promise<typeof staleDetail>((resolve) => { release = resolve; });
+    vi.spyOn(agentClient, "patchSession").mockResolvedValue(undefined);
+    vi.spyOn(agentClient, "getSession").mockResolvedValueOnce(staleDetail).mockReturnValueOnce(pending)
+      .mockResolvedValueOnce({ session: effort ? { ...work, reasoning_effort: effort } : work });
+    const store = storeWithSessions(work);
+
+    await readSessionExecutionDetail(id);
+    const olderRead = readSessionExecutionDetail(id);
+    await store.getState().changeSessionReasoningEffort(id, effort);
+    release(staleDetail);
+    await olderRead;
+
+    expect(store.getState().chats[0].config.reasoningEffort).toBe(effort);
+    expect(getSessionCompatibilitySnapshot(id).workReasoning).toEqual({ createdAt: work.created_at, effort });
+  });
   it.each([false, true])("retains actual GET value on mismatch (lost PATCH=%s)", async (lost) => {
     vi.spyOn(agentClient, "patchSession").mockImplementation(async () => { if (lost) throw new Error("response lost"); });
     vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: { ...summary("target"), reasoning_effort: "low" } });
@@ -69,7 +92,10 @@ const storeWithSessions = (...sessions: SessionSummary[]) => {
   return store;
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  clearSessionCompatibilityObservations();
+});
 
 describe("session model selection", () => {
   const nextModel = { provider: "relay", model: "grok-4.7" };

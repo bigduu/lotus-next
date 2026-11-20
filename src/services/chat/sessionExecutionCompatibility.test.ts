@@ -92,7 +92,7 @@ describe("session compatibility report and explicit refusal", () => {
     completeSessionCompatibilityRead(id, latest, { session: { ...session, reasoning_effort: "max" } })
     completeSessionCompatibilityRead(id, earlier, { session: { ...session, reasoning_effort: "low" } })
     expect(getSessionCompatibilitySnapshot(id).workReasoning).toEqual({
-      createdAt: at, updatedAtMs: Date.parse(at), requestedAtMs: expect.any(Number), effort: "max",
+      createdAt: at, effort: "max",
     })
   })
 })

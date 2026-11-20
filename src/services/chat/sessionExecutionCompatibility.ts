@@ -1,7 +1,7 @@
 import { isApiError } from "../api/errors"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 import { isReasoningEffort } from "@shared/utils/reasoningEffort"
-import type { ReasoningEffort } from "./AgentService"
+import { agentClient, type ReasoningEffort } from "./AgentService"
 
 export interface SessionExecutionCompatibility {
   session_version: number | null
@@ -17,22 +17,22 @@ export interface SessionCompatibilitySnapshot {
   legacy: boolean
   loading: boolean
   readError: boolean
-  workReasoning?: { createdAt: string; updatedAtMs: number; requestedAtMs: number; effort: ReasoningEffort | null }
+  workReasoning?: { createdAt: string; effort: ReasoningEffort | null }
 }
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 const u32 = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffffff
 
-function readWorkReasoning(id: string, session: Record<string, unknown>, requestedAtMs: number): SessionCompatibilitySnapshot["workReasoning"] {
-  // Bamboo gives native Work children deterministic ticket IDs. Work Roots
-  // already read their saved effort through the Root mode authority.
+// Bamboo gives native Work children deterministic ticket IDs. Work Roots
+// already read their saved effort through the Root mode authority.
+export const isWorkChildSessionId = (id: string): boolean => /^ticket-[a-f0-9]{32}$/.test(id)
+
+function readWorkReasoning(id: string, session: Record<string, unknown>): SessionCompatibilitySnapshot["workReasoning"] {
   if (session.kind !== "child" || session.parent_session_id !== DEFAULT_SUPERVISOR_SESSION_ID
-    || !/^ticket-[a-f0-9]{32}$/.test(id) || typeof session.created_at !== "string"
-    || typeof session.updated_at !== "string") return undefined
-  const updatedAtMs = Date.parse(session.updated_at)
+    || !isWorkChildSessionId(id) || typeof session.created_at !== "string") return undefined
   const effort = session.reasoning_effort ?? record(session.model_ref)?.reasoning_effort
-  if (!Number.isFinite(updatedAtMs) || (effort != null && !isReasoningEffort(effort))) return undefined
-  return { createdAt: session.created_at, updatedAtMs, requestedAtMs, effort: effort ?? null }
+  if (effort != null && !isReasoningEffort(effort)) return undefined
+  return { createdAt: session.created_at, effort: effort ?? null }
 }
 
 export function decodeSessionExecutionCompatibility(value: unknown): SessionExecutionCompatibility | null {
@@ -57,7 +57,7 @@ export function decodeSessionExecutionCompatibility(value: unknown): SessionExec
 
 const empty: SessionCompatibilitySnapshot = { report: null, observed: false, legacy: false, loading: false, readError: false }
 const snapshots = new Map<string, SessionCompatibilitySnapshot>()
-const generations = new Map<string, { generation: number; requestedAtMs: number }>()
+const generations = new Map<string, number>()
 const listeners = new Set<() => void>()
 let sequence = 0
 export const getSessionCompatibilitySnapshot = (id: string | null): SessionCompatibilitySnapshot => id ? snapshots.get(id) ?? empty : empty
@@ -69,26 +69,37 @@ function publish(id: string, value: SessionCompatibilitySnapshot) {
 }
 export function beginSessionCompatibilityRead(id: string): number {
   const generation = ++sequence
-  generations.set(id, { generation, requestedAtMs: Date.now() })
+  generations.set(id, generation)
   publish(id, { ...getSessionCompatibilitySnapshot(id), loading: true, readError: false })
   return generation
 }
 export function completeSessionCompatibilityRead(id: string, generation: number, value: unknown): boolean {
-  const read = generations.get(id)
-  if (read?.generation !== generation) return false
+  if (generations.get(id) !== generation) return false
   const session = record(record(value)?.session)
   if (session?.id !== id) { failSessionCompatibilityRead(id, generation); return false }
   const previous = getSessionCompatibilitySnapshot(id)
   const report = decodeSessionExecutionCompatibility(session.execution_compatibility)
   const invalid = session.execution_compatibility != null && !report
-  const workReasoning = readWorkReasoning(id, session, read.requestedAtMs)
+  const workReasoning = readWorkReasoning(id, session)
   publish(id, { report: report ?? (previous.report?.status === "conflict" ? previous.report : null), observed: true,
     legacy: !report && session.session_version == null, loading: false, readError: invalid,
     ...(workReasoning ? { workReasoning } : {}) })
   return !invalid
 }
 export function failSessionCompatibilityRead(id: string, generation: number) {
-  if (generations.get(id)?.generation === generation) publish(id, { ...getSessionCompatibilitySnapshot(id), loading: false, readError: true })
+  if (generations.get(id) === generation) publish(id, { ...getSessionCompatibilitySnapshot(id), loading: false, readError: true })
+}
+
+export async function readSessionExecutionDetail(id: string) {
+  const generation = beginSessionCompatibilityRead(id)
+  try {
+    const detail = await agentClient.getSession(id)
+    completeSessionCompatibilityRead(id, generation, detail)
+    return detail
+  } catch (error) {
+    failSessionCompatibilityRead(id, generation)
+    throw error
+  }
 }
 /** A typed refusal invalidates older in-flight reads; a later canonical read may recover it. */
 export function observeSessionExecutionConflict(id: string | null | undefined, error: unknown): boolean {
@@ -98,7 +109,7 @@ export function observeSessionExecutionConflict(id: string | null | undefined, e
     if (body?.session_id !== id || detail?.code !== "session_execution_incompatible") return false
     const report = decodeSessionExecutionCompatibility(body.compatibility)
     if (report?.status !== "conflict") return false
-    generations.set(id, { generation: ++sequence, requestedAtMs: Date.now() })
+    generations.set(id, ++sequence)
     publish(id, { ...getSessionCompatibilitySnapshot(id), report, observed: true, legacy: false, loading: false, readError: false })
     return true
   } catch { return false }
