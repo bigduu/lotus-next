@@ -51,7 +51,11 @@ export function SettingsSystem() {
       ) : config ? (
         <>
           {ownerAccess && typeof workMutation === "boolean" && typeof workDispatch === "boolean" ? (
-            <SectionWork flags={{ ticket_mutation: workMutation, ticket_dispatch: workDispatch }} />
+            <SectionWork flags={{
+              ticket_mutation: workMutation,
+              ticket_dispatch: workDispatch,
+              work_execution: config.features?.work_execution,
+            }} />
           ) : null}
           {isAdvanced ? (
             <>

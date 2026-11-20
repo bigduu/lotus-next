@@ -182,6 +182,7 @@ export interface ProviderInstancesConfig {
   defaults?: DefaultsConfig;
   features?: {
     provider_model_ref?: boolean;
+    chat_ultra_by_default?: boolean;
   };
 }
 
@@ -351,7 +352,9 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
   if (value.features !== undefined) {
     if (!isRecord(value.features) ||
       (value.features.provider_model_ref !== undefined &&
-        typeof value.features.provider_model_ref !== "boolean")) {
+        typeof value.features.provider_model_ref !== "boolean") ||
+      (value.features.chat_ultra_by_default !== undefined &&
+        typeof value.features.chat_ultra_by_default !== "boolean")) {
       throw new ProviderSnapshotValidationError("Provider features payload is invalid");
     }
     features = value.features as ProviderInstancesConfig["features"];
