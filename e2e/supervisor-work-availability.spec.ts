@@ -188,17 +188,27 @@ test("Work panel reviews and marks the exact oldest chat message", async ({ page
   expect(dismissed).toBe(1)
 })
 
-test("System settings save independent Work flags and the Supervisor shows the confirmed state", async ({ page }, testInfo) => {
-  const features = { ticket_mutation: false, ticket_dispatch: false, provider_model_ref: true }
+test("Supervisor settings save Work flags, reasoning, and parallel limit with confirmed readback", async ({ page }, testInfo) => {
+  type WorkPolicy = { reasoning_effort: string | null; max_parallel: number | null }
+  const features = {
+    ticket_mutation: false, ticket_dispatch: false, provider_model_ref: true,
+    work_execution: { reasoning_effort: null, max_parallel: null } as WorkPolicy,
+  }
   await fixture(page, "v1-ready", features)
   const patches: unknown[] = []
   await page.route("**/api/v1/bamboo/config", async (route) => {
     const request = route.request()
     if (request.method() === "POST") {
-      const patch = request.postDataJSON() as { features: Partial<WorkFlags> }
+      const patch = request.postDataJSON() as {
+        features: Partial<WorkFlags> & { work_execution?: Partial<WorkPolicy> }
+      }
       patches.push(patch)
       // A success response can still fail to confirm the requested setting.
-      if (patches.length > 1) Object.assign(features, patch.features)
+      if (patches.length > 1) {
+        const { work_execution, ...flags } = patch.features
+        Object.assign(features, flags)
+        Object.assign(features.work_execution, work_execution)
+      }
     }
     return route.fulfill({ json: { features } })
   })
@@ -208,8 +218,8 @@ test("System settings save independent Work flags and the Supervisor shows the c
   await page.getByRole("button", { name: "系统设置", exact: true }).click()
   const settings = settingsSurface(page)
   await selectSettingsCategory(settings, "system", "系统")
-  const work = settings.getByRole("region", { name: "工作", exact: true })
-  const mutation = work.getByRole("switch", { name: "允许工作变更", exact: true })
+  const work = settings.getByRole("region", { name: "Supervisor", exact: true })
+  const mutation = work.getByRole("switch", { name: "启用 Work", exact: true })
   const dispatch = work.getByRole("switch", { name: "允许工作派发", exact: true })
   const save = work.getByRole("button", { name: "保存", exact: true })
   await expect(mutation).not.toBeChecked()
@@ -224,15 +234,38 @@ test("System settings save independent Work flags and the Supervisor shows the c
   await expect(dispatch).not.toBeChecked()
 
   await dispatch.click()
+  const reasoning = work.getByRole("combobox", { name: "Work 推理强度", exact: true })
+  const parallel = work.getByRole("textbox", { name: "Work 并行上限", exact: true })
+  await expect(reasoning).toHaveText("自动")
+  await reasoning.click()
+  await page.getByRole("option", { name: "最大", exact: true }).click()
+  await parallel.fill("0")
+  await expect(save).toBeDisabled()
+  await expect(parallel).toHaveAttribute("aria-invalid", "true")
+  await parallel.fill("6")
   await save.click()
   await expect(work).toContainText("已保存")
   expect(patches).toEqual([
     { features: { ticket_mutation: true } },
     { features: { ticket_mutation: true } },
-    { features: { ticket_dispatch: true } },
+    { features: { ticket_dispatch: true, work_execution: { reasoning_effort: "max", max_parallel: 6 } } },
   ])
   expect(features.provider_model_ref).toBe(true)
   await work.screenshot({ path: testInfo.outputPath("work-settings.png") })
+  await closeSettings(settings)
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click()
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click()
+  await selectSettingsCategory(settings, "system", "系统")
+  await expect(reasoning).toHaveText("最大")
+  await expect(parallel).toHaveValue("6")
+  await reasoning.click()
+  await page.getByRole("option", { name: "自动", exact: true }).click()
+  await parallel.clear()
+  await save.click()
+  await expect(work).toContainText("已保存")
+  expect(patches.at(-1)).toEqual({ features: { work_execution: { reasoning_effort: null, max_parallel: null } } })
   await closeSettings(settings)
 
   const workbench = await openWork(page)

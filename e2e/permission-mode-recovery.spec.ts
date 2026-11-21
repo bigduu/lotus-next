@@ -51,14 +51,14 @@ test("composer shows a failed permission read and recovers only after manual ref
   expect(observation.pageErrors).toEqual([])
 })
 
-test("Supervisor can authorize new execution sessions after choosing current-session Auto", async ({ page }, testInfo) => {
+test("Supervisor uses one permission mode for its new execution sessions", async ({ page }, testInfo) => {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
   }, sessionId)
   const observation = await installArtifactRuntime(page, standaloneScenario)
   let revision = 7
-  let dispatchAuto = false
+  let currentMode = "default"
   const writes: unknown[] = []
   await page.route(`**/api/v1/sessions/${sessionId}`, async (route) => {
     if (route.request().method() === "PATCH") {
@@ -66,30 +66,35 @@ test("Supervisor can authorize new execution sessions after choosing current-ses
       const update = route.request().postDataJSON()
       writes.push(update)
       revision += 1
-      dispatchAuto = update.supervisor_auto_dispatch === true
+      currentMode = update.permission_mode
     }
     await route.fulfill({
       headers: { ETag: `"${revision}"` },
-      json: { session: { ...session, title: "Supervisor", permission_mode: "auto", supervisor_auto_dispatch: dispatchAuto } },
+      json: { session: { ...session, title: "Supervisor", permission_mode: currentMode, supervisor_dispatch_inherits_permission_mode: true } },
     })
   })
   await page.goto(standaloneScenario.entryUrl)
   const permission = page.locator('[data-variant="composer"][aria-label="会话权限"]')
   const mode = permission.getByRole("combobox", { name: "权限模式" })
-  await expect(mode).toHaveText("Auto")
+  await expect(mode).toHaveText("Default")
+  await expect(permission).toHaveAttribute("title", /新建的执行会话会沿用此权限模式/)
   await mode.click()
-  await page.getByRole("option", { name: "Auto（含新执行会话）", exact: true }).click()
-  const confirmation = page.getByRole("dialog", { name: "为新执行会话启用 Auto？" })
-  await expect(confirmation).toContainText("及它新建的执行会话可直接运行工具")
-  expect(writes).toEqual([])
-  await testInfo.attach("supervisor-auto-dispatch-confirmation", { body: await confirmation.screenshot(), contentType: "image/png" })
-  await confirmation.getByRole("button", { name: "为派发启用 Auto" }).click()
-  await expect(mode).toHaveText("Auto（含新执行会话）")
-  expect(writes).toEqual([{ permission_mode: "auto", supervisor_auto_dispatch: true }])
-  await mode.click()
+  await expect(page.getByRole("option")).toHaveText(["Default", "Bypass", "Auto"])
   await page.getByRole("option", { name: "Auto", exact: true }).click()
+  const confirmation = page.getByRole("dialog", { name: "为当前会话启用 Auto？" })
+  await expect(confirmation).toContainText("由此 Supervisor 新建的执行会话会沿用此权限模式")
+  expect(writes).toEqual([])
+  await testInfo.attach("supervisor-permission-inheritance", { body: await confirmation.screenshot(), contentType: "image/png" })
+  await confirmation.getByRole("button", { name: "启用 Auto" }).click()
   await expect(mode).toHaveText("Auto")
+  expect(writes).toEqual([{ permission_mode: "auto", expected_supervisor_dispatch_inheritance: true }])
+  await mode.click()
+  await page.getByRole("option", { name: "Bypass", exact: true }).click()
+  await expect(mode).toHaveText("Bypass")
   await expect(confirmation).toHaveCount(0)
-  expect(writes).toEqual([{ permission_mode: "auto", supervisor_auto_dispatch: true }, { permission_mode: "auto" }])
+  expect(writes).toEqual([
+    { permission_mode: "auto", expected_supervisor_dispatch_inheritance: true },
+    { permission_mode: "bypass", expected_supervisor_dispatch_inheritance: true },
+  ])
   expect(observation.pageErrors).toEqual([])
 })

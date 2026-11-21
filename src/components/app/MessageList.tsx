@@ -690,9 +690,11 @@ export const MessageList = memo(function MessageList({
   const hasPendingUser = pendingUsers.length > 0
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
   const activityStatus = delegationWaiting ? uiText("process_waiting_for_subagents") : streamStatus
+  const showBackgroundWaitHint = !streaming && backgroundExecWaiting
+  const showLiveStatus = (sending || streamingActive) && !showBackgroundWaitHint
   const liveItems = useMemo(
-    () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, activityStatus),
-    [activityStatus, liveSegments, sending, streaming, streamingActive, streamingReasoning],
+    () => buildLiveItems(liveSegments, streaming, streamingReasoning, showLiveStatus, activityStatus),
+    [activityStatus, liveSegments, showLiveStatus, streaming, streamingReasoning],
   )
   // The turn still being streamed stays fully visible; every finished turn with
   // a recorded conclusion folds its middle into one divider.
@@ -1217,11 +1219,9 @@ export const MessageList = memo(function MessageList({
         ))}
         {renderTimelineAttachments(timelineTail)}
 
-        {/* While the chat pane confirms a live background-exec wait (suspended
-            run + wait notice still latest), keep a visible running hint instead
-            of an abruptly idle transcript. Execution-gated so a cancelled or
-            errored run never leaves a stale spinner behind. */}
-        {!streaming && backgroundExecWaiting ? (
+        {/* Keep the wait visible while the backend or the legacy wait notice
+            identifies a suspended background command. */}
+        {showBackgroundWaitHint ? (
           <BackgroundExecWaitHint className="px-1 py-1" />
         ) : null}
       </div>

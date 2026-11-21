@@ -279,16 +279,23 @@ async function mount(
 }
 
 it.each([
-  ["suspended", 1, false, true],
-  ["suspended", 0, false, false],
-  ["suspended", 1, true, false],
-  [null, 1, false, false],
-  ["completed", 1, false, false],
-  ["cancelled", 1, false, false],
-  ["error", 1, false, false],
-] as const)("presents child wait only for confirmed suspension (%s, children=%s, running=%s)", async (status, children, running, expected) => {
+  ["suspended", 1, false, undefined, true, false],
+  ["suspended", 0, false, undefined, false, false],
+  ["suspended", 1, true, undefined, false, false],
+  [null, 1, false, undefined, false, false],
+  ["completed", 1, false, undefined, false, false],
+  ["cancelled", 1, false, undefined, false, false],
+  ["error", 1, false, undefined, false, false],
+  ["suspended", 0, false, "waiting_children", true, false],
+  [null, 0, false, "waiting_children", true, false],
+  ["suspended", 1, false, "waiting_bash", false, true],
+  ["suspended", 1, false, "waiting_user", false, false],
+  ["completed", 1, false, "terminal", false, false],
+] as const)("presents the correct wait (%s, children=%s, running=%s, activity=%s)", async (
+  status, children, running, activity, waitingForChildren, waitingForCommand,
+) => {
   const chat = createChat(vi.fn<Send>(), "parent-wait", status)
-  Object.assign(chat.currentChat!, { runningChildCount: children, isRunning: running })
+  Object.assign(chat.currentChat!, { runningChildCount: children, isRunning: running, activity })
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container)
   roots.push(root)
@@ -297,7 +304,8 @@ it.each([
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
-  expect(runtime.messageList?.delegationWaiting).toBe(expected)
+  expect(runtime.messageList?.delegationWaiting).toBe(waitingForChildren)
+  expect(runtime.messageList?.backgroundExecWaiting).toBe(waitingForCommand)
   expect(runtime.composer?.sending).toBe(running)
 })
 
@@ -1629,6 +1637,28 @@ describe("Root orchestration-only control", () => {
     expect(send).toHaveBeenCalledWith("child progress", expect.objectContaining({
       rootOrchestrationOnly: undefined,
     }))
+  })
+
+  it("keeps the saved Work effort after the cached session title changes", async () => {
+    const chat = createChat(vi.fn<Send>(), `ticket-${"a".repeat(32)}`)
+    const createdAt = "2026-11-19T00:00:00Z"
+    const work = { ...chat.currentChat!, kind: "child" as const, createdAtExact: createdAt, updatedAt: createdAt }
+    const compatibility = {
+      report: null, observed: true, legacy: true, loading: false, readError: false, blocked: false, refresh: vi.fn(),
+      workReasoning: { createdAt, effort: "max" as const },
+    }
+    const root = createRoot(document.body.appendChild(document.createElement("div")))
+    roots.push(root)
+    const render = (currentChat: typeof work) => act(async () => root.render(
+      <ChatPane chat={{ ...chat, currentChat, executionCompatibility: compatibility }} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
+    ))
+
+    await render(work)
+    expect(runtime.reasoningPicker?.value).toBe("max")
+    await render({ ...work, title: "Renamed Work", updatedAt: "2026-11-19T00:01:00Z" })
+    expect(runtime.reasoningPicker?.value).toBe("max")
   })
 
   it("treats a Child detail as read-only even before the list supplies kind", async () => {
@@ -2983,6 +3013,69 @@ describe("run diagnostics entry and canonical error isolation", () => {
     expect(report.diagnostic).toMatchObject({ diagnostic_id: null, attempt: null, attempt_limit: null })
     expect(JSON.stringify(report)).not.toContain("legacy upstream")
     expect(chat.retry).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
+  })
+  it.each(["question", "child approval"] as const)("puts a pending %s ahead of earlier diagnostic recovery", async (kind) => {
+    const send = vi.fn<Send>(), retry = vi.fn()
+    const detail = "Automatic retry time budget exhausted"
+    const failure = { kind: "generation-failed" as const, operationId: 4, sessionId: a, message: detail }
+    const chat = { ...createChat(send, a, "suspended"), retry, sendFailure: failure }
+    await mount(send, a)
+    const root = roots.at(-1)!
+    const pending: Partial<ChatPaneProps["chat"]> = kind === "question" ? {
+      pendingQuestion: { has_pending_question: true, interaction_kind: "clarification", question: "Keep going?",
+        options: ["Yes"], allow_custom: false, tool_call_id: "pending-root-question" },
+    } : {
+      pendingApproval: { childSessionId: "waiting-child", requestId: "pending-child-approval",
+        toolName: "Write", permission: "write" },
+    }
+    const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((element) => element.textContent?.trim() === label)
+
+    await act(async () => root.render(pane({ ...chat, ...pending })))
+    expect(document.querySelector(kind === "question" ? "[data-parent-question]" : "[data-child-approval]")).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain(detail)
+    expect(button(uiText("run_diagnostics_open"))).toBeUndefined()
+    expect(button(uiText("retry_generation_37960b38"))).toBeUndefined()
+    expect(retry).not.toHaveBeenCalled()
+
+    await act(async () => root.render(pane(chat)))
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(detail)
+    expect(button(uiText("run_diagnostics_open"))).toBeDefined()
+    await act(async () => button(uiText("retry_generation_37960b38"))?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith(failure)
+  })
+  it.each([
+    ["pending-question recovery", { activity: "waiting_user" }],
+    ["Plan approval", { planMode: { status: "awaiting_approval",
+      entered_at: "2026-01-01T00:00:00Z", pre_permission_mode: "default" } }],
+  ] as const)("holds a persisted generation error during %s", async (_label, currentWait) => {
+    const send = vi.fn<Send>(), retry = vi.fn()
+    const detail = "Automatic retry time budget exhausted"
+    const chat = { ...createChat(send, a, "error", detail), retry }
+    await mount(send, a)
+    const root = roots.at(-1)!
+
+    await act(async () => root.render(pane({
+      ...chat, currentChat: { ...chat.currentChat!, ...currentWait },
+    })))
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(retry).not.toHaveBeenCalled()
+
+    await act(async () => root.render(pane(chat)))
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(detail)
+  })
+  it("keeps draft recovery visible during an independent pending interaction", async () => {
+    const send = vi.fn<Send>()
+    const chat = createChat(send, a, "suspended")
+    await mount(send, a)
+    await act(async () => roots.at(-1)!.render(pane({
+      ...chat, currentChat: { ...chat.currentChat!, activity: "waiting_user" },
+      sendFailure: { kind: "submission-unconfirmed", operationId: 4,
+        sessionId: a, message: "Submission did not complete" },
+    })))
+    const notice = document.querySelector('[role="alert"]')
+    expect(notice?.textContent).toContain("Submission did not complete")
+    expect(notice?.textContent).toContain(uiText("continue_editing_fd4b9e3b"))
   })
   it("closes an old preview when navigation changes and ignores a foreign local failure", async () => {
     const send = vi.fn<Send>()

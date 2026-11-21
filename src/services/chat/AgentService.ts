@@ -2,6 +2,7 @@ import { isRetryRunId, type UpstreamRetrySelection } from "./upstreamRetry";
 import type { PublicRunDiagnostic } from "./runDiagnostic"
 import { uiText } from "@shared/i18n/ui"
 import { setBackendFeatures } from "@/lib/backendFeatures"
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 import { debugLog } from "@shared/utils/debugFlags";
 /**
  * Agent Client Service
@@ -83,12 +84,12 @@ export interface SessionPermissionSnapshot {
   sessionId: string;
   mode: SessionPermissionMode;
   etag: string;
-  supervisorAutoDispatch?: boolean;
+  supervisorDispatchInheritsPermissionMode?: true;
 }
 
 export interface PatchSessionPermissionRequest {
   permission_mode: SessionPermissionMode;
-  supervisor_auto_dispatch?: true;
+  expected_supervisor_dispatch_inheritance?: boolean;
 }
 
 export class SessionPermissionContractError extends Error {
@@ -114,14 +115,11 @@ const readSessionPermissionSnapshot = async (
   ) {
     throw new SessionPermissionContractError();
   }
-  if (!("supervisor_auto_dispatch" in session)) {
-    return { sessionId, mode, etag };
+  if ("supervisor_dispatch_inherits_permission_mode" in session &&
+    session.supervisor_dispatch_inherits_permission_mode === true) {
+    return { sessionId, mode, etag, supervisorDispatchInheritsPermissionMode: true };
   }
-  const dispatch = session.supervisor_auto_dispatch;
-  if (typeof dispatch !== "boolean" || (dispatch && mode !== "auto")) {
-    throw new SessionPermissionContractError();
-  }
-  return { sessionId, mode, etag, supervisorAutoDispatch: dispatch };
+  return { sessionId, mode, etag };
 };
 
 export interface GoldConfig {
@@ -805,6 +803,29 @@ export interface SessionPlanModeState {
 }
 
 /**
+ * What a session is doing right now. Mirrors the backend `SessionActivity`.
+ *
+ * `is_running` is the runner's own liveness, and a Root yields while it waits on
+ * delegated children or a background shell — during those windows no runner
+ * executes, so `is_running` reads `false` although real work is in flight. These
+ * labels are the server's answer, so the UI never has to guess from a
+ * last-tool-call transcript.
+ */
+export type SessionActivity =
+  /** A runner is executing this session right now. */
+  | "running"
+  /** Yielded while delegated children execute, including the resume gap. */
+  | "waiting_children"
+  /** Yielded while a background shell executes; its result resumes the run. */
+  | "waiting_bash"
+  /** Blocked on a pending question. */
+  | "waiting_user"
+  /** The last run reached a terminal status. */
+  | "terminal"
+  /** Nothing in flight and no terminal status recorded. */
+  | "idle";
+
+/**
  * Which machine a session's agent physically runs on: the deployment kind plus
  * the host. Mirrors the backend `SessionPlacement` DTO. The backend always sends
  * one (un-stamped / local sessions default to the backend's own local host).
@@ -877,6 +898,13 @@ export interface SessionSummary {
   has_pending_question?: boolean;
   /** Number of child sessions currently running under this session. */
   running_child_count?: number;
+  /**
+   * What the session is doing right now, derived server-side from the runner
+   * status plus the persisted delegation/shell waits. `is_running` alone cannot
+   * express a yielded run, so prefer this over inferring liveness locally.
+   * Absent from backends that predate the field.
+   */
+  activity?: SessionActivity;
   /** Total number of child sessions in this root's flattened sub-agent tree. */
   subagent_count?: number;
   /**
@@ -889,10 +917,9 @@ export interface SessionSummary {
   bypass_permissions?: boolean;
   /** Missing or unknown typed support must not enable permission-mode writes. */
   permission_mode?: SessionPermissionMode;
-  /** The opt-in is reported by Supervisor detail. */
-  supervisor_auto_dispatch?: boolean;
   /** An index hint to refresh permission detail. */
   supervisor_permission_etag?: string;
+  supervisor_dispatch_inherits_permission_mode?: boolean;
 }
 
 export interface RunningSessionEntry {
@@ -1678,13 +1705,15 @@ export class AgentClient {
     sessionId: string,
     mode: SessionPermissionMode,
     etag: string,
-    supervisorAutoDispatch?: true,
+    expectedDispatchInheritance = false,
   ): Promise<SessionPermissionSnapshot> {
-    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null || (supervisorAutoDispatch && mode !== "auto")) {
+    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) {
       throw new SessionPermissionContractError();
     }
     const request: PatchSessionPermissionRequest = { permission_mode: mode };
-    if (supervisorAutoDispatch) request.supervisor_auto_dispatch = true;
+    if (expectedDispatchInheritance || sessionId === DEFAULT_SUPERVISOR_SESSION_ID) {
+      request.expected_supervisor_dispatch_inheritance = expectedDispatchInheritance;
+    }
     const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "If-Match": etag },

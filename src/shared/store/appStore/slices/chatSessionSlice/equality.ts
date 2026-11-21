@@ -85,7 +85,7 @@ const areChatConfigsEquivalent = (a: ChatItem["config"], b: ChatItem["config"]):
     a.bypassPermissions === b.bypassPermissions &&
     a.permissionMode === b.permissionMode &&
     a.permissionModeEtag === b.permissionModeEtag &&
-    a.supervisorAutoDispatch === b.supervisorAutoDispatch &&
+    a.supervisorDispatchInheritsPermissionMode === b.supervisorDispatchInheritsPermissionMode &&
     JSON.stringify(a.goldConfig ?? null) === JSON.stringify(b.goldConfig ?? null) &&
     JSON.stringify(a.goalState ?? null) === JSON.stringify(b.goalState ?? null) &&
     areTokenUsagesEqual(a.tokenUsage, b.tokenUsage) &&
@@ -115,6 +115,7 @@ export const canReuseSessionListChat = (prev: ChatItem, next: ChatItem): boolean
     prev.subagentType === next.subagentType &&
     prev.subagentCount === next.subagentCount &&
     prev.runningChildCount === next.runningChildCount &&
+    prev.activity === next.activity &&
     prev.placement?.kind === next.placement?.kind &&
     prev.placement?.host === next.placement?.host &&
     prev.title === next.title &&

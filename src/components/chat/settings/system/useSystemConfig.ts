@@ -1,6 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { apiClient, getErrorMessage } from "@services/api"
+import type { ReasoningEffort } from "@services/chat/AgentService"
 import {
   serviceFactory,
   type BambooConfig,
@@ -34,6 +35,12 @@ export interface ContextManagementConfig {
 export interface WorkFeatureFlags {
   ticket_mutation: boolean
   ticket_dispatch: boolean
+  work_execution?: WorkExecutionSettings
+}
+
+export interface WorkExecutionSettings {
+  reasoning_effort: ReasoningEffort | null
+  max_parallel: number | null
 }
 
 /**

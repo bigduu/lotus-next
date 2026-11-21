@@ -236,6 +236,14 @@ export interface ChatItem {
    */
   runningChildCount?: number;
   /**
+   * What the session is doing right now, from the backend `SessionSummary.activity`.
+   * This is the authoritative "still working?" answer: it distinguishes a
+   * delegation or background-shell wait (live work, no runner executing) from a
+   * finished run, which `isRunning` cannot do on its own. Absent from older
+   * backends; callers must fall back to the local derivation in that case.
+   */
+  activity?: import("@services/chat/AgentService").SessionActivity;
+  /**
    * Which machine this session's agent runs on (deployment kind + host),
    * mirrored from the backend `SessionSummary.placement`. Present for every
    * session; local/root sessions carry the backend's own host, remote children
@@ -275,7 +283,7 @@ export interface ChatItem {
     /** Exact detail/PATCH ETag, held in memory only and never a browser preference. */
     permissionModeEtag?: string;
     /** Canonical Supervisor opt-in read with the permission mode and ETag. */
-    supervisorAutoDispatch?: boolean;
+    supervisorDispatchInheritsPermissionMode?: true;
     goldConfig?: GoldConfig | null;
     goalState?: GoalState | null;
     tokenUsage?: TokenUsage;

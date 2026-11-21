@@ -21,18 +21,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { REASONING_OPTIONS } from "../reasoningOptions"
 import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const UNSET = "__unset__"
 const AUTO_EFFORT = "__auto__"
-const REASONING_EFFORTS: readonly { value: ReasoningEffort; label: string }[] = [
-  { value: "none", get label() { return uiText("reasoning_none") } },
-  { value: "low", get label() { return uiText("low_aa9e366f") } },
-  { value: "medium", get label() { return uiText("medium_a567bdaa") } },
-  { value: "high", get label() { return uiText("high_b1c27820") } },
-  { value: "xhigh", get label() { return uiText("extra_high_392d0dce") } },
-  { value: "max", get label() { return uiText("max_9730c15f") } },
-]
 
 interface ModelRoleDefinition {
   key: ProviderDefaultModelRefKey
@@ -115,6 +108,7 @@ type DraftRefs = Record<ProviderDefaultModelRefKey, DraftRef>
 interface DefaultsDraft {
   roles: DraftRefs
   subagentModels: Record<string, DraftRef>
+  chatUltra: boolean
 }
 
 const emptyRef = (): DraftRef => ({ provider: "", model: "", reasoningEffort: "" })
@@ -131,7 +125,7 @@ const payloadRef = (value: DraftRef): ProviderModelRef => ({
   ...(value.reasoningEffort ? { reasoning_effort: value.reasoningEffort } : {}),
 })
 
-function draftFromDefaults(defaults: DefaultsConfig | undefined): DefaultsDraft {
+function draftFromDefaults(defaults: DefaultsConfig | undefined, chatUltra: boolean): DefaultsDraft {
   const roles = Object.fromEntries(
     PROVIDER_DEFAULT_MODEL_REF_KEYS.map((key) => [key, copyRef(defaults?.[key])]),
   ) as DraftRefs
@@ -142,7 +136,7 @@ function draftFromDefaults(defaults: DefaultsConfig | undefined): DefaultsDraft 
       copyRef(ref),
     ]),
   )
-  return { roles, subagentModels }
+  return { roles, subagentModels, chatUltra }
 }
 
 const serializeDraft = (draft: DefaultsDraft): string => JSON.stringify(draft)
@@ -175,16 +169,16 @@ export function DefaultsEditor() {
   const snapshot = runtimeSnapshot ?? repairSnapshot
   const instances = snapshot?.instances ?? []
   const defaults = snapshot?.defaults
+  const chatUltraByDefault = snapshot?.features?.chat_ultra_by_default === true
   const canManage = providerStatus === "ready" || providerStatus === "degraded"
 
-  const initialDraft = draftFromDefaults(defaults)
-  const [draft, setDraft] = useState<DefaultsDraft>(() => initialDraft)
-  const [baseline, setBaseline] = useState(() => serializeDraft(initialDraft))
+  const [baseline, setBaseline] = useState(() => draftFromDefaults(defaults, chatUltraByDefault))
+  const [draft, setDraft] = useState(baseline)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  const dirty = useMemo(() => serializeDraft(draft) !== baseline, [draft, baseline])
+  const dirty = useMemo(() => serializeDraft(draft) !== serializeDraft(baseline), [draft, baseline])
   const compatibilitySyncRequired =
     (defaults?.chat.provider ?? "") !== "" &&
     defaults?.chat.provider !== (snapshot?.default_provider_instance_id ?? "")
@@ -194,10 +188,10 @@ export function DefaultsEditor() {
 
   useEffect(() => {
     if (dirtyRef.current || savingRef.current) return
-    const next = draftFromDefaults(defaults)
+    const next = draftFromDefaults(defaults, chatUltraByDefault)
     setDraft(next)
-    setBaseline(serializeDraft(next))
-  }, [defaults])
+    setBaseline(next)
+  }, [defaults, chatUltraByDefault])
 
   const setRole = (role: ProviderDefaultModelRefKey, patch: Partial<DraftRef>) =>
     setDraft((current) => ({
@@ -280,6 +274,10 @@ export function DefaultsEditor() {
           ? payloadRef(value)
           : null
       }
+      const chat = draft.roles.chat
+      if (!chat.reasoningEffort && baseline.roles.chat.reasoningEffort) {
+        payload.chat = { ...payloadRef(chat), reasoning_effort: null }
+      }
       payload.subagent_models = Object.fromEntries(
         Object.entries(draft.subagentModels).map(([subagent, value]) => [
           subagent,
@@ -290,8 +288,10 @@ export function DefaultsEditor() {
       // Bamboo rewrites model_limits.json on every config write, so carry the
       // current value to avoid deleting an unrelated authoritative sidecar.
       const current = await apiClient.get<{ model_limits?: unknown }>("/bamboo/config")
+      const chatUltraChanged = draft.chatUltra !== baseline.chatUltra
       await apiClient.post("/bamboo/config", {
         defaults: payload,
+        ...(chatUltraChanged ? { features: { chat_ultra_by_default: draft.chatUltra } } : {}),
         // Bamboo still needs this compatibility route internally. The Chat
         // model preference is the sole user choice, so keep both values atomic.
         default_provider_instance: draft.roles.chat.provider,
@@ -299,9 +299,12 @@ export function DefaultsEditor() {
       })
 
       const refreshed = await loadProviderInstances()
-      const confirmed = draftFromDefaults(refreshed.defaults)
+      if (chatUltraChanged && refreshed.features?.chat_ultra_by_default !== draft.chatUltra) {
+        throw new Error(uiText("chat_ultra_default_unconfirmed"))
+      }
+      const confirmed = draftFromDefaults(refreshed.defaults, refreshed.features?.chat_ultra_by_default === true)
       setDraft(confirmed)
-      setBaseline(serializeDraft(confirmed))
+      setBaseline(confirmed)
       dirtyRef.current = false
 
       const remainingIssues = findProviderSnapshotRelationIssues(refreshed)
@@ -341,6 +344,8 @@ export function DefaultsEditor() {
 
   const renderRoleEditor = (role: ModelRoleDefinition) => {
     const value = draft.roles[role.key]
+    const isChat = role.key === "chat"
+    const ultraSelected = isChat && draft.chatUltra
     const models = value.provider && catalog ? getModelsForProvider(value.provider) : []
     const invalid = hasRoleIssue(repairIssues, role.key)
     return (
@@ -389,28 +394,43 @@ export function DefaultsEditor() {
             onChange={(model) => setRole(role.key, { model })}
           />
           <Select
-            value={value.reasoningEffort || AUTO_EFFORT}
+            value={ultraSelected ? "ultra" : value.reasoningEffort || AUTO_EFFORT}
             disabled={!value.provider}
-            onValueChange={(effort) =>
+            onValueChange={(effort) => {
+              if (isChat) {
+                setDraft((current) => ({ ...current, chatUltra: effort === "ultra" }))
+              }
+              if (effort === "ultra") return
               setRole(role.key, {
                 reasoningEffort:
                   effort === AUTO_EFFORT ? "" : (effort as ReasoningEffort),
               })
-            }
+            }}
           >
             <SelectTrigger className="w-full" aria-label={uiText("reasoning_level_fab1021c", { v0: role.label })}>
               <SelectValue placeholder={uiText("reasoning_level_c8c14507")} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={AUTO_EFFORT}>{uiText("auto_7eb336e4")}</SelectItem>
-              {REASONING_EFFORTS.map((effort) => (
+              {REASONING_OPTIONS.map((effort) => (
                 <SelectItem key={effort.value} value={effort.value}>
                   {effort.label}
                 </SelectItem>
               ))}
+              {isChat ? (
+                <SelectItem value="ultra">{uiText("ultra_orchestration_5857fcd7")}</SelectItem>
+              ) : null}
             </SelectContent>
           </Select>
         </div>
+        {ultraSelected ? (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            {uiText("chat_ultra_default_description", {
+              effort: REASONING_OPTIONS.find((option) => option.value === value.reasoningEffort)?.label
+                ?? uiText("auto_7eb336e4"),
+            })}
+          </p>
+        ) : null}
       </div>
     )
   }
@@ -542,7 +562,7 @@ export function DefaultsEditor() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={AUTO_EFFORT}>{uiText("auto_7eb336e4")}</SelectItem>
-                      {REASONING_EFFORTS.map((effort) => (
+                        {REASONING_OPTIONS.map((effort) => (
                         <SelectItem key={effort.value} value={effort.value}>
                           {effort.label}
                         </SelectItem>

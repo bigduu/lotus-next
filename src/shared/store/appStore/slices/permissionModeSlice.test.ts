@@ -92,7 +92,7 @@ describe("server-authoritative session permission state", () => {
     const operation = store.getState().changeSessionPermissionMode("a", "auto", '"7"');
     expect(patch).not.toHaveBeenCalled();
     await Promise.resolve();
-    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"');
+    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"', false);
     expect(config(store).permissionMode).toBe("default");
     expect(store.getState().permissionModeRequests.a.status).toBe("saving");
     pending.resolve(snapshot("auto", '"8"'));
@@ -101,6 +101,16 @@ describe("server-authoritative session permission state", () => {
     expect(store.getState().chats[0].messages).toBe(before.messages);
     expect(store.getState().inputStates).toBe(inputs);
     expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "ready", error: undefined });
+  });
+
+  it("rejects a stale confirmation scope even with the current revision", async () => {
+    const store = harness();
+    read.mockResolvedValueOnce({ ...snapshot("default"), supervisorDispatchInheritsPermissionMode: true });
+    await store.getState().refreshSessionPermissionMode("a");
+    await store.getState().changeSessionPermissionMode("a", "auto", '"7"', false);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(patch).not.toHaveBeenCalled();
+    expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "ready", error: "changed" });
   });
 
   it("fences same-session re-entry synchronously and never queues a later write", async () => {
@@ -126,7 +136,7 @@ describe("server-authoritative session permission state", () => {
     const b = store.getState().changeSessionPermissionMode("b", "bypass", '"3"');
     second.resolve(snapshot("bypass", '"4"', "b")); await b;
     first.resolve(snapshot("auto", '"8"')); await a;
-    expect(patch.mock.calls).toEqual([["a", "auto", '"7"'], ["b", "bypass", '"3"']]);
+    expect(patch.mock.calls).toEqual([["a", "auto", '"7"', false], ["b", "bypass", '"3"', false]]);
     expect(config(store, "a").permissionMode).toBe("auto");
     expect(config(store, "b").permissionMode).toBe("bypass");
     expect(store.getState().currentSessionId).toBe("b");
@@ -144,7 +154,7 @@ describe("server-authoritative session permission state", () => {
     read.mockResolvedValueOnce(snapshot("default", '"1"'));
     patch.mockResolvedValueOnce(snapshot("bypass", '"2"'));
     await store.getState().changeSessionPermissionMode("a", "bypass", '"0"');
-    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "bypass", '"1"');
+    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "bypass", '"1"', false);
     expect(read).toHaveBeenCalledTimes(2);
     expect(config(store)).toMatchObject({ permissionMode: "bypass", permissionModeEtag: '"2"' });
     expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "ready", error: undefined });
@@ -207,7 +217,7 @@ describe("server-authoritative session permission state", () => {
     read.mockResolvedValueOnce(snapshot("bypass", '"8"'));
     patch.mockResolvedValueOnce(snapshot("auto", '"9"'));
     await store.getState().changeSessionPermissionMode("a", "auto", '"8"');
-    expect(patch.mock.calls[1]).toEqual(["a", "auto", '"8"']);
+    expect(patch.mock.calls[1]).toEqual(["a", "auto", '"8"', false]);
   });
 
   it("shows a rejected request only with the subsequently read server mode", async () => {
@@ -362,7 +372,7 @@ describe("server-authoritative session permission state", () => {
     await Promise.resolve();
     store.getState().reconcileSessionPermissionModes([summary("a", "bypass")]);
     pending.reject(new ApiError("Conflict", 412, "Precondition Failed")); await operation;
-    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"');
+    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"', false);
     expect(read).toHaveBeenCalledTimes(3);
     expect(config(store).permissionMode).toBe("bypass");
     expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "ready", error: "conflict" });
@@ -378,7 +388,7 @@ describe("server-authoritative session permission state", () => {
     preflight.resolve(snapshot("default")); await Promise.resolve();
     expect(store.getState().permissionModeRequests.a.status).toBe("saving");
     expect(config(store).permissionMode).toBe("default");
-    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"');
+    expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"', false);
     pending.resolve(snapshot("auto", '"8"')); await operation;
     expect(read).toHaveBeenCalledTimes(3);
     expect(patch).toHaveBeenCalledTimes(1);

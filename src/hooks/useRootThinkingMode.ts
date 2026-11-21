@@ -17,13 +17,14 @@ const notify = () => { for (const listener of listeners) listener() }
 
 /** Compose the existing boundaries without adding a combined durable operation. */
 export function useRootThinkingMode({
-  sessionId, draftKey, ordinarySelection, root, disabled,
+  sessionId, draftKey, ordinarySelection, root, disabled, defaultChatUltra = false,
 }: {
   sessionId: string | null
   draftKey: string
   ordinarySelection: ReasoningEffortSelection
   root: ReturnType<typeof useRootOrchestrationMode>
   disabled: boolean
+  defaultChatUltra?: boolean
 }) {
   useUiLocale()
   const key = sessionId ? `session:${sessionId}` : `draft:${draftKey}`
@@ -36,7 +37,7 @@ export function useRootThinkingMode({
   }, [])
   const [failure, setFailure] = useState<{ key: string; epoch: number; message: string } | null>(null)
   const draftMode = useAppStore((s) => s.inputStates[draftKey]?.thinkingMode
-    ?? s.getInputState(draftKey).thinkingMode ?? "standard")
+    ?? s.getInputState(draftKey).thinkingMode ?? (defaultChatUltra ? "ultra" : "standard"))
   const selected = sessionId ? root.selected : draftMode === "ultra"
   const thinkingMode = sessionId ? selected === null ? null : selected ? "ultra" : "standard" : draftMode
   const ordinaryValue = sessionId && !root.child && root.authority
