@@ -2560,8 +2560,8 @@ describe("caret-driven workspace file lookup", () => {
 })
 
 
-it("uses the selected worktree instead of the Project primary directory when submitting a new session", async () => {
-  Object.assign(runtime.state, { projects: { "project-a": { project_path: "/repo/primary" } } })
+it("uses an explicitly selected existing worktree even when the Project defaults to a new one", async () => {
+  Object.assign(runtime.state, { projects: { "project-a": { project_path: "/repo/primary", new_chat_worktree: true } } })
   const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container); roots.push(root)
@@ -2570,6 +2570,7 @@ it("uses the selected worktree instead of the Project primary directory when sub
     onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
     onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   expect(composer().displayWorkspace).toBe("/Volumes/External/worktrees/task")
+  expect(worktreeControl().automatic).toBe(false)
   change(container.querySelector<HTMLTextAreaElement>("textarea")!, "Inspect this checkout")
   act(() => composer().onSubmit()); await flush()
   expect(send).toHaveBeenCalledWith("Inspect this checkout", expect.objectContaining({
