@@ -49,7 +49,7 @@ test("the LiteLLM experiment saves per provider and reloads with its effective s
   const readInstance = () => ({
     ...instance,
     config: { ...instance.config, litellm_wire_types: liteLlmOverride },
-    experiments: { litellm_wire_types: liteLlmOverride ?? true },
+    experiments: { litellm_wire_types: liteLlmOverride ?? false },
   })
   await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
     default_provider_instance_id: instance.id,
@@ -81,7 +81,7 @@ test("the LiteLLM experiment saves per provider and reloads with its effective s
   await page.getByRole("button", { name: "取消", exact: true }).click()
 
   await editProvider(instance.label).click()
-  await expect(toggle).toBeChecked()
+  await expect(toggle).not.toBeChecked()
   await save.click()
   await expect(editProvider(instance.label)).toBeVisible()
   expect(writes).toHaveLength(1)
@@ -92,18 +92,18 @@ test("the LiteLLM experiment saves per provider and reloads with its effective s
   await save.click()
   await expect(editProvider(instance.label)).toBeVisible()
   expect(writes).toHaveLength(2)
-  expect(writes[1]).toMatchObject({ config: { litellm_wire_types: false } })
+  expect(writes[1]).toMatchObject({ config: { litellm_wire_types: true } })
 
   await page.reload()
   await openProviders(page)
   await editProvider(instance.label).click()
   await expect(toggle).toBeVisible()
-  await expect(toggle).not.toBeChecked()
+  await expect(toggle).toBeChecked()
   await toggle.click()
   await save.click()
   await expect(editProvider(instance.label)).toBeVisible()
   expect(writes).toHaveLength(3)
-  expect(writes[2]).toMatchObject({ config: { litellm_wire_types: true } })
+  expect(writes[2]).toMatchObject({ config: { litellm_wire_types: false } })
   expect(observation.pageErrors).toEqual([])
 })
 
