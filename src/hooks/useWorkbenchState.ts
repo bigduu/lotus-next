@@ -2,19 +2,24 @@ import { useCallback, useEffect, useRef, useState, type SetStateAction } from "r
 import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/RightWorkbench"
 import { getBackendStorageScope } from "@services/api"
 
+export type WorkbenchSubagents = {
+  childId: string | null
+  view: "tree" | "messages"
+}
+
 export interface WorkbenchState {
   open: boolean
   tab: RightWorkbenchTab | null
   tools: WorkbenchToolTab[]
   order: string[]
-  secondSid: string | null
+  subagents: WorkbenchSubagents
   reviewTarget: string | null
   browserActiveId: string | null
   browserPresent: boolean
 }
-const tools: WorkbenchToolTab[] = ["work", "inspector", "review", "session"]
+const tools: WorkbenchToolTab[] = ["work", "inspector", "review", "subagents"]
 export const emptyWorkbenchState = (): WorkbenchState => ({
-  open: false, tab: null, tools: [], order: [], secondSid: null,
+  open: false, tab: null, tools: [], order: [], subagents: { childId: null, view: "tree" },
   reviewTarget: null, browserActiveId: null, browserPresent: false,
 })
 const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 4096
@@ -31,18 +36,29 @@ export function readWorkbenchState(key: string | null): WorkbenchState {
   if (!key) return fallback
   try {
     const value = JSON.parse(localStorage.getItem(key) ?? "null")
-    if (!value || value.version !== 1 || !value.state || typeof value.state !== "object") return fallback
+    if (!value || (value.version !== 1 && value.version !== 2) || !value.state || typeof value.state !== "object") return fallback
     const item = value.state
-    const savedTools = Array.isArray(item.tools)
-      ? [...new Set<WorkbenchToolTab>(item.tools.filter((tool: unknown): tool is WorkbenchToolTab => tools.includes(tool as WorkbenchToolTab)))] : []
+    const migrateTab = (tab: unknown): unknown => value.version === 1 && tab === "session" ? "subagents" : tab
+    const savedTools = Array.isArray(item.tools) ? [...new Set<WorkbenchToolTab>(
+      item.tools.map(migrateTab).filter((tool: unknown): tool is WorkbenchToolTab => tools.includes(tool as WorkbenchToolTab)),
+    )] : []
+    const tab = migrateTab(item.tab)
+    // Both old and new stored IDs are only candidates until the current actor
+    // snapshot proves the child belongs to this session's root.
+    const childId = value.version === 1 ? item.secondSid : item.subagents?.childId
     return {
       open: item.open === true,
-      tab: item.tab === "browser" || savedTools.includes(item.tab) ? item.tab : null,
+      tab: tab === "browser" || savedTools.includes(tab as WorkbenchToolTab) ? tab as RightWorkbenchTab : null,
       tools: savedTools,
-      order: Array.isArray(item.order) ? [...new Set<string>(item.order.filter((id: unknown): id is string =>
-        identifier(id) && (id.startsWith("browser:") || tools.some((tool) => id === `tool:${tool}`)),
-      ))].slice(0, 200) : [],
-      secondSid: identifier(item.secondSid) ? item.secondSid : null,
+      order: Array.isArray(item.order) ? [...new Set<string>(item.order
+        .map((id: unknown) => value.version === 1 && id === "tool:session" ? "tool:subagents" : id)
+        .filter((id: unknown): id is string =>
+          identifier(id) && (id.startsWith("browser:") || tools.some((tool) => id === "tool:" + tool)),
+        ))].slice(0, 200) : [],
+      subagents: {
+        childId: identifier(childId) ? childId : null,
+        view: identifier(childId) && (value.version === 1 || item.subagents?.view === "messages") ? "messages" : "tree",
+      },
       reviewTarget: identifier(item.reviewTarget) ? item.reviewTarget : null,
       browserActiveId: identifier(item.browserActiveId) ? item.browserActiveId : null,
       browserPresent: item.browserPresent === true,
@@ -64,7 +80,7 @@ export function useWorkbenchState(sessionId: string | null) {
   useEffect(() => {
     navigationState.current.delete(key)
     if (!stored.key || stored.key !== key) return
-    try { localStorage.setItem(stored.key, JSON.stringify({ version: 1, state: stored.state })) } catch {
+    try { localStorage.setItem(stored.key, JSON.stringify({ version: 2, state: stored.state })) } catch {
       // Storage may be disabled or full. The current workbench remains usable.
     }
   }, [key, stored])
@@ -90,7 +106,7 @@ export function useWorkbenchState(sessionId: string | null) {
       // Retain it in memory too, so disabled storage does not lose the intent.
       navigationState.current.set(targetKey, state)
       if (targetKey) {
-        try { localStorage.setItem(targetKey, JSON.stringify({ version: 1, state })) } catch { /* optional persistence */ }
+        try { localStorage.setItem(targetKey, JSON.stringify({ version: 2, state })) } catch { /* optional persistence */ }
       }
     }
   }

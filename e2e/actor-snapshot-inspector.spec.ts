@@ -173,7 +173,7 @@ test("129 persistent actors render recursively without expanding the content sub
   await expect(panel.locator(`[data-actor-id="${childId}"]`)).toHaveAttribute("aria-selected", "true")
   await panel.locator(`[data-actor-id="${rootId}"]`).click()
   await expect(panel.locator(`[data-actor-id="${rootId}"]`)).toHaveAttribute("aria-selected", "true")
-  await workbench.getByRole("tab", { name: "并排会话" }).click()
+  await workbench.getByRole("tab", { name: "子代理" }).click()
   await expect(workbench.locator("[data-subagent-transcript-pane]")).toHaveCount(0)
   await expect(workbench.getByText("isolated selected child answer")).toHaveCount(0)
   await workbench.getByRole("tab", { name: "检查器" }).click()

@@ -19,27 +19,13 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { actorLifecycleLabel } from "./actorTreeLabels"
 import { cn } from "@/lib/utils"
 import type { ActorHealth } from "@/services/chat/actorTopology"
 import type { ActorTreeData, ActorTreeNode } from "@/services/chat/actorTreeView"
 
 const ROW_HEIGHT = 64
 const INITIAL_RECT = { width: 320, height: 320 }
-
-const LIFECYCLE_LABEL: Record<ActorTreeNode["lifecycle"], string> = {
-  get active() { return uiText("activity_f98dfe0b") },
-  get unknown() { return uiText("lifecycle_unknown_2217e6e4") },
-  get unconfirmed() { return uiText("unconfirmed_c098e854") },
-  get cold() { return uiText("not_started_e6fc5eb8") },
-  get queued() { return uiText("queued_d6f766f2") },
-  get running() { return uiText("running_1f0eb99b") },
-  get suspended() { return uiText("paused_eb0c326b") },
-  get completed() { return uiText("completed_f28461bb") },
-  get failed() { return uiText("failed_28384d7a") },
-  get cancelled() { return uiText("cancelled_a37778f1") },
-  get retired() { return uiText("exited_899df7e2") },
-  get lost() { return uiText("unreachable_8deefc6c") },
-}
 
 const PLACEMENT_LABEL: Record<ActorTreeNode["placement"], string> = {
   get docker() { return uiText("container_6d23f04b") },
@@ -191,6 +177,7 @@ export interface ActorTreeProps {
   topology: ActorTreeData
   selectedActorId: string | null
   onSelectActor: (actorId: string) => void
+  revealSelected?: boolean
   unreadActorIds?: ReadonlySet<string>
   error?: string | null
   onRetry?: () => void
@@ -203,6 +190,7 @@ export function ActorTree({
   topology,
   selectedActorId,
   onSelectActor,
+  revealSelected = false,
   unreadActorIds,
   error,
   onRetry,
@@ -280,6 +268,13 @@ export function ActorTree({
       return next.size === current.size ? current : next
     })
   }, [selectedActorId, topology.byId]) // Refreshing the same selection preserves keyboard focus.
+
+  const selectedIndex = rows.findIndex(({ node }) => node.actorId === selectedActorId)
+  useEffect(() => {
+    if (!revealSelected || selectedIndex < 0) return
+    const frame = requestAnimationFrame(() => virtualizer.scrollToIndex(selectedIndex, { align: "auto" }))
+    return () => cancelAnimationFrame(frame)
+  }, [revealSelected, selectedIndex, virtualizer])
 
   const toggle = useCallback((actorId: string) => {
     setExpandedActorIds((previous) => {
@@ -363,9 +358,7 @@ export function ActorTree({
                 node.waitingForCount !== null && node.waitingForCount > 0 ? uiText("waiting_23f9a84a", { v0: node.waitingForCount }) : null,
                 node.pendingRequestCount !== null && node.pendingRequestCount > 0 ? uiText("requests_25082fa5", { v0: node.pendingRequestCount }) : null,
               ].filter((count): count is string => count !== null)
-              const lifecycle = node.lifecycle === "unknown" && node.localTaskDiagnostic
-                ? uiText(node.localTaskDiagnostic === "stop_unconfirmed" ? "native_task_stop_unconfirmed" : "native_task_stopped_outcome_unconfirmed")
-                : LIFECYCLE_LABEL[node.lifecycle]
+              const lifecycle = actorLifecycleLabel(node)
               const stopWarning = node.localTaskDiagnostic === "stop_unconfirmed" && node.lifecycle !== "unknown"
                 ? uiText("native_task_stop_unconfirmed") : null
               const placementDescription = node.placement === "unknown"
@@ -376,7 +369,7 @@ export function ActorTree({
               const health = node.health === null ? uiText("health_unknown_d7b6f7ae") : HEALTH_LABEL[node.health]
               const inheritsRunning = node.lifecycle !== "running" && showsRunning(node, runningSubtrees)
               const statusIcon = inheritsRunning ? LIFECYCLE_ICON.running : LIFECYCLE_ICON[node.lifecycle]
-              const statusTitle = inheritsRunning ? LIFECYCLE_LABEL.running : lifecycle
+              const statusTitle = inheritsRunning ? uiText("running_1f0eb99b") : lifecycle
               return (
                 <div
                   key={virtualRow.key}

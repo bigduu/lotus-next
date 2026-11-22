@@ -22,7 +22,7 @@ import { workbenchSensors } from "./workbenchSensors"
 import { type WorkbenchTabDrag, useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
 
-export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session" | "work"
+export type RightWorkbenchTab = "inspector" | "review" | "browser" | "subagents" | "work"
 export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
 
 const toolEntries = [
@@ -30,7 +30,7 @@ const toolEntries = [
   { id: "inspector", get label() { return uiText("inspector_fc48a7f2") }, get description() { return uiText("view_current_session_ea4cbea5") }, icon: SlidersHorizontal },
   { id: "review", label: "Review", get description() { return uiText("view_file_changes_93cce2ed") }, icon: FileDiff },
   { id: "browser", get label() { return uiText("browser_e19c3b9e") }, get description() { return uiText("enter_a_url_to_open_0d932314") }, icon: Globe2 },
-  { id: "session", get label() { return uiText("side_by_side_session_6eced34d") }, get description() { return uiText("open_another_session_28b8469c") }, icon: Bot },
+  { id: "subagents", get label() { return uiText("subagent_workbench_tab") }, get description() { return uiText("subagent_workbench_description") }, icon: Bot },
 ] as const
 
 type VisibleTab =
@@ -125,10 +125,9 @@ export function RightWorkbenchContent({
   inspector,
   review,
   browser,
-  session,
+  subagents,
   work,
   workEnabled = false,
-  sessionTitle,
   visible = true,
   browserEnabled = true,
   browserSessionAvailable = true,
@@ -151,10 +150,9 @@ export function RightWorkbenchContent({
   inspector: ReactNode
   review: ReactNode
   browser: ReactNode
-  session: ReactNode
+  subagents: ReactNode
   work?: ReactNode
   workEnabled?: boolean
-  sessionTitle?: string | null
   docked?: boolean
   visible?: boolean
   pageVisible?: boolean
@@ -245,7 +243,7 @@ export function RightWorkbenchContent({
                 if (item.kind === "tool") {
                   const entry = toolEntries.find((candidate) => candidate.id === item.tool)!
                   const Icon = entry.icon
-                  const title = item.tool === "session" ? sessionTitle || entry.label : entry.label
+                  const title = entry.label
                   return (
                     <SortableWorkbenchTab key={item.key} id={item.key} index={index} title={title} selected={activeTab === item.tool} onMove={moveTab}>
                       <Tooltip>
@@ -326,7 +324,7 @@ export function RightWorkbenchContent({
               {orderedTabs.map((item, index) => {
                 const entry = item.kind === "tool" ? toolEntries.find((candidate) => candidate.id === item.tool)! : null
                 const title = item.kind === "browser" ? item.tab.title || item.tab.url || uiText("new_tab_9c5d3416")
-                  : item.tool === "session" ? sessionTitle || entry!.label : entry!.label
+                  : entry!.label
                 return <DropdownMenuRadioItem key={item.key} value={item.kind === "tool" ? item.tool : item.key}
                   aria-label={item.kind === "browser" ? uiText("browser_tab_bc1120de", { v0: orderedTabs.slice(0, index).filter((candidate) => candidate.kind === "browser").length + 1, v1: title }) : undefined}
                   style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
@@ -360,11 +358,9 @@ export function RightWorkbenchContent({
         </TabsContent>
       ) : null}
       {visible && browserEnabled ? <TabsContent value={browserValue} className="flex min-h-0 min-w-0 overflow-hidden">{browser}</TabsContent> : null}
-      {/* Keep an open root session mounted across tab changes so its draft and
-          in-flight send survive; App gates child projection by active tab. */}
-      {visible && openToolTabs.includes("session") ? (
-        <TabsContent value="session" forceMount className={cn("min-h-0 overflow-hidden", activeTab === "session" ? "flex" : "hidden")}>
-          {session}
+      {visible && openToolTabs.includes("subagents") ? (
+        <TabsContent value="subagents" forceMount className={cn("min-h-0 min-w-0 overflow-hidden", activeTab === "subagents" ? "flex" : "hidden")}>
+          {subagents}
         </TabsContent>
       ) : null}
       <TabsContent value="launcher" className="flex min-h-0 flex-col items-center justify-center overflow-auto p-6">

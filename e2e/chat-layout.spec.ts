@@ -59,8 +59,12 @@ async function openLayout(page: Page) {
       const messages = history(childId).slice(0, 2).map(({ id, role, content, created_at }) => ({ id, role, content, created_at }))
       return route.fulfill({ json: { session_id: childId, projection: "messages", is_delta: false, truncated: false, total_message_count: messages.length, messages } })
     }
-    const actor = sessions.find((item) => path === `/api/v1/actors/${item.id}/snapshot`)
-    if (actor) return route.fulfill({ json: actorSnapshotFixture(actor.id, 0) })
+    const actor = sessions.find((item) => path === "/api/v1/actors/" + item.id + "/snapshot")
+    if (actor) {
+      const snapshot = actorSnapshotFixture(actor.id, actor.id === mainId ? 1 : 0)
+      if (snapshot.nodes[1]) Object.assign(snapshot.nodes[1], { actor_id: childId, title: "Layout child" })
+      return route.fulfill({ json: snapshot })
+    }
     if (sessions.some((item) => path === `/api/v1/task/${item.id}`)) return route.fulfill({ json: { items: [] } })
     if (sessions.some((item) => path === `/api/v1/respond/${item.id}/pending`)) return route.fulfill({ json: { has_pending_question: false } })
     await route.fallback()
@@ -198,16 +202,9 @@ test("Environment reserves shared pane space for the transcript, composer, and r
   await testInfo.attach("Environment reading column", { path: screenshot, contentType: "image/png" })
 })
 
-test("interactive side chat and child transcript retain the shared reading column", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "desktop secondary surfaces")
+test("the child transcript uses the shared reading column", async ({ page }, testInfo) => {
   const observation = await openLayout(page)
-  await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
   const workbench = page.locator("#right-workbench")
-  await workbench.getByRole("button", { name: /并排会话.*打开另一个会话/ }).click()
-  await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
-  await page.getByRole("option", { name: "Layout side", exact: true }).click()
-  await expectDisclosureAlignment(workbench)
-  await expectComposerAlignment(workbench)
   const childCard = page.locator(`[data-subagent-id="${childId}"]`)
   const childToggle = childCard.locator("[data-subagent-toggle]")
   await expect(childToggle).toHaveAttribute("aria-expanded", "false")

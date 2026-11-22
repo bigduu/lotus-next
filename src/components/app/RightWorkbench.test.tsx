@@ -51,7 +51,7 @@ it("switches tools in one docked panel and closes without navigation", () => {
       <RightWorkbench
         docked
         activeTab="inspector"
-        openToolTabs={["inspector", "review", "session"]}
+        openToolTabs={["inspector", "review", "subagents"]}
         onTabChange={onTabChange}
         onToolClose={onToolClose}
         onClose={onClose}
@@ -65,8 +65,7 @@ it("switches tools in one docked panel and closes without navigation", () => {
         activeBrowserTabId="tab-a"
         onBrowserActivate={onBrowserActivate}
         onBrowserClose={onBrowserClose}
-        session={<div>child transcript</div>}
-        sessionTitle="Fix transport"
+        subagents={<div>child transcript</div>}
       />,
     )
   })
@@ -116,7 +115,7 @@ it("uses the supplied docked width without a percentage cap and retains the mobi
       inspector={null}
       review={null}
       browser={null}
-      session={null}
+      subagents={null}
     />
   )
 
@@ -129,7 +128,7 @@ it("uses the supplied docked width without a percentage cap and retains the mobi
   expect(document.querySelector('button[aria-label="收起工作面板"]')).not.toBeNull()
 })
 
-it("keeps an open root session mounted while another workbench tab is selected", () => {
+it("keeps the subagent view mounted while another workbench tab is selected", () => {
   const host = document.body.appendChild(document.createElement("div"))
   const root = createRoot(host)
   roots.push(root)
@@ -145,30 +144,30 @@ it("keeps an open root session mounted while another workbench tab is selected",
     return <div data-testid="running-session">{status}</div>
   }
 
-  const renderWorkbench = (activeTab: "session" | "inspector", visible = true) => (
+  const renderWorkbench = (activeTab: "subagents" | "inspector", visible = true) => (
     <RightWorkbench
       docked
       visible={visible}
       activeTab={activeTab}
-      openToolTabs={["inspector", "session"]}
+      openToolTabs={["inspector", "subagents"]}
       onTabChange={vi.fn()}
       onToolClose={vi.fn()}
       onClose={vi.fn()}
       inspector={<div>inspector content</div>}
       review={null}
       browser={null}
-      session={<RunningSession />}
+      subagents={<RunningSession />}
     />
   )
 
-  act(() => root.render(renderWorkbench("session")))
+  act(() => root.render(renderWorkbench("subagents")))
   expect(host.querySelector('[data-testid="running-session"]')?.textContent).toBe("sending")
   act(() => root.render(renderWorkbench("inspector")))
   expect(onUnmount).not.toHaveBeenCalled()
-  act(() => root.render(renderWorkbench("session")))
+  act(() => root.render(renderWorkbench("subagents")))
   expect(host.querySelector('[data-testid="running-session"]')?.textContent).toBe("sending")
   expect(onMount).toHaveBeenCalledTimes(1)
-  act(() => root.render(renderWorkbench("session", false)))
+  act(() => root.render(renderWorkbench("subagents", false)))
   expect(onUnmount).toHaveBeenCalledOnce()
   expect(host.querySelector('[data-testid="running-session"]')).toBeNull()
 })
@@ -186,7 +185,7 @@ it("preserves a Work decision draft across tab switches", () => {
   const render = (activeTab: "work" | "inspector", visible = true) => <RightWorkbench docked activeTab={activeTab} visible={visible}
     openToolTabs={["work", "inspector"]} workEnabled work={<WorkDecision />}
     onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={vi.fn()}
-    inspector={<div>inspector</div>} review={null} browser={null} session={null} />
+    inspector={<div>inspector</div>} review={null} browser={null} subagents={null} />
   act(() => root.render(render("work")))
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Work answer"]')!
   act(() => {
@@ -223,7 +222,7 @@ it("omits the browser tab and content when the phone layout disables it", () => 
         review={<div>review content</div>}
         browser={<div>browser content</div>}
         browserEnabled={false}
-        session={<div>child transcript</div>}
+        subagents={<div>child transcript</div>}
       />,
     )
   })
@@ -252,7 +251,7 @@ it("shows a launcher instead of an about:blank tab when no content is open", () 
         review={<div>review content</div>}
         browser={<div>browser content</div>}
         browserTabs={[]}
-        session={<div>child transcript</div>}
+        subagents={<div>child transcript</div>}
       />,
     )
   })
@@ -275,7 +274,7 @@ it("uses the same stable selection surface for tool and browser tabs", () => {
   const render = (activeTab: "inspector" | "browser") => act(() => root.render(
     <RightWorkbench docked activeTab={activeTab} openToolTabs={["inspector"]}
       onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={vi.fn()} onTabReorder={onTabReorder}
-      inspector={null} review={null} session={null} browser={null}
+      inspector={null} review={null} subagents={null} browser={null}
       browserTabs={[{ tab_id: "alpha", title: "Alpha", url: "https://a.test", active: true }]} activeBrowserTabId="alpha" />,
   ))
   render("inspector")
@@ -296,22 +295,21 @@ it("uses the same stable selection surface for tool and browser tabs", () => {
 
 it("exposes complete long labels on keyboard focus and in a touch-accessible tab list", async () => {
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
-  const longTitle = "A very long session title that must remain complete when its workbench tab is truncated"
   const browserTitle = "https://example.test/" + "long-path/".repeat(12)
   const onBrowserActivate = vi.fn(); const onTabReorder = vi.fn()
-  act(() => root.render(<RightWorkbench docked activeTab="session" openToolTabs={["session"]}
+  act(() => root.render(<RightWorkbench docked activeTab="subagents" openToolTabs={["subagents"]}
     onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={vi.fn()} onTabReorder={onTabReorder}
-    sessionTitle={longTitle} inspector={null} review={null} session={null} browser={null}
+    inspector={null} review={null} subagents={null} browser={null}
     browserTabs={[{ tab_id: "a", title: browserTitle, url: browserTitle, active: false }]}
     onBrowserActivate={onBrowserActivate} />))
-  const sessionTab = host.querySelector<HTMLElement>('[role="tab"]')!
-  await act(async () => sessionTab.focus())
-  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(longTitle)
-  await act(async () => sessionTab.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  const browserTab = host.querySelector<HTMLElement>('[role="tab"][aria-label^="浏览器标签页"]')!
+  await act(async () => browserTab.focus())
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(browserTitle)
+  await act(async () => browserTab.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
   const list = host.querySelector<HTMLButtonElement>('button[aria-label="已打开的标签页"]')!
   await act(async () => list.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
   const items = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
-  expect(items.map((item) => item.textContent)).toEqual([longTitle, browserTitle])
+  expect(items.map((item) => item.textContent)).toEqual(["子代理", browserTitle])
   expect(items[0].getAttribute("aria-checked")).toBe("true")
   expect(items[1].style.whiteSpace).toBe("normal")
   expect(items[1].style.overflowWrap).toBe("anywhere")
@@ -330,10 +328,11 @@ it("exposes complete long labels on keyboard focus and in a touch-accessible tab
 it("refreshes full labels from current props and returns focus safely when the last tab closes", async () => {
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const onTabChange = vi.fn()
-  const render = (title: string | null) => act(() => root.render(<RightWorkbench docked activeTab={title ? "session" : null}
-    openToolTabs={title ? ["session"] : []} sessionTitle={title}
+  const render = (title: string | null) => act(() => root.render(<RightWorkbench docked activeTab={title ? "browser" : null}
+    openToolTabs={[]} activeBrowserTabId={title ? "current" : null}
+    browserTabs={title ? [{ tab_id: "current", title, url: "https://example.test/", active: true }] : []}
     onTabChange={onTabChange} onToolClose={vi.fn()} onClose={vi.fn()}
-    inspector={null} review={null} session={null} browser={null} />))
+    inspector={null} review={null} subagents={null} browser={null} />))
   render("Original session")
   const list = host.querySelector<HTMLButtonElement>('button[aria-label="已打开的标签页"]')!
   await act(async () => list.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
@@ -352,17 +351,17 @@ it("restores focus after closing tabs without changing their order", async () =>
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const onTabReorder = vi.fn()
   function Harness() {
-    const [open, setOpen] = useState<Array<"inspector" | "session">>(["inspector", "session"])
+    const [open, setOpen] = useState<Array<"inspector" | "subagents">>(["inspector", "subagents"])
     return <RightWorkbench docked activeTab={open[0] ?? null} openToolTabs={open} onTabChange={vi.fn()}
       onToolClose={(closed) => setOpen((tabs) => tabs.filter((tab) => tab !== closed))}
-      onTabReorder={onTabReorder} onClose={vi.fn()} inspector={null} review={null} session={null} browser={null} />
+      onTabReorder={onTabReorder} onClose={vi.fn()} inspector={null} review={null} subagents={null} browser={null} />
   }
   act(() => root.render(<Harness />))
   const close = host.querySelector<HTMLButtonElement>('button[aria-label="关闭检查器标签页"]')!
   act(() => close.focus())
   await act(async () => close.click())
   expect(document.activeElement).toBe(host.querySelector('[role="tab"]'))
-  const last = host.querySelector<HTMLButtonElement>('button[aria-label="关闭并排会话标签页"]')!
+  const last = host.querySelector<HTMLButtonElement>('button[aria-label="关闭子代理标签页"]')!
   act(() => last.focus())
   await act(async () => last.click())
   expect(document.activeElement).toBe(host.querySelector('button[aria-label="打开工作面板标签页"]'))
@@ -373,10 +372,10 @@ it("does not steal focus when a delayed close finishes after the user moves away
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   let finishClose = () => {}
   function Harness() {
-    const [open, setOpen] = useState<Array<"inspector" | "session">>(["inspector", "session"])
-    return <RightWorkbench docked activeTab="session" openToolTabs={open} onTabChange={vi.fn()}
+    const [open, setOpen] = useState<Array<"inspector" | "subagents">>(["inspector", "subagents"])
+    return <RightWorkbench docked activeTab="subagents" openToolTabs={open} onTabChange={vi.fn()}
       onToolClose={(closed) => { finishClose = () => setOpen((tabs) => tabs.filter((tab) => tab !== closed)) }}
-      onClose={vi.fn()} inspector={null} review={null} session={null} browser={null} />
+      onClose={vi.fn()} inspector={null} review={null} subagents={null} browser={null} />
   }
   act(() => root.render(<Harness />))
   const close = host.querySelector<HTMLButtonElement>('button[aria-label="关闭检查器标签页"]')!
@@ -396,7 +395,7 @@ it("traps narrow-workbench focus, dismisses the topmost menu first, and restores
       <button>Background action</button>
       <RightWorkbench visible={visible} activeTab="inspector" openToolTabs={["inspector"]} onTabChange={vi.fn()}
         onToolClose={vi.fn()} onClose={() => { closed(); setVisible(false) }}
-        inspector={<button>Panel action</button>} review={null} session={null} browser={null} /></>
+        inspector={<button>Panel action</button>} review={null} subagents={null} browser={null} /></>
   }
   act(() => root.render(<Harness />))
   const opener = host.querySelector<HTMLButtonElement>('[aria-controls="right-workbench"]')!
@@ -430,7 +429,7 @@ it("traps narrow-workbench focus, dismisses the topmost menu first, and restores
   expect(host.closest('[aria-hidden="true"]')).toBeNull()
 })
 
-it("preserves session drafts and attachment state across desktop/modal resizing without locking desktop focus", async () => {
+it("preserves workbench content state across desktop/modal resizing without locking desktop focus", async () => {
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const mounted = vi.fn(); const unmounted = vi.fn()
   function Session() {
@@ -441,8 +440,8 @@ it("preserves session drafts and attachment state across desktop/modal resizing 
       <button onClick={() => setAttachments((count) => count + 1)}>Attach {attachments}</button></>
   }
   const render = (docked: boolean) => act(() => root.render(<><button aria-controls="right-workbench">Launcher</button>
-    <RightWorkbench docked={docked} activeTab="session" openToolTabs={["session"]} onTabChange={vi.fn()}
-      onToolClose={vi.fn()} onClose={vi.fn()} inspector={null} review={null} browser={null} session={<Session />} /></>))
+    <RightWorkbench docked={docked} activeTab="subagents" openToolTabs={["subagents"]} onTabChange={vi.fn()}
+      onToolClose={vi.fn()} onClose={vi.fn()} inspector={null} review={null} browser={null} subagents={<Session />} /></>))
   render(true)
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!
   const attach = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Attach 0")!
@@ -474,7 +473,7 @@ it("keeps internal pointer interaction open and restores focus after backdrop or
     return <><button aria-controls="right-workbench" onClick={() => setVisible(true)}>Launcher</button>
       <RightWorkbench visible={visible} activeTab="inspector" openToolTabs={["inspector"]} onTabChange={vi.fn()}
         onToolClose={vi.fn()} onClose={() => { closed(); setVisible(false) }}
-        inspector={<button onClick={inside}>Inside action</button>} review={null} session={null} browser={null} /></>
+        inspector={<button onClick={inside}>Inside action</button>} review={null} subagents={null} browser={null} /></>
   }
   act(() => root.render(<Harness />))
   const opener = host.querySelector<HTMLButtonElement>('[aria-controls="right-workbench"]')!
@@ -507,7 +506,7 @@ it("returns to an available launcher when the original opener becomes hidden", a
     const [visible, setVisible] = useState(false)
     return <><button aria-controls="right-workbench">Available launcher</button><button onClick={() => setVisible(true)}>Original opener</button>
       <RightWorkbench visible={visible} activeTab="inspector" openToolTabs={["inspector"]} onTabChange={vi.fn()}
-        onToolClose={vi.fn()} onClose={() => setVisible(false)} inspector={null} review={null} session={null} browser={null} /></>
+        onToolClose={vi.fn()} onClose={() => setVisible(false)} inspector={null} review={null} subagents={null} browser={null} /></>
   }
   act(() => root.render(<Harness />))
   const [fallback, opener] = host.querySelectorAll<HTMLButtonElement>("button")
@@ -522,8 +521,8 @@ it("keeps the real model popover usable across breakpoint changes and repeated f
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const close = vi.fn()
   const render = (docked: boolean) => act(() => root.render(<RightWorkbench docked={docked}
-    activeTab="session" openToolTabs={["session"]} onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close}
-    inspector={null} review={null} browser={null} session={<ModelEffortPicker
+    activeTab="subagents" openToolTabs={["subagents"]} onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close}
+    inspector={null} review={null} browser={null} subagents={<ModelEffortPicker
       modelGroups={[{ provider: "fixture", label: "Fixture", models: ["Model A", "Model B"] }]}
       model="Model A" modelProvider="fixture" onModelChange={vi.fn()} value="medium" onChange={vi.fn()} />} />))
   render(true)
@@ -571,7 +570,7 @@ it("treats sibling-owned work portals and their nested popovers as inside pointe
   function Harness() {
     const [target, setTarget] = useState<HTMLDivElement | null>(null)
     return <><RightWorkbench activeTab="work" openToolTabs={["work"]} workEnabled work={<div ref={setTarget} />}
-      onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} inspector={null} review={null} session={null} browser={null} />
+      onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} inspector={null} review={null} subagents={null} browser={null} />
       {target ? createPortal(<Work />, target) : null}</>
   }
   act(() => root.render(<Harness />))
@@ -610,7 +609,7 @@ it.each(["restore", "kept-mounted", "new-control", "hidden-opener", "changed-ses
         {visible || scenario === "kept-mounted" ? <RightWorkbench visible={visible} focusScopeKey="session-a" getCurrentFocusScope={getScope}
           activeTab="inspector" openToolTabs={["inspector"]} onTabChange={vi.fn()}
           onToolClose={vi.fn()} onClose={() => setVisible(false)} inspector={<button>Panel action</button>}
-          review={null} session={null} browser={null} /> : null}</>
+          review={null} subagents={null} browser={null} /> : null}</>
     }
     act(() => root.render(<Harness />))
     const [fallback, opener, next] = host.querySelectorAll<HTMLButtonElement>("button")
@@ -651,9 +650,9 @@ it("releases hidden-page modal effects for Settings without remounting the workb
   function Harness({ pageVisible }: { pageVisible: boolean }) {
     return <><div data-testid="chat-shell" hidden={!pageVisible} inert={!pageVisible} aria-hidden={!pageVisible || undefined}>
       <button aria-controls="right-workbench">Launcher</button>
-      <RightWorkbench pageVisible={pageVisible} activeTab="session" openToolTabs={["session"]}
+      <RightWorkbench pageVisible={pageVisible} activeTab="subagents" openToolTabs={["subagents"]}
         onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} inspector={null} review={null} browser={null}
-        session={<SessionDraft />} />
+        subagents={<SessionDraft />} />
     </div><section data-testid="settings"><button onClick={changeTheme}>Light theme</button></section></>
   }
   const render = (pageVisible: boolean) => act(() => root.render(<Harness pageVisible={pageVisible} />))
@@ -702,9 +701,9 @@ it("gives global Radix overlays focus above a narrow workbench and restores thei
       return () => window.removeEventListener("keydown", key)
     }, [])
     return <><ResponsiveDialog>
-      <div hidden={settings} inert={settings}><RightWorkbench pageVisible={!settings} activeTab="session" openToolTabs={["session"]}
+      <div hidden={settings} inert={settings}><RightWorkbench pageVisible={!settings} activeTab="subagents" openToolTabs={["subagents"]}
         onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={closeWorkbench} inspector={null} review={null} browser={null}
-        session={<><input aria-label="Side editor" defaultValue="Side draft" />
+        subagents={<><input aria-label="Side editor" defaultValue="Side draft" />
           <ResponsiveDialogTrigger asChild><button>Other global dialog</button></ResponsiveDialogTrigger></>} /></div>
       <ResponsiveDialogContent><ResponsiveDialogTitle>Global settings</ResponsiveDialogTitle><input aria-label="Global input" /></ResponsiveDialogContent>
     </ResponsiveDialog>
@@ -765,9 +764,9 @@ it.each([
     const [open, setOpen] = useState(true)
     return <><button>Background</button>
       <RightWorkbenchSurface {...mode} onClose={closeWorkbench}>
-        {mountWorkbench ? <Suspense fallback={<span>Loading workbench</span>}><LazyContent {...mode} activeTab="session" openToolTabs={["session"]}
+        {mountWorkbench ? <Suspense fallback={<span>Loading workbench</span>}><LazyContent {...mode} activeTab="subagents" openToolTabs={["subagents"]}
           onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={closeWorkbench} inspector={null} review={null} browser={null}
-          session={<input aria-label="Inactive editor" />} /></Suspense> : null}
+          subagents={<input aria-label="Inactive editor" />} /></Suspense> : null}
       </RightWorkbenchSurface>
       <ResponsiveDialog open={open} onOpenChange={setOpen}>
         <ResponsiveDialogContent><ResponsiveDialogTitle>Rename Supervisor</ResponsiveDialogTitle><input aria-label="Rename title" /></ResponsiveDialogContent>
@@ -797,9 +796,9 @@ it.each([false, true])("cancels a keyboard tab drag before allowing Escape to di
   vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} })
   Object.defineProperty(document, "getAnimations", { configurable: true, value: () => [] })
   Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
-  await act(async () => root.render(<RightWorkbench activeTab="review" openToolTabs={["review", "session"]}
+  await act(async () => root.render(<RightWorkbench activeTab="review" openToolTabs={["review", "subagents"]}
     onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={closeWorkbench} onTabReorder={reorder}
-    inspector={null} review={<input aria-label="Review editor" />} browser={null} session={<input aria-label="Side draft" />} />))
+    inspector={null} review={<input aria-label="Review editor" />} browser={null} subagents={<input aria-label="Side draft" />} />))
   const panel = document.getElementById("right-workbench")!
   const handle = host.querySelector<HTMLButtonElement>('button[aria-keyshortcuts]')!
   const before = [...host.querySelectorAll('[role="tab"]')]
@@ -820,7 +819,7 @@ it.each([false, true])("cancels a keyboard tab drag before allowing Escape to di
   expect(closeWorkbench).toHaveBeenCalledTimes(1)
 })
 
-it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without leaving Escape disabled", async (change) => {
+it.each(["unmount", "settings", "subagents"])("cancels a tab drag on %s without leaving Escape disabled", async (change) => {
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const close = vi.fn(); const reorder = vi.fn()
   const dragRef = { current: null as WorkbenchTabDrag | null }
@@ -830,10 +829,10 @@ it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without le
   Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
   const render = (changed: boolean) => act(async () => root.render(
     <RightWorkbenchSurface tabDragRef={dragRef} visible={!(changed && change === "unmount")} pageVisible={!(changed && change === "settings")}
-      focusScopeKey={changed && change === "session" ? "next" : "original"} onClose={close}>
-      {changed && change === "unmount" ? null : <RightWorkbenchContent activeTab="session" openToolTabs={["review", "session"]}
+      focusScopeKey={changed && change === "subagents" ? "next" : "original"} onClose={close}>
+      {changed && change === "unmount" ? null : <RightWorkbenchContent activeTab="subagents" openToolTabs={["review", "subagents"]}
         onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} onTabReorder={reorder}
-        inspector={null} review={null} browser={null} session={<input aria-label="Draft" defaultValue="Retained" />} />}
+        inspector={null} review={null} browser={null} subagents={<input aria-label="Draft" defaultValue="Retained" />} />}
     </RightWorkbenchSurface>,
   ))
   await render(false)
@@ -875,13 +874,13 @@ it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when 
     const dragRef = useRef<WorkbenchTabDrag | null>(null)
     const returnTarget = useRef<() => HTMLElement | null>(() => null)
     useEffect(() => {
-      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); returnTarget.current = captureWorkbenchFocusReturn(document.activeElement as HTMLElement, "session", () => "session", dragRef.current?.getSourceId()); setPalette(true) } }
+      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); returnTarget.current = captureWorkbenchFocusReturn(document.activeElement as HTMLElement, "subagents", () => "subagents", dragRef.current?.getSourceId()); setPalette(true) } }
       window.addEventListener("keydown", key)
       return () => window.removeEventListener("keydown", key)
     }, [])
-    return <><RightWorkbench tabDragRef={dragRef} interactionSuspended={palette} activeTab="session" openToolTabs={["review", "session"]}
+    return <><RightWorkbench tabDragRef={dragRef} interactionSuspended={palette} activeTab="subagents" openToolTabs={["review", "subagents"]}
       onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} onTabReorder={reorder}
-      inspector={null} review={null} browser={null} session={<input aria-label="Draft" defaultValue="Retained" />} />
+      inspector={null} review={null} browser={null} subagents={<input aria-label="Draft" defaultValue="Retained" />} />
       <CommandPalette getReturnFocusTarget={returnTarget.current} open={palette} chats={[]} onClose={() => setPalette(false)} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} /></>
   }
   await act(async () => root.render(<StrictMode><Harness /></StrictMode>))
