@@ -63,17 +63,19 @@ async function prepare(page: Page, legacyTarget?: string, content: "short" | "hi
       expect(url.searchParams.get("projection")).toBe("messages")
       projected.push(history.id)
       if (history.id === nestedId) await holdNested
+      const columns = Array.from({ length: 12 }, (_, index) => "Column" + (index + 1))
+      const wideMessage = [
+        "Reading a narrow transcript. " + "long_identifier_".repeat(30),
+        "", "| " + columns.join(" | ") + " |",
+        "| " + columns.map(() => "---").join(" | ") + " |",
+        "| " + columns.map(() => "Wide content").join(" | ") + " |",
+        "", String.fromCharCode(96).repeat(3) + "text",
+        "long_source_line_".repeat(40), String.fromCharCode(96).repeat(3),
+      ].join("\n")
       const messages = content === "history" ? Array.from({ length: 64 }, (_, index) => ({
         id: history.id + "-" + index, role: index % 2 === 0 ? "user" : "assistant",
         content: history.title + " message " + index + ". " + "Reading context. ".repeat(12), created_at: at,
-      })) : [{ id: history.id + "-answer", role: "assistant", content: content === "wide" ? [
-          "Reading a narrow transcript. " + "long_identifier_".repeat(30),
-          "", "| First column | Second column | Third column | Fourth column |",
-          "| --- | --- | --- | --- |",
-          "| " + Array.from({ length: 4 }, () => "Wide content ".repeat(5).trim()).join(" | ") + " |",
-          "", String.fromCharCode(96).repeat(3) + "text",
-          "long_source_line_".repeat(40), String.fromCharCode(96).repeat(3),
-        ].join("\n") : history.title + " answer", created_at: at }]
+      })) : [{ id: history.id + "-answer", role: "assistant", content: content === "wide" ? wideMessage : history.title + " answer", created_at: at }]
       return route.fulfill({ json: {
         session_id: history.id, projection: "messages", is_delta: false, truncated: false,
         total_message_count: messages.length, messages,
