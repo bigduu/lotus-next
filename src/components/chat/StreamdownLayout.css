@@ -82,6 +82,24 @@
   }
 }
 
+/* Keep wide source lines scrollable inside the readonly workbench transcript. */
+[data-subagent-transcript-pane] .assistant-streamdown [data-streamdown="code-block-body"] {
+  overflow-x: auto;
+}
+
+[data-subagent-transcript-pane] .assistant-streamdown [data-streamdown="code-block-body"] pre {
+  width: max-content;
+  min-width: 100%;
+  overflow: visible;
+}
+
+[data-subagent-transcript-pane] .assistant-streamdown [data-streamdown="code-block-body"] :is(pre, code) {
+  white-space: pre;
+  text-wrap: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 /* Only explicit inline UI icons participate; diagram SVG keeps its own layout. */
 .assistant-streamdown [data-inline-icon],
 .assistant-streamdown :is(p, li) > svg.lucide {

@@ -10,6 +10,7 @@ export type WorkbenchSubagents = {
 
 export interface WorkbenchState {
   open: boolean
+  dockWidth: number | null
   tab: RightWorkbenchTab | null
   tools: WorkbenchToolTab[]
   order: string[]
@@ -20,7 +21,7 @@ export interface WorkbenchState {
 }
 const tools: WorkbenchToolTab[] = ["work", "inspector", "review", "subagents"]
 export const emptyWorkbenchState = (): WorkbenchState => ({
-  open: false, tab: null, tools: [], order: [], subagents: { childId: null, view: "tree" },
+  open: false, dockWidth: null, tab: null, tools: [], order: [], subagents: { childId: null, view: "tree" },
   reviewTarget: null, browserActiveId: null, browserPresent: false,
 })
 const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 4096
@@ -49,6 +50,8 @@ export function readWorkbenchState(key: string | null): WorkbenchState {
     const childId = value.version === 1 ? item.secondSid : item.subagents?.childId
     return {
       open: item.open === true,
+      dockWidth: typeof item.dockWidth === "number" && Number.isFinite(item.dockWidth) && item.dockWidth > 0
+        ? item.dockWidth : null,
       tab: tab === "browser" || savedTools.includes(tab as WorkbenchToolTab) ? tab as RightWorkbenchTab : null,
       tools: savedTools,
       order: Array.isArray(item.order) ? [...new Set<string>(item.order

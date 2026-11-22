@@ -326,7 +326,7 @@ export function ActorTree({
   }
 
   return (
-    <div className={cn("flex min-h-0 min-w-0 flex-col", className)} data-actor-tree>
+    <div className={cn("@container flex min-h-0 min-w-0 flex-col", className)} data-actor-tree>
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-sm font-medium">
         <span>{uiText("agent_structure_4cf93237")}</span>
         {topology.needsSnapshot ? <span role="status" className="text-xs font-normal text-muted-foreground">{uiText("syncing_954ec984")}</span> : null}
@@ -400,7 +400,7 @@ export function ActorTree({
                     selected && "bg-muted/30",
                     !selected && visibleActiveIndex === virtualRow.index && "bg-primary/5",
                   )}
-                  style={{ transform: `translateY(${virtualRow.start}px)`, paddingLeft: Math.min(node.depth, 8) * 16 + 8 }}
+                  style={{ transform: `translateY(${virtualRow.start}px)`, paddingInlineStart: "calc(8px + min(" + Math.min(node.depth, 8) * 16 + "px, " + Math.min(node.depth, 6) * 2.5 + "cqi))" }}
                   onClick={(event) => {
                     if ((event.target as HTMLElement).closest("[data-actor-toggle]")) toggle(node.actorId)
                     else onSelectActor(node.actorId)
@@ -422,7 +422,9 @@ export function ActorTree({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-1">
-                      <span className="truncate font-medium">{node.title || uiText("unnamed_agent_1ff6bc72")}</span>
+                      <span data-actor-title className="line-clamp-2 font-medium leading-tight [overflow-wrap:anywhere]" title={node.title}>
+                        {node.title || uiText("unnamed_agent_1ff6bc72")}
+                      </span>
                       {unread ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" /> : null}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
