@@ -369,6 +369,7 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   await expect(slider).toHaveValue("4")
   await screenshot(page, info, "combined-picker-high")
   const panelBeforeUltra = await page.locator(".model-effort-panel").boundingBox()
+  await expect(slider).toHaveAccessibleDescription("按任务需要使用 SubAgent。")
   const triggerBeforeUltra = await picker.boundingBox()
   const sliderBeforeUltra = await slider.boundingBox()
   const duringUltra = page.locator(".model-effort-panel").evaluate(async (panel) => {
@@ -386,6 +387,7 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   await slider.press("End")
   await expect(picker).toContainText("Ultra")
   await expect.poll(() => operations.length).toBe(operationsBeforeUltra + 1)
+  await expect(slider).toHaveAccessibleDescription("最高推理档，主动调度 SubAgent。")
   expect(main.reasoning_effort).toBe("high")
   expect(patches).toHaveLength(1)
   for (const sample of await duringUltra) {

@@ -33,6 +33,7 @@ import { useRootThinkingMode } from "@/hooks/useRootThinkingMode"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
+import { isGoalResumeCommand } from "@services/chat/goalCommand"
 import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopMode, type SessionLoopState, type SessionLoopStatus } from "@services/chat/sessionLoop"
 import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
 import { tokenBudgetRevision } from "@shared/store/appStore/slices/tokenBudgetSlice"
@@ -911,13 +912,17 @@ export function ChatPane({
         return
       }
     }
+    const resumeGoal = isGoalResumeCommand(text)
+    if (resumeGoal && (!currentSessionId || selectedSkill || attachments.length > 0 || pendingTicketMessage || semanticComposer)) {
+      showToast(uiText("goal_resume_chat_only"), "error")
+      return
+    }
     const goalCommand = !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
-    if (goalCommand && !pendingTicketMessage && (currentSessionId || !goalCommand[1]?.trim())) {
+    if ((goalCommand || resumeGoal) && !pendingTicketMessage && (currentSessionId || !goalCommand?.[1]?.trim())) {
       if (!currentSessionId) { showToast(uiText("open_a_session_before_setting_a_goal_83867da8")); return }
       const revision = draftAtSubmit?.contentRevision ?? 0
-      const objective = goalCommand[1]?.trim()
-      if (!objective) {
+      if (!resumeGoal && !goalCommand?.[1]?.trim()) {
         onOpenInspector()
         storeAtSubmit.setInputContentIfRevision(draftKey, revision, "")
         return
@@ -928,13 +933,22 @@ export function ChatPane({
         return
       }
       goalRequestActive.current = true; setGoalSaving(true)
-      void agentClient.sendMessage({ message: text.trim(), session_id: sessionId, model: currentChat?.config?.model ?? "" }).then(async (response) => {
+      const command = resumeGoal ? agentClient.resumeGoal(sessionId)
+        : agentClient.sendMessage({ message: text.trim(), session_id: sessionId, model: currentChat?.config?.model ?? "" })
+      void command.then(async (response) => {
         if (response.session_id !== sessionId || !response.goal_command) throw new Error("Goal command was not acknowledged")
         recordSessionUserInput(sessionId)
         useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
         if (currentDraftKeyRef.current === draftKey) {
           const action = response.goal_command.action
-          showToast(action === "off" ? uiText("goal_paused_c6289896") : action === "clear" ? uiText("goal_cleared_0cfc707e") : action === "on_no_prompt" ? uiText("set_a_goal_first_cc87f18f") : action === "status" ? uiText("goal_settings_opened_63de7dc7") : uiText("goal_set_724a547c"))
+          const goalMessages: Partial<Record<string, string>> = {
+            off: uiText("goal_paused_c6289896"),
+            clear: uiText("goal_cleared_0cfc707e"),
+            on_no_prompt: uiText("set_a_goal_first_cc87f18f"),
+            status: uiText("goal_settings_opened_63de7dc7"),
+            resume: uiText("goal_resume_queued"),
+          }
+          showToast(goalMessages[action] ?? uiText("goal_set_724a547c"))
           if (action === "status" || action === "on_no_prompt") onOpenInspector()
         }
         try { await useAppStore.getState().loadChatHistory(sessionId) }
@@ -952,7 +966,10 @@ export function ChatPane({
         }
       }).catch((error) => {
         observeSessionExecutionConflict(sessionId, error)
-        if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"), "error", getErrorMessage(error))
+        if (currentDraftKeyRef.current === draftKey) {
+          const unavailable = resumeGoal && isApiError(error) && (error.status === 404 || error.status === 405)
+          showToast(uiText(unavailable ? "goal_resume_unavailable" : "could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"), "error", getErrorMessage(error))
+        }
       }).finally(() => { goalRequestActive.current = false; setGoalSaving(false) })
       return
     }
