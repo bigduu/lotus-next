@@ -833,6 +833,9 @@ export const uiZhCn = {
   "workflow_run_failure_dependency_skipped": "所需依赖已跳过。",
   "workflow_run_failure_storage": "编排存储不可用。",
 
+  "provider_experiments": "实验功能",
+  "provider_experiments_litellm": "LiteLLM 协议适配",
+  "provider_experiments_litellm_hint": "保存后对当前提供方生效。关闭后使用 Bamboo 原有的协议适配。",
   "runtime_models_legacy_assignments": "旧版模型用途",
   "runtime_models_legacy_assignments_hint": "实例中保存的旧版用途也会使用运行时模型。移除模型前，请修改或清空对应用途。",
   "runtime_models_legacy_fast_model": "旧版快速模型",
