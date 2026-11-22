@@ -178,11 +178,20 @@ export function FileChangeDisclosure({
           <div className="divide-y">
             {group.changes.map((change, index) => (
               <section key={change.id} aria-label={uiText("change_1d9f6496", { v0: path, v1: index + 1 })}>
-                {group.changes.length > 1 ? (
+                {group.changes.length > 1 || change.source ? (
                   <div className="flex items-center gap-2 bg-muted/30 px-2.5 py-1 text-[10px] text-muted-foreground">
-                    <span>{uiText("modify_37090f45")} {index + 1} / {group.changes.length}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{describeOperation(change.payload.operation)}</span>
+                    {group.changes.length > 1 ? (
+                      <>
+                        <span>{uiText("modify_37090f45")} {index + 1} / {group.changes.length}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{describeOperation(change.payload.operation)}</span>
+                      </>
+                    ) : null}
+                    {change.source ? (
+                      <span className="min-w-0 truncate" title={change.source.title}>
+                        {uiText("review_subagent_change_source", { title: change.source.title })}
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
                 <div>

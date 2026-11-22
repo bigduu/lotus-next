@@ -2311,7 +2311,7 @@ export class AgentClient {
   /**
    * Get chat history
    */
-  async getHistory(sessionId: string, sinceMessageId?: string): Promise<HistoryResponse> {
+  async getHistory(sessionId: string, sinceMessageId?: string, signal?: AbortSignal): Promise<HistoryResponse> {
     debugLog("[AgentClient]", "history.request", { sessionId, sinceMessageId });
     // Delta mode: when a cursor is supplied, the backend returns only messages
     // appended after it (`is_delta: true`), so a client that already has most
@@ -2319,7 +2319,7 @@ export class AgentClient {
     const path = sinceMessageId
       ? `history/${encodeURIComponent(sessionId)}?since_message_id=${encodeURIComponent(sinceMessageId)}`
       : `history/${encodeURIComponent(sessionId)}`;
-    const response = await apiClient.get<HistoryResponse>(path, { cache: "no-store" });
+    const response = await apiClient.get<HistoryResponse>(path, { cache: "no-store", ...(signal ? { signal } : {}) });
     debugLog("[AgentClient]", "history.response", summarizeHistoryResponse(response));
     return response;
   }
