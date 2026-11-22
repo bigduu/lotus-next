@@ -476,7 +476,6 @@ export interface ChatRequest {
   enhance_prompt?: string;
   workspace_path?: string;
   selected_skill_ids?: string[];
-  workflow_selection?: import("../command/workflowCatalog").WorkflowSelection;
   /** Durable Root tool boundary. Omit on follow-up to keep the saved choice. */
   root_orchestration_only?: boolean;
   /** Initial Root product mode. Existing Roots use a separate mode operation. */

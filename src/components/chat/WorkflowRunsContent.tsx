@@ -16,7 +16,7 @@ const statusLabel = (status: WorkflowStepStatus) => uiText(`workflow_run_status_
 export default function RunSession({ sessionId, projectId, projectName }: {
   sessionId: string; projectId?: string | null; projectName?: string
 }) {
-  const catalog = useWorkflowCatalog(sessionId, true)
+  const catalog = useWorkflowCatalog(sessionId)
   const [manualDraft, setDraft] = useState<TypedWorkflowDraft | null>(null)
   const [authoring, setAuthoring] = useState<{ runId?: string } | null>(null)
   const [publication, setPublication] = useState<PublishedWorkflow | null>(null)

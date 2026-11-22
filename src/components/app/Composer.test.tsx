@@ -58,10 +58,6 @@ async function mountComposer(overrides: Partial<ComponentProps<typeof Composer>>
     onClearSkill: vi.fn(),
     onPickSkill: vi.fn(),
     skills: [],
-    workflows: [],
-    selectedWorkflow: null,
-    onClearWorkflow: vi.fn(),
-    onPickWorkflow: vi.fn(),
     slashQuery: null,
     onMentionQueryChange: vi.fn(),
     displayWorkspace: null,
@@ -133,7 +129,6 @@ describe("Composer submission controls", () => {
   })
   it("keeps permission, runtime, and submission controls inside the composer surface", async () => {
     const { container } = await mountComposer({
-      workflowControl: <span data-testid="workflow-chip">Review · 本条消息</span>,
       permissionControl: <span data-testid="permission-control">Auto</span>,
       runtimeControls: <span data-testid="runtime-controls">Model</span>,
     })
@@ -143,7 +138,6 @@ describe("Composer submission controls", () => {
     const send = container.querySelector('button[aria-label="发送消息"]')
 
     expect(surface).not.toBeNull()
-    expect(surface?.contains(container.querySelector('[data-testid="workflow-chip"]'))).toBe(true)
     expect(surface?.contains(permission)).toBe(true)
     expect(surface?.contains(runtimeControls)).toBe(true)
     expect(surface?.contains(send)).toBe(true)
@@ -223,7 +217,6 @@ describe("Composer submission controls", () => {
 
   it.each<Partial<ComponentProps<typeof Composer>>>([
     { attachments: [{ id: "image", name: "image.png", url: "data:image/png;base64," }] },
-    { selectedWorkflow: { name: "review", content: "Review the change" } },
   ])("submits non-text content through the same handler: %j", async (overrides) => {
     const { textarea, props } = await mountComposer({ ...overrides, draft: "" })
     dispatchSubmitShortcut(textarea)

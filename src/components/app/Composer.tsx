@@ -30,9 +30,6 @@ import { SlashMenu } from "@/components/chat/SlashMenu"
 import { FileMenu } from "@/components/chat/FileMenu"
 import { useAppStore } from "@shared/store/appStore"
 import type { SkillDefinition } from "@shared/types/skill"
-import type { WorkflowCatalogEntry } from "@services/command/workflowCatalog"
-import type { WorkflowCatalogState } from "@/components/chat/useWorkflowCatalog"
-import type { CommandItem } from "@services/command"
 import type { GuidanceMode } from "@services/chat/guidance"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
 
@@ -147,11 +144,6 @@ export function Composer({
   permissionControl,
   workspaceControl,
   runtimeControls,
-  workflowControl,
-  workflowUndoControl,
-  catalogState,
-  onPickCatalogEntry,
-  catalogDisabled,
   submissionPending,
   inputRef,
   attachments,
@@ -162,12 +154,7 @@ export function Composer({
   onClearSkill,
   onPickSkill,
   skills,
-  workflows,
-  selectedWorkflow,
-  onClearWorkflow,
-  onPickWorkflow,
-  onPickCatalog,
-  onOpenCatalog,
+  onOpenWorkflowRuns,
   onPickGoal,
   onPickCompact,
   compactUnavailable,
@@ -203,12 +190,6 @@ export function Composer({
   workspaceControl?: ReactNode
   /** Context, reasoning, and model controls shown in the lower-right toolbar. */
   runtimeControls?: ReactNode
-  /** Exact catalog selection; separate from slash-command text expansion. */
-  workflowControl?: ReactNode
-  workflowUndoControl?: ReactNode
-  catalogState?: WorkflowCatalogState
-  onPickCatalogEntry?: (entry: WorkflowCatalogEntry) => void
-  catalogDisabled?: boolean
   submissionPending: boolean
   inputRef: Ref<ComposerInputHandle>
   attachments: AttachmentView[]
@@ -219,12 +200,7 @@ export function Composer({
   onClearSkill: () => void
   onPickSkill: (skill: SkillDefinition) => void
   skills: SkillDefinition[]
-  workflows: CommandItem[]
-  selectedWorkflow: { name: string; content: string } | null
-  onClearWorkflow: () => void
-  onPickWorkflow: (command: CommandItem) => void
-  onPickCatalog?: () => void
-  onOpenCatalog?: () => void
+  onOpenWorkflowRuns?: () => void
   onPickGoal?: () => void
   onPickCompact?: () => void
   compactUnavailable?: string | null
@@ -259,7 +235,7 @@ export function Composer({
   useEffect(() => setFileSuggestion(null), [draftKey, displayWorkspace])
   const canQueue = sending && !!onQueueModeChange
   const canSubmit = !sending || canQueue || sendWhileRunning
-  const hasContent = !!draft.trim() || attachments.length > 0 || !!selectedWorkflow
+  const hasContent = !!draft.trim() || attachments.length > 0
 
   const openSecondaryDialog = (open: () => void) => {
     if (moreOpen) {
@@ -279,8 +255,6 @@ export function Composer({
       >
         <Paperclip className="size-4" />
       </Button>
-      {onPickCatalog && <Button size="icon" variant="ghost" className={composerIconButtonClassName}
-        aria-label={uiText("open_workflow_catalog_1bd98d37")} title={uiText("catalog_workflow_this_message_4bad8776")} onClick={() => openSecondaryDialog(onOpenCatalog ?? onPickCatalog)}><BookText className="size-4" /></Button>}
       {!hasSession ? (
         <>
           <ProjectChip
@@ -320,15 +294,10 @@ export function Composer({
       {slashQuery !== null && (
         <SlashMenu
           inputId={inputId}
-          catalogState={catalogState}
-          onPickCatalogEntry={onPickCatalogEntry}
-          catalogDisabled={catalogDisabled}
           skills={skills}
-          workflows={workflows}
           query={slashQuery}
           onPick={onPickSkill}
-          onPickWorkflow={onPickWorkflow}
-          onPickCatalog={onPickCatalog}
+          onOpenWorkflowRuns={onOpenWorkflowRuns}
           onPickGoal={onPickGoal}
           onPickCompact={onPickCompact}
           compactUnavailable={compactUnavailable}
@@ -346,20 +315,6 @@ export function Composer({
             <button
               onClick={onClearSkill}
               aria-label={uiText("remove_skill_1324d3de")}
-              className="opacity-70 hover:opacity-100"
-            >
-              <X className="size-3" />
-            </button>
-          </span>
-        </div>
-      )}
-      {selectedWorkflow && (
-        <div className="mx-auto mb-2 flex w-full max-w-full">
-          <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
-            {uiText("text_expansion_6768e498")}{selectedWorkflow.name}
-            <button
-              onClick={onClearWorkflow}
-              aria-label={uiText("remove_workflow_c1c0133d")}
               className="opacity-70 hover:opacity-100"
             >
               <X className="size-3" />
@@ -405,8 +360,6 @@ export function Composer({
           className="rounded-2xl border border-transparent bg-card p-1.5"
           style={{ borderRadius: "1.5rem" }}
         >
-          {workflowControl}
-          {workflowUndoControl}
           <div className="relative">
             <Suspense
               fallback={

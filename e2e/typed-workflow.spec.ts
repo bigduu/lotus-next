@@ -1,285 +1,131 @@
-import { expectComposerText, revealComposerSettings } from "./support/composer.js"
-import { expect, test, type Page, type TestInfo } from "@playwright/test"
+import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
-import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
+import { expectComposerText } from "./support/composer.js"
 
 const sessionId = "all-surface-session"
-const birth = "b".repeat(64)
+const otherSessionId = "workflow-other-session"
+const primaryTitle = "All-surface acceptance"
+const otherTitle = "Other workflow session"
+const definition = {
+  id: "inspect-files", name: "Inspect files", description: "Read the project files",
+  kind: "orchestration", source: "user", revision: 7, status: "valid", winner: true,
+  invocation_policy: { explicit: true }, argument_schema: { type: "object" },
+}
+const legacy = {
+  ...definition, id: "legacy", name: "Legacy instructions",
+  kind: "instruction", description: "Old Markdown workflow",
+}
 const at = "2026-09-26T00:00:00.000Z"
-const session = { id: sessionId, title: "Workflow selection preview", kind: "root", title_version: 1, pinned: false,
-  root_session_id: sessionId, parent_session_id: null, spawn_depth: 0,
-  model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
-  created_at: at, updated_at: at, last_activity_at: at, message_count: 0, has_attachments: false,
-  workspace_path: "/workspace/lotus-next", project_id: "workflow-preview",
-  is_running: false, last_run_status: "completed", permission_mode: "default", bypass_permissions: false, subagent_count: 0 }
-const entry = { id: "review/exact", name: "Bounded review", description: "Review only the selected files", kind: "instruction",
-  source: "workspace", revision: 7, status: "valid", winner: true, invocation_policy: { explicit: true },
-  argument_schema: { type: "object", required: ["target"], properties: { target: { type: "string" } }, additionalProperties: false } }
-const message = (page: Page) => page.getByRole("textbox", { name: "消息", exact: true }).first()
-const chip = (page: Page) => page.locator("[data-composer-surface] [data-workflow-chip]").first()
-const args = (page: Page) => page.getByRole("textbox", { name: "Workflow 参数（JSON）" })
-const picker = (page: Page) => page.getByRole("dialog", { name: "目录工作流 · 本条消息" })
-async function ready(page: Page) {
-  await page.goto(standaloneScenario.entryUrl)
-  await expect(page.locator('[data-variant="composer"][aria-label="会话权限"]').first()).toBeVisible()
+const run = {
+  run_id: "inspect-run", session_id: sessionId, workflow_id: definition.id, workflow_revision: definition.revision,
+  status: "succeeded", can_cancel: false, last_sequence: 1,
+  plan: { type: "step", step: "read" },
+  steps: { read: { id: "read", status: "succeeded", attempts: 1 } },
+  budget: { max_steps: 2, max_retries: 0, max_agents: 0, wall_time_ms: 1000 },
+  usage: { steps: 1, retries: 0, agents: 0, tokens: 0, cost_micros: null },
+  child_agent_count: 0, created_at: at, updated_at: at,
 }
-async function openCatalog(page: Page) {
-  await revealComposerSettings(page)
-  await page.getByRole("button", { name: "打开目录工作流", exact: true }).first().click()
-  await expect(picker(page).getByLabel("目录中的 Workflow")).toBeVisible()
-}
-async function editArgs(page: Page, value: string) {
-  await chip(page).getByRole("button", { name: /编辑目录工作流/ }).click()
-  await args(page).fill(value)
-  await picker(page).getByRole("button", { name: "关闭工作流目录", exact: true }).click()
-}
-async function screenshot(page: Page, info: TestInfo, name: string) {
-  const path = info.outputPath(`${name}.png`)
-  await page.screenshot({ path, animations: "disabled" })
-  await info.attach(name, { path, contentType: "image/png" })
-}
-async function setup(page: Page, ultra = false) {
-  await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, sessionId)
+
+test("chat offers executable Workflow Runs while preserving the user's draft", async ({ page }, testInfo) => {
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
+  }, sessionId)
   const observation = await installArtifactRuntime(page, standaloneScenario)
-  await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ json: { sessions: [session], total: 1, limit: 200, offset: 0 } }))
-  const project = { id: "workflow-preview", name: "Lotus Next", status: "active", revision: 1,
-    project_path: "/workspace/lotus-next", project_path_status: "configured", created_at: at, updated_at: at }
-  await page.route("**/api/v1/projects?*", (route) => route.fulfill({ json: { projects: [project] } }))
-  await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [project] } }))
-  await page.route("**/api/v1/projects/workflow-preview", (route) => route.fulfill({ json: { project } }))
-  const state = { ultra, epoch: 0, revision: 7, catalogReads: 0, detailReads: 0 }
-  const chats: Array<Record<string, unknown>> = []
-  const modes: Array<Record<string, unknown>> = []
-  await page.route(`**/api/v1/sessions/${sessionId}`, (route) => {
-    if (route.request().method() === "PATCH") return route.fulfill({ json: {} })
-    state.detailReads++
-    return route.fulfill({ json: { session: { ...session, thinking_mode: state.ultra ? "ultra" : "standard", root_orchestration_only: state.ultra,
-      root_mode_transition_epoch: state.epoch, root_mode_birth_token: birth } }, headers: { ETag: '"1"' } })
-  })
-  await page.route("**/api/v1/bamboo/workflow-catalog?*", (route) => {
-    expect(new URL(route.request().url()).searchParams.get("session_id")).toBe(sessionId); state.catalogReads++
-    return route.fulfill({ json: { revision: 100, entries: [{ ...entry, revision: state.revision }, { ...entry, id: "run", name: "Deploy orchestration", kind: "orchestration" }] } })
-  })
-  await page.route("**/api/v1/commands", (route) => route.fulfill({ json: { total: 1, commands: [{ id: "workflow-legacy", name: "legacy", display_name: "legacy", description: "Expand legacy text", type: "workflow", metadata: null }] } }))
-  await page.route("**/api/v1/commands/workflow/legacy", (route) => route.fulfill({ json: { id: "workflow-legacy", name: "legacy", content: "Legacy markdown instructions", type: "workflow" } }))
-  await page.route(`**/api/v1/execute/${sessionId}`, (route) => route.fulfill({ json: { status: "started", session_id: sessionId } }))
-  await page.route(`**/api/v1/sessions/${sessionId}/root-mode-operations/*`, (route) => {
-    const input = route.request().postDataJSON(); modes.push(input)
-    expect(input).toEqual({ birth_token: birth, expected_epoch: state.epoch, enabled: false, thinking_mode: "standard" })
-    const operationId = decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-1)!)
-    const expected = state.epoch; state.epoch++; state.ultra = false
-    return route.fulfill({ json: { status: "committed", operation_id: operationId, expected_epoch: expected,
-      resulting_epoch: state.epoch, enabled_at_completion: false, thinking_mode_at_completion: "standard", root_tool_authority_revision: state.epoch } })
-  })
-  return { observation, state, chats, modes }
-}
-
-test("exact Workflow survives Root conflict then succeeds after explicit mode disable", async ({ page }, info) => {
-  test.skip(info.project.name === "tablet-chromium", "desktop and phone acceptance")
-  const { observation, state, chats, modes } = await setup(page, true)
-  await page.route("**/api/v1/chat", (route) => {
-    const body = route.request().postDataJSON(); chats.push(body)
-    expect(body.root_orchestration_only).toBeUndefined()
-    expect(body.project_id).toBeUndefined()
-    expect(body.workflow_selection).toEqual({ id: entry.id, source: "workspace", revision: 7, args: { target: "src/scope.ts" } })
-    expect(body.message).toBe("Review this exact file only")
-    return state.ultra ? route.fulfill({ status: 409, json: { error: { code: "root_orchestration_incompatible_mode", message: "Disable Root orchestration-only mode before selecting a Workflow" } } })
-      : route.fulfill({ json: { session_id: sessionId, status: "success" } })
-  })
-  await ready(page)
-  const mode = modelEffortPicker(page)
-  await expect(mode).toContainText("Ultra"); expect(state.catalogReads).toBe(0)
-  await openCatalog(page)
-  await expect(picker(page).getByRole("button", { name: /Deploy orchestration/ })).toBeDisabled()
-  await picker(page).getByRole("button", { name: /Bounded review workspace/ }).click()
-  await expect(picker(page)).toHaveCount(0)
-  await expect(chip(page)).toContainText("本条消息")
-  await message(page).fill("Review this exact file only")
-  await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  expect(chats).toHaveLength(0)
-  await expect(chip(page).getByRole("alert")).toContainText("target")
-  await editArgs(page, '{"target":"src/scope.ts"}')
-  const before = state.detailReads
-  await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect(chip(page).getByRole("alert")).toContainText("root_orchestration_incompatible_mode")
-  await expect.poll(() => state.detailReads).toBeGreaterThan(before)
-  await expect(mode).toContainText("Ultra"); expect(modes).toHaveLength(0)
-  await expectComposerText(message(page), "Review this exact file only")
-  await screenshot(page, info, "workflow-root-conflict")
-  await chip(page).getByRole("button", { name: /编辑目录工作流/ }).click()
-  await expect(args(page)).toHaveValue('{"target":"src/scope.ts"}')
-  await picker(page).getByRole("button", { name: "关闭工作流目录", exact: true }).click()
-  await selectEffort(page, "自动")
-  await expect(mode).not.toContainText("Ultra")
-  await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect.poll(() => chats.length).toBe(2)
-  await expectComposerText(message(page), ""); expect(modes).toHaveLength(1)
-  await page.reload(); await expect(mode).not.toContainText("Ultra")
-  await expect(chip(page)).toHaveCount(0)
-  expect(await page.locator("html").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
-  expect(observation.pageErrors).toEqual([])
-})
-
-test("stale catalog retains old exact selection until reselected and text expansion stays explicit", async ({ page }, info) => {
-  test.skip(info.project.name === "tablet-chromium", "desktop and phone acceptance")
-  const { observation, state, chats } = await setup(page)
-  await page.route("**/api/v1/chat", (route) => {
-    const body = route.request().postDataJSON(); chats.push(body)
-    return body.workflow_selection?.revision === 7 ? route.fulfill({ status: 409, json: { error: { code: "workflow_revision_mismatch", message: "selected workflow revision changed; refresh the catalog" } } })
-      : route.fulfill({ json: { session_id: sessionId, status: "success" } })
-  })
-  await ready(page)
-  await message(page).fill("/Bounded")
-  await page.getByRole("button", { name: /\/Bounded review workspace · r7/ }).click()
-  await args(page).fill('{"target":"src"}')
-  state.revision = 8
-  await picker(page).getByRole("button", { name: "刷新", exact: true }).click()
-  await expect(picker(page).getByRole("button", { name: /Bounded review workspace · r8/ })).toBeVisible()
-  await expect(page.locator("[data-workflow-selection]")).toContainText("workspace · r7")
-  await picker(page).getByRole("button", { name: "关闭工作流目录", exact: true }).click()
-  await message(page).fill("keep stale task")
-  await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect(chip(page).getByRole("alert")).toContainText("workflow_revision_mismatch")
-  expect(chats[0].workflow_selection).toEqual({ id: entry.id, source: "workspace", revision: 7, args: { target: "src" } })
-  await screenshot(page, info, "workflow-stale-selection")
-  await chip(page).getByRole("button", { name: /编辑目录工作流/ }).click()
-  await expect(args(page)).toHaveValue('{"target":"src"}')
-  await picker(page).getByRole("button", { name: /Bounded review workspace · r8/ }).click()
-  await editArgs(page, '{"target":"src"}')
-  await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect.poll(() => chats.length).toBe(2)
-  expect(chats[1].workflow_selection).toEqual({ id: entry.id, source: "workspace", revision: 8, args: { target: "src" } })
-  await page.reload()
-  await expect(page.locator('[data-variant="composer"][aria-label="会话权限"]')).toBeVisible()
-  await expect(chip(page)).toHaveCount(0)
-  await message(page).fill("/legacy")
-  await page.getByRole("button", { name: /\/legacy.*文本展开/ }).click()
-  await message(page).fill("extra input")
-  await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect.poll(() => chats.length).toBe(3)
-  expect(chats[2].workflow_selection).toBeUndefined()
-  expect(chats[2].message).toBe("Legacy markdown instructions\n\nextra input")
-  expect(observation.pageErrors).toEqual([])
-})
-
-test("Environment and slash selection share a message chip with IME, removal, and delayed ACK protection", async ({ page }, info) => {
-  const { observation, chats } = await setup(page)
-  let acknowledge = () => {}
-  const ack = new Promise<void>((resolve) => { acknowledge = resolve })
-  await page.route("**/api/v1/chat", async (route) => {
-    chats.push(route.request().postDataJSON()); await ack
-    await route.fulfill({ json: { session_id: sessionId, status: "success" } })
-  })
-  await ready(page)
-  // Narrow layouts still expose the same Environment entry via its launcher.
-  const environment = page.locator("[data-environment-card]")
-  if (!(await environment.isVisible())) await page.getByRole("button", { name: "打开 Environment", exact: true }).click()
-  await environment.getByRole("button", { name: "选择目录工作流，本条消息", exact: true }).click()
-  await picker(page).getByRole("button", { name: /Bounded review workspace/ }).click()
-  await expect(environment).toContainText("Bounded review")
-  await expect(chip(page)).toContainText("Bounded review")
-  expect(chats).toHaveLength(0)
-  await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
-  await editArgs(page, '{"target":"src"}')
-  await message(page).fill("请检查所选文件，并给出可执行的建议。")
-  await screenshot(page, info, "workflow-chip-environment-hidden")
-  await chip(page).getByRole("button", { name: "移除目录工作流", exact: true }).click()
-  await expect(chip(page)).toHaveCount(0)
-  await page.getByRole("button", { name: "撤销移除", exact: true }).click()
-  await expect(chip(page)).toContainText("Bounded review")
-  await page.getByRole("button", { name: "打开 Environment", exact: true }).click()
-  await expect(environment).toContainText("Bounded review")
-  await screenshot(page, info, "workflow-environment-and-chip")
-  await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
-  await message(page).fill("/")
-  await expect(page.getByText("目录工作流 · 本条消息", { exact: true }).first()).toBeVisible()
-  await expect(page.getByText("文本展开工作流", { exact: true })).toBeVisible()
-  await screenshot(page, info, "workflow-slash-groups")
-  await message(page).fill("/Bounded")
-  const option = page.getByRole("button", { name: /\/Bounded review workspace/ })
-  await expect(option).toBeVisible()
-  for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
-    await message(page).dispatchEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...composition })
+  const catalogQueries: URLSearchParams[] = []
+  const legacyRequests: string[] = []
+  const chatWrites: string[] = []
+  const starts: unknown[] = []
+  if (testInfo.project.name === "desktop-chromium") {
+    const primary = {
+      id: sessionId, title: primaryTitle, root_session_id: sessionId, kind: "root",
+      model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
+      created_at: at, updated_at: at, last_activity_at: at, message_count: 0,
+      is_running: false, last_run_status: "completed", permission_mode: "default",
+    }
+    const other = { ...primary, id: otherSessionId, root_session_id: otherSessionId, title: otherTitle }
+    await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
+      json: { sessions: [primary, other], total: 2, limit: 200, offset: 0 },
+    }))
+    await page.route("**/api/v1/sessions/" + otherSessionId, (route) => route.fulfill({ json: { session: other } }))
+    await page.route("**/api/v1/history/" + otherSessionId, (route) => route.fulfill({ json: { session_id: otherSessionId, messages: [] } }))
+    await page.route("**/api/v1/respond/" + otherSessionId + "/pending", (route) => route.fulfill({ json: { has_pending_question: false } }))
+    await page.route("**/api/v1/task/" + otherSessionId, (route) => route.fulfill({ json: { session_id: otherSessionId, items: [] } }))
   }
-  await expectComposerText(message(page), "/Bounded"); expect(chats).toHaveLength(0)
-  await message(page).press("Enter")
-  await expect(args(page)).toBeVisible()
-  await args(page).fill('{"target":"src"}')
-  await args(page).press("End"); await args(page).press("Enter")
-  await expect(args(page)).toHaveValue('{"target":"src"}\n')
-  expect(chats).toHaveLength(0)
-  await picker(page).getByRole("button", { name: "关闭工作流目录", exact: true }).click()
-  await message(page).fill("frozen request")
-  try {
-    await message(page).press("Enter")
-    await expect.poll(() => chats.length).toBe(1)
-    await expect(chip(page).getByRole("button", { name: "移除目录工作流", exact: true })).toBeDisabled()
-    await message(page).fill("newer unsent draft")
-  } finally { acknowledge() }
-  await expect(message(page)).toHaveAttribute("aria-busy", "false")
-  await expectComposerText(message(page), "newer unsent draft")
-  await expect(chip(page)).toHaveCount(0)
-  expect(chats[0].message).toBe("frozen request")
-  expect(chats[0].workflow_selection).toEqual({ id: entry.id, source: "workspace", revision: 7, args: { target: "src" } })
-  expect(chats[0].root_orchestration_only).toBeUndefined()
-  expect(chats[0].project_id).toBeUndefined()
-  expect(observation.pageErrors).toEqual([])
-  expect(await page.locator("html").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
-})
-
-test("session switches keep workflow catalog choices and drafts isolated", async ({ page }, info) => {
-  test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation")
-  const { observation } = await setup(page)
-  const sideId = "side-workflow"
-  const side = { ...session, id: sideId, root_session_id: sideId, title: "Side workflow",
-    root_orchestration_only: false, thinking_mode: "standard", root_mode_transition_epoch: 0, root_mode_birth_token: birth }
-  await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ json: { sessions: [session, side], total: 2, limit: 200, offset: 0 } }))
-  await page.route(`**/api/v1/sessions/${sideId}`, (route) => route.fulfill({ json: { session: side }, headers: { ETag: '"1"' } }))
-  await page.route(`**/api/v1/history/${sideId}`, (route) => route.fulfill({ json: { session_id: sideId, messages: [] } }))
-  await page.route("**/api/v1/respond/" + sideId + "/pending", (route) =>
-    route.fulfill({ json: { has_pending_question: false } }))
-  await page.route("**/api/v1/task/" + sideId, (route) => route.fulfill({ json: { session_id: sideId, items: [] } }))
-  await page.route("**/api/v1/bamboo/workflow-catalog?*", (route) => {
-    const isSide = new URL(route.request().url()).searchParams.get("session_id") === sideId
-    return route.fulfill({ json: { revision: 1, entries: [{ ...entry, name: isSide ? "Side review" : entry.name, argument_schema: { type: "object" } }] } })
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname
+    if (/^\/api\/v1\/(?:commands|bamboo\/workflows)(?:\/|$)/.test(path)) legacyRequests.push(path)
+    if (request.method() === "POST" && /^\/api\/v1\/(?:chat|sessions\/[^/]+\/(?:guidance|messages))(?:\/|$)/.test(path)) {
+      chatWrites.push(path)
+    }
   })
-  const chats: unknown[] = []
-  await page.route("**/api/v1/chat", (route) => { chats.push(route.request().postDataJSON()); return route.fulfill({ status: 500, json: {} }) })
-  await ready(page)
-  const input = page.getByRole("textbox", { name: "消息", exact: true })
-  await input.fill("/Bounded")
-  await page.getByRole("button", { name: "Side workflow", exact: true }).click()
-  await expect(input).toHaveCount(1)
-  await expectComposerText(input, "")
-  await input.fill("/Side")
-  await expect(page.getByRole("button", { name: /\/Side review workspace/ })).toBeVisible()
-  await input.press("Enter")
-  await expectComposerText(input, "")
-  await expect(page.locator("[data-workflow-chip]")).toContainText("Side review")
-  await page.getByRole("button", { name: session.title, exact: true }).click()
-  await expectComposerText(input, "/Bounded")
-  await expect(page.locator("[data-workflow-chip]")).toHaveCount(0)
-  await input.press("Enter")
-  await expectComposerText(input, "")
-  await expect(page.locator("[data-workflow-chip]")).toContainText("Bounded review")
-  await page.getByRole("button", { name: "Side workflow", exact: true }).click()
-  await expect(page.locator("[data-workflow-chip]")).toHaveCount(0)
-  await input.fill("/Side")
-  await expect(page.getByRole("button", { name: /\/Side review workspace/ })).toBeVisible()
-  await input.press("Enter")
-  await expect(page.getByRole("button", { name: /编辑目录工作流 Side review/ })).toBeVisible()
-  await page.getByRole("button", { name: /编辑目录工作流 Side review/ }).click()
-  await expect(args(page)).toBeVisible()
-  await input.click()
-  await expect(input).toBeFocused()
-  await expect(args(page)).toHaveCount(0)
-  await page.getByRole("button", { name: "移除目录工作流", exact: true }).click()
-  await expect(page.locator("[data-workflow-chip]")).toHaveCount(0)
-  await page.getByRole("button", { name: session.title, exact: true }).click()
-  await expect(page.locator("[data-workflow-chip]")).toHaveCount(0)
-  await input.fill("/Bounded")
-  await expect(page.getByRole("button", { name: /\/Bounded review workspace/ })).toBeVisible()
-  expect(chats).toHaveLength(0)
+  await page.route("**/api/v1/bamboo/workflow-catalog?*", (route) => {
+    const query = new URL(route.request().url()).searchParams
+    catalogQueries.push(query)
+    const visible = query.get("session_id") === otherSessionId
+      ? { ...definition, id: "inspect-other", name: "Inspect other files" }
+      : definition
+    // Older Hosts can still return both kinds in the same response.
+    return route.fulfill({ json: { revision: 100, entries: [legacy, visible] } })
+  })
+  await page.route("**/api/v1/sessions/*/workflow-runs", (route) => {
+    const routeSession = new URL(route.request().url()).pathname.split("/").at(-2)
+    if (route.request().method() === "POST") {
+      expect(routeSession).toBe(sessionId)
+      starts.push(route.request().postDataJSON())
+      return route.fulfill({ status: 202, json: run })
+    }
+    return route.fulfill({ json: routeSession === sessionId && starts.length ? [run] : [] })
+  })
+  await page.route("**/api/v1/sessions/*/workflow-runs/inspect-run", (route) => route.fulfill({ json: run }))
+  await page.route("**/api/v1/sessions/*/workflow-runs/inspect-run/events?*", (route) => route.fulfill({ json: [] }))
+
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.locator('[data-variant="composer"][aria-label="会话权限"]')).toBeVisible()
+  const composer = page.getByRole("textbox", { name: "消息", exact: true })
+  await composer.fill("/legacy")
+  await expect(page.getByRole("button", { name: /\/legacy/ })).toHaveCount(0)
+  await composer.fill("/workflow")
+  expect(catalogQueries).toHaveLength(0)
+  await page.getByRole("button", { name: /\/workflow/ }).click()
+  const dialog = page.getByRole("dialog", { name: "编排运行" })
+  await expect(dialog).toBeVisible()
+  const choices = dialog.getByLabel("选择编排")
+  await expect(choices.locator("option").filter({ hasText: "Inspect files" })).toHaveCount(1)
+  await expect(choices.locator("option").filter({ hasText: "Legacy instructions" })).toHaveCount(0)
+  expect(catalogQueries[0]?.get("orchestration_only")).toBe("true")
+  expect(catalogQueries[0]?.get("session_id")).toBe(sessionId)
+  await choices.selectOption("user:inspect-files:7")
+  await dialog.getByRole("button", { name: "启动运行", exact: true }).click()
+  await expect.poll(() => starts).toEqual([{ workflow_id: "inspect-files", revision: 7, args: {} }])
+  await expect(dialog.getByText(run.run_id, { exact: true })).toBeVisible()
+  await testInfo.attach("session-workflow-run", {
+    body: await dialog.screenshot(),
+    contentType: "image/png",
+  })
+  await page.keyboard.press("Escape")
+  await expect(dialog).toHaveCount(0)
+  await expectComposerText(composer, "/workflow")
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect(dialog).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(dialog).toHaveCount(0)
+  await expectComposerText(composer, "/workflow")
+  if (testInfo.project.name === "desktop-chromium") {
+    await page.getByRole("button", { name: otherTitle, exact: true }).click()
+    await expectComposerText(composer, "")
+    await composer.fill("/workflow")
+    await page.getByRole("button", { name: /\/workflow/ }).click()
+    await expect(dialog.getByRole("option", { name: /Inspect other files/ })).toHaveCount(1)
+    await expect(dialog.getByRole("option", { name: /Inspect files/ })).toHaveCount(0)
+    expect(catalogQueries.at(-1)?.get("session_id")).toBe(otherSessionId)
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+    await page.getByRole("button", { name: primaryTitle, exact: true }).click()
+    await expectComposerText(composer, "/workflow")
+  }
+  expect(chatWrites).toEqual([])
+  expect(legacyRequests).toEqual([])
   expect(observation.pageErrors).toEqual([])
-  await screenshot(page, info, "workflow-session-switch")
 })
