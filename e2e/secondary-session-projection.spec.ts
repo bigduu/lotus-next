@@ -224,10 +224,10 @@ test("narrow tree and transcript fit the workbench while wide blocks scroll loca
   await expect(transcript.getByText(/Reading a narrow transcript/)).toBeVisible()
   const code = transcript.locator('[data-streamdown="code-block-body"]')
   const table = transcript.locator('[data-streamdown="table-wrapper"] > div').last()
-  for (const block of [code, table]) {
+  for (const [name, block] of [["code", code], ["table", table]] as const) {
     await expect(block).toBeVisible()
     await expect(block).toHaveCSS("overflow-x", "auto")
-    await expect.poll(() => block.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeGreaterThan(10)
+    await expect.poll(() => block.evaluate((element) => element.scrollWidth - element.clientWidth), { message: name + " scrolls within its block" }).toBeGreaterThan(10)
   }
   await expect.poll(() => transcript.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
   const before = await transcript.boundingBox()
