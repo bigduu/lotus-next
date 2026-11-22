@@ -26,7 +26,7 @@ export async function expectInspectorGeometry(panel: Locator, testInfo: TestInfo
     }
     const gap = section.querySelector('[data-actor-gap]')
     const heading = section.firstElementChild!.querySelector('span')!
-    const titlePrefixes = Array.from(section.querySelectorAll('[role="treeitem"] .truncate.font-medium') as ArrayLike<typeof section>, (title) => {
+    const titlePrefixes = Array.from(section.querySelectorAll('[role="treeitem"] [data-actor-title]') as ArrayLike<typeof section>, (title) => {
       const text = String(title.textContent ?? "")
       const range = section.ownerDocument.createRange()
       range.setStart(title.firstChild!, 0)
@@ -59,7 +59,7 @@ export async function expectInspectorGeometry(panel: Locator, testInfo: TestInfo
     expect(layer.rect.right, `${phase}: ${name} right edge`).toBeLessThanOrEqual(geometry.tabpanel.rect.right + 1)
   }
   // Require visible text inside the intersection of every clipping ancestor,
-  // not merely inside an equally shifted parent. Right-end title ellipsis stays intentional.
+  // not merely inside an equally shifted parent. The compact title still has bounded height.
   const ancestors = [geometry.workbench, geometry.tabpanel, geometry.embedded, geometry.scroller, geometry.panel]
   const visibleLeft = Math.max(0, ...ancestors.map((layer) => layer.rect.left))
   const visibleRight = Math.min(geometry.viewport.width, ...ancestors.map((layer) => layer.rect.right))

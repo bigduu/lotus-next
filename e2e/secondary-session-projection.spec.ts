@@ -23,6 +23,8 @@ const sessions = snapshots.flatMap(({ nodes }) => nodes.map((node) => ({
   created_at: at, updated_at: at, last_activity_at: at, message_count: 1,
   subagent_count: node.role === "root" ? nodes.length - 1 : 0,
   is_running: false, last_run_status: "completed", permission_mode: "default", bypass_permissions: false,
+  root_orchestration_only: false, thinking_mode: "standard", reasoning_effort: "medium",
+  root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
 })))
 
 async function prepare(page: Page, legacyTarget?: string, content: "short" | "history" | "wide" = "short") {

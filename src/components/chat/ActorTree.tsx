@@ -422,7 +422,7 @@ export function ActorTree({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-1">
-                      <span className="line-clamp-2 font-medium leading-tight [overflow-wrap:anywhere]" title={node.title}>
+                      <span data-actor-title className="line-clamp-2 font-medium leading-tight [overflow-wrap:anywhere]" title={node.title}>
                         {node.title || uiText("unnamed_agent_1ff6bc72")}
                       </span>
                       {unread ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" /> : null}
