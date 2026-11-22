@@ -91,9 +91,8 @@ function writeWorkbenchState(key: string, state: WorkbenchState) {
 /** Persist view descriptors only. Drafts, message content and actions are not persisted. */
 export function useWorkbenchState(sessionId: string | null) {
   const key = workbenchStorageKey(getBackendStorageScope(), sessionId)
-  const [previousVisit, setVisit] = useState<Visit>(() => ({ key }))
-  const visit = previousVisit.key === key ? previousVisit : { key }
-  if (visit !== previousVisit) setVisit(visit)
+  const [visit, setVisit] = useState<Visit>(() => ({ key }))
+  if (visit.key !== key) setVisit({ key })
   const committedVisit = useRef<Visit | null>(null)
   useLayoutEffect(() => {
     committedVisit.current = visit
