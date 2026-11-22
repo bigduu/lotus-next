@@ -39,7 +39,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       ? { ...row, ticket: { ...row.ticket, active_assignment: null, blocked: { reason: "User input needed", resume_state: "active" } } } : row) : rows
     await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [project] } }))
     await page.route("**/api/v1/projects/project-board", (route) => route.fulfill({ json: project }))
-    await page.route("**/api/v1/tickets/project-board", (route) => route.fulfill({ json: { ...currentEnvelope(), data: { project_id: project.id,
+    await page.route("**/api/v1/tickets/project-board", (route) => route.fulfill({ json: { ...currentEnvelope(), codex_handoff_available: true, data: { project_id: project.id,
       counts: { todo: 1, doing: 1, testing: 1, done: 1, blocked: 1, cancelled: 1, total: 5 },
       rows: route.request().postDataJSON().include_cancelled ? currentRows() : currentRows().slice(0, 4),
     } } }))
@@ -210,6 +210,29 @@ for (const colorScheme of ["light", "dark"] as const) {
     expect(observation.pageErrors).toEqual([])
     expect(workReads().some((request) => request.url.endsWith("/tickets/inspect"))).toBe(true)
     expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect|sprints\/list|patrol\/(observation|status))$/.test(request.url))).toBe(true)
+    if (colorScheme === "light" && info.project.name === "desktop-chromium") {
+      const offerId = "11a11111-22b2-43c3-84d4-55e555555555"
+      await page.route("**/api/v1/tickets/codex-handoff", (route) => {
+        expect(route.request().postDataJSON()).toEqual({
+          project_id: project.id, work_id: "work-1", generation: 1, record_revision: 1, authority_epoch: 2,
+        })
+        return route.fulfill({ json: { offer_id: offerId, cwd: "/workspace/Project's Work" } })
+      })
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+      await openWork()
+      await dialog.getByTestId("project-work-work-1").click()
+      const continueInCodex = dialog.getByRole("button", { name: "在 Codex 继续", exact: true })
+      await expect(continueInCodex).toBeVisible()
+      expect(ticketRequests.some((request) => request.url.endsWith("/codex-handoff"))).toBe(false)
+      await continueInCodex.click()
+      const command = dialog.getByRole("textbox", { name: "Codex 交接命令" })
+      await expect(command).toHaveValue(new RegExp(offerId))
+      await dialog.getByRole("button", { name: "复制命令", exact: true }).click()
+      await expect(dialog.getByText("已复制命令", { exact: true })).toBeVisible()
+      expect(await page.evaluate<string>("navigator.clipboard.readText()")).toBe(await command.inputValue())
+      expect(ticketRequests.some((request) => request.url.endsWith("/codex-handoff/claim"))).toBe(false)
+      await info.attach("work-codex-handoff", { body: await dialog.screenshot(), contentType: "image/png" })
+    }
     await info.attach("project-work-lazy-boundary-mock-evidence", { body: Buffer.from(JSON.stringify({
       source: artifact.sourceRevision, sourceDirty: artifact.sourceDirty,
       mode: "controlled HTTP/WebSocket and locally fulfilled production assets; no Bamboo server",
