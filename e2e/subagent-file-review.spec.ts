@@ -34,6 +34,8 @@ test("Root Review combines durable edits from a child and a nested child in the 
   let feed: WebSocketRoute | undefined
   let treeReads = 0
   const childReads: string[] = []
+  let releaseNestedHistory!: () => void
+  const nestedHistory = new Promise<void>((resolve) => { releaseNestedHistory = resolve })
   const session = (id: string, title: string, rootId: string, parent: string | null, workspace: string) => ({
     id, title, title_version: 1, kind: parent ? "child" : "root",
     parent_session_id: parent, root_session_id: rootId, spawn_depth: parent ? parent === worker ? 2 : 1 : 0,
@@ -76,7 +78,10 @@ test("Root Review combines durable edits from a child and a nested child in the 
       }
       if (url.pathname === `/api/v1/history/${id}`) {
         if (item.kind === "child") childReads.push(id)
-        if (id === nested && !nestedAvailable) return route.fulfill({ status: 404, json: { error: "not readable yet" } })
+        if (id === nested) {
+          if (!nestedAvailable) return route.fulfill({ status: 404, json: { error: "not readable yet" } })
+          await nestedHistory
+        }
         const messages = id === root ? [edit("result", "/main/shared.txt", "root edit")]
           : id === worker && committed ? [edit("result", "shared.txt", "child edit", completedAt)]
           : id === nested ? [edit("result", "shared.txt", "nested worktree edit")]
@@ -109,13 +114,17 @@ test("Root Review combines durable edits from a child and a nested child in the 
   expect(childReads).not.toContain(otherWorker)
   nestedAvailable = true
   await review.getByRole("button", { name: "Retry" }).click()
-  await expect(review.getByText("2 files · 2 changes")).toBeVisible()
+  const nestedReads = () => childReads.filter((id) => id === nested).length
+  await expect.poll(nestedReads).toBe(2)
 
   await expect.poll(() => feed !== undefined).toBe(true)
   committed = true
   feed!.send(JSON.stringify({ ch: "feed", seq: 1, event: { seq: 1, ts: completedAt, session_id: worker,
     event: { type: "session_history_committed", session_id: worker } } }))
+  await expect(review.getByText("1 file · 2 changes")).toBeVisible()
+  releaseNestedHistory()
   await expect(review.getByText("2 files · 3 changes")).toBeVisible()
+  expect(nestedReads()).toBe(2)
   const mainFile = review.locator("details").filter({ has: page.locator('[title="/main/shared.txt"]') })
   if (await mainFile.getAttribute("open") === null) await mainFile.locator("summary").click()
   await expect(mainFile.getByText("Subagent: File worker")).toBeVisible()

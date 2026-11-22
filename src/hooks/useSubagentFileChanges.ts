@@ -19,9 +19,16 @@ type ReadSnapshot = {
   entries: Map<string, HistoryRead>
 }
 
+type ActiveHistoryRead = {
+  birth: string | number
+  controller: AbortController
+}
+
 const MAX_CONCURRENT_HISTORY_READS = 4
 const emptySnapshot: ReadSnapshot = { scope: null, entries: new Map() }
 const birth = (chat: ChatItem) => chat.createdAtExact ?? chat.createdAt
+const needsRead = (entry: HistoryRead | undefined, revision: string, attempt: number) =>
+  entry?.revision !== revision || (entry.failed && entry.attempt !== attempt)
 
 function childHistoryRevision(child: ChatItem) {
   return JSON.stringify([
@@ -44,6 +51,15 @@ export function useSubagentFileChanges(root: ChatItem | null | undefined, connec
   const [attempt, setAttempt] = useState(0)
   const [snapshot, setSnapshot] = useState(emptySnapshot)
   const latest = useRef(emptySnapshot)
+  const activeReads = useRef(new Map<string, ActiveHistoryRead>())
+
+  useEffect(() => {
+    const reads = activeReads.current
+    return () => {
+      for (const read of reads.values()) read.controller.abort()
+      reads.clear()
+    }
+  }, [scope, active])
 
   useEffect(() => {
     if (latest.current.scope !== scope) {
@@ -52,56 +68,60 @@ export function useSubagentFileChanges(root: ChatItem | null | undefined, connec
     }
     if (!active || !scope) return
 
-    const entries = new Map<string, HistoryRead>()
-    const queue = sources.filter(({ child, revision }) => {
-      const previous = latest.current.entries.get(child.id)
-      if (previous?.birth === birth(child)) entries.set(child.id, previous)
-      return previous?.revision !== revision || (previous.failed && previous.attempt !== attempt)
-    })
-    const controller = new AbortController()
-    const { signal } = controller
-    const publish = () => {
-      const next = { scope, entries: new Map(entries) }
+    const reads = activeReads.current
+    const births = new Map(sources.map(({ child }) => [child.id, birth(child)]))
+    for (const [id, read] of reads) {
+      if (births.get(id) === read.birth) continue
+      read.controller.abort()
+      reads.delete(id)
+    }
+    const previousEntries = latest.current.entries
+    const entries = new Map([...previousEntries].filter(([id, entry]) => births.get(id) === entry.birth))
+    const publish = (entries: ReadSnapshot["entries"]) => {
+      const next = { scope, entries }
       latest.current = next
       setSnapshot(next)
     }
-    if (entries.size !== latest.current.entries.size) publish()
+    if (entries.size !== previousEntries.size) publish(entries)
 
-    // Idle child histories are read once per indexed revision. Opening Review
-    // on a large tree must also leave room for the user's other API reads.
-    const readNext = async () => {
-      while (!signal.aborted) {
-        const next = queue.shift()
-        if (!next) return
-        const { child, revision } = next
-        let changes: SessionFileChange[] = []
-        let truncated = false
-        let failed = false
-        try {
-          const history = await agentClient.getHistory(child.id, undefined, signal)
-          if (signal.aborted) return
-          if (history.session_id !== child.id) throw new Error("Child history session mismatch")
-          changes = collectSubagentFileChanges(history.messages, {
-            sessionId: child.id,
-            title: child.title,
-            workspace: child.config?.workspacePath,
-            separateFileLocation: !!child.placement && child.placement.kind !== "local",
-          })
-          truncated = history.truncated === true
-        } catch {
-          if (signal.aborted) return
-          failed = true
-        }
-        entries.set(child.id, { birth: birth(child), revision, attempt, changes, truncated, failed })
-        publish()
+    // An index change can arrive while another child's history is loading.
+    // Finish each read independently and give unread or older entries a turn
+    // before rereading a child whose revision kept advancing.
+    const readOrder = new Map(Array.from(entries.keys(), (id, index) => [id, index]))
+    const pending = sources.filter(({ child, revision }) =>
+      !reads.has(child.id) && needsRead(entries.get(child.id), revision, attempt),
+    ).sort((a, b) => (readOrder.get(a.child.id) ?? -1) - (readOrder.get(b.child.id) ?? -1))
+
+    const load = async ({ child, revision }: typeof sources[number]) => {
+      const controller = new AbortController()
+      reads.set(child.id, { birth: birth(child), controller })
+      const { signal } = controller
+      let changes: SessionFileChange[] = []
+      let truncated = false
+      let failed = false
+      try {
+        const history = await agentClient.getHistory(child.id, undefined, signal)
+        if (signal.aborted) return
+        if (history.session_id !== child.id) throw new Error("Child history session mismatch")
+        changes = collectSubagentFileChanges(history.messages, {
+          sessionId: child.id,
+          title: child.title,
+          workspace: child.config?.workspacePath,
+          separateFileLocation: !!child.placement && child.placement.kind !== "local",
+        })
+        truncated = history.truncated === true
+      } catch {
+        if (signal.aborted) return
+        failed = true
       }
+      reads.delete(child.id)
+      const updated = new Map(latest.current.entries)
+      updated.delete(child.id)
+      updated.set(child.id, { birth: birth(child), revision, attempt, changes, truncated, failed })
+      publish(updated)
     }
-    const workerCount = Math.min(MAX_CONCURRENT_HISTORY_READS, queue.length)
-    for (let index = 0; index < workerCount; index++) {
-      void readNext()
-    }
-    return () => controller.abort()
-  }, [scope, active, sources, attempt])
+    for (const source of pending.slice(0, MAX_CONCURRENT_HISTORY_READS - reads.size)) void load(source)
+  }, [scope, active, sources, attempt, snapshot])
 
   const retry = useCallback(() => {
     if (rootId) void useAppStore.getState().loadSubagentSessions(rootId, { force: true }).catch(() => {})
@@ -120,7 +140,7 @@ export function useSubagentFileChanges(root: ChatItem | null | undefined, connec
         loading ||= active
         continue
       }
-      loading ||= active && (entry.revision !== revision || (entry.failed && entry.attempt !== attempt))
+      loading ||= active && needsRead(entry, revision, attempt)
       unavailable ||= entry.failed
       truncated ||= entry.truncated
       for (const change of entry.changes) changes.push(change)
