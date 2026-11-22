@@ -32,7 +32,6 @@ import {
   orderPersistedFileChanges,
   summarizeSessionFileChangeGroups,
 } from "@/lib/sessionFileChanges"
-import { WorktreeManager } from "@/components/app/WorktreeManager"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import type { HistoryReadingAnchor } from "@/components/app/MessageList"
@@ -54,6 +53,8 @@ import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/Right
 const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
 
 const SubagentsPane = lazy(() => import("@/components/app/SubagentsPane").then((module) => ({ default: module.SubagentsPane })))
+
+const WorktreeManager = lazy(() => import("@/components/app/WorktreeManager").then((module) => ({ default: module.WorktreeManager })))
 
 function App() {
   useUiLocale()
@@ -320,7 +321,7 @@ function App() {
   // applies while `pendingProjectId` still matches the section's project.
   const [pendingSection, setPendingSection] = useState<{ projectId: string; sectionId: string | null } | null>(null)
   const [projectManagerOpen, setProjectManagerOpen] = useState(false)
-  const [worktreesOpen, setWorktreesOpen] = useState(false)
+  const [worktreeManagerVisibility, setWorktreeManagerVisibility] = useState<"unopened" | "open" | "closed">("unopened")
   const [pickedWorktree, setPickedWorktree] = useState<{ projectId: string; path: string } | null>(null)
   const [copyFeedback, setCopyFeedback] = useState<{ message: string; failed: boolean } | null>(null)
 
@@ -569,7 +570,7 @@ function App() {
             onCopySessionId={copySessionId}
             onOpenSettings={openSettings}
             onOpenProjectManager={() => setProjectManagerOpen(true)}
-            onOpenWorktrees={() => setWorktreesOpen(true)}
+            onOpenWorktrees={() => setWorktreeManagerVisibility("open")}
           />
         )}
         workbench={(
@@ -767,18 +768,23 @@ function App() {
         }}
       />
 
-      <WorktreeManager open={worktreesOpen} onClose={() => setWorktreesOpen(false)}
-        onOpen={(projectId, path) => {
-          newChat()
-          setPendingProjectId(projectId)
-          // A worktree-scoped creation is its own intent; drop any section pick.
-          setPendingSection(null)
-          setPickedWorkspace(path)
-          setPickedWorktree({ projectId, path })
-          setWorktreesOpen(false)
-        }}
-        onSession={(id) => { select(id); setWorktreesOpen(false) }}
-      />
+      {/* Load on first open, then keep the manager mounted to preserve its draft. */}
+      {worktreeManagerVisibility !== "unopened" && (
+        <Suspense fallback={null}>
+          <WorktreeManager open={worktreeManagerVisibility === "open"} onClose={() => setWorktreeManagerVisibility("closed")}
+            onOpen={(projectId, path) => {
+              newChat()
+              setPendingProjectId(projectId)
+              // A worktree-scoped creation is its own intent; drop any section pick.
+              setPendingSection(null)
+              setPickedWorkspace(path)
+              setPickedWorktree({ projectId, path })
+              setWorktreeManagerVisibility("closed")
+            }}
+            onSession={(id) => { select(id); setWorktreeManagerVisibility("closed") }}
+          />
+        </Suspense>
+      )}
       <ProjectManagerModal open={projectManagerOpen} onClose={() => setProjectManagerOpen(false)} />
 
       <DeleteSessionDialog
