@@ -25,7 +25,7 @@ const sessions = snapshots.flatMap(({ nodes }) => nodes.map((node) => ({
   is_running: false, last_run_status: "completed", permission_mode: "default", bypass_permissions: false,
 })))
 
-async function prepare(page: Page, legacyTarget?: string) {
+async function prepare(page: Page, legacyTarget?: string, longTranscript = false) {
   await page.addInitScript(({ rootId, legacyTarget, origin }) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", rootId)
@@ -40,7 +40,7 @@ async function prepare(page: Page, legacyTarget?: string) {
   const projected: string[] = []
   let releaseNested!: () => void
   const holdNested = new Promise<void>((resolve) => { releaseNested = resolve })
-  if (legacyTarget) releaseNested()
+  if (legacyTarget || longTranscript) releaseNested()
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -61,9 +61,13 @@ async function prepare(page: Page, legacyTarget?: string) {
       expect(url.searchParams.get("projection")).toBe("messages")
       projected.push(history.id)
       if (history.id === nestedId) await holdNested
+      const messages = longTranscript ? Array.from({ length: 64 }, (_, index) => ({
+        id: history.id + "-" + index, role: index % 2 === 0 ? "user" : "assistant",
+        content: history.title + " message " + index + ". " + "Reading context. ".repeat(12), created_at: at,
+      })) : [{ id: history.id + "-answer", role: "assistant", content: history.title + " answer", created_at: at }]
       return route.fulfill({ json: {
-        session_id: history.id, projection: "messages", is_delta: false, truncated: false, total_message_count: 1,
-        messages: [{ id: history.id + "-answer", role: "assistant", content: history.title + " answer", created_at: at }],
+        session_id: history.id, projection: "messages", is_delta: false, truncated: false,
+        total_message_count: messages.length, messages,
       } })
     }
     return route.fallback()
@@ -143,3 +147,52 @@ for (const [target, label] of [[nestedId, "a child in the tree"], [otherRootId, 
     }
   })
 }
+
+test("restores the subagent view, expansion and reading anchor with its own session", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation and independent workbench views")
+  await prepare(page, undefined, true)
+  const panel = page.locator("#right-workbench")
+  const transcript = panel.locator("[data-subagent-transcript-pane] .overflow-y-auto")
+  const openTree = () => page.getByRole("button", { name: "查看子代理树", exact: true }).click()
+  const branch = panel.getByRole("treeitem", { name: /Search branch/ })
+  const nested = panel.getByRole("treeitem", { name: /Nested writer/ })
+  const switcher = panel.getByRole("button", { name: "切换子代理", exact: true })
+
+  await openTree()
+  await branch.locator("[data-actor-toggle]").click()
+  await nested.click()
+  await expect(transcript.getByText(/Nested writer message 63/)).toBeVisible()
+  await transcript.hover()
+  await page.mouse.wheel(0, -1200)
+  await expect(panel.getByRole("button", { name: "滚动到底部", exact: true })).toBeVisible()
+  const anchor = await transcript.evaluate((element) => {
+    const top = element.getBoundingClientRect().top
+    return [...element.querySelectorAll("[data-history-entry-key]")]
+      .find((row) => row.getBoundingClientRect().bottom > top + 4)?.getAttribute("data-history-entry-key") ?? null
+  })
+  expect(anchor).toBeTruthy()
+
+  await page.getByRole("button", { name: "Other root", exact: true }).click()
+  await expect(panel).toBeHidden()
+  await openTree()
+  await expect(panel.getByRole("treeitem", { name: /Foreign child/ })).toBeVisible()
+  await page.getByRole("button", { name: "Current root", exact: true }).click()
+  await expect(switcher).toContainText("Nested writer")
+  await expect(transcript.locator("[data-history-entry-key=" + JSON.stringify(anchor) + "]")).toBeInViewport()
+  await panel.getByRole("button", { name: "收起工作面板", exact: true }).click()
+  await expect(panel).toBeHidden()
+  await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
+  await expect(switcher).toContainText("Nested writer")
+  await expect(transcript.locator("[data-history-entry-key=" + JSON.stringify(anchor) + "]")).toBeInViewport()
+  await panel.getByRole("button", { name: "返回树", exact: true }).click()
+  await expect(branch).toHaveAttribute("aria-expanded", "true")
+  await expect(nested).toHaveAttribute("aria-selected", "true")
+
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expect(branch).toHaveAttribute("aria-expanded", "true")
+  await expect(nested).toHaveAttribute("aria-selected", "true")
+  await panel.getByRole("button", { name: "关闭子代理标签页", exact: true }).click()
+  await expect(panel.getByText("还没有打开内容")).toBeVisible()
+  await expect(panel.getByRole("tab", { name: "子代理", exact: true })).toHaveCount(0)
+  await info.attach("restored-session-tree", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
+})

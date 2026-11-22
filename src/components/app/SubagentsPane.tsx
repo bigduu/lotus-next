@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { ChevronDown, ChevronLeft, RefreshCw } from "lucide-react"
 
+import type { HistoryReadingAnchor } from "@/components/app/MessageList"
 import { SubagentTranscriptPane } from "@/components/app/SubagentTranscriptPane"
 import { ActorTree } from "@/components/chat/ActorTree"
 import { actorLifecycleLabel } from "@/components/chat/actorTreeLabels"
@@ -72,7 +73,10 @@ function SubagentPicker({ child, topology, onSelect }: {
   )
 }
 
-export function SubagentsPane({ rootId, active, descendantCount, selection, onSelectChild, onShowTree, onMissingChild }: {
+export function SubagentsPane({
+  rootId, active, descendantCount, selection, onSelectChild, onShowTree, onMissingChild,
+  onExpandedChange, readingAnchors,
+}: {
   rootId: string | null
   active: boolean
   descendantCount: number | null
@@ -80,6 +84,8 @@ export function SubagentsPane({ rootId, active, descendantCount, selection, onSe
   onSelectChild: (id: string) => void
   onShowTree: () => void
   onMissingChild: (id: string) => void
+  onExpandedChange: Dispatch<SetStateAction<ReadonlySet<string>>>
+  readingAnchors: Map<string, HistoryReadingAnchor>
 }) {
   useUiLocale()
   const { childId, view } = selection
@@ -91,6 +97,10 @@ export function SubagentsPane({ rootId, active, descendantCount, selection, onSe
   [rootId, state.loading, state.snapshot])
   useEffect(() => { previousTree.current = topology }, [topology])
 
+  const expandedActorIds = useMemo(
+    () => new Set(selection.expandedActorIds ?? (rootId ? [rootId] : [])),
+    [rootId, selection.expandedActorIds],
+  )
   const selected = childId ? topology.byId[childId] : undefined
   const child = selected?.parentActorId ? selected : null
   const reading = view === "messages" && child !== null
@@ -144,6 +154,7 @@ export function SubagentsPane({ rootId, active, descendantCount, selection, onSe
         </div>
         <ActorTree topology={topology} selectedActorId={child?.actorId ?? rootId}
           revealSelected={!reading}
+          expansion={{ ids: expandedActorIds, update: onExpandedChange }}
           onSelectActor={(id) => {
             if (id === rootId) return
             nextFocus.current = "messages"
@@ -152,7 +163,14 @@ export function SubagentsPane({ rootId, active, descendantCount, selection, onSe
           error={state.error} onRetry={() => void state.refresh()} retryable={state.retryable}
           className="flex-1" />
       </div>
-      {active && reading ? <SubagentTranscriptPane key={child.actorId} sessionId={child.actorId} /> : null}
+      {active && reading ? (
+        <SubagentTranscriptPane key={child.actorId} sessionId={child.actorId}
+          readingAnchor={readingAnchors.get(child.actorId)}
+          onReadingAnchor={(anchor) => {
+            if (anchor) readingAnchors.set(child.actorId, anchor)
+            else readingAnchors.delete(child.actorId)
+          }} />
+      ) : null}
     </section>
   )
 }
