@@ -612,10 +612,15 @@ function MessageActions({
   )
 }
 
+export type HistoryReadingAnchor = { key: string; offset: number }
+
 export const MessageList = memo(function MessageList({
   scrollRef,
   contentRef,
   onScroll,
+  initialReadingAnchor,
+  onReadingAnchor,
+  onMissingReadingAnchor,
   messages,
   timelineAttachments = EMPTY_TIMELINE_ATTACHMENTS,
   mergedSubAgents,
@@ -647,6 +652,9 @@ export const MessageList = memo(function MessageList({
   scrollRef: Ref<HTMLDivElement>
   contentRef: Ref<HTMLDivElement>
   onScroll: () => void
+  initialReadingAnchor?: HistoryReadingAnchor | null
+  onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
+  onMissingReadingAnchor?: () => void
   messages: Message[]
   timelineAttachments?: readonly TimelineAttachment[]
   mergedSubAgents: Record<string, SubAgentCard>
@@ -769,6 +777,36 @@ export const MessageList = memo(function MessageList({
     // already-delivered ancestor again in the same browser frame.
     useAnimationFrameWithResizeObserver: true,
   })
+
+  const restoredReading = useRef(false)
+  useLayoutEffect(() => {
+    if (!initialReadingAnchor || !hasHistory || restoredReading.current) return
+    // Wait for the virtual list to establish its viewport and header offset.
+    const frame = requestAnimationFrame(() => {
+      restoredReading.current = true
+      const index = historyEntriesRef.current.findIndex((entry) => entry.key === initialReadingAnchor.key)
+      const target = index < 0 ? undefined : virtualizer.getOffsetForIndex(index, "start")
+      if (!target) {
+        onMissingReadingAnchor?.()
+        return
+      }
+      virtualizer.scrollToOffset(target[0] + initialReadingAnchor.offset, { align: "start" })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [hasHistory, initialReadingAnchor, onMissingReadingAnchor, virtualizer])
+
+  const handleReadingScroll = () => {
+    onScroll()
+    const element = scrollElementRef.current
+    if (!onReadingAnchor || !element || (initialReadingAnchor && !restoredReading.current)) return
+    if (element.scrollHeight - element.clientHeight - element.scrollTop <= 2) {
+      onReadingAnchor(null)
+      return
+    }
+    const row = virtualizer.getVirtualItemForOffset(element.scrollTop)
+    const key = row && historyEntriesRef.current[row.index]?.key
+    if (row && key) onReadingAnchor({ key, offset: Math.max(0, element.scrollTop - row.start) })
+  }
 
   // The scroller includes the Subagent cards before the virtualized history.
   // Their height changes when they load or expand, shifting its scroll origin.
@@ -1127,7 +1165,7 @@ export const MessageList = memo(function MessageList({
   const virtualItems = virtualizer.getVirtualItems()
 
   return (
-    <div ref={setScrollElement} onScroll={onScroll} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3">
+    <div ref={setScrollElement} onScroll={onReadingAnchor ? handleReadingScroll : onScroll} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3">
       <div
         ref={contentRef}
         data-message-list-content

@@ -2,9 +2,13 @@ import { expect, test, type Locator, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 const sidebarKey = "lotus_next_sidebar_w"
-const workbenchKey = "lotus_next_inspector_w"
+const defaultSession = "all-surface-session"
+const workbenchKey = "lotus-next.workbench.v1:" + encodeURIComponent(standaloneScenario.origin + "/api/v1") + ":" + defaultSession
 const panelWidth = (panel: Locator) => panel.evaluate((element) => element.getBoundingClientRect().width)
 const preference = (page: Page, key: string) => page.evaluate((storageKey) => localStorage.getItem(storageKey), key)
+
+const workbenchPreference = (page: Page) => page.evaluate((key) =>
+  JSON.parse(localStorage.getItem(key) ?? "null")?.state.dockWidth ?? null, workbenchKey)
 
 async function openPanels(page: Page) {
   await page.addInitScript(() => {
@@ -37,14 +41,14 @@ test("keyboard separators keep pixel limits and restore preferences across narro
   await workbenchHandle.press("End")
   await expect.poll(() => panelWidth(workbench)).toBeCloseTo(360, 0)
   await workbenchHandle.press("Home")
-  const saved = Number(await preference(page, workbenchKey))
+  const saved = Number(await workbenchPreference(page))
   expect(saved).toBeGreaterThan(1200)
   await expect.poll(() => panelWidth(workbench)).toBeCloseTo(saved, 0)
   await expect.poll(() => panelWidth(page.locator("#chat-panel"))).toBeGreaterThanOrEqual(359)
   await page.setViewportSize({ width: 1280, height: 900 })
   await expect.poll(() => panelWidth(workbench)).toBeLessThan(saved)
   await workbenchHandle.click()
-  expect(Number(await preference(page, workbenchKey))).toBe(saved)
+  expect(Number(await workbenchPreference(page))).toBe(saved)
   await page.setViewportSize({ width: 2400, height: 1000 })
   await expect.poll(() => panelWidth(workbench)).toBeCloseTo(saved, 0)
   await page.reload()
@@ -69,7 +73,7 @@ test("Escape, pointer cancellation, and global dialogs discard an unfinished res
   const handle = page.getByRole("separator", { name: "调整工作面板宽度" })
   const panel = page.locator("#right-workbench")
   const initial = await panelWidth(panel)
-  const stored = await preference(page, workbenchKey)
+  const stored = await workbenchPreference(page)
   const startDrag = async () => {
     const box = (await handle.boundingBox())!
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -81,40 +85,40 @@ test("Escape, pointer cancellation, and global dialogs discard an unfinished res
   await page.keyboard.press("Escape")
   await page.mouse.up()
   await expect.poll(() => panelWidth(panel)).toBeCloseTo(initial, 0)
-  expect(await preference(page, workbenchKey)).toBe(stored)
+  expect(await workbenchPreference(page)).toBe(stored)
 
   await startDrag()
   await handle.evaluate((element) => element.releasePointerCapture(1))
   await page.mouse.move(100, 100)
   await page.mouse.up()
   await expect.poll(() => panelWidth(panel)).toBeCloseTo(initial, 0)
-  expect(await preference(page, workbenchKey)).toBe(stored)
+  expect(await workbenchPreference(page)).toBe(stored)
 
   await startDrag()
   await handle.dispatchEvent("pointercancel", { pointerId: 1, pointerType: "mouse" })
   await page.mouse.up()
   await expect.poll(() => panelWidth(panel)).toBeCloseTo(initial, 0)
-  expect(await preference(page, workbenchKey)).toBe(stored)
+  expect(await workbenchPreference(page)).toBe(stored)
 
   await startDrag()
   await page.evaluate("window.dispatchEvent(new Event('blur'))")
   await page.mouse.move(100, 100)
   await page.mouse.up()
   await expect.poll(() => panelWidth(panel)).toBeCloseTo(initial, 0)
-  expect(await preference(page, workbenchKey)).toBe(stored)
+  expect(await workbenchPreference(page)).toBe(stored)
 
   await startDrag()
   await page.keyboard.press("Control+k")
   await page.mouse.up()
   await page.keyboard.press("Escape")
   await expect.poll(() => panelWidth(panel)).toBeCloseTo(initial, 0)
-  expect(await preference(page, workbenchKey)).toBe(stored)
+  expect(await workbenchPreference(page)).toBe(stored)
 
   await startDrag()
   await page.getByRole("button", { name: "新建会话", exact: true }).evaluate((button) => button.click())
   await page.mouse.move(100, 100)
   await page.mouse.up()
-  expect(await preference(page, workbenchKey)).toBe(stored)
+  expect(await workbenchPreference(page)).toBe(stored)
   await page.getByRole("button", { name: "All-surface acceptance", exact: true }).click()
   await expect.poll(() => panelWidth(panel)).toBeCloseTo(initial, 0)
   expect(observation.pageErrors).toEqual([])

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError, NetworkRequestError } from "../api/errors"
-import { prepareWorkflowSelection, type WorkflowCatalogEntry } from "../command/workflowCatalog"
+import type { WorkflowCatalogEntry } from "../command/workflowCatalog"
 import { parseWorkflowRun, prepareWorkflowRun, workflowRuns, workflowRunError, workflowRunUnavailableReason } from "./workflowRuns"
 
 const client = vi.hoisted(() => ({ get: vi.fn(), postOnce: vi.fn() }))
@@ -20,7 +20,7 @@ const raw = (sessionId = "root/id?", runId = "run/id?", sequence = 5) => ({
 beforeEach(() => { client.get.mockReset(); client.postOnce.mockReset() })
 
 describe("session-scoped Workflow Run client", () => {
-  it("starts the exact orchestration revision once and keeps instruction admission separate", async () => {
+  it("starts the exact orchestration revision once and rejects instruction entries", async () => {
     client.postOnce.mockResolvedValue(raw())
     const draft = { entry, argsText: '{"file":"src/one.ts"}' }
     expect(prepareWorkflowRun(draft)).toEqual({ workflow_id: entry.id, revision: 7, args: { file: "src/one.ts" } })
@@ -28,10 +28,10 @@ describe("session-scoped Workflow Run client", () => {
     expect(client.postOnce).toHaveBeenCalledExactlyOnceWith("sessions/root%2Fid%3F/workflow-runs", {
       workflow_id: entry.id, revision: 7, args: { file: "src/one.ts" },
     })
-    expect(() => prepareWorkflowSelection(draft)).toThrow("Workflow Run API")
     const instruction = { ...entry, kind: "instruction" as const }
-    expect(prepareWorkflowSelection({ entry: instruction, argsText: draft.argsText })).toEqual({ id: entry.id, source: "user", revision: 7, args: { file: "src/one.ts" } })
     expect(workflowRunUnavailableReason(instruction)).not.toBeNull()
+    await expect(workflowRuns.start("root/id?", { ...draft, entry: instruction })).rejects.toThrow()
+    expect(client.postOnce).toHaveBeenCalledTimes(1)
   })
   it.each([
     '{"file":2}', '{}', '{"file":"safe","extra":true}', '{"file":"safe","number":1e400}', 'invalid json',

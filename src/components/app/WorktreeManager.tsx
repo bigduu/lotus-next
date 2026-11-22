@@ -7,6 +7,7 @@ import { worktreeService, type GitWorktree, type ProjectWorktrees, type Worktree
 import { getErrorMessage } from "@services/api/errors"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogTitle } from "@/components/ui/responsive-dialog"
 
 export function WorktreeManager({ open, onClose, onOpen, onSession }: {
@@ -33,6 +34,7 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
   const [createdPath, setCreatedPath] = useState<string | null>(null)
   const activeProjects = Object.values(projects).filter((project) => project.status === "active")
   const selectedProjectId = activeProjects.some((project) => project.id === projectId) ? projectId : activeProjects[0]?.id || ""
+  const selectedProject = projects[selectedProjectId]
 
   useEffect(() => {
     if (!open) return
@@ -82,6 +84,11 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
     setRoot(next.project_roots?.[selectedProjectId] ?? next.default_root ?? "")
     await refresh()
   })
+  const saveNewChatDefault = (enabled: boolean) => run(async () => {
+    const project = await projectService.getProject(selectedProjectId)
+    const saved = await useAppStore.getState().updateProject(project.id, project.revision, { new_chat_worktree: enabled })
+    if (saved.new_chat_worktree !== enabled) throw new Error(uiText("could_not_save_project_a052bb9e"))
+  })
   const openWorktree = (entry: GitWorktree) => run(async () => {
     // Binding grants the existing Project workspace authority; it is not a
     // worktree registry. Discovery always comes from Git, including CLI worktrees.
@@ -119,6 +126,17 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
           {selectedProjectId && <><label htmlFor="worktree-project-root" className="text-sm">{uiText("worktrees_project_root")}</label>
             <div className="flex gap-2"><Input id="worktree-project-root" value={projectRoot} disabled={loading || busy || !preferences} onChange={(event) => setProjectRoot(event.target.value)} placeholder={uiText("worktrees_use_global")} />
               <Button variant="outline" disabled={loading || busy || !preferences} onClick={() => void saveRoot(selectedProjectId)}>{uiText("save_a3030bf8")}</Button></div></>}
+          {typeof selectedProject?.new_chat_worktree === "boolean" && (
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <label htmlFor="worktree-new-chat-default" className="text-sm font-medium">{uiText("worktrees_new_chat_default")}</label>
+                <p id="worktree-new-chat-default-hint" className="text-xs text-muted-foreground">{uiText("worktrees_new_chat_default_hint")}</p>
+              </div>
+              <Switch id="worktree-new-chat-default" aria-describedby="worktree-new-chat-default-hint"
+                checked={selectedProject.new_chat_worktree} disabled={loading || busy}
+                onCheckedChange={(checked) => void saveNewChatDefault(checked)} />
+            </div>
+          )}
         </section>
         {loading && <p role="status">{uiText("loading_4927a53b")}</p>}
         {listing && <>

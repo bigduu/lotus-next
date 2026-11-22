@@ -32,7 +32,7 @@ export interface ProjectBoardData {
   counts: Record<BoardStage | "blocked" | "cancelled" | "total", number>
   rows: ProjectBoardRow[]
 }
-export type ProjectBoardPage = ReadEnvelope<ProjectBoardData>
+export type ProjectBoardPage = ReadEnvelope<ProjectBoardData> & { codex_handoff_available?: boolean }
 export interface BoardAssignment {
   id: string
   state: string

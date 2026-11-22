@@ -20,6 +20,7 @@ import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
 import { runtimeObservationTarget, savedPatrolTarget, type HealthRead } from "./project-work/assignmentHealth"
 import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
 import { ProjectSprintPanel } from "./project-work/ProjectSprintPanel"
+import { CodexWorkHandoff } from "./project-work/CodexWorkHandoff"
 import type { SprintFilter } from "@services/tickets/sprints"
 
 const stages: BoardStage[] = ["todo", "doing", "testing", "done"]
@@ -34,7 +35,7 @@ function ContextDetails({ context, label, name }: { context: ProjectContext | nu
     <dd data-testid={`project-work-context-${name}`}><ContextRevision context={context} />{context ? <><span className="block">{uiText("project_work_contract_revision", { revision: context.contract_revision })}</span><span className="block break-all">{context.workspace_binding.path}</span></> : null}</dd>
   </>
 }
-function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row: ProjectBoardRow; snapshot: SnapshotRef; projectId: string; onClose: () => void; onOpenSession?: OpenWorkSession }) {
+function WorkDetails({ row, snapshot, projectId, canHandoff, onClose, onOpenSession }: { row: ProjectBoardRow; snapshot: SnapshotRef; projectId: string; canHandoff: boolean; onClose: () => void; onOpenSession?: OpenWorkSession }) {
   const locale = useUiLocale()
   const [view, setView] = useState<BoardWorkView | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -122,6 +123,9 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
     /></div>
     {opening ? <p role="status" className="mt-2 text-xs">{uiText("assignment_health_opening_session")}</p> : null}
     {navigationError ? <p role="alert" className="mt-2 text-destructive">{navigationError}</p> : null}
+    {canHandoff && sessions.online && view && row.ticket.state !== "accepted" && row.ticket.state !== "cancelled" ? <CodexWorkHandoff selector={{
+      project_id: projectId, work_id: workId, generation, record_revision: row.ticket.record_revision, authority_epoch: authorityEpoch,
+    }} /> : null}
     {error ? <p role="alert" className="mt-2 text-destructive">{error}</p> : !view ? <p role="status">{uiText("project_work_loading")}</p> : <>
       {view.requests.some((request) => request.status === "open") ? <p className="mt-2">{uiText("project_work_waiting")}</p> : null}
       <h4 className="mt-3 font-medium">{uiText("project_work_evidence")}</h4>
@@ -196,7 +200,7 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
     {page?.next_cursor ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void loadMore()}>{uiText("project_work_more")}</Button> : null}
-    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={JSON.stringify([project.id, page.snapshot.commit, page.snapshot.seq, page.snapshot.authority_epoch, selected.ticket.id, selected.ticket.generation, selected.ticket.active_assignment])} row={selected} snapshot={page.snapshot} projectId={project.id} onOpenSession={onOpenSession} onClose={() => setSelectedId(null)} />
+    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={JSON.stringify([project.id, page.snapshot.commit, page.snapshot.seq, page.snapshot.authority_epoch, selected.ticket.id, selected.ticket.generation, selected.ticket.active_assignment])} row={selected} snapshot={page.snapshot} projectId={project.id} canHandoff={owner && page.codex_handoff_available === true} onOpenSession={onOpenSession} onClose={() => setSelectedId(null)} />
       {staleControls ? <p role="status" className="text-sm text-muted-foreground">{uiText("project_work_controls_unavailable_context")}</p> : null}
       {planning ? <ProjectWorkPlanningControls key={`planning:${selected.ticket.id}:${selected.ticket.generation}`} {...planning} owner={owner && planning.owner} command={commandAtSnapshot(planning.command, selected, page.snapshot)} copy={projectWorkControlsCopy()} /> : null}
       {ownerControls ? <ProjectWorkOwnerControls key={`owner:${selected.ticket.id}:${selected.ticket.generation}`} {...ownerControls} owner={owner && ownerControls.owner} commands={ownerCommands} copy={projectWorkControlsCopy()} /> : null}

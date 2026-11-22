@@ -194,12 +194,6 @@ export interface UtilityService {
   resetSetupStatus(): Promise<void>;
 
   /**
-   * Workflow management
-   */
-  saveWorkflow(name: string, content: string): Promise<{ success: boolean; path: string }>;
-  deleteWorkflow(name: string): Promise<ApiSuccessResponse>;
-
-  /**
    * Keyword masking
    */
   getKeywordMaskingConfig(): Promise<{
@@ -305,17 +299,6 @@ class HttpUtilityService implements UtilityService {
 
   async resetBambooConfig(): Promise<ApiSuccessResponse> {
     return apiClient.post<ApiSuccessResponse>("bamboo/config/reset", {});
-  }
-
-  async saveWorkflow(name: string, content: string): Promise<{ success: boolean; path: string }> {
-    return apiClient.post<{ success: boolean; path: string }>("bamboo/workflows", {
-      name,
-      content,
-    });
-  }
-
-  async deleteWorkflow(name: string): Promise<ApiSuccessResponse> {
-    return apiClient.delete<ApiSuccessResponse>(`bamboo/workflows/${encodeURIComponent(name)}`);
   }
 
   async getKeywordMaskingConfig(): Promise<{

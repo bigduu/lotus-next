@@ -29,7 +29,6 @@ import {
 } from "@services/chat/backgroundShellObservation"
 import { apiClient, getBackendStorageScope } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
-import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { backgroundBashIds, hasSessionWorkWait, parseBackgroundBashLaunch } from "@/lib/sessionBackgroundTasks"
 import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId, discardUnsentContinuousRetryFence, restoreConfirmedUnstartedRetryFence, readContinuousRetryFence, readOrdinaryRetryFence } from "@/lib/continuousRetryFence"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
@@ -150,7 +149,7 @@ const toFailureMessage = (error: unknown): string | undefined => {
 
 export type SendSubmissionResult =
   | { kind: "accepted"; operationId: number; sessionId: string; navigated: boolean }
-  | { kind: "unconfirmed"; operationId: number; rejectionCode?: SubmissionRejectionCode; workflowError?: { code: string; message: string } }
+  | { kind: "unconfirmed"; operationId: number; rejectionCode?: SubmissionRejectionCode }
   | { kind: "blocked" }
   | { kind: "busy" }
   | { kind: "ignored" }
@@ -2219,7 +2218,6 @@ export function useChat(
       text: string,
       opts?: {
         skillIds?: string[]
-        workflowSelection?: WorkflowSelection
         /** Explicit Root-only selection; undefined preserves the durable value. */
         rootOrchestrationOnly?: boolean
         thinkingMode?: import("@services/chat/AgentService").ThinkingMode
@@ -2317,7 +2315,6 @@ export function useChat(
           enhance_prompt: enhancePrompt || undefined,
           system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
-          ...(opts?.workflowSelection ? { workflow_selection: opts.workflowSelection } : {}),
           root_orchestration_only: !startSid
             ? submittedThinkingMode === undefined ? opts?.rootOrchestrationOnly : submittedThinkingMode === "ultra"
             : undefined,
@@ -2369,8 +2366,7 @@ export function useChat(
           })
         }
         if (compatibilityConflict) return { kind: "blocked" }
-        const workflowError = opts?.workflowSelection ? workflowSubmissionError(err) : null
-        return { kind: "unconfirmed", operationId: operation.id, ...(rejectionCode ? { rejectionCode } : {}), ...(workflowError ? { workflowError } : {}) }
+        return { kind: "unconfirmed", operationId: operation.id, ...(rejectionCode ? { rejectionCode } : {}) }
       }
 
       operation.phase = "generating"

@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { LazyCommandPalette } from "@/components/chat/LazyCommandPalette"
@@ -11,22 +11,31 @@ import { useThemeStore } from "@shared/store/themeStore"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
 import { applyGlobalAccentToDocument, getGlobalAccentColors } from "@shared/theme/globalAccentColors"
 import { useChat } from "@/hooks/useChat"
+import { useSubagentFileChanges } from "@/hooks/useSubagentFileChanges"
 import { assignSessionToSectionDurable } from "@/hooks/useProjectSidebarSections"
 import { useWorkbenchBrowserSelection } from "@/hooks/useWorkbenchBrowserSelection"
-import { useWorkbenchState } from "@/hooks/useWorkbenchState"
+import { activateWorkbenchTab, useWorkbenchState } from "@/hooks/useWorkbenchState"
+import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { useWorkbenchWidth } from "@/hooks/useWorkbenchWidth"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizableLayout } from "@/components/ui/resizable-layout"
-import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
+import { useIsMobile, useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
 import { navigateRecordedSession } from "@/lib/recordedSessionNavigation"
-import { WorktreeManager } from "@/components/app/WorktreeManager"
+import {
+  collectLiveSessionFileChanges,
+  collectSessionFileChanges,
+  groupSessionFileChanges,
+  mergeSessionFileChanges,
+  orderPersistedFileChanges,
+  summarizeSessionFileChangeGroups,
+} from "@/lib/sessionFileChanges"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
+import type { HistoryReadingAnchor } from "@/components/app/MessageList"
 import { ChatPane } from "@/components/app/ChatPane"
-import { SecondarySessionPane } from "@/components/app/SecondarySessionPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
 import { LazyBrowserPaneView } from "@/components/app/LazyBrowserPaneView"
@@ -42,6 +51,10 @@ import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/Right
 
 // The optional workbench need not add its tab/drag UI to ordinary-chat startup.
 const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
+
+const SubagentsPane = lazy(() => import("@/components/app/SubagentsPane").then((module) => ({ default: module.SubagentsPane })))
+
+const WorktreeManager = lazy(() => import("@/components/app/WorktreeManager").then((module) => ({ default: module.WorktreeManager })))
 
 function App() {
   useUiLocale()
@@ -99,29 +112,41 @@ function App() {
     createChat()
   }, [createChat])
 
-  // Only a confirmed root mounts the interactive side chat; unknown and child
-  // sessions use the message-only projection until summary metadata resolves.
-  const { state: workbenchState, setField: setWorkbenchField, scope: workbenchScope, openToolForSession } = useWorkbenchState(currentSessionId)
+  const {
+    state: workbenchState, update: updateWorkbench, setField: setWorkbenchField,
+    scope: workbenchScope, isCurrent: isCurrentWorkbench, openToolForSession,
+  } = useWorkbenchState(currentSessionId)
   const currentWorkbenchScope = useRef(workbenchScope)
   currentWorkbenchScope.current = workbenchScope
   const getCurrentWorkbenchScope = useCallback(() => currentWorkbenchScope.current, [])
-  const { secondSid, open: workbenchOpen, tab: workbenchTab, tools: openToolTabs,
-    reviewTarget: reviewTargetFilePath } = workbenchState
-  const setSecondSid = (value: string | null) => setWorkbenchField("secondSid", value)
+  const { subagents, open: workbenchOpen, tab: workbenchTab, tools: openToolTabs,
+    reviewTarget } = workbenchState
   const setWorkbenchOpen = (value: React.SetStateAction<boolean>) => setWorkbenchField("open", value)
   const setWorkbenchTab = useCallback((value: React.SetStateAction<RightWorkbenchTab | null>) => setWorkbenchField("tab", value), [setWorkbenchField])
-  const setOpenToolTabs = (value: React.SetStateAction<WorkbenchToolTab[]>) => setWorkbenchField("tools", value)
-  const setReviewTargetFilePath = (value: string | null) => setWorkbenchField("reviewTarget", value)
-  const pickSecond = (id: string | null) => setSecondSid(id)
-  useEffect(() => {
-    if (!secondSid) return
-    // Restore summary metadata only; an absent/deleted target retains the
-    // message-only fallback and never starts a run or creates a replacement.
-    const store = useAppStore.getState()
-    if (!store.chats.some((item) => item.id === secondSid)) {
-      void store.restoreSession(secondSid).catch(() => false)
-    }
-  }, [secondSid, workbenchScope])
+  const rootId = currentChat?.kind === "root" ? currentChat.id : currentChat?.rootSessionId ?? null
+  const descendantCount = chats.find((item) => item.id === rootId)?.subagentCount ?? null
+  const selectSubagent = (childId: string) => setWorkbenchField("subagents", (current) =>
+    current.childId === childId && current.view === "messages" ? current : { ...current, childId, view: "messages" })
+  const showSubagentTree = () => setWorkbenchField("subagents", (current) =>
+    current.view === "tree" ? current : { ...current, view: "tree" })
+  const clearSubagent = (childId: string) => setWorkbenchField("subagents", (current) =>
+    current.childId === childId ? { ...current, childId: null, view: "tree" } : current)
+
+  const subagentReadingAnchors = useRef(new Map<string | null, Map<string, HistoryReadingAnchor>>())
+  const readingAnchors = useMemo(() => {
+    const existing = subagentReadingAnchors.current.get(workbenchScope)
+    if (existing) return existing
+    const anchors = new Map<string, HistoryReadingAnchor>()
+    subagentReadingAnchors.current.set(workbenchScope, anchors)
+    return anchors
+  }, [workbenchScope])
+  const changeExpandedActors = useCallback((change: React.SetStateAction<ReadonlySet<string>>) => {
+    setWorkbenchField("subagents", (previous) => {
+      const current = new Set(previous.expandedActorIds ?? (rootId ? [rootId] : []))
+      const next = typeof change === "function" ? change(current) : change
+      return next === current ? previous : { ...previous, expandedActorIds: [...next] }
+    })
+  }, [rootId, setWorkbenchField])
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -151,15 +176,21 @@ function App() {
   const workEnabled = !!currentChat && isDefaultSupervisor(currentChat)
   const visibleToolTabs = openToolTabs.filter((tab) => tab !== "work" || workEnabled)
 
-  const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
-  const [browserEntryDraft, setBrowserEntryDraft] = useState("")
-  const [browserEntryTouched, setBrowserEntryTouched] = useState(false)
+  const [browserEntry, setBrowserEntry] = useState({ scope: workbenchScope, open: false, draft: "", touched: false })
+  if (browserEntry.scope !== workbenchScope) {
+    setBrowserEntry({ scope: workbenchScope, open: false, draft: "", touched: false })
+  }
+  const { open: browserEntryOpen, draft: browserEntryDraft, touched: browserEntryTouched } = browserEntry
+  const updateBrowserEntry = useCallback((change: Partial<Pick<typeof browserEntry, "open" | "draft" | "touched">>) => {
+    if (!isCurrentWorkbench()) return
+    setBrowserEntry((current) => current.scope === workbenchScope ? { ...current, ...change } : current)
+  }, [isCurrentWorkbench, workbenchScope])
+  const setBrowserEntryOpen = useCallback((open: boolean) => updateBrowserEntry({ open }), [updateBrowserEntry])
   const browserEntrySessionRef = useRef<{ sessionId: string | null; initialStateMissing: boolean } | null>(null)
   const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
-  const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ sessionId: string; url: string } | null>(null)
+  const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ scope: string | null; sessionId: string; url: string } | null>(null)
   const pendingBrowserNavigationAttemptRef = useRef<typeof pendingBrowserNavigation>(null)
   const isMobile = useIsMobile()
-  const isWide = useIsWide()
   const browserEnabled = !isMobile && !isPhoneDevice()
   const browser = useBrowserSession(
     currentSessionId,
@@ -191,14 +222,6 @@ function App() {
   })
 
   useEffect(() => {
-    if (browserEntrySessionRef.current?.sessionId !== currentSessionId) {
-      setBrowserEntryOpen(false)
-      setBrowserEntryDraft("")
-      setBrowserEntryTouched(false)
-    }
-  }, [currentSessionId])
-
-  useEffect(() => {
     // A selected browser tab follows the newly selected chat. Remember that
     // chat so switching to another workbench tab keeps its browser session live.
     if (browserEnabled && workbenchOpen && workbenchTab === "browser") {
@@ -208,7 +231,7 @@ function App() {
 
   useEffect(() => {
     if (!pendingBrowserNavigation) return
-    if (pendingBrowserNavigation.sessionId !== currentSessionId) {
+    if (pendingBrowserNavigation.scope !== workbenchScope || pendingBrowserNavigation.sessionId !== currentSessionId) {
       setPendingBrowserNavigation(null)
       pendingBrowserNavigationAttemptRef.current = null
       return
@@ -221,7 +244,7 @@ function App() {
     if (pendingBrowserNavigationAttemptRef.current === pendingBrowserNavigation) return
     pendingBrowserNavigationAttemptRef.current = pendingBrowserNavigation
     void openUrlInNewTab(pendingBrowserNavigation.url).then((opened) => {
-      if (pendingBrowserNavigationAttemptRef.current !== pendingBrowserNavigation) return
+      if (!isCurrentWorkbench() || pendingBrowserNavigationAttemptRef.current !== pendingBrowserNavigation) return
       pendingBrowserNavigationAttemptRef.current = null
       if (opened) {
         setPendingBrowserNavigation((current) => current === pendingBrowserNavigation ? null : current)
@@ -230,7 +253,7 @@ function App() {
         setPendingBrowserNavigation((current) => current === pendingBrowserNavigation ? null : current)
       }
     })
-  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, browser.busy, browser.loading, browser.entryOpening, openUrlInNewTab, hasPendingDialog])
+  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, browser.busy, browser.loading, browser.entryOpening, openUrlInNewTab, hasPendingDialog, isCurrentWorkbench, setBrowserEntryOpen, workbenchScope])
   useEffect(() => {
     if (!browserEntryOpen || browserReadySessionId !== currentSessionId || !browserState) return
     const origin = browserEntrySessionRef.current
@@ -240,7 +263,7 @@ function App() {
       ? browserState.tabs.length > 0
       : Boolean(browserState.url && browserState.url !== "about:blank")
     if (hasPage && !browserEntryTouched && !pendingBrowserNavigation) setBrowserEntryOpen(false)
-  }, [browserEntryOpen, browserReadySessionId, currentSessionId, browserState, browserEntryTouched, pendingBrowserNavigation])
+  }, [browserEntryOpen, browserReadySessionId, currentSessionId, browserState, browserEntryTouched, pendingBrowserNavigation, setBrowserEntryOpen])
   useEffect(() => {
     if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
     if (browserState.tabs.length > 0) {
@@ -254,9 +277,17 @@ function App() {
     min: 220,
     max: 420,
   })
-  const workbenchResize = useWorkbenchWidth(sidebarCollapsed ? 0 : sidebarResize.width)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const chatShellRef = useRef<HTMLDivElement>(null)
+  const [chatShellRef, chatShellWidth] = useContainerWidth<HTMLDivElement>(!settingsOpen)
+  const desktopSidebar = useMediaQuery("(min-width: 768px)") && !sidebarCollapsed
+  const saveWorkbenchWidth = useCallback((width: number) => setWorkbenchField("dockWidth", width), [setWorkbenchField])
+  const workbenchResize = useWorkbenchWidth(
+    chatShellWidth || window.innerWidth,
+    desktopSidebar ? sidebarResize.width : 0,
+    workbenchState.dockWidth,
+    saveWorkbenchWidth,
+  )
+  const dockWorkbench = workbenchResize.canDock
   const settingsReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
   const openSettings = () => {
     if (!settingsOpen) {
@@ -290,7 +321,7 @@ function App() {
   // applies while `pendingProjectId` still matches the section's project.
   const [pendingSection, setPendingSection] = useState<{ projectId: string; sectionId: string | null } | null>(null)
   const [projectManagerOpen, setProjectManagerOpen] = useState(false)
-  const [worktreesOpen, setWorktreesOpen] = useState(false)
+  const [worktreeManagerVisibility, setWorktreeManagerVisibility] = useState<"unopened" | "open" | "closed">("unopened")
   const [pickedWorktree, setPickedWorktree] = useState<{ projectId: string; path: string } | null>(null)
   const [copyFeedback, setCopyFeedback] = useState<{ message: string; failed: boolean } | null>(null)
 
@@ -363,7 +394,20 @@ function App() {
 
   const workspacePath = currentChat?.config?.workspacePath
   const displayWorkspace = workspacePath ?? pickedWorkspace
-  const secondSession = chats.find((item) => item.id === secondSid)
+  const [environmentSession, setEnvironmentSession] = useState<string | null>(null)
+  const reviewing = workbenchOpen && selectedWorkbenchTab === "review"
+  const subagentChanges = useSubagentFileChanges(currentChat, workbenchScope, !settingsOpen &&
+    (reviewing || (currentSessionId !== null && environmentSession === currentSessionId)))
+  const ownFileChanges = useMemo(() => collectSessionFileChanges(chat.messages), [chat.messages])
+  const persistedFileChanges = useMemo(() => subagentChanges.changes.length > 0
+    ? orderPersistedFileChanges([...ownFileChanges, ...subagentChanges.changes])
+    : ownFileChanges,
+  [ownFileChanges, subagentChanges.changes])
+  const liveFileChanges = useMemo(() => collectLiveSessionFileChanges(chat.liveSegments), [chat.liveSegments])
+  const fileChangeGroups = useMemo(() => groupSessionFileChanges(
+    mergeSessionFileChanges(persistedFileChanges, liveFileChanges), displayWorkspace ?? undefined,
+  ), [persistedFileChanges, liveFileChanges, displayWorkspace])
+  const fileChangeSummary = useMemo(() => summarizeSessionFileChangeGroups(fileChangeGroups), [fileChangeGroups])
   const visibleTabIds = visibleWorkbenchTabIds(
     visibleToolTabs,
     browserTabsForWorkbench,
@@ -374,20 +418,18 @@ function App() {
     const remaining = visibleTabIds.filter((item) => item !== key)
     return remaining[index] ?? remaining[index - 1] ?? null
   }
-  const pruneSavedTab = (key: string) => {
-    setWorkbenchField("order", (current) => current.filter((item) => item !== key))
-  }
-  const selectCloseSuccessor = (key: string | null, activeBrowserTabId = browserState?.active_tab_id) => {
-    workbenchSelectionVersionRef.current += 1
-    if (key?.startsWith("tool:")) {
-      setWorkbenchTab(key.slice("tool:".length) as WorkbenchToolTab)
-    } else if (key?.startsWith("browser:")) {
-      const tabId = key.slice("browser:".length)
-      setWorkbenchTab("browser")
+  const removeClosedTab = (key: string, next?: string | null, activeBrowserTabId = browserState?.active_tab_id) => {
+    const nextBrowserId = next?.startsWith("browser:") ? next.slice("browser:".length) : null
+    const nextTool = next?.startsWith("tool:") ? next.slice("tool:".length) as WorkbenchToolTab : null
+    updateWorkbench((previous) => ({
+      ...previous,
+      tools: key.startsWith("tool:") ? previous.tools.filter((tool) => "tool:" + tool !== key) : previous.tools,
+      order: previous.order.filter((id) => id !== key),
+      tab: next === undefined ? previous.tab : nextBrowserId ? "browser" : nextTool,
+    }))
+    if (nextBrowserId) {
       setBrowserEntryOpen(false)
-      if (tabId !== activeBrowserTabId) void browser.activateTab(tabId)
-    } else {
-      setWorkbenchTab(null)
+      if (nextBrowserId !== activeBrowserTabId) void browser.activateTab(nextBrowserId)
     }
   }
   const openWorkbench = (tab: RightWorkbenchTab, openBrowserFromEntry = true) => {
@@ -406,23 +448,15 @@ function App() {
           sessionId: currentSessionId,
           initialStateMissing: browserReadySessionId !== currentSessionId || !browserState,
         }
-        setBrowserEntryDraft("")
-        setBrowserEntryTouched(false)
-        setBrowserEntryOpen(true)
+        updateBrowserEntry({ draft: "", touched: false, open: true })
       }
-    } else {
-      setOpenToolTabs((current) => current.includes(tab) ? current : [...current, tab])
     }
-    setWorkbenchTab(tab)
-    setWorkbenchOpen(true)
+    updateWorkbench((previous) => activateWorkbenchTab(previous, tab))
   }
   const closeToolTab = (tab: WorkbenchToolTab) => {
     workbenchSelectionVersionRef.current += 1
     const key = `tool:${tab}`
-    const successor = closeSuccessor(key)
-    setOpenToolTabs((current) => current.filter((item) => item !== tab))
-    pruneSavedTab(key)
-    if (workbenchTab === tab) selectCloseSuccessor(successor)
+    removeClosedTab(key, workbenchTab === tab ? closeSuccessor(key) : undefined)
   }
   const closeBrowserTab = (tabId: string) => {
     workbenchSelectionVersionRef.current += 1
@@ -431,41 +465,45 @@ function App() {
     const wasSelected = workbenchTab === "browser" && browserState?.active_tab_id === tabId && !browserEntryOpen
     const selectionVersion = workbenchSelectionVersionRef.current
     void browser.closeTab(tabId).then((closed) => {
-      if (!closed) return
-      pruneSavedTab(key)
-      if (wasSelected && workbenchSelectionVersionRef.current === selectionVersion) {
-        selectCloseSuccessor(successor, closed.active_tab_id)
-      }
+      if (!closed || !isCurrentWorkbench()) return
+      const selectSuccessor = wasSelected && workbenchSelectionVersionRef.current === selectionVersion
+      if (selectSuccessor) workbenchSelectionVersionRef.current += 1
+      removeClosedTab(key, selectSuccessor ? successor : undefined, closed.active_tab_id)
     })
   }
   const openLinkInApp = (url: string) => {
     if (!currentSessionId || !browserEnabled) return
-    setPendingBrowserNavigation({ sessionId: currentSessionId, url })
+    setPendingBrowserNavigation({ scope: workbenchScope, sessionId: currentSessionId, url })
     if (browserReadySessionId === currentSessionId && browserState?.pending_dialog) {
       setBrowserEntryOpen(false)
-      setWorkbenchTab("browser")
-      setWorkbenchOpen(true)
+      updateWorkbench((previous) => activateWorkbenchTab(previous, "browser"))
     } else {
       openWorkbench("browser")
     }
   }
-  const openReview = (filePath?: string) => {
-    setReviewTargetFilePath(filePath ?? null)
-    openWorkbench("review")
+  const openReview = (fileId?: string) => {
+    workbenchSelectionVersionRef.current += 1
+    updateWorkbench((previous) => ({
+      ...activateWorkbenchTab(previous, "review"),
+      reviewTarget: fileId ?? previous.reviewTarget,
+    }))
   }
   const toggleWorkbench = () => {
     setWorkbenchOpen((open) => !open)
   }
-  const toggleSideSession = () => {
-    if (workbenchOpen && workbenchTab === "session") {
-      setWorkbenchOpen(false)
-      return
-    }
-    openWorkbench("session")
+  const openSubagentTree = () => {
+    workbenchSelectionVersionRef.current += 1
+    updateWorkbench((previous) => ({
+      ...activateWorkbenchTab(previous, "subagents"),
+      subagents: { ...previous.subagents, view: "tree" },
+    }))
   }
   const openSubagentPreview = (childId: string) => {
-    pickSecond(childId)
-    openWorkbench("session")
+    workbenchSelectionVersionRef.current += 1
+    updateWorkbench((previous) => ({
+      ...activateWorkbenchTab(previous, "subagents"),
+      subagents: { ...previous.subagents, childId, view: "messages" },
+    }))
   }
 
   return (
@@ -486,12 +524,12 @@ function App() {
       {/* Register the stable parent layer before any global dialogs. Lazy
           tab content must never mount its own later, higher-priority layer. */}
       <ResizableLayout
-        sidebarCollapsed={sidebarCollapsed}
-        workbenchDocked={isWide && workbenchOpen}
+        desktopSidebar={desktopSidebar}
+        workbenchDocked={dockWorkbench && workbenchOpen}
         sidebarWidth={sidebarResize}
         workbenchWidth={workbenchResize}
         workbenchMaxWidth={workbenchResize.maxWidth}
-        viewportWidth={workbenchResize.viewportWidth}
+        containerWidth={workbenchResize.containerWidth}
         suspended={settingsOpen || paletteOpen}
         scopeKey={workbenchScope}
         sidebar={(
@@ -532,7 +570,7 @@ function App() {
             onCopySessionId={copySessionId}
             onOpenSettings={openSettings}
             onOpenProjectManager={() => setProjectManagerOpen(true)}
-            onOpenWorktrees={() => setWorktreesOpen(true)}
+            onOpenWorktrees={() => setWorktreeManagerVisibility("open")}
           />
         )}
         workbench={(
@@ -543,7 +581,7 @@ function App() {
             getCurrentFocusScope={getCurrentWorkbenchScope}
             visible={workbenchOpen}
             pageVisible={!settingsOpen}
-            docked={isWide}
+            docked={dockWorkbench}
             width="100%"
             onClose={() => setWorkbenchOpen(false)}
           >
@@ -581,11 +619,9 @@ function App() {
                     setBrowserEntryOpen(false)
                     return
                   }
-                  if (tab === "review") setReviewTargetFilePath(null)
                   openWorkbench(tab)
                 }}
                 onClose={() => setWorkbenchOpen(false)}
-                sessionTitle={secondSession?.title}
                 inspector={
                   <Inspector
                     embedded
@@ -593,14 +629,14 @@ function App() {
                     open={workbenchOpen && selectedWorkbenchTab === "inspector"}
                     onClose={() => setWorkbenchOpen(false)}
                     workspace={displayWorkspace}
+                    fileChangeGroups={fileChangeGroups}
                     onEditWorkspace={() => setWsPickerOpen(true)}
                     onOpenReview={openReview}
                     onCopySessionId={copySessionId}
-                    selectedActorId={secondSid ?? currentSessionId ?? null}
+                    selectedActorId={subagents.childId ?? currentSessionId ?? null}
                     onSelectActor={(actorId) => {
-                      const rootId = currentChat?.kind === "root" ? currentSessionId : currentChat?.rootSessionId
                       if (actorId === rootId) {
-                        pickSecond(null)
+                        setWorkbenchField("subagents", (current) => ({ ...current, childId: null, view: "tree" }))
                         openToolForSession(actorId, "inspector")
                         select(actorId)
                       } else openSubagentPreview(actorId)
@@ -609,10 +645,13 @@ function App() {
                 }
                 review={(
                   <ReviewPane
+                    key={workbenchScope}
                     sessionId={currentSessionId}
-                    liveSegments={chat.liveSegments}
+                    groups={fileChangeGroups}
+                    summary={fileChangeSummary}
+                    subagentChanges={subagentChanges}
                     workspace={displayWorkspace}
-                    targetFilePath={reviewTargetFilePath}
+                    targetFile={reviewTarget}
                   />
                 )}
                 browser={browserEnabled ? (
@@ -622,14 +661,8 @@ function App() {
                     active={workbenchOpen && workbenchTab === "browser"}
                     newTabEntry={browserEntryOpen}
                     entryDraft={browserEntryDraft}
-                    onEntryDraftChange={(draft) => {
-                      setBrowserEntryDraft(draft)
-                      setBrowserEntryTouched(true)
-                    }}
-                    onNewTabOpened={() => {
-                      setBrowserEntryOpen(false)
-                      setBrowserEntryDraft("")
-                    }}
+                    onEntryDraftChange={(draft) => updateBrowserEntry({ draft, touched: true })}
+                    onNewTabOpened={() => updateBrowserEntry({ open: false, draft: "", touched: false })}
                     browser={{
                       ...browser,
                       openDefault: (id) => {
@@ -647,16 +680,18 @@ function App() {
                     }}
                   />
                 ) : null}
-                session={(
-                  <SecondarySessionPane
-                    sessionId={secondSid}
-                    pageVisible={!settingsOpen}
-                    active={workbenchOpen && selectedWorkbenchTab === "session"}
-                    chats={chats}
-                    onPickSession={pickSecond}
-                    onClose={() => setWorkbenchOpen(false)}
-                    onOpenInspector={() => setWorkbenchTab("inspector")}
-                    onOpenReview={() => setWorkbenchTab("review")}
+                subagents={(
+                  <SubagentsPane
+                    key={workbenchScope}
+                    rootId={rootId}
+                    descendantCount={descendantCount}
+                    active={!settingsOpen && workbenchOpen && selectedWorkbenchTab === "subagents"}
+                    selection={subagents}
+                    onSelectChild={selectSubagent}
+                    onShowTree={showSubagentTree}
+                    onMissingChild={clearSubagent}
+                    onExpandedChange={changeExpandedActors}
+                    readingAnchors={readingAnchors}
                   />
                 )}
               />
@@ -666,6 +701,8 @@ function App() {
       >
         <ChatPane
           chat={{ ...chat, select, newChat }}
+          fileChangeSummary={fileChangeSummary}
+          onEnvironmentVisible={setEnvironmentSession}
           pageVisible={!settingsOpen}
           onOpenRecordedSession={openSessionLink}
           pickedWorkspace={pickedWorkspace}
@@ -701,11 +738,10 @@ function App() {
           onOpenReview={() => openReview()}
           workPanelTarget={workEnabled ? workPanelTarget : null}
           onOpenWork={workEnabled ? () => openWorkbench("work") : undefined}
-          onWorkReference={() => { if (!isWide) setWorkbenchOpen(false) }}
+          onWorkReference={() => { if (!dockWorkbench) setWorkbenchOpen(false) }}
           sidePaneOpen={workbenchOpen}
           onToggleSidePane={toggleWorkbench}
-          splitOpen={workbenchOpen && workbenchTab === "session"}
-          onToggleSplit={toggleSideSession}
+          onOpenSubagents={openSubagentTree}
           onSelectSubAgent={openSubagentPreview}
           onOpenSidebar={() => {
             setSidebarOpen(true)
@@ -732,18 +768,23 @@ function App() {
         }}
       />
 
-      <WorktreeManager open={worktreesOpen} onClose={() => setWorktreesOpen(false)}
-        onOpen={(projectId, path) => {
-          newChat()
-          setPendingProjectId(projectId)
-          // A worktree-scoped creation is its own intent; drop any section pick.
-          setPendingSection(null)
-          setPickedWorkspace(path)
-          setPickedWorktree({ projectId, path })
-          setWorktreesOpen(false)
-        }}
-        onSession={(id) => { select(id); setWorktreesOpen(false) }}
-      />
+      {/* Load on first open, then keep the manager mounted to preserve its draft. */}
+      {worktreeManagerVisibility !== "unopened" && (
+        <Suspense fallback={null}>
+          <WorktreeManager open={worktreeManagerVisibility === "open"} onClose={() => setWorktreeManagerVisibility("closed")}
+            onOpen={(projectId, path) => {
+              newChat()
+              setPendingProjectId(projectId)
+              // A worktree-scoped creation is its own intent; drop any section pick.
+              setPendingSection(null)
+              setPickedWorkspace(path)
+              setPickedWorktree({ projectId, path })
+              setWorktreeManagerVisibility("closed")
+            }}
+            onSession={(id) => { select(id); setWorktreeManagerVisibility("closed") }}
+          />
+        </Suspense>
+      )}
       <ProjectManagerModal open={projectManagerOpen} onClose={() => setProjectManagerOpen(false)} />
 
       <DeleteSessionDialog
@@ -778,6 +819,11 @@ function App() {
         }}
         onNewChat={() => {
           setSettingsOpen(false)
+          const project = pendingProjectId ? useAppStore.getState().projects[pendingProjectId] : undefined
+          if (project?.new_chat_worktree === true && pickedWorktree?.projectId === project.id) {
+            setPickedWorkspace(null)
+            setPickedWorktree(null)
+          }
           newChat()
         }}
         onSettings={openSettings}

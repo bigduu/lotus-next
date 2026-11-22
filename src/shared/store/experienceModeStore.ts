@@ -20,7 +20,6 @@ export const SIMPLE_MODE_SETTINGS_TABS = new Set([
   "schedules",
   "notifications",
   "prompts",
-  "workflows",
   "system",
 ]);
 

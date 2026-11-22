@@ -1,4 +1,6 @@
 import type { Message } from "@shared/types/chatMessages"
+import type { HistoryResponse } from "@services/chat/AgentService"
+import { compareRfc3339Instants } from "@shared/utils/compareRfc3339Instants"
 import {
   getFileChangePayloadDiffStats,
   parseFileChangeResultPayload,
@@ -8,7 +10,16 @@ import {
 export type SessionFileChange = {
   id: string
   toolCallId?: string
+  createdAt?: string
   payload: FileChangeResultPayload
+  source?: SubagentFileChangeSource
+}
+
+export type SubagentFileChangeSource = {
+  sessionId: string
+  title: string
+  workspace?: string
+  separateFileLocation: boolean
 }
 
 export type SessionFileChangeGroup = {
@@ -36,7 +47,7 @@ export type LiveFileChangeSegment = {
 }
 
 /** Collect durable file-edit results from a loaded session transcript. */
-export function collectSessionFileChanges(messages: Message[]): SessionFileChange[] {
+export function collectSessionFileChanges(messages: readonly Message[]): SessionFileChange[] {
   const changes: SessionFileChange[] = []
 
   for (const message of messages) {
@@ -48,10 +59,42 @@ export function collectSessionFileChanges(messages: Message[]): SessionFileChang
     const content = toolResult.result?.result
     if (typeof content !== "string") continue
     const payload = parseFileChangeResultPayload(content)
-    if (payload) changes.push({ id: message.id, toolCallId: toolResult.toolCallId, payload })
+    if (payload) changes.push({
+      id: message.id,
+      toolCallId: toolResult.toolCallId,
+      createdAt: message.createdAt,
+      payload,
+    })
   }
 
   return changes
+}
+
+/** Project durable tool results without retaining the child's conversation. */
+export function collectSubagentFileChanges(
+  messages: HistoryResponse["messages"],
+  source: SubagentFileChangeSource,
+): SessionFileChange[] {
+  const changes: SessionFileChange[] = []
+  for (const message of messages) {
+    if (message.role !== "tool" || message.tool_success === false) continue
+    const payload = parseFileChangeResultPayload(message.content)
+    if (payload) changes.push({
+      id: JSON.stringify([source.sessionId, message.id]),
+      createdAt: message.created_at,
+      payload,
+      source,
+    })
+  }
+  return changes
+}
+
+export function orderPersistedFileChanges(changes: SessionFileChange[]): SessionFileChange[] {
+  return changes.sort((left, right) =>
+    left.createdAt && right.createdAt
+      ? compareRfc3339Instants(left.createdAt, right.createdAt) || 0
+      : 0,
+  )
 }
 
 /** Collect structured file edits before the current tool round is persisted. */
@@ -133,13 +176,19 @@ export function groupSessionFileChanges(
   >()
 
   changes.forEach((change, index) => {
+    const source = change.source
     const filePath = normalizeFileChangePath(
       change.payload.file_path,
       change.payload.workspace,
-      sessionWorkspace,
+      source ? source.workspace : sessionWorkspace,
     )
+    // A remote environment or an unresolved relative path has its own file
+    // identity even if the displayed path appears elsewhere in this tree.
+    const id = source && (source.separateFileLocation || !isAbsoluteFileChangePath(filePath))
+      ? `subagent-file:${JSON.stringify([source.sessionId, filePath])}`
+      : `file:${filePath}`
     const stats = getFileChangePayloadDiffStats(change.payload)
-    const existing = groups.get(filePath)
+    const existing = groups.get(id)
 
     if (existing) {
       existing.changes.push(change)
@@ -150,8 +199,8 @@ export function groupSessionFileChanges(
       return
     }
 
-    groups.set(filePath, {
-      id: `file:${filePath}`,
+    groups.set(id, {
+      id,
       filePath,
       changes: [change],
       addedLines: stats.added,

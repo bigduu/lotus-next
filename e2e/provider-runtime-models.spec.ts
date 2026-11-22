@@ -30,6 +30,87 @@ test("new provider offers only the three general provider types", async ({ page 
   expect(observation.pageErrors).toEqual([])
 })
 
+test("the LiteLLM experiment saves per provider and reloads with its effective state", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const instance = {
+    id: "fixture-provider", type: "gemini", label: "Fixture Gemini", enabled: true,
+    config: { model: "fixture-model", api_key: "****...****", runtime_models: ["fixture-model"] },
+  }
+  const olderInstance = {
+    ...instance, id: "older-provider", label: "Legacy Gemini",
+    config: { ...instance.config, litellm_wire_types: false },
+  }
+  const writes: Array<{ config: Record<string, unknown> }> = []
+  let liteLlmOverride: boolean | undefined
+  const readInstance = () => ({
+    ...instance,
+    config: { ...instance.config, litellm_wire_types: liteLlmOverride },
+    experiments: { litellm_wire_types: liteLlmOverride ?? false },
+  })
+  await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
+    default_provider_instance_id: instance.id,
+    instances: [readInstance(), olderInstance],
+    defaults: { chat: { provider: instance.id, model: "fixture-model" } },
+    features: { provider_model_ref: true },
+  } }))
+  await page.route("**/api/v1/bamboo/settings/provider-instances/fixture-provider", async (route) => {
+    expect(route.request().method()).toBe("PUT")
+    const patch = route.request().postDataJSON() as (typeof writes)[number]
+    writes.push(patch)
+    if (typeof patch.config.litellm_wire_types === "boolean") {
+      liteLlmOverride = patch.config.litellm_wire_types
+    }
+    await route.fulfill({ json: readInstance() })
+  })
+
+  const editProvider = (label: string) => page.locator("li")
+    .filter({ hasText: label }).getByRole("button", { name: "编辑", exact: true })
+  const save = page.getByRole("button", { name: "保存", exact: true })
+  const experiment = page.getByRole("group", { name: "实验功能", exact: true })
+  const toggle = experiment.getByRole("switch", { name: "LiteLLM 协议适配", exact: true })
+
+  await page.goto(standaloneScenario.entryUrl)
+  await openProviders(page)
+  await editProvider(olderInstance.label).click()
+  await expect(save).toBeVisible()
+  await expect(experiment).toHaveCount(0)
+  await page.getByRole("button", { name: "取消", exact: true }).click()
+
+  await editProvider(instance.label).click()
+  await expect(toggle).not.toBeChecked()
+  await testInfo.attach("litellm-experiment-default-off", {
+    body: await experiment.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
+  await save.click()
+  await expect(editProvider(instance.label)).toBeVisible()
+  expect(writes).toHaveLength(1)
+  expect(writes[0].config).not.toHaveProperty("litellm_wire_types")
+
+  await editProvider(instance.label).click()
+  await toggle.click()
+  await save.click()
+  await expect(editProvider(instance.label)).toBeVisible()
+  expect(writes).toHaveLength(2)
+  expect(writes[1]).toMatchObject({ config: { litellm_wire_types: true } })
+
+  await page.reload()
+  await openProviders(page)
+  await editProvider(instance.label).click()
+  await expect(toggle).toBeVisible()
+  await expect(toggle).toBeChecked()
+  await toggle.click()
+  await save.click()
+  await expect(editProvider(instance.label)).toBeVisible()
+  expect(writes).toHaveLength(3)
+  expect(writes[2]).toMatchObject({ config: { litellm_wire_types: false } })
+  expect(observation.pageErrors).toEqual([])
+})
+
 // Stateful HTTP fixtures verify the UI contract; backend admission has separate Rust coverage.
 test("Work review purpose survives unrelated edits and can be explicitly unset", async ({ page }, testInfo) => {
   await page.addInitScript(() => {

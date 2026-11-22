@@ -25,7 +25,7 @@ function session(id: string, title: string, running: boolean) {
   }
 }
 
-async function prepare(page: Page, info: TestInfo, split = false) {
+async function prepare(page: Page, info: TestInfo, { multipleSessions = false, running = true } = {}) {
   const phone = info.project.name === "phone-chromium"
   const locale = phone ? "zh-CN" : "en-US"
   const theme = phone ? "dark" : "light"
@@ -37,11 +37,11 @@ async function prepare(page: Page, info: TestInfo, split = false) {
     localStorage.setItem("lotus_next_last_session", "all-surface-session")
   }, { locale, theme })
   const observation = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
-  const sessions = split ? [
+  const sessions = multipleSessions ? [
     session(primary, "Compression main", false),
     session(background, "Background compression A", true),
     session(comparison, "Idle comparison B", false),
-  ] : [session(primary, "Synthetic context feedback", true)]
+  ] : [session(primary, "Synthetic context feedback", running)]
   const requests: { method: string; path: string }[] = []
   const clientFrames: Record<string, unknown>[] = []
   const events: { sessionId: string; event: object }[] = []
@@ -102,7 +102,7 @@ async function prepare(page: Page, info: TestInfo, split = false) {
   await expect(page.getByRole("textbox", { name: phone ? "消息" : "Messages", exact: true }).first()).toBeVisible()
   if (theme === "dark") await expect(page.locator("html")).toHaveClass(/\bdark\b/)
   else await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
-  if (!split) await expect.poll(() => channels.has(`agent.${primary}`)).toBe(true)
+  if (!multipleSessions && running) await expect.poll(() => channels.has(`agent.${primary}`)).toBe(true)
   const copy = (key: CopyKey) => phone ? uiZhCn[key] : uiEnUs[key]
   const emit = (event: object, sessionId = primary) => {
     events.push({ sessionId, event })
@@ -121,11 +121,11 @@ async function prepare(page: Page, info: TestInfo, split = false) {
     type: "context_summarized", summary: privateDetail, messages_summarized: 12, tokens_saved: 500_000,
     usage_before_percent: 90, usage_after_percent: 40, trigger_type: "synthetic-only",
   }, sessionId)
-  const barrier = async () => {
+  const emitChange = async (event: object, sessionId = primary) => {
     await expect.poll(() => channels.has("feed")).toBe(true)
     const seq = ++feedSequence
     socket!.send(JSON.stringify({ ch: "feed", seq, event: {
-      seq, ts: at, session_id: primary, event: { type: "task_list_updated", session_id: primary },
+      seq, ts: at, session_id: sessionId, event,
     } }))
     // A real consumer cursor proves this later frame was applied, so all prior
     // agent frames on the ordered socket have reached the application's parser.
@@ -133,13 +133,63 @@ async function prepare(page: Page, info: TestInfo, split = false) {
       element.ownerDocument.defaultView!.localStorage.getItem("lotus_account_feed_cursor_v1"),
     )).toBe(String(seq))
   }
+  const barrier = () => emitChange({ type: "task_list_updated", session_id: primary })
   return { page, info, phone, theme, locale, observation, requests, clientFrames, events, protocolErrors, channels, barrier,
-    copy, emit, status, budget, summary,
+    copy, emit, emitChange, status, budget, summary,
     notice: page.getByTestId("context-compression-notice"),
   }
 }
 
 type Fixture = Awaited<ReturnType<typeof prepare>>
+
+test("Session DAG draws a live fork and join and expands the grouped task steps", async ({ page }, info) => {
+  const f = await prepare(page, info)
+  const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
+  await expect(card).toHaveCount(0)
+  const task = { notes: "", status: "completed", depends_on: [] }
+  const items = [
+    { ...task, id: "prepare", description: "Prepare the evidence" },
+    { ...task, id: "review", description: "Review each component", depends_on: ["prepare"] },
+    { ...task, id: "bamboo", description: "Check Bamboo source", parent_id: "review", depends_on: ["review"] },
+    { ...task, id: "lotus", description: "Check Lotus source", status: "in_progress", parent_id: "review", depends_on: ["review"] },
+    { ...task, id: "report", description: "Combine the findings", status: "pending", depends_on: ["bamboo", "lotus"] },
+  ]
+  f.emit({ type: "task_list_updated", task_list: { session_id: primary, title: "Evidence review", items, created_at: at, updated_at: at }, version: 3 })
+  await expect(card).toBeVisible()
+  await expect(card.getByRole("button").first()).toContainText(f.phone ? "已完成 3 / 5" : "3 of 5 complete")
+  await card.getByRole("button").first().click()
+  const graph = card.getByRole("region", { name: f.copy("session_task_dag_dependencies"), exact: true })
+  await expect(graph.locator("path[marker-end]")).toHaveCount(5)
+  await graph.getByRole("button", { name: /Review each component/ }).click()
+  const steps = card.getByRole("list", { name: f.copy("session_task_dag_steps"), exact: true })
+  await expect(steps.getByRole("listitem")).toHaveCount(2)
+  const lotus = steps.getByRole("listitem").filter({ hasText: "Check Lotus source" })
+  await expect(lotus).toContainText(f.copy("ticket_in_progress_5026a63b"))
+  f.emit({ type: "task_list_item_progress", session_id: primary, item_id: "lotus",
+    status: "completed", tool_calls_count: 1, version: 4 })
+  await expect(lotus).toContainText(f.copy("completed_f28461bb"))
+  await expect(card.getByRole("button").first()).toContainText(f.phone ? "已完成 4 / 5" : "4 of 5 complete")
+  await capture(f, "session-task-dag")
+  await verifyIsolation(f)
+})
+
+test("Session DAG catches up from the durable feed while the viewer is idle", async ({ page }, info) => {
+  const f = await prepare(page, info, { running: false })
+  const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
+  await expect(card).toHaveCount(0)
+  const task = { id: "review", description: "Review the saved evidence", status: "completed", notes: "", depends_on: [] }
+  const saved = { session_id: primary, title: "Remote plan", items: [task], created_at: at, updated_at: at }
+  await f.emitChange({ type: "task_list_updated", task_list: saved, version: 5 })
+  await expect(card).toBeVisible()
+  const completed = f.phone ? "已完成 1 / 1" : "1 of 1 complete"
+  await expect(card.getByRole("button").first()).toContainText(completed)
+
+  const older = { ...saved, items: [{ ...task, status: "pending" }] }
+  await f.emitChange({ type: "task_list_updated", task_list: older, version: 4 })
+  await expect(card.getByRole("button").first()).toContainText(completed)
+  expect(f.clientFrames).not.toContainEqual(expect.objectContaining({ type: "subscribe", ch: `agent.${primary}` }))
+  await verifyIsolation(f)
+})
 
 test("Inspector keeps a saved Task status when an older live update arrives", async ({ page }, info) => {
   test.skip(info.project.name === "phone-chromium", "Exercises the desktop workbench Inspector")
@@ -337,36 +387,36 @@ test("local Stop remains unconfirmed and detached late frames cannot overwrite u
   await verifyIsolation(f)
 })
 
-test("background bound Session continues updating while comparison Session stays isolated", async ({ page }, info) => {
-  test.skip(info.project.name !== "desktop-chromium", "Bound side-by-side rebind is a desktop acceptance path")
-  const f = await prepare(page, info, true)
-  await page.getByRole("button", { name: "Open side panel", exact: true }).click()
-  const workbench = page.locator("#right-workbench")
-  await workbench.getByRole("button", { name: "Side-by-side session Open another session", exact: true }).click()
-  await workbench.getByRole("tab", { name: "Side-by-side session", exact: true }).click()
-  const picker = workbench.getByRole("combobox").filter({ hasText: /Select a session to compare|Background compression A|Idle comparison B/ })
-  await picker.click()
-  await page.getByRole("option", { name: "Background compression A", exact: true }).click()
-  await expect.poll(() => f.channels.has(`agent.${background}`)).toBe(true)
+test("compression feedback follows its session through sidebar navigation", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation")
+  const f = await prepare(page, info, { multipleSessions: true })
+  const active = page.getByRole("button", { name: /Background compression A$/ })
+  const idle = page.getByRole("button", { name: "Idle comparison B", exact: true })
+  await active.click()
+  await expect.poll(() => f.channels.has("agent." + background)).toBe(true)
   f.budget(90, background)
   f.status("started", background)
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveText(f.copy("context_compression_notice_running"))
-  await expectUsage(f, 90, workbench)
-  await picker.click()
-  await page.getByRole("option", { name: "Idle comparison B", exact: true }).click()
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveCount(0)
-  await expect(workbench.getByRole("button", { name: "Context usage", exact: true })).toHaveCount(0)
-  expect(f.channels.has(`agent.${background}`)).toBe(true)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_running"))
+  await expectUsage(f, 90)
+  await idle.click()
+  await expect(f.notice).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Context usage", exact: true })).toHaveCount(0)
   f.status("completed", background)
   f.summary(background)
   f.budget(80, background)
   await f.barrier()
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveCount(0)
-  await capture(f, "comparison-session-hides-background-feedback")
-  await picker.click()
-  await page.getByRole("option", { name: "Background compression A", exact: true }).click()
-  await expectUsage(f, 80, workbench)
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveText(f.copy("context_compression_notice_completed"))
-  await capture(f, "background-session-retains-new-budget")
+  await expect(f.notice).toHaveCount(0)
+  await capture(f, "other-session-hides-background-feedback")
+  await active.click()
+  await expect.poll(() => f.channels.has("agent." + background)).toBe(true)
+  // A new scoped observation can restore live feedback after a rebind.
+  f.status("started", background)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_running"))
+  f.status("completed", background)
+  f.summary(background)
+  f.budget(80, background)
+  await expectUsage(f, 80)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_completed"))
+  await capture(f, "background-session-shows-own-budget")
   await verifyIsolation(f)
 })

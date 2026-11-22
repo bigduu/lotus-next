@@ -1,45 +1,30 @@
+import { useRef } from "react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { ChevronDown, LoaderCircle, RefreshCw } from "lucide-react"
 
-import { MessageList } from "@/components/app/MessageList"
+import { MessageList, type HistoryReadingAnchor } from "@/components/app/MessageList"
 import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
-import { useActorSnapshot } from "@/hooks/useActorSnapshot"
 import { useSubagentTranscript } from "@/hooks/useSubagentTranscript"
-import type { ChatItem } from "@shared/types/chat"
 
 const noop = () => {}
 
 export function SubagentTranscriptPane({
   sessionId,
-  chats,
-  onPickSession,
+  readingAnchor,
+  onReadingAnchor,
 }: {
-  sessionId: string | null
-  chats: ChatItem[]
-  onPickSession: (sessionId: string | null) => void
+  sessionId: string
+  readingAnchor?: HistoryReadingAnchor
+  onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
 }) {
   useUiLocale()
   const transcript = useSubagentTranscript(sessionId)
-  const selectedChild = chats.find((chat) => chat.id === sessionId && chat.kind === "child")
-  // An index entry without its authoritative Root relationship cannot grant an
-  // Actor channel. The legacy projected message transcript remains independent.
-  const rootId = selectedChild?.rootSessionId ?? null
-  const preview = useActorSnapshot(rootId, !!rootId && !!sessionId, sessionId)
+  const anchor = useRef(readingAnchor).current
   const { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom } =
-    useStickyScroll(sessionId)
+    useStickyScroll(sessionId, Boolean(anchor))
 
-  const body = !sessionId ? (
-    <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-      {uiText("select_a_subagent_to_load_its_message_history_d73b4879")}</div>
-  ) : transcript.loading && transcript.messages.length === 0 ? (
+  const body = transcript.loading && transcript.messages.length === 0 ? (
     <div
       className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
       aria-label={uiText("loading_subagent_messages_c313f76d")}
@@ -73,6 +58,9 @@ export function SubagentTranscriptPane({
         scrollRef={scrollRef}
         contentRef={contentRef}
         onScroll={handleScroll}
+        initialReadingAnchor={transcript.loading ? null : anchor}
+        onReadingAnchor={onReadingAnchor}
+        onMissingReadingAnchor={scrollToBottom}
         messages={transcript.messages}
         mergedSubAgents={{}}
         sending={transcript.streaming}
@@ -108,27 +96,6 @@ export function SubagentTranscriptPane({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-subagent-transcript-pane>
-      <div className="flex shrink-0 items-center border-b px-3 py-2">
-        <Select
-          value={sessionId ?? undefined}
-          onValueChange={(value) => onPickSession(value || null)}
-        >
-          <SelectTrigger size="sm" className="min-w-0 flex-1">
-            <SelectValue placeholder={uiText("select_subagent_aceda583")} />
-          </SelectTrigger>
-          <SelectContent>
-            {chats
-              .filter((chat) => !chat.parentSessionId || chat.id === sessionId)
-              .map((chat) => (
-                <SelectItem key={chat.id} value={chat.id}>
-                  {chat.title || uiText("new_session_c57c30bc")}
-                </SelectItem>
-              ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {preview.gapReason ? <p role="status" data-actor-gap={preview.gapReason} className="border-b px-3 py-2 text-xs text-muted-foreground">
-        {uiText("there_is_a_gap_in_subagent_events_state_was_reloaded_bu_463a89f1")}</p> : null}
       {body}
     </div>
   )
