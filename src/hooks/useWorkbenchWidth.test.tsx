@@ -1,27 +1,26 @@
-import { act } from "react"
+import { act, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { getWorkbenchMaxWidth, MIN_CHAT_WIDTH, useWorkbenchWidth } from "./useWorkbenchWidth"
+import { afterEach, beforeEach, expect, it } from "vitest"
+import { getWorkbenchMaxWidth, MIN_DOCKED_CHAT_WIDTH, useWorkbenchWidth } from "./useWorkbenchWidth"
 
-const storageKey = "lotus_next_inspector_w"
+const legacyKey = "lotus_next_inspector_w"
 let root: Root
 let host: HTMLDivElement
 let resize: ReturnType<typeof useWorkbenchWidth>
 
-function Harness({ sidebarWidth = 288 }: { sidebarWidth?: number }) {
-  resize = useWorkbenchWidth(sidebarWidth)
+function Harness({ container = 1920, sidebar = 288, saved = null }: {
+  container?: number
+  sidebar?: number
+  saved?: number | null
+}) {
+  const [preferredWidth, setPreferredWidth] = useState(saved)
+  resize = useWorkbenchWidth(container, sidebar, preferredWidth, setPreferredWidth)
   return <div />
-}
-
-function setViewportWidth(width: number) {
-  vi.stubGlobal("innerWidth", width)
-  act(() => window.dispatchEvent(new Event("resize")))
 }
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   localStorage.clear()
-  vi.stubGlobal("innerWidth", 1920)
   host = document.body.appendChild(document.createElement("div"))
   root = createRoot(host)
 })
@@ -33,55 +32,46 @@ afterEach(() => {
 })
 
 it.each([
-  [1280, 420, 498],
-  [1280, 288, 630],
-  [1920, 288, 1270],
-  [1920, 0, 1559],
-  [2560, 420, 1778],
-])("allows viewport %i and sidebar %i to use %i pixels while reserving chat", (viewport, sidebar, expected) => {
-  expect(getWorkbenchMaxWidth(viewport, sidebar)).toBe(expected)
-  expect(viewport - sidebar - expected - (sidebar > 0 ? 2 : 1)).toBe(MIN_CHAT_WIDTH)
+  [1280, 420, 442],
+  [1280, 288, 574],
+  [1920, 288, 1214],
+  [1920, 0, 1503],
+  [2560, 420, 1722],
+])("reserves chat space inside a %i px container with a %i px sidebar", (container, sidebar, expected) => {
+  expect(getWorkbenchMaxWidth(container, sidebar)).toBe(expected)
+  expect(container - sidebar - expected - (sidebar > 0 ? 2 : 1)).toBe(MIN_DOCKED_CHAT_WIDTH)
 })
 
-it("keeps a valid minimum on narrow viewports where the workbench is an overlay", () => {
-  expect(getWorkbenchMaxWidth(375, 288)).toBe(360)
+it("switches to an overlay when the measured container cannot fit both columns", () => {
+  act(() => root.render(<Harness container={1024} />))
+  expect(resize.canDock).toBe(false)
+  act(() => root.render(<Harness container={1024} sidebar={0} />))
+  expect(resize.canDock).toBe(true)
+  act(() => root.render(<Harness container={360} sidebar={0} />))
+  expect(resize.canDock).toBe(false)
 })
 
-it("restores the saved wide preference after narrowing and expanding the window", () => {
-  localStorage.setItem(storageKey, "1200")
+it("uses the legacy width as a default and keeps a session preference across temporary limits", () => {
+  localStorage.setItem(legacyKey, "900")
   act(() => root.render(<Harness />))
-  expect(resize.width).toBe(1200)
-  setViewportWidth(1280)
-  expect(resize.width).toBe(630)
-  expect(localStorage.getItem(storageKey)).toBe("1200")
-  setViewportWidth(1920)
-  expect(resize.width).toBe(1200)
-})
-
-it("adjusts for sidebar resizing and collapse without losing the preferred width", () => {
-  localStorage.setItem(storageKey, "1500")
-  act(() => root.render(<Harness sidebarWidth={0} />))
-  expect(resize.width).toBe(1500)
-  act(() => root.render(<Harness />))
-  expect(resize.width).toBe(1270)
-  act(() => root.render(<Harness sidebarWidth={420} />))
-  expect(resize.width).toBe(1138)
-  act(() => root.render(<Harness sidebarWidth={0} />))
-  expect(resize.width).toBe(1500)
-  expect(localStorage.getItem(storageKey)).toBe("1500")
-})
-
-it("commits beyond both old width caps, persists, and restores after remount", () => {
-  act(() => root.render(<Harness />))
+  expect(resize.width).toBe(900)
   act(() => resize.setWidth(1200))
   expect(resize.width).toBe(1200)
-  expect(resize.width).toBeGreaterThan(840)
-  expect(resize.width).toBeGreaterThan(window.innerWidth * 0.46)
-  expect(localStorage.getItem(storageKey)).toBe("1200")
-  act(() => root.render(null))
-  setViewportWidth(1280)
+  act(() => root.render(<Harness container={1280} />))
+  expect(resize.width).toBe(574)
+  act(() => root.render(<Harness container={755} sidebar={0} />))
+  expect(resize.canDock).toBe(false)
+  act(() => resize.setWidth(363))
   act(() => root.render(<Harness />))
-  expect(resize.width).toBe(630)
-  setViewportWidth(1920)
   expect(resize.width).toBe(1200)
+  expect(localStorage.getItem(legacyKey)).toBe("900")
+})
+
+it("uses the width supplied by the current session", () => {
+  act(() => root.render(<Harness saved={780} key="session-a" />))
+  expect(resize.width).toBe(780)
+  act(() => root.render(<Harness saved={430} key="session-b" />))
+  expect(resize.width).toBe(430)
+  act(() => root.render(<Harness saved={780} key="session-a" />))
+  expect(resize.width).toBe(780)
 })

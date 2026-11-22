@@ -1,29 +1,36 @@
-import { useEffect, useState } from "react"
-import { useResizableWidth } from "./useResizableWidth"
+import { useCallback, useState } from "react"
 
 export const MIN_WORKBENCH_WIDTH = 360
 export const MIN_CHAT_WIDTH = 360
+export const MIN_DOCKED_CHAT_WIDTH = 416
 
-/** Docked panels share the viewport with chat and one or two 1px dividers. */
-export function getWorkbenchMaxWidth(viewportWidth: number, sidebarWidth: number): number {
+/** Docking requires space for both readable columns and the visible separators. */
+export function getWorkbenchMaxWidth(containerWidth: number, sidebarWidth: number): number {
   const dividerWidth = sidebarWidth > 0 ? 2 : 1
-  return Math.max(MIN_WORKBENCH_WIDTH, viewportWidth - sidebarWidth - MIN_CHAT_WIDTH - dividerWidth)
+  return Math.max(0, containerWidth - sidebarWidth - MIN_DOCKED_CHAT_WIDTH - dividerWidth)
 }
 
-export function useWorkbenchWidth(sidebarWidth: number) {
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
+function readLegacyWidth() {
+  try {
+    const width = Number(localStorage.getItem("lotus_next_inspector_w"))
+    if (Number.isFinite(width) && width > 0) return width
+  } catch { /* Use the default when storage is unavailable. */ }
+  return 520
+}
 
-  useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth)
-    window.addEventListener("resize", onResize)
-    onResize()
-    return () => window.removeEventListener("resize", onResize)
-  }, [])
-
-  const maxWidth = getWorkbenchMaxWidth(viewportWidth, sidebarWidth)
-  const preference = useResizableWidth("lotus_next_inspector_w", 520, {
-    min: MIN_WORKBENCH_WIDTH,
-    max: maxWidth,
-  })
-  return { ...preference, maxWidth, viewportWidth }
+export function useWorkbenchWidth(
+  containerWidth: number,
+  sidebarWidth: number,
+  preferredWidth: number | null,
+  onPreferredWidth: (width: number) => void,
+) {
+  const [defaultWidth] = useState(readLegacyWidth)
+  const maxWidth = getWorkbenchMaxWidth(containerWidth, sidebarWidth)
+  const canDock = maxWidth >= MIN_WORKBENCH_WIDTH
+  const width = canDock ? Math.min(maxWidth, Math.max(MIN_WORKBENCH_WIDTH, preferredWidth ?? defaultWidth)) : 0
+  const setWidth = useCallback((next: number) => {
+    if (!canDock || !Number.isFinite(next) || next <= 0) return
+    onPreferredWidth(Math.min(maxWidth, Math.max(MIN_WORKBENCH_WIDTH, next)))
+  }, [canDock, maxWidth, onPreferredWidth])
+  return { width, setWidth, maxWidth, canDock, containerWidth }
 }

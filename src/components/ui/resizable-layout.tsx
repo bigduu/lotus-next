@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react"
 import { Group, Panel, useGroupRef, type Layout, type LayoutChangedMeta } from "react-resizable-panels"
-import { useMediaQuery } from "@shared/hooks/useMediaQuery"
+import { MIN_CHAT_WIDTH, MIN_DOCKED_CHAT_WIDTH, MIN_WORKBENCH_WIDTH } from "@/hooks/useWorkbenchWidth"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { ResizeHandle } from "./resize-handle"
 
@@ -9,23 +9,22 @@ type WidthPreference = { width: number; setWidth: (width: number) => void }
 type ResizeInteraction = { side: Side; pointerId: number | null; layout: Layout; cancelled: boolean }
 
 /** Keep the real surface ancestry stable while their docked columns disappear. */
-export function ResizableLayout({ sidebar, children, workbench, sidebarCollapsed, workbenchDocked,
-  sidebarWidth, workbenchWidth, workbenchMaxWidth, viewportWidth, suspended, scopeKey,
+export function ResizableLayout({ sidebar, children, workbench, desktopSidebar, workbenchDocked,
+  sidebarWidth, workbenchWidth, workbenchMaxWidth, containerWidth, suspended, scopeKey,
 }: {
   sidebar: ReactNode
   children: ReactNode
   workbench: ReactNode
-  sidebarCollapsed: boolean
+  desktopSidebar: boolean
   workbenchDocked: boolean
   sidebarWidth: WidthPreference
   workbenchWidth: WidthPreference
   workbenchMaxWidth: number
-  viewportWidth: number
+  containerWidth: number
   suspended: boolean
   scopeKey: string | null
 }) {
   useUiLocale()
-  const desktopSidebar = useMediaQuery("(min-width: 768px)") && !sidebarCollapsed
   const group = useGroupRef()
   const interaction = useRef<ResizeInteraction | null>(null)
   const element = useRef<HTMLDivElement | null>(null)
@@ -118,7 +117,7 @@ export function ResizableLayout({ sidebar, children, workbench, sidebarCollapsed
     })
     return () => { current = false }
   }, [cancelResize, desktopSidebar, workbenchDocked, sidebarWidth.width, workbenchWidth.width,
-    workbenchMaxWidth, viewportWidth, suspended, scopeKey, group])
+    workbenchMaxWidth, containerWidth, suspended, scopeKey, group])
 
   const begin = (target: EventTarget | null, pointerId: number | null) => {
     if (suspended || !(target instanceof HTMLElement)) return false
@@ -165,12 +164,12 @@ export function ResizableLayout({ sidebar, children, workbench, sidebarCollapsed
     </Panel>
     {desktopSidebar ? <ResizeHandle id="sidebar-resize" data-resize-panel="sidebar" aria-label={uiText("resize_sidebar")}
       disabled={suspended} /> : null}
-    <Panel id="chat-panel" minSize={desktopSidebar ? 360 : 0} className="flex min-h-0 min-w-0 touch-auto!" style={{ overflow: "hidden" }}>
+    <Panel id="chat-panel" minSize={workbenchDocked ? MIN_DOCKED_CHAT_WIDTH : desktopSidebar ? MIN_CHAT_WIDTH : 0} className="flex min-h-0 min-w-0 touch-auto!" style={{ overflow: "hidden" }}>
       {children}
     </Panel>
     {workbenchDocked ? <ResizeHandle id="workbench-resize" data-resize-panel="workbench" aria-label={uiText("resize_workbench")}
       disabled={suspended} /> : null}
-    <Panel id="workbench-panel" minSize={workbenchDocked ? 360 : 0}
+    <Panel id="workbench-panel" minSize={workbenchDocked ? MIN_WORKBENCH_WIDTH : 0}
       maxSize={workbenchDocked ? workbenchMaxWidth : 0} defaultSize={workbenchDocked ? workbenchWidth.width : 0}
       style={{ overflow: "visible" }} className="flex min-h-0 min-w-0 touch-auto!">
       {workbench}

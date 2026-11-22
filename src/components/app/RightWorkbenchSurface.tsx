@@ -137,8 +137,9 @@ export function RightWorkbenchSurface({ children, visible = true, pageVisible = 
           <aside ref={panelRef} id="right-workbench" role={modal ? "dialog" : undefined}
             aria-modal={modal ? true : undefined} aria-label={uiText("workbench_c2730bc7")}
             hidden={!visible}
-            className={cn("flex min-h-0 min-w-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
-            style={{ ...(docked ? { width: width ?? 520 } : { width: "92vw", maxWidth: "42rem" }), display: visible ? undefined : "none" }}>
+            className={cn("flex min-h-0 min-w-0 flex-col bg-card", docked ? "shrink-0 border-l" :
+              "fixed inset-y-0 right-0 z-50 w-full shadow-lg md:w-[calc(100vw-3rem)] md:max-w-[56rem] md:border-l")}
+            style={{ width: docked ? width ?? 520 : undefined, display: visible ? undefined : "none" }}>
             {children}
           </aside>
         </DismissableLayer>

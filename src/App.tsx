@@ -14,10 +14,11 @@ import { useChat } from "@/hooks/useChat"
 import { assignSessionToSectionDurable } from "@/hooks/useProjectSidebarSections"
 import { useWorkbenchBrowserSelection } from "@/hooks/useWorkbenchBrowserSelection"
 import { activateWorkbenchTab, useWorkbenchState } from "@/hooks/useWorkbenchState"
+import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { useWorkbenchWidth } from "@/hooks/useWorkbenchWidth"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizableLayout } from "@/components/ui/resizable-layout"
-import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
+import { useIsMobile, useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
@@ -180,7 +181,6 @@ function App() {
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ scope: string | null; sessionId: string; url: string } | null>(null)
   const pendingBrowserNavigationAttemptRef = useRef<typeof pendingBrowserNavigation>(null)
   const isMobile = useIsMobile()
-  const isWide = useIsWide()
   const browserEnabled = !isMobile && !isPhoneDevice()
   const browser = useBrowserSession(
     currentSessionId,
@@ -267,9 +267,17 @@ function App() {
     min: 220,
     max: 420,
   })
-  const workbenchResize = useWorkbenchWidth(sidebarCollapsed ? 0 : sidebarResize.width)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const chatShellRef = useRef<HTMLDivElement>(null)
+  const [chatShellRef, chatShellWidth] = useContainerWidth<HTMLDivElement>(!settingsOpen)
+  const desktopSidebar = useMediaQuery("(min-width: 768px)") && !sidebarCollapsed
+  const saveWorkbenchWidth = useCallback((width: number) => setWorkbenchField("dockWidth", width), [setWorkbenchField])
+  const workbenchResize = useWorkbenchWidth(
+    chatShellWidth || window.innerWidth,
+    desktopSidebar ? sidebarResize.width : 0,
+    workbenchState.dockWidth,
+    saveWorkbenchWidth,
+  )
+  const dockWorkbench = workbenchResize.canDock
   const settingsReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
   const openSettings = () => {
     if (!settingsOpen) {
@@ -492,12 +500,12 @@ function App() {
       {/* Register the stable parent layer before any global dialogs. Lazy
           tab content must never mount its own later, higher-priority layer. */}
       <ResizableLayout
-        sidebarCollapsed={sidebarCollapsed}
-        workbenchDocked={isWide && workbenchOpen}
+        desktopSidebar={desktopSidebar}
+        workbenchDocked={dockWorkbench && workbenchOpen}
         sidebarWidth={sidebarResize}
         workbenchWidth={workbenchResize}
         workbenchMaxWidth={workbenchResize.maxWidth}
-        viewportWidth={workbenchResize.viewportWidth}
+        containerWidth={workbenchResize.containerWidth}
         suspended={settingsOpen || paletteOpen}
         scopeKey={workbenchScope}
         sidebar={(
@@ -549,7 +557,7 @@ function App() {
             getCurrentFocusScope={getCurrentWorkbenchScope}
             visible={workbenchOpen}
             pageVisible={!settingsOpen}
-            docked={isWide}
+            docked={dockWorkbench}
             width="100%"
             onClose={() => setWorkbenchOpen(false)}
           >
@@ -701,7 +709,7 @@ function App() {
           onOpenReview={() => openReview()}
           workPanelTarget={workEnabled ? workPanelTarget : null}
           onOpenWork={workEnabled ? () => openWorkbench("work") : undefined}
-          onWorkReference={() => { if (!isWide) setWorkbenchOpen(false) }}
+          onWorkReference={() => { if (!dockWorkbench) setWorkbenchOpen(false) }}
           sidePaneOpen={workbenchOpen}
           onToggleSidePane={toggleWorkbench}
           onOpenSubagents={openSubagentTree}

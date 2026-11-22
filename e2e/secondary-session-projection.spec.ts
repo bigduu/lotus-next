@@ -25,7 +25,7 @@ const sessions = snapshots.flatMap(({ nodes }) => nodes.map((node) => ({
   is_running: false, last_run_status: "completed", permission_mode: "default", bypass_permissions: false,
 })))
 
-async function prepare(page: Page, legacyTarget?: string, longTranscript = false) {
+async function prepare(page: Page, legacyTarget?: string, content: "short" | "history" | "wide" = "short") {
   await page.addInitScript(({ rootId, legacyTarget, origin }) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", rootId)
@@ -40,7 +40,7 @@ async function prepare(page: Page, legacyTarget?: string, longTranscript = false
   const projected: string[] = []
   let releaseNested!: () => void
   const holdNested = new Promise<void>((resolve) => { releaseNested = resolve })
-  if (legacyTarget || longTranscript) releaseNested()
+  if (legacyTarget || content !== "short") releaseNested()
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -61,10 +61,17 @@ async function prepare(page: Page, legacyTarget?: string, longTranscript = false
       expect(url.searchParams.get("projection")).toBe("messages")
       projected.push(history.id)
       if (history.id === nestedId) await holdNested
-      const messages = longTranscript ? Array.from({ length: 64 }, (_, index) => ({
+      const messages = content === "history" ? Array.from({ length: 64 }, (_, index) => ({
         id: history.id + "-" + index, role: index % 2 === 0 ? "user" : "assistant",
         content: history.title + " message " + index + ". " + "Reading context. ".repeat(12), created_at: at,
-      })) : [{ id: history.id + "-answer", role: "assistant", content: history.title + " answer", created_at: at }]
+      })) : [{ id: history.id + "-answer", role: "assistant", content: content === "wide" ? [
+          "Reading a narrow transcript. " + "long_identifier_".repeat(30),
+          "", "| First column | Second column | Third column | Fourth column |",
+          "| --- | --- | --- | --- |",
+          "| " + Array.from({ length: 4 }, () => "Wide content ".repeat(5).trim()).join(" | ") + " |",
+          "", String.fromCharCode(96).repeat(3) + "text",
+          "long_source_line_".repeat(40), String.fromCharCode(96).repeat(3),
+        ].join("\n") : history.title + " answer", created_at: at }]
       return route.fulfill({ json: {
         session_id: history.id, projection: "messages", is_delta: false, truncated: false,
         total_message_count: messages.length, messages,
@@ -150,7 +157,7 @@ for (const [target, label] of [[nestedId, "a child in the tree"], [otherRootId, 
 
 test("restores the subagent view, expansion and reading anchor with its own session", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation and independent workbench views")
-  await prepare(page, undefined, true)
+  await prepare(page, undefined, "history")
   const panel = page.locator("#right-workbench")
   const transcript = panel.locator("[data-subagent-transcript-pane] .overflow-y-auto")
   const openTree = () => page.getByRole("button", { name: "查看子代理树", exact: true }).click()
@@ -195,4 +202,46 @@ test("restores the subagent view, expansion and reading anchor with its own sess
   await expect(panel.getByText("还没有打开内容")).toBeVisible()
   await expect(panel.getByRole("tab", { name: "子代理", exact: true })).toHaveCount(0)
   await info.attach("restored-session-tree", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
+})
+
+test("narrow tree and transcript fit the workbench while wide blocks scroll locally", async ({ page }, info) => {
+  const desktop = info.project.name === "desktop-chromium"
+  if (desktop) await page.setViewportSize({ width: 1080, height: 900 })
+  const { observation } = await prepare(page, undefined, "wide")
+  await page.getByRole("button", { name: "查看子代理树", exact: true }).click()
+  const panel = page.locator("#right-workbench")
+  if (desktop) await expect(panel).not.toHaveAttribute("aria-modal")
+  else await expect(panel).toHaveAttribute("aria-modal", "true")
+  if (info.project.name === "phone-chromium") {
+    await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(page.viewportSize()!.width, 0)
+  }
+  const tree = panel.getByRole("tree")
+  await tree.getByRole("treeitem", { name: /Search branch/ }).locator("[data-actor-toggle]").click()
+  await tree.getByRole("treeitem", { name: /Nested writer/ }).click()
+  const transcript = panel.locator("[data-subagent-transcript-pane]")
+  await expect(transcript.getByText(/Reading a narrow transcript/)).toBeVisible()
+  const code = transcript.locator('[data-streamdown="code-block-body"]')
+  const table = transcript.locator('[data-streamdown="table-wrapper"] > div').last()
+  for (const block of [code, table]) {
+    await expect(block).toBeVisible()
+    await expect(block).toHaveCSS("overflow-x", "auto")
+    await expect.poll(() => block.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeGreaterThan(10)
+  }
+  await expect.poll(() => transcript.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+  const before = await transcript.boundingBox()
+  expect(before).not.toBeNull()
+  expect(before!.x + before!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1)
+  if (desktop) {
+    const switcher = panel.getByRole("button", { name: "切换子代理", exact: true })
+    await switcher.focus()
+    await page.setViewportSize({ width: 1000, height: 900 })
+    await expect(panel).toHaveAttribute("aria-modal", "true")
+    await expect(switcher).toBeFocused()
+    await expect(transcript.getByText(/Reading a narrow transcript/)).toBeVisible()
+    await page.setViewportSize({ width: 1080, height: 900 })
+    await expect(panel).not.toHaveAttribute("aria-modal")
+    await expect(switcher).toBeFocused()
+  }
+  expect(observation.pageErrors).toEqual([])
+  await info.attach("narrow-subagent-transcript", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
 })
