@@ -22,7 +22,6 @@ import {
   Share2,
   ShieldCheck,
   Sun,
-  Workflow,
 } from "lucide-react"
 import { useThemeStore } from "@shared/store/themeStore"
 import { getUserMessageColors, USER_MESSAGE_COLOR_PRESETS } from "@shared/theme/userMessageColors"
@@ -45,7 +44,6 @@ import { SettingsSchedules } from "@/components/chat/settings/SettingsSchedules"
 import { SettingsNotifications } from "@/components/chat/settings/SettingsNotifications"
 import { SettingsMasking } from "@/components/chat/settings/SettingsMasking"
 import { SettingsPrompts } from "@/components/chat/settings/SettingsPrompts"
-import { SettingsWorkflows } from "@/components/chat/settings/SettingsWorkflows"
 import { SettingsClusters } from "@/components/chat/settings/SettingsClusters"
 import { SettingsMetrics } from "@/components/chat/settings/SettingsMetrics"
 import { SettingsSystem } from "@/components/chat/settings/SettingsSystem"
@@ -325,7 +323,6 @@ const TABS = [
   { id: "notifications", icon: Bell, get label() { return uiText("notifications_4b6ded8a") }, render: () => <SettingsNotifications /> },
   { id: "masking", icon: ShieldCheck, get label() { return uiText("keyword_masking_62e701d9") }, render: () => <SettingsMasking /> },
   { id: "prompts", icon: FileText, get label() { return uiText("prompts_4b47dbae") }, render: () => <SettingsPrompts /> },
-  { id: "workflows", icon: Workflow, get label() { return uiText("workflow_c71d0bca") }, render: () => <SettingsWorkflows /> },
   { id: "clusters", icon: Network, get label() { return uiText("clusters_5318ca46") }, render: () => <SettingsClusters /> },
   { id: "metrics", icon: ChartNoAxesCombined, get label() { return uiText("metrics_b87e67c7") }, render: () => <SettingsMetrics /> },
   { id: "jiandu", icon: Database, get label() { return uiText("jiandu_memory_6567932c") }, render: () => <SettingsJiandu /> },
@@ -337,7 +334,7 @@ export type SettingsTabId = (typeof TABS)[number]["id"]
 const TAB_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
   { get label() { return uiText("settings_group_appearance") }, tabs: ["general", "notifications"] },
   { get label() { return uiText("settings_group_connections") }, tabs: ["providers", "config-share", "model-limits", "retry", "mcp", "clusters"] },
-  { get label() { return uiText("settings_group_capabilities") }, tabs: ["plugins", "skills", "prompts", "workflows", "schedules", "jiandu"] },
+  { get label() { return uiText("settings_group_capabilities") }, tabs: ["plugins", "skills", "prompts", "schedules", "jiandu"] },
   { get label() { return uiText("settings_group_safety") }, tabs: ["permissions", "masking", "env", "metrics", "system"] },
 ]
 

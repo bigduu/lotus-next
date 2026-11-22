@@ -1,54 +1,36 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef } from "react"
 import type { SkillDefinition } from "@shared/types/skill"
-import type { CommandItem } from "@services/command"
-import { workflowUnavailableReason, type WorkflowCatalogEntry } from "@services/command/workflowCatalog"
-import type { WorkflowCatalogState } from "./useWorkflowCatalog"
 import { cn } from "@/lib/utils"
 import { useMenuKeyboardNav } from "./useMenuKeyboardNav"
 
 type Entry =
-  | { kind: "typed"; id: string; name: string; description: string; entry: WorkflowCatalogEntry }
-  | { kind: "catalog"; id: string; name: string; description: string }
   | { kind: "command"; id: string; name: string; description: string; action: () => void; unavailable?: string | null }
   | { kind: "skill"; id: string; name: string; description: string; skill: SkillDefinition }
-  | { kind: "workflow"; id: string; name: string; description: string; command: CommandItem }
 
 /**
- * Slash-command picker shown above the composer when the draft starts with "/".
- * Built-in commands run directly. Picking a skill or workflow instead
- * prepares it for the next send.
- * Escape dismisses the menu without touching the draft.
+ * Built-in commands open their destination or run directly. Picking a Skill
+ * prepares it for the next send. Escape preserves the draft.
  */
 export function SlashMenu({
   skills,
-  workflows,
   query,
   onPick,
-  onPickWorkflow,
   onPickGoal,
   onPickCompact,
   compactUnavailable,
-  onPickCatalog,
+  onOpenWorkflowRuns,
   onDismiss,
   inputId,
-  catalogState,
-  onPickCatalogEntry,
-  catalogDisabled = false,
 }: {
   inputId: string
-  catalogState?: WorkflowCatalogState
-  onPickCatalogEntry?: (entry: WorkflowCatalogEntry) => void
-  catalogDisabled?: boolean
   skills: SkillDefinition[]
-  workflows: CommandItem[]
   query: string
   onPick: (skill: SkillDefinition) => void
-  onPickWorkflow: (command: CommandItem) => void
   onPickGoal?: () => void
   onPickCompact?: () => void
   compactUnavailable?: string | null
-  onPickCatalog?: () => void
+  onOpenWorkflowRuns?: () => void
   onDismiss?: () => void
 }) {
   useUiLocale()
@@ -56,55 +38,38 @@ export function SlashMenu({
   const matches = (name: string, description: string) =>
     !q || name.toLowerCase().includes(q) || description.toLowerCase().includes(q)
 
-  const catalogEntry: Entry[] = onPickCatalog &&
-    (!q || matches(uiText("catalog_workflows_b3caa7b0"), uiText("choose_an_executable_workflow_from_the_bamboo_catalog_b7020d54")) || "workflow".includes(q))
-    ? [{ kind: "catalog", id: "builtin-catalog", name: uiText("catalog_workflows_b3caa7b0"), description: uiText("open_the_workflow_catalog_to_choose_a_workflow_and_argu_4359980e") }]
-    : []
   const compactDescription = uiText("compact_context_command")
   const compactEntry: Entry | null = onPickCompact && matches("compact", compactDescription)
     ? { kind: "command", id: "builtin-compact", name: "compact", description: compactDescription,
         action: onPickCompact, unavailable: compactUnavailable }
     : null
+  const workflowDescription = uiText("workflow_run_title")
   const entries: Entry[] = [
     ...(onPickGoal && matches("goal", uiText("set_session_goal_98fa0b0f")) ? [{ kind: "command" as const, id: "builtin-goal", name: "goal", description: uiText("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8"), action: onPickGoal }] : []),
     ...(compactEntry ? [compactEntry] : []),
+    ...(onOpenWorkflowRuns && matches("workflow", workflowDescription) ? [{
+      kind: "command" as const, id: "builtin-workflow", name: "workflow", description: workflowDescription,
+      action: onOpenWorkflowRuns,
+    }] : []),
     ...skills
-      .filter((s) => matches(s.name, s.description))
-      .map((s) => ({
+      .filter((skill) => matches(skill.name, skill.description))
+      .map((skill) => ({
         kind: "skill" as const,
-        id: `skill-${s.id}`,
-        name: s.name,
-        description: s.description,
-        skill: s,
+        id: "skill-" + skill.id,
+        name: skill.name,
+        description: skill.description,
+        skill,
       })),
-    ...workflows
-      .filter((w) => matches(w.display_name || w.name, w.description))
-      .map((w) => ({
-        kind: "workflow" as const,
-        id: `workflow-${w.id}`,
-        name: w.display_name || w.name,
-        description: w.description,
-        command: w,
-      })),
-  ].slice(0, catalogEntry.length ? 7 : 8)
-  const typedEntries: Entry[] = (catalogState?.catalog?.entries ?? [])
-    .filter((entry) => !q || matches(entry.name, entry.description) || entry.id.toLowerCase().includes(q) || entry.source.includes(q))
-    .map((entry) => ({ kind: "typed", id: `catalog:${entry.source}:${entry.id}:${entry.revision}`, name: entry.name, description: entry.description, entry }))
-  entries.push(...typedEntries, ...catalogEntry)
+  ].slice(0, 8)
   // The exact built-in command is reserved, including when it is unavailable.
   const shownEntries = q === "compact" && compactEntry ? [compactEntry] : entries
-  const disabledReason = (entry: Entry) => entry.kind === "typed"
-    ? workflowUnavailableReason(entry.entry) || (catalogDisabled ? uiText("workflow_selection_is_currently_unavailable_94a186a4") : null)
-    : entry.kind === "command" ? entry.unavailable : null
+  const disabledReason = (entry: Entry) => entry.kind === "command" ? entry.unavailable : null
   const selectable = shownEntries.filter((entry) => !disabledReason(entry))
 
-  const pick = (e: Entry) => {
-    if (disabledReason(e)) return
-    if (e.kind === "typed") onPickCatalogEntry?.(e.entry)
-    else if (e.kind === "skill") onPick(e.skill)
-    else if (e.kind === "workflow") onPickWorkflow(e.command)
-    else if (e.kind === "catalog") onPickCatalog?.()
-    else e.action()
+  const pick = (entry: Entry) => {
+    if (disabledReason(entry)) return
+    if (entry.kind === "skill") onPick(entry.skill)
+    else entry.action()
   }
 
   const active = useMenuKeyboardNav(
@@ -121,49 +86,38 @@ export function SlashMenu({
     activeItemRef.current?.scrollIntoView({ block: "nearest" })
   }, [active])
 
-  if (entries.length === 0 && !catalogState) return null
+  if (shownEntries.length === 0) return null
 
   return (
     <div className="mx-auto mb-2 w-full max-w-6xl overflow-hidden rounded-xl border bg-popover shadow-lg">
-      <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">{uiText("commands_skills_workflows_1abfc720")}</div>
       <div className="max-h-64 overflow-y-auto p-1">
-        {shownEntries.map((e, i) => (
-          <div key={e.id}>
-          {(i === 0 || shownEntries[i - 1].kind !== e.kind) && <div className="px-3 pb-1 pt-2 text-[10px] text-muted-foreground">
-            {e.kind === "typed" ? uiText("catalog_workflow_this_message_4bad8776") : e.kind === "workflow" ? uiText("text_expansion_workflow_8362c042") : e.kind === "skill" ? uiText("skills_99aea2f9") : e.kind === "command" ? uiText("command_6ee4a9a8") : uiText("catalog_management_8dd26df6")}
-          </div>}
-          <button
-            ref={selectable[active]?.id === e.id ? activeItemRef : undefined}
-            disabled={!!disabledReason(e)}
-            onClick={() => pick(e)}
-            className={cn(
-              "flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
-              selectable[active]?.id === e.id && "bg-accent",
-              "disabled:opacity-50",
-            )}
-          >
-            <span className="flex items-center gap-1.5 text-sm font-medium">
-              /{e.name}
-              <span
+        {shownEntries.map((entry, i) => {
+          const unavailable = disabledReason(entry)
+          return (
+            <div key={entry.id}>
+              {(i === 0 || shownEntries[i - 1].kind !== entry.kind) && (
+                <div className="px-3 pb-1 pt-2 text-[10px] text-muted-foreground">
+                  {entry.kind === "skill" ? uiText("skills_99aea2f9") : uiText("command_6ee4a9a8")}
+                </div>
+              )}
+              <button
+                ref={selectable[active]?.id === entry.id ? activeItemRef : undefined}
+                disabled={!!unavailable}
+                onClick={() => pick(entry)}
                 className={cn(
-                  "rounded-full px-1.5 py-0 text-[10px] font-normal",
-                  e.kind === "workflow"
-                    ? "bg-primary/15 text-primary"
-                    : "bg-muted text-muted-foreground",
+                  "flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
+                  selectable[active]?.id === entry.id && "bg-accent",
+                  "disabled:opacity-50",
                 )}
               >
-                {e.kind === "typed" ? `${e.entry.source} · r${e.entry.revision}` : e.kind === "command" ? uiText("command_6ee4a9a8") : e.kind === "catalog" ? uiText("catalog_selection_a07f95c4") : e.kind === "workflow" ? uiText("text_expansion_96adb387") : uiText("skills_99aea2f9")}
-              </span>
-            </span>
-            {(disabledReason(e) || e.description) ? (
-              <span className="line-clamp-1 text-xs text-muted-foreground">{disabledReason(e) || e.description}</span>
-            ) : null}
-          </button>
-          </div>
-        ))}
-        {!entries.length && !catalogState?.loading && !catalogState?.error && <p className="px-3 py-2 text-xs text-muted-foreground">{uiText("no_matching_commands_or_workflows_bfef441f")}</p>}
-        {catalogState?.loading && <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("loading_workflow_catalog_59214f82")}</p>}
-        {catalogState?.error && <p role="alert" className="px-3 py-2 text-xs text-destructive">{uiText("could_not_load_catalog_a2342d5f")}{catalogState.error}</p>}
+                <span className="text-sm font-medium">/{entry.name}</span>
+                {(unavailable || entry.description) && (
+                  <span className="line-clamp-1 text-xs text-muted-foreground">{unavailable || entry.description}</span>
+                )}
+              </button>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

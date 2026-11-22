@@ -8,7 +8,6 @@ export type SettingsTabKey =
   | "prompts"
   | "skills"
   | "mcp"
-  | "workflows"
   | "hooks"
   | "permissions"
   | "masking"

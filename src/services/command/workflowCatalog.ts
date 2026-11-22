@@ -1,9 +1,7 @@
 import { uiText } from "@shared/i18n/ui"
 import { apiClient } from "../api"
-import { isApiError } from "../api/errors"
 
 export type WorkflowSource = "builtin" | "project" | "workspace" | "user" | "plugin"
-export type WorkflowSelection = { id: string; source: WorkflowSource; revision: number; args: unknown }
 export type WorkflowCatalogEntry = {
   id: string; name: string; description: string
   kind: "instruction" | "orchestration"; source: WorkflowSource; revision: number
@@ -109,23 +107,6 @@ export function parseWorkflowCatalog(value: unknown): WorkflowCatalog {
   return { revision: value.revision as number, entries }
 }
 
-export function workflowUnavailableReason(entry: WorkflowCatalogEntry): string | null {
-  if (entry.status !== "valid") return entry.last_error || uiText("invalid_definition_d28c9eaf")
-  if (!entry.winner) return uiText("not_the_active_source_ed72c73c")
-  if (entry.revision <= 0) return uiText("no_sendable_revision_119eaea0")
-  if (entry.kind !== "instruction") return uiText("orchestration_workflows_require_the_workflow_run_api_f7631380")
-  if (entry.invocation_policy.explicit !== true) return uiText("explicit_selection_is_not_allowed_ac1f6f64")
-  return null
-}
-
-export function prepareWorkflowSelection(draft: TypedWorkflowDraft): WorkflowSelection {
-  const reason = workflowUnavailableReason(draft.entry)
-  if (reason) throw new Error(reason)
-  return { id: draft.entry.id, source: draft.entry.source, revision: draft.entry.revision,
-    args: parseWorkflowArguments(draft.entry, draft.argsText) }
-}
-
-/** Shared argument validation; each caller still owns its invocation admission. */
 export function parseWorkflowArguments(entry: WorkflowCatalogEntry, argsText: string): unknown {
   validateWorkflowSchema(entry.argument_schema)
   let args: unknown
@@ -143,17 +124,7 @@ export function parseWorkflowArguments(entry: WorkflowCatalogEntry, argsText: st
   return args
 }
 
-export async function getWorkflowCatalog(sessionId: string | null, signal?: AbortSignal): Promise<WorkflowCatalog> {
-  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""
-  return parseWorkflowCatalog(await apiClient.get<unknown>(`/bamboo/workflow-catalog${query}`, { signal }))
-}
-
-export function workflowSubmissionError(error: unknown): { code: string; message: string } | null {
-  if (!isApiError(error) || !error.body) return null
-  try {
-    const body = JSON.parse(error.body) as { error?: { code?: unknown; message?: unknown } }
-    const code = body.error?.code
-    if (typeof code !== "string" || (!code.startsWith("workflow_") && code !== "root_orchestration_incompatible_mode")) return null
-    return { code, message: typeof body.error?.message === "string" ? body.error.message : error.message }
-  } catch { return null }
+export async function getWorkflowCatalog(sessionId: string, signal?: AbortSignal): Promise<WorkflowCatalog> {
+  const query = new URLSearchParams({ orchestration_only: "true", session_id: sessionId })
+  return parseWorkflowCatalog(await apiClient.get<unknown>("/bamboo/workflow-catalog?" + query, { signal }))
 }

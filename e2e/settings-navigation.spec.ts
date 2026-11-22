@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js";
 import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.ts";
 
-test("real-lane Settings helpers navigate the built page and responsive categories", async ({ page }) => {
+test("real-lane Settings helpers navigate the built page and responsive categories", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1");
     localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
@@ -23,6 +23,8 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   const settings = settingsSurface(page);
   await expect(settings).toBeVisible();
   await expect(settingsSurface(page, "dialog")).toHaveCount(0);
+  await expect(settings.locator('#settings-category option[value="workflows"]')).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: /^(Workflow|Workflow[s]|工作流)$/ })).toHaveCount(0);
   await expect(composer).toBeHidden();
   await expect(settings.locator("#settings-category")).toBeVisible({
     visible: (page.viewportSize()?.width ?? 0) < 768,
@@ -44,6 +46,12 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   await expect(settings.getByRole("button", { name: "导入 JSON", exact: true })).toBeEnabled();
   await selectSettingsCategory(settings, "general", "通用");
   await expect(settings.getByRole("heading", { name: "通用", exact: true })).toBeVisible();
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("settings-categories", {
+      body: await settings.screenshot(),
+      contentType: "image/png",
+    });
+  }
   await closeSettings(settings);
   await expect(composer).toBeVisible();
   expect(observation.errorResponses).toEqual([]);
