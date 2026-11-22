@@ -44,13 +44,14 @@ export function SlashMenu({
         action: onPickCompact, unavailable: compactUnavailable }
     : null
   const workflowDescription = uiText("workflow_run_title")
+  const workflowEntry: Entry | null = onOpenWorkflowRuns && matches("workflow", workflowDescription)
+    ? { kind: "command", id: "builtin-workflow", name: "workflow", description: workflowDescription,
+        action: onOpenWorkflowRuns }
+    : null
   const entries: Entry[] = [
     ...(onPickGoal && matches("goal", uiText("set_session_goal_98fa0b0f")) ? [{ kind: "command" as const, id: "builtin-goal", name: "goal", description: uiText("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8"), action: onPickGoal }] : []),
     ...(compactEntry ? [compactEntry] : []),
-    ...(onOpenWorkflowRuns && matches("workflow", workflowDescription) ? [{
-      kind: "command" as const, id: "builtin-workflow", name: "workflow", description: workflowDescription,
-      action: onOpenWorkflowRuns,
-    }] : []),
+    ...(workflowEntry ? [workflowEntry] : []),
     ...skills
       .filter((skill) => matches(skill.name, skill.description))
       .map((skill) => ({
@@ -61,8 +62,9 @@ export function SlashMenu({
         skill,
       })),
   ].slice(0, 8)
-  // The exact built-in command is reserved, including when it is unavailable.
-  const shownEntries = q === "compact" && compactEntry ? [compactEntry] : entries
+  // Exact compact and workflow commands take precedence over matching Skills.
+  const exactCommand = [compactEntry, workflowEntry].find((entry) => entry?.name === q)
+  const shownEntries = exactCommand ? [exactCommand] : entries
   const disabledReason = (entry: Entry) => entry.kind === "command" ? entry.unavailable : null
   const selectable = shownEntries.filter((entry) => !disabledReason(entry))
 

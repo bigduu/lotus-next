@@ -657,6 +657,10 @@ export function ChatPane({
 
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const [workflowRunsOpen, setWorkflowRunsOpen] = useState(false)
+  const openWorkflowRuns = () => {
+    setMenusDismissed(true)
+    setWorkflowRunsOpen(true)
+  }
   const [clearTarget, setClearTarget] = useState<{ id: string; title: string } | null>(null)
   // Tiptap reports the active @query at the caret, including mid-message edits.
   const [atQuery, setAtQuery] = useState<string | null>(null)
@@ -909,6 +913,10 @@ export function ChatPane({
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
+    if (currentSessionId && text.trim().toLowerCase() === "/workflow") {
+      openWorkflowRuns()
+      return
+    }
     const loopCommand = parseSessionLoopCommand(text)
     if (loopCommand !== null) {
       if (loopCommand === "invalid") { showToast(uiText("session_loop_usage")); return }
@@ -1201,7 +1209,7 @@ export function ChatPane({
     ...(currentSessionId ? [{ label: uiText("conversation_clear_action"), icon: <RotateCcw className="size-4" />,
       onClick: () => setClearTarget({ id: currentSessionId, title: currentChat?.title || currentSessionId }) }] : []),
     ...(currentSessionId ? [{ label: uiText("workflow_run_title"), icon: <BookText className="size-4" />,
-      onClick: () => setWorkflowRunsOpen(true) }] : []),
+      onClick: openWorkflowRuns }] : []),
     ...(currentSessionId && messages.length > 0
       ? [
           {
@@ -1284,7 +1292,7 @@ export function ChatPane({
             </Select>
             {currentSessionId ? (
               <>
-                <Button size="icon" variant="ghost" aria-label={uiText("workflow_run_title")} onClick={() => setWorkflowRunsOpen(true)}>
+                <Button size="icon" variant="ghost" aria-label={uiText("workflow_run_title")} onClick={openWorkflowRuns}>
                   <BookText className="size-4" />
                 </Button>
                 <Button
@@ -1627,10 +1635,7 @@ export function ChatPane({
           onClearSkill={() => changeSelectedSkill(null)}
           onPickSkill={pickSkill}
           skills={skills}
-          onOpenWorkflowRuns={currentSessionId ? () => {
-            setMenusDismissed(true)
-            setWorkflowRunsOpen(true)
-          } : undefined}
+          onOpenWorkflowRuns={currentSessionId ? openWorkflowRuns : undefined}
           onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
           onPickCompact={() => {
             const latest = useAppStore.getState().inputStates[draftKey]

@@ -32,10 +32,14 @@ test("chat offers executable Workflow Runs while preserving the user's draft", a
   const observation = await installArtifactRuntime(page, standaloneScenario)
   const catalogQueries: URLSearchParams[] = []
   const legacyRequests: string[] = []
+  const chatWrites: string[] = []
   const starts: unknown[] = []
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname
     if (/^\/api\/v1\/(?:commands|bamboo\/workflows)(?:\/|$)/.test(path)) legacyRequests.push(path)
+    if (request.method() === "POST" && /^\/api\/v1\/(?:chat|sessions\/[^/]+\/(?:guidance|messages))(?:\/|$)/.test(path)) {
+      chatWrites.push(path)
+    }
   })
   await page.route("**/api/v1/bamboo/workflow-catalog?*", (route) => {
     catalogQueries.push(new URL(route.request().url()).searchParams)
@@ -48,7 +52,7 @@ test("chat offers executable Workflow Runs while preserving the user's draft", a
       starts.push(route.request().postDataJSON())
       return route.fulfill({ status: 202, json: run })
     }
-    return route.fulfill({ json: [] })
+    return route.fulfill({ json: starts.length ? [run] : [] })
   })
   await page.route("**/api/v1/sessions/*/workflow-runs/inspect-run", (route) => route.fulfill({ json: run }))
   await page.route("**/api/v1/sessions/*/workflow-runs/inspect-run/events?*", (route) => route.fulfill({ json: [] }))
@@ -79,6 +83,12 @@ test("chat offers executable Workflow Runs while preserving the user's draft", a
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
   await expectComposerText(composer, "/workflow")
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect(dialog).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(dialog).toHaveCount(0)
+  await expectComposerText(composer, "/workflow")
+  expect(chatWrites).toEqual([])
   expect(legacyRequests).toEqual([])
   expect(observation.pageErrors).toEqual([])
 })
