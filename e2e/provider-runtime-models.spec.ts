@@ -30,7 +30,7 @@ test("new provider offers only the three general provider types", async ({ page 
   expect(observation.pageErrors).toEqual([])
 })
 
-test("the LiteLLM experiment saves per provider and reloads with its effective state", async ({ page }) => {
+test("the LiteLLM experiment saves per provider and reloads with its effective state", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
@@ -82,6 +82,10 @@ test("the LiteLLM experiment saves per provider and reloads with its effective s
 
   await editProvider(instance.label).click()
   await expect(toggle).not.toBeChecked()
+  await testInfo.attach("litellm-experiment-default-off", {
+    body: await experiment.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  })
   await save.click()
   await expect(editProvider(instance.label)).toBeVisible()
   expect(writes).toHaveLength(1)
