@@ -182,6 +182,8 @@ const apiResponse = (
     return actorSnapshotFixture(session.id, 0)
   }
   if (method === "GET" && /^\/api\/v1\/sessions\/[^/]+\/guidance$/.test(pathnameWithSearch)) return { messages: [] }
+  const taskRead = /^\/api\/v1\/task\/([^/]+)$/.exec(pathnameWithSearch)
+  if (method === "GET" && taskRead) return { session_id: decodeURIComponent(taskRead[1]), title: null, items: [], version: 0 }
   if (method === "GET" && /^\/api\/v1\/bamboo\/workflow-catalog(?:\?.*)?$/.test(pathnameWithSearch)) {
     return { revision: 1, entries: [] }
   }

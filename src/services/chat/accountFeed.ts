@@ -29,6 +29,22 @@ let feedSubscription: FeedSubscription | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let offReconnected: (() => void) | null = null;
 
+// Only mounted chat cards need Task snapshots from the account-wide feed.
+const taskListViewers = new Map<string, number>();
+
+export const observeSessionTaskList = (sessionId: string): (() => void) => {
+  taskListViewers.set(sessionId, (taskListViewers.get(sessionId) ?? 0) + 1);
+  return () => {
+    const viewers = taskListViewers.get(sessionId) ?? 0;
+    if (viewers > 1) taskListViewers.set(sessionId, viewers - 1);
+    else taskListViewers.delete(sessionId);
+  };
+};
+
+const refreshTaskSnapshot = (sessionId: string): void => {
+  void useAppStore.getState().loadTaskList(sessionId).catch(() => {});
+};
+
 /**
  * True while the account feed is RUNNING but unavailable: either the shared
  * WebSocket is down or this feed was isolated after a synchronous delivery
@@ -136,6 +152,17 @@ const applyChange = (change: ChangeEvent): void => {
     store.reconcileClearedConversation(sessionId);
   }
   if (event.type === "session_deleted") store.invalidateSessionNavigation(sessionId);
+
+  if (sessionId && taskListViewers.has(sessionId)) {
+    if (event.type === "task_list_updated" && event.task_list?.session_id === sessionId) {
+      const version = event.version ?? event.task_list.version;
+      if (version === undefined) refreshTaskSnapshot(sessionId);
+      else store.setTaskList(sessionId, { ...event.task_list, version });
+    } else if (event.type === "session_history_committed") {
+      // Final task progress can be saved after the last full Task event.
+      refreshTaskSnapshot(sessionId);
+    }
+  }
 
   // Server-side preference-gated notifications → surface as a browser
   // notification when the user isn't actively watching that session.
@@ -250,6 +277,7 @@ export const startAccountFeed = (): void => {
         clearCursor();
         cancelScheduledRefresh();
         refreshSessionsNowAfterReset();
+        for (const sessionId of taskListViewers.keys()) refreshTaskSnapshot(sessionId);
       },
       onChange: (change) => {
         useAppStore.getState().setAgentAvailability(true);

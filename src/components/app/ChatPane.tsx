@@ -80,6 +80,7 @@ import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationCon
 import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
 import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
 import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
+import { SessionTaskDag } from "@/components/chat/SessionTaskDag"
 import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 import {
   Select,
@@ -1470,6 +1471,10 @@ export function ChatPane({
         {...sessionDrop.handlers}
           >
         <SessionCompatibilityNotice state={chat.executionCompatibility} sessionId={currentSessionId} />
+        {currentSessionId && currentChat?.id === currentSessionId && currentChat.kind !== "child"
+          && !currentChat.parentSessionId && !historyBlocked && pageVisible !== false ? (
+          <SessionTaskDag key={`task-dag:${currentSessionId}`} sessionId={currentSessionId} running={currentlyRunning} />
+        ) : null}
         {pendingApproval && chat.approvalCompatibility?.blocked ? (
           <section aria-label={uiText("subagent_approval_request_4321e83b")}>
             <p className="px-3 pt-2 text-sm font-medium">{uiText("subagent_approval_request_4321e83b")}</p>
