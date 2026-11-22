@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useState } from "react"
+import { useId, useState } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
 import type { DefaultsConfig, NewProviderKind, ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
@@ -62,6 +62,7 @@ interface Draft {
   responsesOnlyModels: string
   targetProvider: string
   requestOverridesJson: string
+  litellmWireTypes?: boolean
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v))
@@ -170,6 +171,10 @@ function buildPayload(
     config.request_overrides = null
   }
 
+  if (draft.litellmWireTypes !== undefined) {
+    config.litellm_wire_types = draft.litellmWireTypes
+  }
+
   return {
     payload: {
       type,
@@ -245,6 +250,8 @@ export function InstanceEditor({
 }) {
   useUiLocale()
   const isEdit = instance != null
+  const litellmWireTypes = instance?.experiments?.litellm_wire_types
+  const litellmSwitchId = useId()
   const hasStoredApiKey = isMaskedSecret(
     ((instance?.config ?? {}) as Record<string, unknown>).api_key,
   )
@@ -521,6 +528,31 @@ export function InstanceEditor({
             />
           </label>
         </div>
+      ) : null}
+
+      {typeof litellmWireTypes === "boolean" ? (
+        <fieldset className="rounded-md border p-2.5">
+          <legend className="px-1 text-xs font-medium">{uiText("provider_experiments")}</legend>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <label htmlFor={litellmSwitchId} className="block text-sm font-medium">
+                {uiText("provider_experiments_litellm")}
+              </label>
+              <p id={`${litellmSwitchId}-hint`} className="text-xs text-muted-foreground">
+                {uiText("provider_experiments_litellm_hint")}
+              </p>
+            </div>
+            <Switch
+              id={litellmSwitchId}
+              aria-describedby={`${litellmSwitchId}-hint`}
+              checked={draft.litellmWireTypes ?? litellmWireTypes}
+              disabled={saving}
+              onCheckedChange={(checked) => patch({
+                litellmWireTypes: checked === litellmWireTypes ? undefined : checked,
+              })}
+            />
+          </div>
+        </fieldset>
       ) : null}
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
