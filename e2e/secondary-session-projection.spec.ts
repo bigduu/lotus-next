@@ -38,8 +38,9 @@ async function prepare(page: Page, legacyTarget?: string) {
   }, { rootId, legacyTarget, origin: standaloneScenario.origin })
   const observation = await installArtifactRuntime(page, standaloneScenario)
   const projected: string[] = []
-  const holdNested = Promise.withResolvers<void>()
-  if (legacyTarget) holdNested.resolve()
+  let releaseNested!: () => void
+  const holdNested = new Promise<void>((resolve) => { releaseNested = resolve })
+  if (legacyTarget) releaseNested()
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -59,7 +60,7 @@ async function prepare(page: Page, legacyTarget?: string) {
     if (history) {
       expect(url.searchParams.get("projection")).toBe("messages")
       projected.push(history.id)
-      if (history.id === nestedId) await holdNested.promise
+      if (history.id === nestedId) await holdNested
       return route.fulfill({ json: {
         session_id: history.id, projection: "messages", is_delta: false, truncated: false, total_message_count: 1,
         messages: [{ id: history.id + "-answer", role: "assistant", content: history.title + " answer", created_at: at }],
@@ -68,13 +69,13 @@ async function prepare(page: Page, legacyTarget?: string) {
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
-  return { observation, projected, holdNested }
+  return { observation, projected, releaseNested }
 }
 
 const frame = (value: unknown) => value as { type?: string; ch?: string }
 
 test("reads and quickly switches only between subagents in the active tree", async ({ page }, info) => {
-  const { observation, projected, holdNested } = await prepare(page)
+  const { observation, projected, releaseNested } = await prepare(page)
   try {
     await page.getByRole("button", { name: "查看子代理树", exact: true }).click()
     const panel = page.locator("#right-workbench")
@@ -102,7 +103,7 @@ test("reads and quickly switches only between subagents in the active tree", asy
     await page.getByRole("option", { name: /Search branch.*Current root/ }).click()
     await expect(panel.getByText("Search branch answer")).toBeVisible()
     const late = page.waitForResponse((response) => response.url().includes("/sessions/" + nestedId + "/history"))
-    holdNested.resolve()
+    releaseNested()
     await late
     await expect(panel.getByText("Nested writer answer")).toHaveCount(0)
 
@@ -122,7 +123,7 @@ test("reads and quickly switches only between subagents in the active tree", asy
     expect(observation.pageErrors).toEqual([])
     expect(observation.protocolErrors).toEqual([])
   } finally {
-    holdNested.resolve()
+    releaseNested()
   }
 })
 
