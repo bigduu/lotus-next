@@ -263,7 +263,7 @@ export const uiZhCn = {
   "project_work_continue_in_codex": "在 Codex 继续",
   "project_work_codex_prepare_again": "重新准备 Codex 交接",
   "project_work_codex_preparing": "正在准备所选工作的交接…",
-  "project_work_codex_terminal_help": "安装 Codex CLI 后，在本机终端运行此命令。交接可在十分钟内领取一次。",
+  "project_work_codex_terminal_help": "安装 Codex CLI 后，请在 Windows 的 PowerShell 或 macOS 和 Linux 的 Bash 或 Zsh 中运行。交接可在十分钟内领取一次。",
   "project_work_codex_command": "Codex 交接命令",
   "project_work_codex_copy": "复制命令",
   "project_work_codex_copied": "已复制命令",

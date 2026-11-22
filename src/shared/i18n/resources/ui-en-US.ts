@@ -263,7 +263,7 @@ export const uiEnUs = {
   "project_work_continue_in_codex": "Continue in Codex",
   "project_work_codex_prepare_again": "Prepare a new Codex handoff",
   "project_work_codex_preparing": "Preparing the selected Work…",
-  "project_work_codex_terminal_help": "Run this command in your local terminal with Codex CLI installed. You can claim this handoff once within ten minutes.",
+  "project_work_codex_terminal_help": "With Codex CLI installed, run this command in PowerShell on Windows or Bash or Zsh on macOS and Linux. You can claim this handoff once within ten minutes.",
   "project_work_codex_command": "Codex handoff command",
   "project_work_codex_copy": "Copy command",
   "project_work_codex_copied": "Command copied",
