@@ -425,10 +425,7 @@ export function DefaultsEditor() {
         </div>
         {ultraSelected ? (
           <p className="mt-2 text-[11px] text-muted-foreground">
-            {uiText("chat_ultra_default_description", {
-              effort: REASONING_OPTIONS.find((option) => option.value === value.reasoningEffort)?.label
-                ?? uiText("auto_7eb336e4"),
-            })}
+            {uiText("chat_ultra_default_description")}
           </p>
         ) : null}
       </div>

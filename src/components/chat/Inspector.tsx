@@ -42,12 +42,20 @@ function GoalSection({
   const [draft, setDraft] = useState("")
   const [autoContinue, setAutoContinue] = useState(false)
   const [recoverTimeouts, setRecoverTimeouts] = useState(false)
+  const [resumeAfterRestart, setResumeAfterRestart] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
   const goal = goldConfig?.goal
   const recoveryPolicy = (goldConfig?.recovery?.max_attempts ?? 0) > 0
     ? goldConfig!.recovery!
     : { max_attempts: 3, max_elapsed_seconds: 900 }
+  const stopReason = goalState?.stop_reason === "continuation_budget"
+    ? uiText("goal_stopped_at_continuation_limit")
+    : goalState?.stop_reason === "no_progress"
+      ? uiText("goal_stopped_without_progress")
+      : goalState?.stop_reason === "verification_unavailable"
+        ? uiText("goal_verification_unavailable")
+        : null
 
   const save = async () => {
     if (saving) return
@@ -58,6 +66,7 @@ function GoalSection({
         gold_config: {
           ...(goldConfig ?? { enabled: true }), enabled: true, goal: g || null,
           auto_continue_enabled: autoContinue,
+          resume_after_restart: autoContinue && resumeAfterRestart,
           recovery: recoverTimeouts && autoContinue
             ? recoveryPolicy
             : { max_attempts: 0, max_elapsed_seconds: 0 },
@@ -79,6 +88,7 @@ function GoalSection({
               setDraft(goal ?? "")
               setAutoContinue(goldConfig?.auto_continue_enabled ?? false)
               setRecoverTimeouts((goldConfig?.recovery?.max_attempts ?? 0) > 0)
+              setResumeAfterRestart(goldConfig?.resume_after_restart ?? false)
               setSaveError("")
               setEditing(true)
             }}
@@ -88,7 +98,7 @@ function GoalSection({
           </button>
         ) : null}
       </div>
-      <p className="mb-2 text-xs text-muted-foreground">{uiText("chat_commands_a9207e15")}<code>{uiText("goal_goal_text_4fe4dd06")}</code>{uiText("set_and_pursue_270d1beb")}<code>/goal off</code>{uiText("pause_bfaa6e86")}<code>/goal clear</code>{uiText("clear_531ffd78")}</p>
+      <p className="mb-2 text-xs text-muted-foreground">{uiText("chat_commands_a9207e15")}<code>{uiText("goal_goal_text_4fe4dd06")}</code>{uiText("set_and_pursue_270d1beb")}<code>/goal off</code>{uiText("pause_bfaa6e86")}<code>/goal resume</code>{uiText("goal_resume_command_description")}<code>/goal clear</code>{uiText("clear_531ffd78")}</p>
       {editing ? (
         <>
           <textarea
@@ -105,6 +115,9 @@ function GoalSection({
             <input type="checkbox" checked={recoverTimeouts} disabled={!autoContinue} onChange={(event) => setRecoverTimeouts(event.target.checked)} />
             {uiText("attempt_recovery_after_an_output_timeout_227c0054")}</label>
           {autoContinue && recoverTimeouts && <p className="mt-1 text-xs text-muted-foreground">{uiText("extra_attempts_per_goal_at_most_71934320")} {Math.min(recoveryPolicy.max_attempts, 10)} {uiText("attempts_recovery_window_123ea7f2")} {Math.min(recoveryPolicy.max_elapsed_seconds, 3600) / 60} {uiText("minutes_stopping_ends_the_wait_4accfbf3")}</p>}
+          <label className="mt-2 flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={resumeAfterRestart} disabled={!autoContinue} onChange={(event) => setResumeAfterRestart(event.target.checked)} />
+            {uiText("goal_resume_after_restart")}</label>
           {saveError && <p role="alert" className="mt-1 text-xs text-destructive">{saveError}</p>}
           <div className="mt-1.5 flex justify-end gap-2">
             <Button size="sm" variant="secondary" disabled={saving} onClick={() => setEditing(false)}>
@@ -119,6 +132,7 @@ function GoalSection({
           {goalState?.status ? (
             <div className="mt-1.5 text-xs text-muted-foreground">{uiText("status_ed1eb79b")}{goalState.status}</div>
           ) : null}
+          {stopReason && <p className="mt-1 text-xs text-muted-foreground">{stopReason}</p>}
         </>
       ) : (
         <p className="text-xs leading-relaxed text-muted-foreground">

@@ -74,6 +74,9 @@ export function ModelEffortPicker({
   const displayed = efforts[displayIndex]!
   const text = labels()
   const currentLabel = unconfirmed ? uiText("unconfirmed_c098e854") : text[selected]
+  const effortDescription = allowUltra && !unconfirmed
+    ? uiText(displayed === "ultra" ? "ultra_reasoning_description" : "standard_reasoning_description")
+    : undefined
   const accent = accents[displayed]
   const normalized = query.trim().toLowerCase()
   const filtered = normalized ? modelGroups.flatMap((group) => {
@@ -132,7 +135,7 @@ export function ModelEffortPicker({
               {selected === "ultra" ? <Sparkles className="mx-auto size-4" style={{ color: accent }} aria-hidden />
                 : <span aria-hidden />}
               <div className="min-w-0 text-center">
-                <p className="truncate text-sm font-semibold" style={{ color: accent }} aria-live="polite" title={unconfirmed ? currentLabel : text[displayed]}>
+                <p className="truncate text-sm font-semibold" style={{ color: accent }} aria-live="polite" title={effortDescription ?? (unconfirmed ? currentLabel : text[displayed])}>
                   {unconfirmed ? currentLabel : text[displayed]}
                 </p>
                 <button ref={modelButtonRef} type="button" data-testid="model-picker-model" disabled={unavailableModels} title={model || uiText("select_a_model_1afed6a8")}
@@ -167,6 +170,7 @@ export function ModelEffortPicker({
               </div>
               <input ref={sliderRef} type="range" min={0} max={efforts.length - 1} step={1} value={displayIndex}
                 aria-label={uiText("reasoning_level_c8c14507")} aria-valuetext={unconfirmed ? currentLabel : text[displayed]}
+                aria-description={effortDescription}
                 disabled={effortDisabled}
                 onPointerDown={() => { pointerActive.current = true }}
                 onChange={(event) => {

@@ -943,7 +943,14 @@ export function ChatPane({
         useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
         if (currentDraftKeyRef.current === draftKey) {
           const action = response.goal_command.action
-          showToast(action === "off" ? uiText("goal_paused_c6289896") : action === "clear" ? uiText("goal_cleared_0cfc707e") : action === "on_no_prompt" ? uiText("set_a_goal_first_cc87f18f") : action === "status" ? uiText("goal_settings_opened_63de7dc7") : uiText("goal_set_724a547c"))
+          const goalMessages: Partial<Record<string, string>> = {
+            off: uiText("goal_paused_c6289896"),
+            clear: uiText("goal_cleared_0cfc707e"),
+            on_no_prompt: uiText("set_a_goal_first_cc87f18f"),
+            status: uiText("goal_settings_opened_63de7dc7"),
+            resume: uiText("goal_resume_queued"),
+          }
+          showToast(goalMessages[action] ?? uiText("goal_set_724a547c"))
           if (action === "status" || action === "on_no_prompt") onOpenInspector()
         }
         try { await useAppStore.getState().loadChatHistory(sessionId) }

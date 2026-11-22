@@ -127,6 +127,7 @@ export interface GoldConfig {
   enabled: boolean;
   auto_answer_enabled?: boolean;
   auto_continue_enabled?: boolean;
+  resume_after_restart?: boolean;
   model_name?: string | null;
   /** The user's session goal, surfaced to the main agent and the evaluator. */
   goal?: string | null;
@@ -159,6 +160,7 @@ export interface GoalEvalRecord {
 export interface GoalState {
   objective: string;
   status: "active" | "complete" | "blocked" | "need_input" | "budget_limited" | string;
+  stop_reason?: "continuation_budget" | "no_progress" | "verification_unavailable" | string | null;
   declared_status?: "complete" | "blocked" | null;
   declared_at_round?: number | null;
   continuation_count: number;
