@@ -305,6 +305,7 @@ export function Inspector({
     collectSessionFileChanges(sessionId ? chat?.messages ?? [] : []), workspace ?? undefined,
   ), [reviewGroups, sessionId, chat?.messages, workspace])
   const fileChangeSummary = useMemo(() => summarizeSessionFileChangeGroups(fileChangeGroups), [fileChangeGroups])
+  const canReviewSubagents = Boolean(onOpenReview && chat?.kind === "root" && rootDescendantCount)
   const getProviderLabel = useProviderStore((s) => s.getProviderDisplayLabel)
 
   useEffect(() => {
@@ -525,7 +526,7 @@ export function Inspector({
             )}
           </section>
 
-          {fileChangeGroups.length > 0 ? (
+          {fileChangeGroups.length > 0 || canReviewSubagents ? (
             <section className="rounded-lg border p-3">
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <span className="text-xs font-medium text-muted-foreground">{uiText("file_changes_4d016b2f")}</span>
@@ -540,26 +541,30 @@ export function Inspector({
                   </button>
                 ) : null}
               </div>
-              <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {uiText("count_files", { count: fileChangeSummary.fileCount })} · {uiText("count_changes", { count: fileChangeSummary.editCount })}</span>
-                <span className="shrink-0">
-                  <span className="text-green-600 dark:text-green-400">
-                    +{fileChangeSummary.addedLines}
-                  </span>{" "}
-                  <span className="text-red-600 dark:text-red-400">
-                    −{fileChangeSummary.removedLines}
-                  </span>
-                </span>
-              </div>
-              <FileChangeList
-                groups={fileChangeGroups}
-                workspace={workspace ?? undefined}
-                pathMode="basename"
-                density="compact"
-                variant="summary"
-                onSelect={(group) => onOpenReview?.(group.id)}
-              />
+              {fileChangeGroups.length > 0 ? (
+                <>
+                  <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span>
+                      {uiText("count_files", { count: fileChangeSummary.fileCount })} · {uiText("count_changes", { count: fileChangeSummary.editCount })}</span>
+                    <span className="shrink-0">
+                      <span className="text-green-600 dark:text-green-400">
+                        +{fileChangeSummary.addedLines}
+                      </span>{" "}
+                      <span className="text-red-600 dark:text-red-400">
+                        −{fileChangeSummary.removedLines}
+                      </span>
+                    </span>
+                  </div>
+                  <FileChangeList
+                    groups={fileChangeGroups}
+                    workspace={workspace ?? undefined}
+                    pathMode="basename"
+                    density="compact"
+                    variant="summary"
+                    onSelect={(group) => onOpenReview?.(group.id)}
+                  />
+                </>
+              ) : null}
             </section>
           ) : null}
 

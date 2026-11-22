@@ -394,7 +394,7 @@ function App() {
   const workspacePath = currentChat?.config?.workspacePath
   const displayWorkspace = workspacePath ?? pickedWorkspace
   const [environmentSession, setEnvironmentSession] = useState<string | null>(null)
-  const reviewing = workbenchOpen && (selectedWorkbenchTab === "review" || selectedWorkbenchTab === "inspector")
+  const reviewing = workbenchOpen && selectedWorkbenchTab === "review"
   const subagentChanges = useSubagentFileChanges(currentChat, workbenchScope, !settingsOpen &&
     (reviewing || (currentSessionId !== null && environmentSession === currentSessionId)))
   const ownFileChanges = useMemo(() => collectSessionFileChanges(chat.messages), [chat.messages])

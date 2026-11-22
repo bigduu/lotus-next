@@ -91,7 +91,10 @@ test("Root Review combines durable edits from a child and a nested child in the 
       }
       if (url.pathname === `/api/v1/task/${id}`) return route.fulfill({ json: { session_id: id, items: [] } })
       if (url.pathname === `/api/v1/actors/${id}/snapshot`) {
-        return route.fulfill({ json: actorSnapshotFixture(id, item.subagent_count) })
+        const snapshot = actorSnapshotFixture(id, item.subagent_count)
+        if (id === root) Object.assign(snapshot.nodes[2], { parent_actor_id: worker, depth: 2 })
+        if (id === otherRoot) snapshot.nodes[1].actor_id = otherWorker
+        return route.fulfill({ json: snapshot })
       }
     }
     return route.fallback()
@@ -104,7 +107,13 @@ test("Root Review combines durable edits from a child and a nested child in the 
   }
   await page.goto(standaloneScenario.entryUrl)
   await expect.poll(() => treeReads).toBeGreaterThan(0)
+  await page.getByRole("button", { name: "Open side panel" }).click()
+  await openTool("Inspector")
+  const inspector = workbench.getByRole("tabpanel", { name: "Inspector" })
+  await expect(inspector.getByRole("tree")).toBeVisible()
+  await expect(inspector.getByRole("button", { name: "Review", exact: true })).toBeVisible()
   expect(childReads).toEqual([])
+  await workbench.getByRole("button", { name: "Collapse workbench" }).click()
   await page.getByRole("button", { name: "Open Environment" }).click()
   const changes = page.getByRole("region", { name: "Environment" }).getByRole("button", { name: /Changes/ })
   await expect(changes).toContainText("1 changed file")
@@ -135,8 +144,7 @@ test("Root Review combines durable edits from a child and a nested child in the 
   await workbench.getByRole("button", { name: "Collapse workbench" }).click()
   await expect(changes).toContainText("2 changed files")
   await changes.click()
-  await openTool("Inspector")
-  const inspector = workbench.getByRole("tabpanel", { name: "Inspector" })
+  await workbench.getByRole("tab", { name: "Inspector", exact: true }).click()
   await expect(inspector.getByText("2 files · 3 changes")).toBeVisible()
   await inspector.getByRole("button", { name: /shared\.txt/ }).filter({
     has: page.locator('[title="/isolated/shared.txt"]'),
@@ -147,7 +155,12 @@ test("Root Review combines durable edits from a child and a nested child in the 
 
   await page.getByRole("button", { name: "Other Root", exact: true }).click()
   await page.getByRole("button", { name: "Open side panel" }).click()
-  await openTool("Review")
+  await openTool("Inspector")
+  await expect(inspector.getByRole("tree")).toBeVisible()
+  const reviewEntry = inspector.getByRole("button", { name: "Review", exact: true })
+  await expect(reviewEntry).toBeVisible()
+  expect(childReads).not.toContain(otherWorker)
+  await reviewEntry.click()
   await expect(review.getByText("other.txt", { exact: true })).toBeVisible()
   await expect(review.getByText("Subagent: Other worker")).toBeVisible()
   await expect(review.getByText(/shared\.txt/)).toHaveCount(0)
