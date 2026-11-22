@@ -46,15 +46,18 @@ function GoalSection({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
   const goal = goldConfig?.goal
+  const visibleGoalState = goldConfig?.enabled && goal?.trim() === goalState?.objective
+    ? goalState
+    : null
   const supportsRestartRecovery = typeof goldConfig?.resume_after_restart === "boolean"
   const recoveryPolicy = (goldConfig?.recovery?.max_attempts ?? 0) > 0
     ? goldConfig!.recovery!
     : { max_attempts: 3, max_elapsed_seconds: 900 }
-  const stopReason = goalState?.stop_reason === "continuation_budget"
+  const stopReason = visibleGoalState?.stop_reason === "continuation_budget"
     ? uiText("goal_stopped_at_continuation_limit")
-    : goalState?.stop_reason === "no_progress"
+    : visibleGoalState?.stop_reason === "no_progress"
       ? uiText("goal_stopped_without_progress")
-      : goalState?.stop_reason === "verification_unavailable"
+      : visibleGoalState?.stop_reason === "verification_unavailable"
         ? uiText("goal_verification_unavailable")
         : null
 
@@ -130,8 +133,8 @@ function GoalSection({
       ) : goal ? (
         <>
           <p className="text-sm leading-relaxed">{goal}</p>
-          {goalState?.status ? (
-            <div className="mt-1.5 text-xs text-muted-foreground">{uiText("status_ed1eb79b")}{goalState.status}</div>
+          {visibleGoalState?.status ? (
+            <div className="mt-1.5 text-xs text-muted-foreground">{uiText("status_ed1eb79b")}{visibleGoalState.status}</div>
           ) : null}
           {stopReason && <p className="mt-1 text-xs text-muted-foreground">{stopReason}</p>}
         </>
