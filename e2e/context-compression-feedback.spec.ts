@@ -390,7 +390,7 @@ test("local Stop remains unconfirmed and detached late frames cannot overwrite u
 test("compression feedback follows its session through sidebar navigation", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation")
   const f = await prepare(page, info, { multipleSessions: true })
-  const active = page.getByRole("button", { name: "Background compression A", exact: true })
+  const active = page.getByRole("button", { name: /Background compression A$/ })
   const idle = page.getByRole("button", { name: "Idle comparison B", exact: true })
   await active.click()
   await expect.poll(() => f.channels.has("agent." + background)).toBe(true)
@@ -409,6 +409,9 @@ test("compression feedback follows its session through sidebar navigation", asyn
   await capture(f, "other-session-hides-background-feedback")
   await active.click()
   await expect.poll(() => f.channels.has("agent." + background)).toBe(true)
+  // A new scoped observation can restore live feedback after a rebind.
+  f.status("started", background)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_running"))
   f.status("completed", background)
   f.summary(background)
   f.budget(80, background)

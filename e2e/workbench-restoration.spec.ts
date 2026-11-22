@@ -1,3 +1,4 @@
+import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { expect, test, type Locator, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -40,6 +41,9 @@ async function installSessions(page: Page, includeSupervisor = false) {
       return route.fulfill({ json: { sessions: listed, total: listed.length, limit: 200, offset: 0 } })
     }
     for (const session of sessions) {
+      if (path === "/api/v1/actors/" + session.id + "/snapshot") {
+        return route.fulfill({ json: actorSnapshotFixture(session.id, 0) })
+      }
       if (path === `/api/v1/sessions/${session.id}`) {
         return route.fulfill({ json: { session }, headers: { ETag: '"1"' } })
       }

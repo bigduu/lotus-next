@@ -34,8 +34,12 @@ function SubagentPicker({ child, topology, onSelect }: {
   onSelect: (id: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(next) => {
+      if (next) setQuery("")
+      setOpen(next)
+    }}>
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" className="min-w-0 max-w-full" aria-label={uiText("switch_subagent")}>
           <span className="truncate">{actorTitle(child)}</span>
@@ -43,12 +47,12 @@ function SubagentPicker({ child, topology, onSelect }: {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] p-0">
-        <Command label={uiText("switch_subagent")}>
-          <CommandInput aria-label={uiText("search_subagents")} placeholder={uiText("search_subagents")}
+        <Command label={uiText("search_subagents")}>
+          <CommandInput value={query} onValueChange={setQuery} aria-label={uiText("search_subagents")} placeholder={uiText("search_subagents")}
             className="border-b px-3 py-2" />
           <CommandList className="max-h-[min(20rem,50dvh)] p-1">
             <CommandEmpty className="p-2 text-sm text-muted-foreground">{uiText("no_matching_subagents")}</CommandEmpty>
-            {Object.values(topology.byId).filter((node) => node.role === "child").map((node) => {
+            {Object.values(topology.byId).filter((node) => node.parentActorId !== null).map((node) => {
               const title = actorTitle(node)
               const path = parentPath(node, topology)
               const status = actorLifecycleLabel(node)
@@ -79,7 +83,7 @@ export function SubagentsPane({ rootId, active, descendantCount, selection, onSe
 }) {
   useUiLocale()
   const { childId, view } = selection
-  const state = useActorSnapshot(rootId, active, view === "messages" ? childId : null, descendantCount)
+  const state = useActorSnapshot(rootId, active, view === "messages" && childId !== rootId ? childId : null, descendantCount)
   const previousTree = useRef<ActorTreeData | undefined>(undefined)
   const topology = useMemo(() => state.snapshot
     ? actorSnapshotTree(state.snapshot, state.loading, previousTree.current)
@@ -88,7 +92,7 @@ export function SubagentsPane({ rootId, active, descendantCount, selection, onSe
   useEffect(() => { previousTree.current = topology }, [topology])
 
   const selected = childId ? topology.byId[childId] : undefined
-  const child = selected?.role === "child" ? selected : null
+  const child = selected?.parentActorId ? selected : null
   const reading = view === "messages" && child !== null
   const pane = useRef<HTMLElement>(null)
   const nextFocus = useRef<"tree" | "messages" | null>(null)
