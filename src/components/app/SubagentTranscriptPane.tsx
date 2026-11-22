@@ -1,7 +1,8 @@
+import { useRef } from "react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { ChevronDown, LoaderCircle, RefreshCw } from "lucide-react"
 
-import { MessageList } from "@/components/app/MessageList"
+import { MessageList, type HistoryReadingAnchor } from "@/components/app/MessageList"
 import { Button } from "@/components/ui/button"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
 import { useSubagentTranscript } from "@/hooks/useSubagentTranscript"
@@ -10,13 +11,18 @@ const noop = () => {}
 
 export function SubagentTranscriptPane({
   sessionId,
+  readingAnchor,
+  onReadingAnchor,
 }: {
   sessionId: string
+  readingAnchor?: HistoryReadingAnchor
+  onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
 }) {
   useUiLocale()
   const transcript = useSubagentTranscript(sessionId)
+  const anchor = useRef(readingAnchor).current
   const { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom } =
-    useStickyScroll(sessionId)
+    useStickyScroll(sessionId, Boolean(anchor))
 
   const body = transcript.loading && transcript.messages.length === 0 ? (
     <div
@@ -52,6 +58,9 @@ export function SubagentTranscriptPane({
         scrollRef={scrollRef}
         contentRef={contentRef}
         onScroll={handleScroll}
+        initialReadingAnchor={transcript.loading ? null : anchor}
+        onReadingAnchor={onReadingAnchor}
+        onMissingReadingAnchor={scrollToBottom}
         messages={transcript.messages}
         mergedSubAgents={{}}
         sending={transcript.streaming}

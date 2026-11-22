@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type Dispatch, type SetStateAction } from "react"
 import { defaultRangeExtractor, observeElementRect, useVirtualizer, type Range, type Rect, type Virtualizer } from "@tanstack/react-virtual"
 import {
   CircleAlert,
@@ -178,6 +178,10 @@ export interface ActorTreeProps {
   selectedActorId: string | null
   onSelectActor: (actorId: string) => void
   revealSelected?: boolean
+  expansion?: {
+    ids: ReadonlySet<string>
+    update: Dispatch<SetStateAction<ReadonlySet<string>>>
+  }
   unreadActorIds?: ReadonlySet<string>
   error?: string | null
   onRetry?: () => void
@@ -191,6 +195,7 @@ export function ActorTree({
   selectedActorId,
   onSelectActor,
   revealSelected = false,
+  expansion,
   unreadActorIds,
   error,
   onRetry,
@@ -200,9 +205,11 @@ export function ActorTree({
   useUiLocale()
   const treeId = useId()
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const [expandedActorIds, setExpandedActorIds] = useState<ReadonlySet<string>>(
+  const [localExpansion, setLocalExpansion] = useState<ReadonlySet<string>>(
     () => new Set([topology.rootActorId]),
   )
+  const expandedActorIds = expansion?.ids ?? localExpansion
+  const setExpandedActorIds = expansion?.update ?? setLocalExpansion
   const [activeActorId, setActiveActorId] = useState<string | null>(
     selectedActorId ?? topology.rootActorId,
   )
@@ -244,7 +251,7 @@ export function ActorTree({
   const virtualRows = virtualizer.getVirtualItems()
 
   useEffect(() => {
-    setExpandedActorIds(new Set([topology.rootActorId]))
+    setLocalExpansion(new Set([topology.rootActorId]))
     setActiveActorId(selectedActorIdRef.current ?? topology.rootActorId)
   }, [topology.rootActorId])
 
@@ -267,7 +274,7 @@ export function ActorTree({
       }
       return next.size === current.size ? current : next
     })
-  }, [selectedActorId, topology.byId]) // Refreshing the same selection preserves keyboard focus.
+  }, [selectedActorId, topology.byId, setExpandedActorIds]) // Refreshing the same selection preserves keyboard focus.
 
   const selectedIndex = rows.findIndex(({ node }) => node.actorId === selectedActorId)
   useEffect(() => {
@@ -283,7 +290,7 @@ export function ActorTree({
       else next.add(actorId)
       return next
     })
-  }, [])
+  }, [setExpandedActorIds])
 
   const activateIndex = (index: number) => {
     const row = rows[index]
