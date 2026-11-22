@@ -11,6 +11,7 @@ import { useThemeStore } from "@shared/store/themeStore"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
 import { applyGlobalAccentToDocument, getGlobalAccentColors } from "@shared/theme/globalAccentColors"
 import { useChat } from "@/hooks/useChat"
+import { useSubagentFileChanges } from "@/hooks/useSubagentFileChanges"
 import { assignSessionToSectionDurable } from "@/hooks/useProjectSidebarSections"
 import { useWorkbenchBrowserSelection } from "@/hooks/useWorkbenchBrowserSelection"
 import { activateWorkbenchTab, useWorkbenchState } from "@/hooks/useWorkbenchState"
@@ -23,6 +24,14 @@ import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
 import { navigateRecordedSession } from "@/lib/recordedSessionNavigation"
+import {
+  collectLiveSessionFileChanges,
+  collectSessionFileChanges,
+  groupSessionFileChanges,
+  mergeSessionFileChanges,
+  orderPersistedFileChanges,
+  summarizeSessionFileChangeGroups,
+} from "@/lib/sessionFileChanges"
 import { WorktreeManager } from "@/components/app/WorktreeManager"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
@@ -110,7 +119,7 @@ function App() {
   currentWorkbenchScope.current = workbenchScope
   const getCurrentWorkbenchScope = useCallback(() => currentWorkbenchScope.current, [])
   const { subagents, open: workbenchOpen, tab: workbenchTab, tools: openToolTabs,
-    reviewTarget: reviewTargetFilePath } = workbenchState
+    reviewTarget } = workbenchState
   const setWorkbenchOpen = (value: React.SetStateAction<boolean>) => setWorkbenchField("open", value)
   const setWorkbenchTab = useCallback((value: React.SetStateAction<RightWorkbenchTab | null>) => setWorkbenchField("tab", value), [setWorkbenchField])
   const rootId = currentChat?.kind === "root" ? currentChat.id : currentChat?.rootSessionId ?? null
@@ -384,6 +393,20 @@ function App() {
 
   const workspacePath = currentChat?.config?.workspacePath
   const displayWorkspace = workspacePath ?? pickedWorkspace
+  const [environmentSession, setEnvironmentSession] = useState<string | null>(null)
+  const reviewing = workbenchOpen && selectedWorkbenchTab === "review"
+  const subagentChanges = useSubagentFileChanges(currentChat, workbenchScope, !settingsOpen &&
+    (reviewing || (currentSessionId !== null && environmentSession === currentSessionId)))
+  const ownFileChanges = useMemo(() => collectSessionFileChanges(chat.messages), [chat.messages])
+  const persistedFileChanges = useMemo(() => subagentChanges.changes.length > 0
+    ? orderPersistedFileChanges([...ownFileChanges, ...subagentChanges.changes])
+    : ownFileChanges,
+  [ownFileChanges, subagentChanges.changes])
+  const liveFileChanges = useMemo(() => collectLiveSessionFileChanges(chat.liveSegments), [chat.liveSegments])
+  const fileChangeGroups = useMemo(() => groupSessionFileChanges(
+    mergeSessionFileChanges(persistedFileChanges, liveFileChanges), displayWorkspace ?? undefined,
+  ), [persistedFileChanges, liveFileChanges, displayWorkspace])
+  const fileChangeSummary = useMemo(() => summarizeSessionFileChangeGroups(fileChangeGroups), [fileChangeGroups])
   const visibleTabIds = visibleWorkbenchTabIds(
     visibleToolTabs,
     browserTabsForWorkbench,
@@ -457,11 +480,11 @@ function App() {
       openWorkbench("browser")
     }
   }
-  const openReview = (filePath?: string) => {
+  const openReview = (fileId?: string) => {
     workbenchSelectionVersionRef.current += 1
     updateWorkbench((previous) => ({
       ...activateWorkbenchTab(previous, "review"),
-      reviewTarget: filePath ?? previous.reviewTarget,
+      reviewTarget: fileId ?? previous.reviewTarget,
     }))
   }
   const toggleWorkbench = () => {
@@ -605,6 +628,7 @@ function App() {
                     open={workbenchOpen && selectedWorkbenchTab === "inspector"}
                     onClose={() => setWorkbenchOpen(false)}
                     workspace={displayWorkspace}
+                    fileChangeGroups={fileChangeGroups}
                     onEditWorkspace={() => setWsPickerOpen(true)}
                     onOpenReview={openReview}
                     onCopySessionId={copySessionId}
@@ -622,9 +646,11 @@ function App() {
                   <ReviewPane
                     key={workbenchScope}
                     sessionId={currentSessionId}
-                    liveSegments={chat.liveSegments}
+                    groups={fileChangeGroups}
+                    summary={fileChangeSummary}
+                    subagentChanges={subagentChanges}
                     workspace={displayWorkspace}
-                    targetFilePath={reviewTargetFilePath}
+                    targetFile={reviewTarget}
                   />
                 )}
                 browser={browserEnabled ? (
@@ -674,6 +700,8 @@ function App() {
       >
         <ChatPane
           chat={{ ...chat, select, newChat }}
+          fileChangeSummary={fileChangeSummary}
+          onEnvironmentVisible={setEnvironmentSession}
           pageVisible={!settingsOpen}
           onOpenRecordedSession={openSessionLink}
           pickedWorkspace={pickedWorkspace}

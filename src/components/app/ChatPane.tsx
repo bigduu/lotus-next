@@ -79,9 +79,11 @@ import { useNewSessionPermission } from "@shared/store/newSessionPermission"
 import {
   collectLiveSessionFileChanges,
   collectSessionFileChanges,
+  groupSessionFileChanges,
   mergeSessionFileChanges,
+  summarizeSessionFileChangeGroups,
+  type SessionFileChangeSummary,
 } from "@/lib/sessionFileChanges"
-import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
 import { extractDiagnosticId, type RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
 import { RunDiagnosticsEntry } from "@/components/chat/RunDiagnosticsEntry"
@@ -186,6 +188,8 @@ const EMPTY_PENDING_USER_IMAGES = [] as const
 /** The primary chat controls the transcript, composer and its transient dialogs. */
 export function ChatPane({
   chat,
+  fileChangeSummary,
+  onEnvironmentVisible,
   pickedWorkspace,
   worktreePath,
   pendingProjectId,
@@ -209,6 +213,8 @@ export function ChatPane({
   pageVisible = true,
 }: {
   chat: ChatState
+  fileChangeSummary?: SessionFileChangeSummary
+  onEnvironmentVisible?: (sessionId: string | null) => void
   pickedWorkspace: string | null
   /** Explicit checkout selected in the worktree manager for this Project. */
   worktreePath?: string | null
@@ -433,6 +439,9 @@ export function ChatPane({
   const environmentOpen = environmentPreference === "open"
     || (environmentPreference === "auto" && environmentHasRoom)
   const environmentVisible = environmentOpen && !(sidePaneOpen ?? false)
+  useEffect(() => {
+    onEnvironmentVisible?.(pageVisible && environmentVisible ? currentSessionId : null)
+  }, [currentSessionId, environmentVisible, onEnvironmentVisible, pageVisible])
   const environmentReservedWidth = environmentVisible && environmentHasRoom
     ? ENVIRONMENT_OCCUPIED_WIDTH
     : 0
@@ -648,33 +657,15 @@ export function ChatPane({
   liveSendRef.current = send
   const selectedWorktreePath = !currentSessionId ? preparation.path ?? worktreePath : null
   const displayWorkspace = workspacePath ?? selectedWorktreePath ?? selectedProjectPath ?? pickedWorkspace
+  const environmentChanges = useMemo(() => fileChangeSummary ?? summarizeSessionFileChangeGroups(
+    groupSessionFileChanges(mergeSessionFileChanges(
+      collectSessionFileChanges(messages), collectLiveSessionFileChanges(liveSegments),
+    ), displayWorkspace ?? undefined),
+  ), [fileChangeSummary, messages, liveSegments, displayWorkspace])
   const currentProjectName = useAppStore((state) => {
     const projectId = currentChat?.config?.projectId
     return projectId ? state.projects[projectId]?.name : undefined
   })
-  const persistedFileChanges = useMemo(() => collectSessionFileChanges(messages), [messages])
-  const liveFileChanges = useMemo(
-    () => collectLiveSessionFileChanges(liveSegments),
-    [liveSegments],
-  )
-  const sessionFileChanges = useMemo(
-    () => mergeSessionFileChanges(persistedFileChanges, liveFileChanges),
-    [persistedFileChanges, liveFileChanges],
-  )
-  const fileChangeSummary = useMemo(() => {
-    const filePaths = new Set<string>()
-    let addedLines = 0
-    let removedLines = 0
-
-    for (const change of sessionFileChanges) {
-      filePaths.add(change.payload.file_path)
-      const stats = getFileChangePayloadDiffStats(change.payload)
-      addedLines += stats.added
-      removedLines += stats.removed
-    }
-
-    return { changedFiles: filePaths.size, addedLines, removedLines }
-  }, [sessionFileChanges])
   const environmentSources = useMemo<EnvironmentSource[]>(() => {
     const sources = new Map<string, EnvironmentSource>()
     const addPath = (path: string) => {
@@ -1190,9 +1181,9 @@ export function ChatPane({
       workspace={displayWorkspace}
       projectName={currentProjectName}
       placement={currentChat?.placement}
-      changedFiles={fileChangeSummary.changedFiles}
-      addedLines={fileChangeSummary.addedLines}
-      removedLines={fileChangeSummary.removedLines}
+      changedFiles={environmentChanges.fileCount}
+      addedLines={environmentChanges.addedLines}
+      removedLines={environmentChanges.removedLines}
       sources={environmentSources}
       onOpenReview={() => launchWorkbench(onOpenReview ?? onOpenInspector)}
       onPreviewImage={setPreview}

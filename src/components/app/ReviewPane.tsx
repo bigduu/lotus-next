@@ -1,48 +1,40 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useMemo } from "react"
 import { FileDiff } from "lucide-react"
-import { useShallow } from "zustand/react/shallow"
 import { FileChangeList } from "@/components/chat/FileChangeList"
-import {
-  collectLiveSessionFileChanges,
-  collectSessionFileChanges,
-  groupSessionFileChanges,
-  mergeSessionFileChanges,
-  summarizeSessionFileChangeGroups,
-  type LiveFileChangeSegment,
-} from "@/lib/sessionFileChanges"
-import { selectSessionById, useAppStore } from "@shared/store/appStore"
+import { Button } from "@/components/ui/button"
+import type { SessionFileChangeGroup, SessionFileChangeSummary } from "@/lib/sessionFileChanges"
 
 export function ReviewPane({
   sessionId,
-  liveSegments = [],
+  groups,
+  summary,
+  subagentChanges,
   workspace,
-  targetFilePath,
+  targetFile,
 }: {
   sessionId: string | null
-  liveSegments?: readonly LiveFileChangeSegment[]
+  groups: readonly SessionFileChangeGroup[]
+  summary: SessionFileChangeSummary
+  subagentChanges: { loading: boolean; unavailable: boolean; truncated: boolean; retry: () => void }
   workspace?: string | null
-  targetFilePath?: string | null
+  targetFile?: string | null
 }) {
   useUiLocale()
-  const messages = useAppStore(
-    useShallow((state) =>
-      sessionId ? (selectSessionById(sessionId)(state)?.messages ?? []) : [],
-    ),
-  )
-  const changes = useMemo(
-    () =>
-      mergeSessionFileChanges(
-        collectSessionFileChanges(messages),
-        collectLiveSessionFileChanges(liveSegments),
-      ),
-    [liveSegments, messages],
-  )
-  const groups = useMemo(
-    () => groupSessionFileChanges(changes, workspace ?? undefined),
-    [changes, workspace],
-  )
-  const summary = useMemo(() => summarizeSessionFileChangeGroups(groups), [groups])
+  const selectedId = groups.find((group) => group.id === targetFile)?.id
+    ?? groups.find((group) => group.filePath === targetFile)?.id
+  const { loading, unavailable, truncated, retry } = subagentChanges
+  const status = loading || unavailable || truncated ? (
+    <div role="status" className="mb-3 space-y-1 text-xs text-muted-foreground">
+      {loading ? <p>{uiText("review_subagent_changes_loading")}</p> : null}
+      {unavailable && !loading ? (
+        <div className="flex items-center gap-2">
+          <p>{uiText("review_subagent_changes_unavailable")}</p>
+          <Button variant="ghost" size="sm" onClick={retry}>{uiText("retry_b8784c8d")}</Button>
+        </div>
+      ) : null}
+      {truncated ? <p>{uiText("review_subagent_changes_truncated")}</p> : null}
+    </div>
+  ) : null
 
   if (!sessionId) {
     return (
@@ -55,7 +47,7 @@ export function ReviewPane({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
         <FileDiff className="size-6 opacity-60" />
-        <p>{uiText("this_session_has_no_file_changes_to_review_yet_062e5342")}</p>
+        {status ?? <p>{uiText("this_session_has_no_file_changes_to_review_yet_062e5342")}</p>}
       </div>
     )
   }
@@ -72,18 +64,19 @@ export function ReviewPane({
           <span className="text-red-600 dark:text-red-400">−{summary.removedLines}</span>
         </span>
       </div>
+      {status}
       <FileChangeList
-        key={targetFilePath ?? "latest"}
+        key={targetFile ?? "latest"}
         groups={groups}
         workspace={workspace ?? undefined}
         pathMode="relative"
         density="comfortable"
         defaultOpen={(index, total) =>
-          targetFilePath
-            ? groups[index]?.filePath === targetFilePath
+          targetFile
+            ? groups[index]?.id === selectedId
             : index === total - 1
         }
-        scrollToGroupId={targetFilePath ? `file:${targetFilePath}` : null}
+        scrollToGroupId={selectedId ?? null}
       />
     </div>
   )
