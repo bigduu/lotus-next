@@ -226,7 +226,9 @@ for (const colorScheme of ["light", "dark"] as const) {
       expect(ticketRequests.some((request) => request.url.endsWith("/codex-handoff"))).toBe(false)
       await continueInCodex.click()
       const command = dialog.getByRole("textbox", { name: "Codex 交接命令" })
-      await expect(command).toHaveValue(new RegExp(offerId))
+      const windows = /Windows/i.test(await page.evaluate<string>("navigator.userAgent"))
+      const claim = windows ? Buffer.from(JSON.stringify({ offer_id: offerId })).toString("base64") : offerId
+      await expect.poll(async () => (await command.inputValue()).includes(claim)).toBe(true)
       await dialog.getByRole("button", { name: "复制命令", exact: true }).click()
       await expect(dialog.getByText("已复制命令", { exact: true })).toBeVisible()
       expect(await page.evaluate<string>("navigator.clipboard.readText()")).toBe(await command.inputValue())
