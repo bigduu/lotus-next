@@ -1082,6 +1082,7 @@ export const uiEnUs = {
   "goal_settings_opened_63de7dc7": "Goal settings opened",
   "goal_set_724a547c": "Goal set",
   "goal_resume_queued": "Goal continuation queued",
+  "goal_resume_unavailable": "Resume is unavailable for the selected Goal on this Bamboo service.",
   "root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a": "Root permissions are unconfirmed. The goal was saved but will not run. Resolve the mode change first.",
   "goal_saved_send_a_message_to_continue_ba844fbc": "Goal saved. Send a message to continue.",
   "could_not_save_the_goal_your_command_is_preserved_pleas_ac375306": "Could not save the goal. Your command is preserved. Please try again.",

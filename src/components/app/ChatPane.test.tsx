@@ -1848,6 +1848,35 @@ it("handles a goal command without sending it to the conversation", async () => 
   expect(input.value).toBe("")
 })
 
+it.each([true, false])("only submits Goal resume when Bamboo advertised support (%s)", async (supported) => {
+  const chat = createChat(vi.fn<Send>(), "goal-resume")
+  chat.currentChat!.config = {
+    ...chat.currentChat!.config,
+    goldConfig: { enabled: true, goal: "Verify the build", ...(supported ? { resume_after_restart: false } : {}) },
+  }
+  vi.mocked(agentClient.sendMessage).mockClear()
+  vi.mocked(agentClient.execute).mockClear()
+  if (supported) {
+    vi.mocked(agentClient.sendMessage).mockResolvedValueOnce({
+      session_id: "goal-resume", status: "accepted", goal_command: { action: "resume", should_execute: true },
+    })
+  }
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container)
+  roots.push(root)
+  await act(async () => {
+    root.render(<ChatPane chat={chat} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()}
+      onOpenInspector={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+  })
+  const input = container.querySelector<HTMLTextAreaElement>("textarea")!
+  change(input, "/goal resume")
+  act(() => composer().onSubmit())
+  await flush()
+  expect(agentClient.sendMessage).toHaveBeenCalledTimes(supported ? 1 : 0)
+  expect(agentClient.execute).toHaveBeenCalledTimes(supported ? 1 : 0)
+  expect(input.value).toBe(supported ? "" : "/goal resume")
+})
+
 it("dispatches one compaction request and leaves a newer draft intact", async () => {
   const request = deferred<Awaited<ReturnType<typeof agentClient.compactSessionContext>>>()
   vi.mocked(agentClient.compactSessionContext).mockReturnValueOnce(request.promise)

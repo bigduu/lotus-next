@@ -46,6 +46,7 @@ function GoalSection({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
   const goal = goldConfig?.goal
+  const supportsRestartRecovery = typeof goldConfig?.resume_after_restart === "boolean"
   const recoveryPolicy = (goldConfig?.recovery?.max_attempts ?? 0) > 0
     ? goldConfig!.recovery!
     : { max_attempts: 3, max_elapsed_seconds: 900 }
@@ -66,7 +67,7 @@ function GoalSection({
         gold_config: {
           ...(goldConfig ?? { enabled: true }), enabled: true, goal: g || null,
           auto_continue_enabled: autoContinue,
-          resume_after_restart: autoContinue && resumeAfterRestart,
+          ...(supportsRestartRecovery ? { resume_after_restart: autoContinue && resumeAfterRestart } : {}),
           recovery: recoverTimeouts && autoContinue
             ? recoveryPolicy
             : { max_attempts: 0, max_elapsed_seconds: 0 },
@@ -98,7 +99,7 @@ function GoalSection({
           </button>
         ) : null}
       </div>
-      <p className="mb-2 text-xs text-muted-foreground">{uiText("chat_commands_a9207e15")}<code>{uiText("goal_goal_text_4fe4dd06")}</code>{uiText("set_and_pursue_270d1beb")}<code>/goal off</code>{uiText("pause_bfaa6e86")}<code>/goal resume</code>{uiText("goal_resume_command_description")}<code>/goal clear</code>{uiText("clear_531ffd78")}</p>
+      <p className="mb-2 text-xs text-muted-foreground">{uiText("chat_commands_a9207e15")}<code>{uiText("goal_goal_text_4fe4dd06")}</code>{uiText("set_and_pursue_270d1beb")}<code>/goal off</code>{uiText("pause_bfaa6e86")}{supportsRestartRecovery && <><code>/goal resume</code>{uiText("goal_resume_command_description")}</>}<code>/goal clear</code>{uiText("clear_531ffd78")}</p>
       {editing ? (
         <>
           <textarea
@@ -115,9 +116,9 @@ function GoalSection({
             <input type="checkbox" checked={recoverTimeouts} disabled={!autoContinue} onChange={(event) => setRecoverTimeouts(event.target.checked)} />
             {uiText("attempt_recovery_after_an_output_timeout_227c0054")}</label>
           {autoContinue && recoverTimeouts && <p className="mt-1 text-xs text-muted-foreground">{uiText("extra_attempts_per_goal_at_most_71934320")} {Math.min(recoveryPolicy.max_attempts, 10)} {uiText("attempts_recovery_window_123ea7f2")} {Math.min(recoveryPolicy.max_elapsed_seconds, 3600) / 60} {uiText("minutes_stopping_ends_the_wait_4accfbf3")}</p>}
-          <label className="mt-2 flex items-center gap-2 text-xs">
+          {supportsRestartRecovery && <label className="mt-2 flex items-center gap-2 text-xs">
             <input type="checkbox" checked={resumeAfterRestart} disabled={!autoContinue} onChange={(event) => setResumeAfterRestart(event.target.checked)} />
-            {uiText("goal_resume_after_restart")}</label>
+            {uiText("goal_resume_after_restart")}</label>}
           {saveError && <p role="alert" className="mt-1 text-xs text-destructive">{saveError}</p>}
           <div className="mt-1.5 flex justify-end gap-2">
             <Button size="sm" variant="secondary" disabled={saving} onClick={() => setEditing(false)}>

@@ -1080,6 +1080,7 @@ export const uiZhCn = {
   "goal_settings_opened_63de7dc7": "已打开目标设置",
   "goal_set_724a547c": "目标已设置",
   "goal_resume_queued": "已请求继续推进目标",
+  "goal_resume_unavailable": "当前 Bamboo 服务无法续跑这个目标。",
   "root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a": "Root 权限结果未知，目标已保存但不会执行；请先处理模式切换",
   "goal_saved_send_a_message_to_continue_ba844fbc": "目标已保存，发送消息即可继续推进",
   "could_not_save_the_goal_your_command_is_preserved_pleas_ac375306": "目标保存失败，指令已保留，请重试",

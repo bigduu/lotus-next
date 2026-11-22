@@ -931,6 +931,11 @@ export function ChatPane({
         storeAtSubmit.setInputContentIfRevision(draftKey, revision, "")
         return
       }
+      if (objective.toLowerCase() === "resume"
+        && typeof currentChat?.config?.goldConfig?.resume_after_restart !== "boolean") {
+        showToast(uiText("goal_resume_unavailable"), "error")
+        return
+      }
       const sessionId = currentSessionId
       if (getRootModeFenceState(sessionId) !== "clear") {
         setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
