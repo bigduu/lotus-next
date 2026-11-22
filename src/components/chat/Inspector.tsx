@@ -1,7 +1,6 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { ArrowRight, Copy, X, FolderGit2 } from "lucide-react"
-import { useShallow } from "zustand/react/shallow"
 import { shallow } from "zustand/shallow"
 import {
   useAppStore,
@@ -16,6 +15,7 @@ import {
   collectSessionFileChanges,
   groupSessionFileChanges,
   summarizeSessionFileChangeGroups,
+  type SessionFileChangeGroup,
 } from "@/lib/sessionFileChanges"
 import {
   formatTokenCount,
@@ -255,6 +255,7 @@ export function Inspector({
   open,
   onClose,
   workspace,
+  fileChangeGroups: reviewGroups,
   onEditWorkspace,
   onOpenReview,
   onCopySessionId,
@@ -268,8 +269,9 @@ export function Inspector({
   open: boolean
   onClose: () => void
   workspace?: string | null
+  fileChangeGroups?: readonly SessionFileChangeGroup[]
   onEditWorkspace?: () => void
-  onOpenReview?: (filePath?: string) => void
+  onOpenReview?: (fileId?: string) => void
   onCopySessionId: (sessionId: string) => void
   onSelectActor?: (actorId: string) => void
   selectedActorId?: string | null
@@ -299,19 +301,10 @@ export function Inspector({
   const managedNavigation = useRef(0)
   useEffect(() => { setAuxiliaryOpen(false) }, [sessionId])
   useEffect(() => () => { ++managedNavigation.current }, [open, sessionId])
-  // Inspector shows a deduplicated index; Review owns the full diff surface.
-  const sessionMessages = useAppStore(
-    useShallow((s) => (sessionId ? (selectSessionById(sessionId)(s)?.messages ?? []) : [])),
-  )
-  const fileChanges = useMemo(() => collectSessionFileChanges(sessionMessages), [sessionMessages])
-  const fileChangeGroups = useMemo(
-    () => groupSessionFileChanges(fileChanges, workspace ?? undefined),
-    [fileChanges, workspace],
-  )
-  const fileChangeSummary = useMemo(
-    () => summarizeSessionFileChangeGroups(fileChangeGroups),
-    [fileChangeGroups],
-  )
+  const fileChangeGroups = useMemo(() => reviewGroups ?? groupSessionFileChanges(
+    collectSessionFileChanges(sessionId ? chat?.messages ?? [] : []), workspace ?? undefined,
+  ), [reviewGroups, sessionId, chat?.messages, workspace])
+  const fileChangeSummary = useMemo(() => summarizeSessionFileChangeGroups(fileChangeGroups), [fileChangeGroups])
   const getProviderLabel = useProviderStore((s) => s.getProviderDisplayLabel)
 
   useEffect(() => {
@@ -565,7 +558,7 @@ export function Inspector({
                 pathMode="basename"
                 density="compact"
                 variant="summary"
-                onSelect={(group) => onOpenReview?.(group.filePath)}
+                onSelect={(group) => onOpenReview?.(group.id)}
               />
             </section>
           ) : null}

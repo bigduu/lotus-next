@@ -3,10 +3,42 @@ import type { Message } from "@shared/types/chatMessages"
 import {
   collectLiveSessionFileChanges,
   collectSessionFileChanges,
+  collectSubagentFileChanges,
   groupSessionFileChanges,
   mergeSessionFileChanges,
+  orderPersistedFileChanges,
   summarizeSessionFileChangeGroups,
 } from "./sessionFileChanges"
+
+it("orders Root and child edits together while keeping different worktrees and remote files distinct", () => {
+  const path = "src/app.ts"
+  const payload = { operation: "Edit", file_path: path, diff: { unified: "+child edit" } }
+  const childResult = {
+    id: "same-id", role: "tool" as const, tool_call_id: "same-call", tool_success: true,
+    content: JSON.stringify(payload), created_at: "2026-11-22T00:00:00.000000001Z",
+  }
+  const worker = { sessionId: "worker", title: "Worker", workspace: "/workspace", separateFileLocation: false }
+  const childChanges = collectSubagentFileChanges([
+    { ...childResult, role: "assistant" },
+    { ...childResult, id: "failed-write", tool_success: false },
+    childResult,
+  ], worker)
+  expect(childChanges).toHaveLength(1)
+  expect(childChanges[0]?.source?.title).toBe("Worker")
+  const worktree = collectSubagentFileChanges([childResult], { ...worker, sessionId: "worktree", workspace: "/other" })
+  const remote = collectSubagentFileChanges([childResult], { ...worker, sessionId: "remote", separateFileLocation: true })
+  const root = {
+    id: "same-id", toolCallId: "same-call", payload, createdAt: "2026-11-22T00:00:00.000000002Z",
+  }
+  const groups = groupSessionFileChanges(orderPersistedFileChanges([
+    root, ...childChanges, ...worktree, ...remote,
+  ]), "/workspace")
+
+  expect(groups).toHaveLength(3)
+  expect(groups.find((group) => group.id === `file:/workspace/${path}`)?.changes.map((change) => change.id))
+    .toEqual([childChanges[0]?.id, root.id])
+  expect(groups.map((group) => group.filePath)).toEqual([`/other/${path}`, `/workspace/${path}`, `/workspace/${path}`])
+})
 
 it("collects only structured file-edit results in transcript order", () => {
   const fileResult = JSON.stringify({
