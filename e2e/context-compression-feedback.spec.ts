@@ -25,7 +25,7 @@ function session(id: string, title: string, running: boolean) {
   }
 }
 
-async function prepare(page: Page, info: TestInfo, { split = false, running = true } = {}) {
+async function prepare(page: Page, info: TestInfo, { multipleSessions = false, running = true } = {}) {
   const phone = info.project.name === "phone-chromium"
   const locale = phone ? "zh-CN" : "en-US"
   const theme = phone ? "dark" : "light"
@@ -37,7 +37,7 @@ async function prepare(page: Page, info: TestInfo, { split = false, running = tr
     localStorage.setItem("lotus_next_last_session", "all-surface-session")
   }, { locale, theme })
   const observation = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
-  const sessions = split ? [
+  const sessions = multipleSessions ? [
     session(primary, "Compression main", false),
     session(background, "Background compression A", true),
     session(comparison, "Idle comparison B", false),
@@ -102,7 +102,7 @@ async function prepare(page: Page, info: TestInfo, { split = false, running = tr
   await expect(page.getByRole("textbox", { name: phone ? "消息" : "Messages", exact: true }).first()).toBeVisible()
   if (theme === "dark") await expect(page.locator("html")).toHaveClass(/\bdark\b/)
   else await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
-  if (!split && running) await expect.poll(() => channels.has(`agent.${primary}`)).toBe(true)
+  if (!multipleSessions && running) await expect.poll(() => channels.has(`agent.${primary}`)).toBe(true)
   const copy = (key: CopyKey) => phone ? uiZhCn[key] : uiEnUs[key]
   const emit = (event: object, sessionId = primary) => {
     events.push({ sessionId, event })
@@ -387,36 +387,33 @@ test("local Stop remains unconfirmed and detached late frames cannot overwrite u
   await verifyIsolation(f)
 })
 
-test("background bound Session continues updating while comparison Session stays isolated", async ({ page }, info) => {
-  test.skip(info.project.name !== "desktop-chromium", "Bound side-by-side rebind is a desktop acceptance path")
-  const f = await prepare(page, info, { split: true })
-  await page.getByRole("button", { name: "Open side panel", exact: true }).click()
-  const workbench = page.locator("#right-workbench")
-  await workbench.getByRole("button", { name: "Side-by-side session Open another session", exact: true }).click()
-  await workbench.getByRole("tab", { name: "Side-by-side session", exact: true }).click()
-  const picker = workbench.getByRole("combobox").filter({ hasText: /Select a session to compare|Background compression A|Idle comparison B/ })
-  await picker.click()
-  await page.getByRole("option", { name: "Background compression A", exact: true }).click()
-  await expect.poll(() => f.channels.has(`agent.${background}`)).toBe(true)
+test("compression feedback follows its session through sidebar navigation", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation")
+  const f = await prepare(page, info, { multipleSessions: true })
+  const active = page.getByRole("button", { name: "Background compression A", exact: true })
+  const idle = page.getByRole("button", { name: "Idle comparison B", exact: true })
+  await active.click()
+  await expect.poll(() => f.channels.has("agent." + background)).toBe(true)
   f.budget(90, background)
   f.status("started", background)
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveText(f.copy("context_compression_notice_running"))
-  await expectUsage(f, 90, workbench)
-  await picker.click()
-  await page.getByRole("option", { name: "Idle comparison B", exact: true }).click()
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveCount(0)
-  await expect(workbench.getByRole("button", { name: "Context usage", exact: true })).toHaveCount(0)
-  expect(f.channels.has(`agent.${background}`)).toBe(true)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_running"))
+  await expectUsage(f, 90)
+  await idle.click()
+  await expect(f.notice).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Context usage", exact: true })).toHaveCount(0)
   f.status("completed", background)
   f.summary(background)
   f.budget(80, background)
   await f.barrier()
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveCount(0)
-  await capture(f, "comparison-session-hides-background-feedback")
-  await picker.click()
-  await page.getByRole("option", { name: "Background compression A", exact: true }).click()
-  await expectUsage(f, 80, workbench)
-  await expect(workbench.getByTestId("context-compression-notice")).toHaveText(f.copy("context_compression_notice_completed"))
-  await capture(f, "background-session-retains-new-budget")
+  await expect(f.notice).toHaveCount(0)
+  await capture(f, "other-session-hides-background-feedback")
+  await active.click()
+  await expect.poll(() => f.channels.has("agent." + background)).toBe(true)
+  f.status("completed", background)
+  f.summary(background)
+  f.budget(80, background)
+  await expectUsage(f, 80)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_completed"))
+  await capture(f, "background-session-shows-own-budget")
   await verifyIsolation(f)
 })

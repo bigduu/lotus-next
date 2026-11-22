@@ -70,4 +70,6 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
     {...props} />
 }
 
-export { Command, CommandInput, CommandList, CommandItem }
+const CommandEmpty = CommandPrimitive.Empty
+
+export { Command, CommandInput, CommandList, CommandItem, CommandEmpty }

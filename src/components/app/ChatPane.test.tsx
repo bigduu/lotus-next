@@ -274,8 +274,8 @@ async function mount(
   const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
   await act(async () => {
     root.render(<ChatPane chat={{ ...createChat(send, id, lastRunStatus), sending: running, streaming, ...(compatibility ? { executionCompatibility: compatibility } : {}) }} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
   const textarea = container.querySelector<HTMLTextAreaElement>("textarea"); if (!textarea) throw new Error("textarea did not render")
   return textarea
@@ -304,8 +304,8 @@ it.each([
   roots.push(root)
   await act(async () => {
     root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
   expect(runtime.messageList?.delegationWaiting).toBe(waitingForChildren)
   expect(runtime.messageList?.backgroundExecWaiting).toBe(waitingForCommand)
@@ -473,8 +473,8 @@ it("hydrates the visible Session task DAG and drops it when switching to another
   const send = vi.fn<Send>()
   const render = (id: string, pageVisible = true) => act(async () => {
     root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} pageVisible={pageVisible} />)
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} pageVisible={pageVisible} />)
   })
   await render("dag-a")
   expect(runtime.state.loadTaskList).toHaveBeenCalledExactlyOnceWith("dag-a")
@@ -511,8 +511,8 @@ async function mountWorktreeChat(send: Send) {
   const root = createRoot(host); roots.push(root)
   let props: ChatPaneProps = {
     chat: createChat(send, null), pickedWorkspace: null, pendingProjectId: "p1", newChatEpoch: 0,
-    onOpenWorkspacePicker: vi.fn(), onOpenInspector: vi.fn(), splitOpen: false,
-    onToggleSplit: vi.fn(), onOpenSidebar: vi.fn(), sidebarCollapsed: false,
+    onOpenWorkspacePicker: vi.fn(), onOpenInspector: vi.fn(),
+    onOpenSidebar: vi.fn(), sidebarCollapsed: false,
   }
   const render = async (changes: Partial<ChatPaneProps> = {}) => {
     props = { ...props, ...changes }
@@ -773,7 +773,7 @@ describe("ChatPane composer acknowledgement", () => {
     const onOpen = vi.fn(), onReference = vi.fn()
     await act(async () => root.render(<ChatPane chat={createChat(vi.fn<Send>(), "bamboo-default-supervisor")}
       pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-      splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false}
       workPanelTarget={target} onOpenWork={onOpen} onWorkReference={onReference} />))
     await act(async () => { await vi.dynamicImportSettled() })
     expect(host.querySelector('[data-testid="ticket-work-overview"]')).toBeNull()
@@ -810,8 +810,8 @@ describe("ChatPane composer acknowledgement", () => {
     const root = createRoot(host); roots.push(root)
     const render = (panel: HTMLElement | null, sessionId = supervisor, pageVisible = true) => act(() => root.render(
       <ChatPane chat={createChat(vi.fn<Send>(), sessionId)} pickedWorkspace={null}
-        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        onOpenSidebar={vi.fn()} sidebarCollapsed={false}
         workPanelTarget={panel} onOpenWork={vi.fn()} pageVisible={pageVisible} />))
     render(null)
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
@@ -841,7 +841,7 @@ describe("ChatPane composer acknowledgement", () => {
     const host = document.body.appendChild(document.createElement("div"))
     const root = createRoot(host); roots.push(root)
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace={null}
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false} onToggleSplit={vi.fn()}
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
       onOpenSidebar={vi.fn()} sidebarCollapsed={false} onOpenWork={vi.fn()} />))
     expect(host.querySelector('[data-testid="ticket-work-status"]')).toBeNull()
   })
@@ -854,8 +854,8 @@ describe("ChatPane composer acknowledgement", () => {
     const target = document.body.appendChild(document.createElement("div"))
     const root = createRoot(host); roots.push(root)
     await act(async () => root.render(<ChatPane chat={createChat(vi.fn<Send>(), "bamboo-default-supervisor")}
-      pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} workPanelTarget={target} />))
+      pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} workPanelTarget={target} />))
     expect(target.querySelector('[data-testid="ticket-work-availability"]')).not.toBeNull()
     expect(target.querySelector(kind === "error" || kind === "forbidden" ? '[role="alert"]' : '[role="status"]')).not.toBeNull()
     expect(target.textContent).toContain("exact service reason")
@@ -977,8 +977,8 @@ describe("ChatPane composer acknowledgement", () => {
     const root = createRoot(container); roots.push(root)
     const render = async (outputRate: number | null) => {
       await act(async () => root.render(<ChatPane chat={{ ...chat, outputRate }} pickedWorkspace="/picked"
-        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     }
 
     await render(null)
@@ -1020,8 +1020,8 @@ describe("ChatPane composer acknowledgement", () => {
     const root = createRoot(container); roots.push(root)
 
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     expect(runtime.modelPicker?.value).toBe("gpt-5.6-luna")
   })
@@ -1071,8 +1071,8 @@ describe("ChatPane composer acknowledgement", () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     expect(runtime.modelPicker?.modelGroups).toEqual([
       { provider: "work", label: "Work", models: ["newly-added", "vendor:custom-name"] },
@@ -1090,8 +1090,8 @@ describe("ChatPane composer acknowledgement", () => {
     snapshot.instances[0].enabled = false
     runtime.providerState.providerSnapshot = { ...snapshot, defaults: { chat: { provider: "other", model: "other-default" } } }
     await act(async () => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     expect(runtime.state.selectedModel).toEqual({ provider: "easycli", model: "test-model" })
     expect(runtime.modelPicker?.modelGroups).toEqual([{ provider: "other", label: "Other", models: ["other-default", "other-custom"] }])
@@ -1242,8 +1242,8 @@ describe("ChatPane composer acknowledgement", () => {
     }
 
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     expect(alert?.textContent).toContain("消息已发送，但生成中断")
@@ -1280,8 +1280,8 @@ describe("ChatPane composer acknowledgement", () => {
     const chat = createChat(vi.fn<Send>(), "failed-session", "error", detail)
 
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     expect(alert?.textContent).toContain(title)
@@ -1302,8 +1302,8 @@ describe("ChatPane composer acknowledgement", () => {
     const failure = { kind: "generation-failed" as const, operationId: 4, sessionId: "old-session", message: detail }
     const chat = { ...createChat(send, "old-session"), retry, sendFailure: failure }
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     expect(alert?.textContent).toContain("会话来源校验未通过")
     expect(alert?.textContent).toContain("请先核对会话来源和已完成的操作")
@@ -1330,8 +1330,8 @@ describe("ChatPane composer acknowledgement", () => {
     }
 
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     expect(alert?.textContent).toContain("模型服务正在限流")
@@ -1353,8 +1353,8 @@ describe("ChatPane composer acknowledgement", () => {
     }
 
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     expect(alert?.textContent).toContain("发送状态未确认，内容已保留")
@@ -1373,8 +1373,8 @@ describe("ChatPane composer acknowledgement", () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/synthetic/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!
     await fill(textarea)
     const draft = runtime.state.inputStates["old-source"]?.content
@@ -1648,8 +1648,8 @@ describe("Root orchestration-only control", () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     expect(document.body.textContent).toContain("Bamboo 已拒绝此请求，内容已保留")
     expect(document.body.textContent).not.toContain("Bamboo 已拒绝此模式切换")
     expect(document.body.textContent).toContain("Selected Skill conflicts with active Root mode")
@@ -1663,8 +1663,8 @@ describe("Root orchestration-only control", () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     await act(async () => root.render(<ChatPane chat={childChat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     expect(runtime.reasoningPicker?.allowUltra).toBe(false)
     expect(document.body.textContent).not.toContain("Ultra 编排")
@@ -1691,8 +1691,8 @@ describe("Root orchestration-only control", () => {
     roots.push(root)
     const render = (currentChat: typeof work) => act(async () => root.render(
       <ChatPane chat={{ ...chat, currentChat, executionCompatibility: compatibility }} pickedWorkspace="/picked"
-        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
     ))
 
     await render(work)
@@ -1718,8 +1718,8 @@ describe("Root orchestration-only control", () => {
     const root = createRoot(container); roots.push(root)
     runtime.state.changeSessionReasoningEffort = vi.fn().mockRejectedValueOnce(new Error("Child save offline"))
     await act(async () => root.render(<ChatPane chat={child} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     await act(async () => { runtime.reasoningPicker?.onChange("low"); await Promise.resolve() })
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Child save offline")
     expect(runtime.reasoningPicker?.allowUltra).toBe(false)
@@ -1894,8 +1894,8 @@ describe("Root orchestration-only control", () => {
     change(textarea, "root draft")
     const root = roots.at(-1)!
     await act(async () => root.render(<ChatPane chat={createChat(send, "other-session")} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     expect(composer().workflowControl).toBeNull()
     expect(runtime.state.inputStates["root-session"]?.content).toBe("root draft")
   })
@@ -1940,8 +1940,8 @@ describe("Root orchestration-only control", () => {
     expect(composer().slashQuery).toBeNull()
     expect(resets).toEqual([true])
     await act(async () => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), "other-session")} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     expect(composer().slashQuery).toBe("a")
     expect(resets).toEqual([true, false])
   })
@@ -2321,8 +2321,8 @@ it("keeps compaction feedback and draft clearing scoped to the originating sessi
   const root = createRoot(container); roots.push(root)
   const render = (id: string) => act(async () => {
     root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
   await render("origin")
   change(container.querySelector("textarea")!, "/compact")
@@ -2403,38 +2403,29 @@ it("admits an acknowledged Goal even when submitted during a running session", a
   expect(input.value).toBe("")
 })
 
-describe("ChatPane read visibility", () => {
-  for (const hiddenBy of ["closed", "narrow viewport"] as const) {
-    it(`retains unread background messages while secondary pane is ${hiddenBy}`, async () => {
-      const container = document.body.appendChild(document.createElement("div"))
-      const root = createRoot(container); roots.push(root)
-      const id = `read-visibility-${hiddenBy}`
-      const base = createChat(vi.fn<Send>(), id)
-      const session = (count: number) => ({ ...base.currentChat!, messageCount: count })
-      function Surface({ open, count }: { open: boolean; count: number }) {
-        const current = session(count)
-        const markers = useSessionReadState()
-        return <>
-          <span data-testid="unread">{String(isSessionUnread(current, markers))}</span>
-          {open && <ChatPane chat={{ ...base, currentChat: current }} pickedWorkspace={null}
-            secondary={{ sessionId: id, chats: [], onPickSession: vi.fn(), onClose: vi.fn() }}
-            onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen
-            onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />}
-        </>
-      }
-      const unread = () => container.querySelector('[data-testid="unread"]')?.textContent
-      await act(async () => root.render(<Surface open count={1} />))
-      expect(unread()).toBe("false")
-      if (hiddenBy === "narrow viewport") resizePane(false)
-      await act(async () => root.render(<Surface open={hiddenBy !== "closed"} count={2} />))
-      expect(unread()).toBe("true")
-      act(() => document.dispatchEvent(new Event("visibilitychange")))
-      expect(unread()).toBe("true")
-      if (hiddenBy === "narrow viewport") resizePane(true)
-      await act(async () => root.render(<Surface open count={2} />))
-      expect(unread()).toBe("false")
-    })
+it("retains unread messages while settings hide the chat", async () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const base = createChat(vi.fn<Send>(), "read-visibility")
+  function Surface({ visible, count }: { visible: boolean; count: number }) {
+    const current = { ...base.currentChat!, messageCount: count }
+    const markers = useSessionReadState()
+    return <>
+      <span data-testid="unread">{String(isSessionUnread(current, markers))}</span>
+      <ChatPane chat={{ ...base, currentChat: current }} pickedWorkspace={null}
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        onOpenSidebar={vi.fn()} sidebarCollapsed={false} pageVisible={visible} />
+    </>
   }
+  const unread = () => container.querySelector('[data-testid="unread"]')?.textContent
+  await act(async () => root.render(<Surface visible count={1} />))
+  expect(unread()).toBe("false")
+  await act(async () => root.render(<Surface visible={false} count={2} />))
+  expect(unread()).toBe("true")
+  act(() => document.dispatchEvent(new Event("visibilitychange")))
+  expect(unread()).toBe("true")
+  await act(async () => root.render(<Surface visible count={2} />))
+  expect(unread()).toBe("false")
 })
 
 it("shows an unreadable pending request with a working refresh control outside the dialog", async () => {
@@ -2445,8 +2436,8 @@ it("shows an unreadable pending request with a working refresh control outside t
     questionError: "暂时无法读取确认请求，请刷新后重试。", questionUnavailable: true,
     questionLoading: false, questionSubmitting: false, refreshQuestion: refresh }
   await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   const alert = container.querySelector('[role="alert"]')
   expect(alert?.textContent).toContain("无法读取确认请求")
   const refreshButton = alert?.querySelector("button")
@@ -2461,8 +2452,8 @@ it("routes a sub-agent card to the side-preview callback without replacing the m
   const chat = createChat(vi.fn<Send>(), "parent")
   const openPreview = vi.fn()
   await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onSelectSubAgent={openPreview}
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onSelectSubAgent={openPreview}
     onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
   act(() => runtime.messageList?.onSelectSubAgent("child"))
@@ -2478,8 +2469,8 @@ it("centers the jump-to-bottom control on the composer column", async () => {
   const chat = createChat(vi.fn<Send>(), "parent")
 
   await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
   const region = container.querySelector("[data-composer-region]")
   const anchor = region?.querySelector<HTMLElement>("[data-scroll-to-bottom-anchor]")
@@ -2509,8 +2500,8 @@ it("shows Environment by default and only suppresses it while the side pane is o
   const render = (sidePaneOpen: boolean) => (
     <ChatPane chat={chat} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-      sidePaneOpen={sidePaneOpen} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
+      sidePaneOpen={sidePaneOpen}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
   )
 
   await act(async () => root.render(render(false)))
@@ -2549,8 +2540,8 @@ it("auto-shows Environment once the chat surface clears it and animates state ch
   const chat = createChat(vi.fn<Send>(), "parent")
 
   await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
   const launcher = container.querySelector<HTMLButtonElement>(
     'button[aria-label="打开 Environment"]',
@@ -2638,8 +2629,8 @@ it("updates Environment from live edits and previews image sources", async () =>
   }]
 
   await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
   const card = container.querySelector<HTMLElement>("[data-environment-card]")
   expect(card?.textContent).toContain("1 个变更文件")
@@ -2653,24 +2644,21 @@ it("updates Environment from live edits and previews image sources", async () =>
   expect(container.querySelector("[data-image-lightbox]")?.getAttribute("data-src")).toBe(previewUrl)
 })
 
-it("returns from a child inside the side pane without changing the main session", async () => {
+it("returns from a child session to its parent", async () => {
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container); roots.push(root)
   const chat = createChat(vi.fn<Send>(), "child")
   chat.currentChat = { ...chat.currentChat!, parentSessionId: "parent" }
-  const pickSideSession = vi.fn()
   await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace={null}
-    secondary={{ sessionId: "child", chats: [], onPickSession: pickSideSession, onClose: vi.fn() }}
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
   const back = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
     button.textContent?.includes("返回父会话"),
   )
   act(() => back?.click())
 
-  expect(pickSideSession).toHaveBeenCalledExactlyOnceWith("parent")
-  expect(chat.select).not.toHaveBeenCalled()
+  expect(chat.select).toHaveBeenCalledExactlyOnceWith("parent")
 })
 
 
@@ -2684,8 +2672,8 @@ describe("caret-driven workspace file lookup", () => {
     act(() => composer().onMentionQueryChange("read"))
     expect(list).toHaveBeenLastCalledWith("/picked")
     const render = (workspace: string) => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace={workspace}
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
     await act(async () => render("/different"))
     expect(list).toHaveBeenLastCalledWith("/different")
     const selected = { path: "current.ts", name: "current.ts", is_directory: false }
@@ -2710,8 +2698,8 @@ it("uses the selected worktree instead of the Project primary directory when sub
   const root = createRoot(container); roots.push(root)
   await act(async () => root.render(<ChatPane chat={createChat(send, null)} pickedWorkspace="/picked"
     pendingProjectId="project-a" worktreePath="/Volumes/External/worktrees/task"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   expect(composer().displayWorkspace).toBe("/Volumes/External/worktrees/task")
   change(container.querySelector<HTMLTextAreaElement>("textarea")!, "Inspect this checkout")
   act(() => composer().onSubmit()); await flush()
@@ -2720,20 +2708,17 @@ it("uses the selected worktree instead of the Project primary directory when sub
   }))
 })
 
-it.each([false, true])("routes a dropped session to the correct pane (secondary=%s)", async (secondary) => {
+it("opens a dropped root session in the main chat", async () => {
   const chat = createChat(vi.fn(), "current")
   chat.chats = [{ id: "dropped", kind: "root", config: { projectId: "p" } }] as typeof chat.chats
-  const pick = vi.fn()
   const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
   await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace={null}
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={secondary}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
-    secondary={secondary ? { sessionId: "current", chats: chat.chats, onPickSession: pick, onClose: vi.fn() } : undefined} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   const event = new Event("drop", { bubbles: true, cancelable: true })
   Object.defineProperty(event, "dataTransfer", { value: { types: ["application/x-lotus-sidebar-session"], getData: () => JSON.stringify({ sessionId: "dropped", projectId: "p" }) } })
   act(() => container.querySelector("[data-session-drop-target]")!.dispatchEvent(event))
-  expect(secondary ? pick : chat.select).toHaveBeenCalledWith("dropped")
-  expect(secondary ? chat.select : pick).not.toHaveBeenCalled()
+  expect(chat.select).toHaveBeenCalledWith("dropped")
 })
 
 it("home describe action only focuses the current draft and disappears on session navigation", async () => {
@@ -2749,8 +2734,8 @@ it("home describe action only focuses the current draft and disappears on sessio
   expect(runtime.queueSend).not.toHaveBeenCalled()
   const root = roots.at(-1)!
   const renderSession = async (id: string | null) => act(async () => root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   await renderSession("other-session")
   expect(document.querySelector("[data-home-describe]")).toBeNull()
   change(textarea, "other session draft")
@@ -2770,8 +2755,8 @@ describe("scoped notifications", () => {
     act(() => { void runtime.modelPicker!.onChange({ provider: "easycli", model: "grok-4.7" }) })
     const renderSession = async (id: string) => act(async () => roots.at(-1)!.render(
       <ChatPane chat={createChat(vi.fn<Send>(), id)} pickedWorkspace="/picked"
-        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     await renderSession("session-2")
     await renderSession("session-1")
     await act(async () => reject(new Error("late model failure")))
@@ -2798,8 +2783,8 @@ describe("scoped notifications", () => {
     await mount(vi.fn<Send>(), "session-1")
     await act(async () => roots.at(-1)!.render(
       <ChatPane chat={chat} pickedWorkspace="/picked"
-        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
     await act(async () => runtime.messageList!.onFork("message-1"))
     expect(runtime.toastProps?.forking).toBe(false)
     expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", details: "fork unavailable" })
@@ -2814,8 +2799,8 @@ it.each([false, true])("handles intentional fork navigation without replacing a 
   await mount(vi.fn<Send>(), "session-1")
   const renderChat = async (chat: ChatPaneProps["chat"]) => act(async () => roots.at(-1)!.render(
     <ChatPane chat={chat} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   await renderChat(original)
   act(() => runtime.messageList!.onFork("message-1"))
   await renderChat(createChat(vi.fn<Send>(), "fork-session"))
@@ -2830,47 +2815,6 @@ it.each([false, true])("handles intentional fork navigation without replacing a 
 })
 
 
-it("keeps a failed secondary history distinct from empty content and retains its draft during read-only recovery", async () => {
-  const send = vi.fn<Send>()
-  const textarea = await mount(send, "session-1")
-  change(textarea, "Unsent draft survives history recovery")
-  const retryRead = vi.fn()
-  const renderRead = async (status: "loading" | "ready" | "error") => {
-    runtime.messageList = null
-    await act(async () => roots.at(-1)!.render(
-      <ChatPane chat={createChat(send, "session-1")} pickedWorkspace="/picked"
-        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen
-        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
-        secondary={{ sessionId: "session-1", chats: [], onPickSession: vi.fn(), onClose: vi.fn(),
-          historyRead: { status, retry: retryRead } }} />,
-    ))
-  }
-  await renderRead("error")
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain("并排会话暂时无法加载")
-  expect(runtime.messageList).toBeNull()
-  expect(document.querySelector<HTMLElement>("[data-history-composer-blocked]")?.hidden).toBe(true)
-  const focusInput = vi.spyOn(textarea, "focus")
-  act(() => runtime.toastProps?.onRestoreFocus?.())
-  expect(focusInput).not.toHaveBeenCalled()
-  expect(document.querySelector("textarea")).toBe(textarea)
-  expect(composer().draft).toBe("Unsent draft survives history recovery")
-  act(() => composer().onSubmit())
-  expect(send).not.toHaveBeenCalled()
-  act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "重试")!.click())
-  expect(retryRead).toHaveBeenCalledOnce()
-  await renderRead("loading")
-  expect(document.querySelector('[role="alert"]')).toBeNull()
-  expect(runtime.messageList).toBeNull()
-  await renderRead("ready")
-  expect(document.querySelector<HTMLElement>("[data-history-composer-blocked]")?.hidden).toBe(false)
-  act(() => runtime.toastProps?.onRestoreFocus?.())
-  expect(focusInput).toHaveBeenCalledOnce()
-  expect(runtime.messageList).not.toBeNull()
-  expect(document.querySelector("textarea")).toBe(textarea)
-  expect(composer().draft).toBe("Unsent draft survives history recovery")
-  expect(send).not.toHaveBeenCalled()
-})
-
 describe("context compression presentation", () => {
   it("keeps a pre-start failure visible during text streaming without a usage estimate", async () => {
     const send = vi.fn<Send>()
@@ -2879,7 +2823,7 @@ describe("context compression presentation", () => {
       contextCompression: { status: "failed", reason: "candidate_plan" } as const }
     const render = async (next: ChatPaneProps["chat"]) => act(async () => roots.at(-1)!.render(
       <ChatPane chat={next} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-        splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
+        onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
     ))
     await render(chat)
     const notice = document.querySelector('[data-testid="context-compression-notice"]')
@@ -2893,24 +2837,6 @@ describe("context compression presentation", () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it("keeps compression feedback inside the history visibility boundary", async () => {
-    const send = vi.fn<Send>()
-    await mount(send, "compression-child")
-    const chat = { ...createChat(send, "compression-child"), contextCompression: { status: "running" } as const }
-    const render = async (status: "loading" | "ready") => act(async () => roots.at(-1)!.render(
-      <ChatPane chat={chat} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-        splitOpen onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
-        secondary={{ sessionId: "compression-child", chats: [], onPickSession: vi.fn(), onClose: vi.fn(),
-          historyRead: { status, retry: vi.fn() } }} />,
-    ))
-    await render("loading")
-    const notice = document.querySelector('[data-testid="context-compression-notice"]')!
-    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(true)
-    await render("ready")
-    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(false)
-    expect(notice.textContent).toBe(uiText("context_compression_notice_running"))
-    expect(send).not.toHaveBeenCalled()
-  })
 })
 
 describe("session compatibility presentation and submit guard", () => {
@@ -2958,8 +2884,8 @@ it("forwards every pending ACK to MessageList without another submission", async
   await mount(send, "pending-ack-session")
   const pendingUserMessages = [{ operationId: 1, text: "first caption", images: [] }, { operationId: 2, text: "second caption", images: [] }]
   await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(send, "pending-ack-session"), pendingUserMessages }} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   expect(runtime.messageList?.pendingUserMessages).toBe(pendingUserMessages)
   expect(send).not.toHaveBeenCalled()
 })
@@ -2980,8 +2906,8 @@ describe("child approval compatibility", () => {
     await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(vi.fn<Send>(), "approval-parent"),
       executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond, ...submission,
       ...(question ? { pendingQuestion: question.pending, answerQuestion: question.answer } : {}) }} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   }
   it.each(["compatible", "legacy_compatible", null] as const)("keeps %s Child approval actionable when only its parent conflicts", async (status) => {
     const respond = vi.fn(async (_approved: boolean) => {})
@@ -3035,8 +2961,8 @@ describe("run diagnostics entry and canonical error isolation", () => {
   const id = "9ab6cd70-bc43-4fed-9f10-50c2873fa287"
   const otherId = "fa6aa794-30d4-4e8b-a222-46b35c8348d9"
   const pane = (chat: ChatPaneProps["chat"]) => <ChatPane chat={chat} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
   const open = async () => {
     const entry = [...document.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.trim() === uiText("run_diagnostics_open"))!

@@ -41,6 +41,14 @@ const LIFECYCLE_LABEL: Record<ActorTreeNode["lifecycle"], string> = {
   get lost() { return uiText("unreachable_8deefc6c") },
 }
 
+export function actorLifecycleLabel(node: ActorTreeNode) {
+  if (node.lifecycle === "unknown" && node.localTaskDiagnostic) {
+    return uiText(node.localTaskDiagnostic === "stop_unconfirmed"
+      ? "native_task_stop_unconfirmed" : "native_task_stopped_outcome_unconfirmed")
+  }
+  return LIFECYCLE_LABEL[node.lifecycle]
+}
+
 const PLACEMENT_LABEL: Record<ActorTreeNode["placement"], string> = {
   get docker() { return uiText("container_6d23f04b") },
   ssh: "SSH",
@@ -191,6 +199,7 @@ export interface ActorTreeProps {
   topology: ActorTreeData
   selectedActorId: string | null
   onSelectActor: (actorId: string) => void
+  revealSelected?: boolean
   unreadActorIds?: ReadonlySet<string>
   error?: string | null
   onRetry?: () => void
@@ -203,6 +212,7 @@ export function ActorTree({
   topology,
   selectedActorId,
   onSelectActor,
+  revealSelected = false,
   unreadActorIds,
   error,
   onRetry,
@@ -280,6 +290,13 @@ export function ActorTree({
       return next.size === current.size ? current : next
     })
   }, [selectedActorId, topology.byId]) // Refreshing the same selection preserves keyboard focus.
+
+  const selectedIndex = rows.findIndex(({ node }) => node.actorId === selectedActorId)
+  useEffect(() => {
+    if (!revealSelected || selectedIndex < 0) return
+    const frame = requestAnimationFrame(() => virtualizer.scrollToIndex(selectedIndex, { align: "auto" }))
+    return () => cancelAnimationFrame(frame)
+  }, [revealSelected, selectedIndex, virtualizer])
 
   const toggle = useCallback((actorId: string) => {
     setExpandedActorIds((previous) => {
@@ -363,9 +380,7 @@ export function ActorTree({
                 node.waitingForCount !== null && node.waitingForCount > 0 ? uiText("waiting_23f9a84a", { v0: node.waitingForCount }) : null,
                 node.pendingRequestCount !== null && node.pendingRequestCount > 0 ? uiText("requests_25082fa5", { v0: node.pendingRequestCount }) : null,
               ].filter((count): count is string => count !== null)
-              const lifecycle = node.lifecycle === "unknown" && node.localTaskDiagnostic
-                ? uiText(node.localTaskDiagnostic === "stop_unconfirmed" ? "native_task_stop_unconfirmed" : "native_task_stopped_outcome_unconfirmed")
-                : LIFECYCLE_LABEL[node.lifecycle]
+              const lifecycle = actorLifecycleLabel(node)
               const stopWarning = node.localTaskDiagnostic === "stop_unconfirmed" && node.lifecycle !== "unknown"
                 ? uiText("native_task_stop_unconfirmed") : null
               const placementDescription = node.placement === "unknown"
