@@ -13,6 +13,7 @@ import { debugLog } from "@shared/utils/debugFlags";
 import { apiClient } from "../api";
 import { isApiError } from "../api/errors";
 import { readSessionLoopStatus, type SessionLoopCommand, type SessionLoopStatus } from "./sessionLoop";
+import { isGoalResumeCommand } from "./goalCommand";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
 
@@ -127,6 +128,7 @@ export interface GoldConfig {
   enabled: boolean;
   auto_answer_enabled?: boolean;
   auto_continue_enabled?: boolean;
+  resume_after_restart?: boolean;
   model_name?: string | null;
   /** The user's session goal, surfaced to the main agent and the evaluator. */
   goal?: string | null;
@@ -159,6 +161,7 @@ export interface GoalEvalRecord {
 export interface GoalState {
   objective: string;
   status: "active" | "complete" | "blocked" | "need_input" | "budget_limited" | string;
+  stop_reason?: "continuation_budget" | "no_progress" | "verification_unavailable" | string | null;
   declared_status?: "complete" | "blocked" | null;
   declared_at_round?: number | null;
   continuation_count: number;
@@ -1440,6 +1443,9 @@ export class AgentClient {
    * Send a chat message and get session ID
    */
   async sendMessage(request: ChatRequest): Promise<ChatResponse> {
+    if (isGoalResumeCommand(request.message)) {
+      throw new Error("Goal resume must use the dedicated session operation.");
+    }
     debugLog("[AgentClient]", "chat.request", {
       sessionId: request.session_id ?? null,
       model: request.model,
@@ -1758,6 +1764,10 @@ export class AgentClient {
       ? await apiClient.getOnce<unknown>(path, { cache: "no-store" })
       : await apiClient.postOnce<unknown>(path, command);
     return readSessionLoopStatus(response, sessionId, command);
+  }
+
+  async resumeGoal(sessionId: string): Promise<ChatResponse> {
+    return apiClient.postOnce<ChatResponse>(`sessions/${encodeURIComponent(sessionId)}/goal/resume`);
   }
 
   async getSessionCompactionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionCompactionStatus> {

@@ -119,7 +119,7 @@ test("Chat preferences save Ultra orchestration and keep the model effort on new
   await expect(chatEffort).toHaveText("最大")
   await chatEffort.click()
   await page.getByRole("option", { name: "Ultra", exact: true }).click()
-  await expect(settings.getByText("新聊天默认使用 Ultra，模型推理档位为「最大」。", { exact: true })).toBeVisible()
+  await expect(settings.getByText("新聊天以模型支持的最高推理档运行，并主动把独立工作分给 SubAgent。", { exact: true })).toBeVisible()
   await settings.getByRole("button", { name: "保存偏好", exact: true }).click()
   await expect(settings.getByText("已保存", { exact: true })).toBeVisible()
   expect(writes).toHaveLength(1)

@@ -132,6 +132,7 @@ vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => 
   recoverRootMode: vi.fn(),
   compactSessionContext: vi.fn(),
   applySessionLoop: vi.fn(),
+  resumeGoal: vi.fn(),
   sendMessage: vi.fn().mockImplementation(async (request) => ({ session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true } })),
   execute: vi.fn().mockResolvedValue(undefined),
 } }))
@@ -1846,6 +1847,46 @@ it("handles a goal command without sending it to the conversation", async () => 
   expect(agentClient.sendMessage).toHaveBeenCalledWith({ session_id: "goal-chat", model: "", message: "/goal 完成测试并说明结果" })
   expect(send).not.toHaveBeenCalled()
   expect(input.value).toBe("")
+})
+
+it.each([true, false])("uses the dedicated Goal resume endpoint and preserves a failed command (%s)", async (supported) => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.sendMessage).mockClear()
+  vi.mocked(agentClient.resumeGoal).mockClear()
+  vi.mocked(agentClient.execute).mockClear()
+  if (supported) {
+    vi.mocked(agentClient.resumeGoal).mockResolvedValueOnce({
+      session_id: "goal-resume", status: "accepted", goal_command: { action: "resume", should_execute: false },
+    })
+  } else {
+    vi.mocked(agentClient.resumeGoal).mockRejectedValueOnce(Object.assign(new Error("Missing route"), { status: 404 }))
+  }
+  const input = await mount(send, "goal-resume")
+  const command = "/GOAL\u0085Resume"
+  change(input, command)
+  act(() => composer().onSubmit())
+  await flush()
+  expect(agentClient.resumeGoal).toHaveBeenCalledExactlyOnceWith("goal-resume")
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(input.value).toBe(supported ? "" : command)
+})
+
+it.each(["attachment", "skill", "new chat"] as const)("keeps Goal resume out of ordinary chat with %s", async (block) => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.sendMessage).mockClear()
+  vi.mocked(agentClient.resumeGoal).mockClear()
+  const input = await mount(send, block === "new chat" ? null : "goal-resume")
+  if (block === "attachment") await addImage("keep.png")
+  if (block === "skill") act(() => composer().onPickSkill(skillA))
+  change(input, "/goal resume")
+  act(() => composer().onSubmit())
+  await flush()
+  expect(agentClient.resumeGoal).not.toHaveBeenCalled()
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("/goal resume")
 })
 
 it("dispatches one compaction request and leaves a newer draft intact", async () => {
