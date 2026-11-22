@@ -291,6 +291,7 @@ export interface TaskItem {
   description: string;
   status: TaskItemStatus;
   depends_on: string[];
+  parent_id?: string | null;
   notes: string;
 }
 

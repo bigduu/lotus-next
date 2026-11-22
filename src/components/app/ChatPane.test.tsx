@@ -8,6 +8,7 @@ import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { ReasoningEffort } from "@services/chat/AgentService"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
+import type { TaskList } from "@shared/store/appStore/slices/todoListSlice"
 
 type ComposerProps = ComponentProps<(typeof import("./Composer"))["Composer"]>
 type MessageListProps = ComponentProps<(typeof import("./MessageList"))["MessageList"]>
@@ -46,6 +47,8 @@ type State = {
   changeSessionReasoningEffort(id: string, effort: ReasoningEffort | null): Promise<void>
   refreshChatsNow(): Promise<void>
   loadChatHistory: ReturnType<typeof vi.fn>
+  taskLists: Record<string, TaskList>
+  loadTaskList: ReturnType<typeof vi.fn>
   updateTokenUsage: ReturnType<typeof vi.fn>
   setTruncationInfo: ReturnType<typeof vi.fn>
 }
@@ -412,6 +415,8 @@ beforeEach(() => {
     selectedModel: { provider: "easycli", model: "test-model" },
     refreshChatsNow: vi.fn().mockResolvedValue(undefined),
     loadChatHistory: vi.fn().mockResolvedValue(undefined),
+    taskLists: {},
+    loadTaskList: vi.fn().mockResolvedValue(null),
     updateTokenUsage: vi.fn(), setTruncationInfo: vi.fn(),
     changeSessionReasoningEffort: vi.fn().mockResolvedValue(undefined),
     changeSessionModel: vi.fn().mockResolvedValue(undefined),
@@ -461,6 +466,41 @@ beforeEach(() => {
   runtime.listCommands.mockReset().mockResolvedValue({ commands: [], total: 0 }); runtime.peekTemplate.mockReset().mockReturnValue(null)
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
+
+it("hydrates the visible Session task DAG and drops it when switching to another Session", async () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); roots.push(root)
+  const send = vi.fn<Send>()
+  const render = (id: string, pageVisible = true) => act(async () => {
+    root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} pageVisible={pageVisible} />)
+  })
+  await render("dag-a")
+  expect(runtime.state.loadTaskList).toHaveBeenCalledExactlyOnceWith("dag-a")
+  const card = () => host.querySelector(`section[aria-label="${uiText("session_task_dag_title")}"]`)
+  expect(card()).toBeNull()
+
+  const taskList: TaskList = {
+    session_id: "dag-a", title: "Review", created_at: "2026-11-22T00:00:00Z", updated_at: "2026-11-22T00:00:00Z",
+    items: [{ id: "review", description: "Review A", status: "in_progress", depends_on: [], notes: "" }],
+  }
+  act(() => { runtime.state.taskLists = { "dag-a": taskList }; notify() })
+  expect(card()?.textContent).toContain(uiText("session_task_dag_progress", { completed: 0, total: 1 }))
+  act(() => { card()?.querySelector("button")?.click() })
+  expect(card()?.textContent).toContain("Review A")
+
+  await render("dag-b")
+  expect(card()).toBeNull()
+  expect(runtime.state.loadTaskList.mock.calls).toEqual([["dag-a"], ["dag-b"]])
+  await render("dag-a", false)
+  expect(card()).toBeNull()
+  expect(runtime.state.loadTaskList).toHaveBeenCalledTimes(2)
+  await render("dag-a")
+  expect(card()?.querySelector("button")?.getAttribute("aria-expanded")).toBe("false")
+  expect(runtime.state.loadTaskList.mock.calls.at(-1)).toEqual(["dag-a"])
+})
+
 const worktreeSelection = { repository: "/repo", root: "/trees", name: "task", branch: "task-branch" }
 function worktreeControl() {
   if (!runtime.worktreeControl) throw new Error("Worktree control did not render")

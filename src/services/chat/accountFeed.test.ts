@@ -40,6 +40,7 @@ vi.mock("@/lib/notify", () => ({ notify: mockState.notify, isNotifyEnabled: () =
 
 import {
   isAccountFeedDisconnected,
+  observeSessionTaskList,
   startAccountFeed,
   stopAccountFeed,
 } from "./accountFeed";
@@ -57,6 +58,8 @@ const createStore = () => ({
   invalidateSessionNavigation: vi.fn(),
   applyServerTitle: vi.fn(),
   applyServerPinned: vi.fn(),
+  setTaskList: vi.fn(),
+  loadTaskList: vi.fn(async () => null),
 });
 
 type TestStore = ReturnType<typeof createStore>;
@@ -251,6 +254,31 @@ describe("accountFeed cursor and reset lifecycle", () => {
     expect(store.refreshChatsNow).toHaveBeenCalledTimes(1);
     expect(store.refreshSessionsIndex).not.toHaveBeenCalled();
     expect(localStorage.getItem(CURSOR_STORAGE_KEY)).toBeNull();
+  });
+
+  it("applies Task updates only to observed Session owners and refreshes on a feed reset", () => {
+    const closeFirst = observeSessionTaskList("session-1");
+    const closeSecond = observeSessionTaskList("session-1");
+    try {
+      startAccountFeed();
+      closeFirst();
+      const taskList = { session_id: "session-1", title: "Plan", items: [], created_at: "", updated_at: "" };
+      capturedHandlers().onChange(change(1, { type: "task_list_updated", task_list: taskList, version: 4 }));
+      capturedHandlers().onChange({
+        ...change(2, { type: "task_list_updated", task_list: taskList, version: 5 }),
+        session_id: "other-session",
+      });
+      expect(store.setTaskList).toHaveBeenCalledExactlyOnceWith("session-1", { ...taskList, version: 4 });
+
+      capturedHandlers().onReset?.();
+      expect(store.loadTaskList).toHaveBeenCalledExactlyOnceWith("session-1");
+
+      closeSecond();
+      capturedHandlers().onChange(change(3, { type: "task_list_updated", task_list: taskList, version: 5 }));
+      expect(store.setTaskList).toHaveBeenCalledTimes(1);
+    } finally {
+      closeSecond();
+    }
   });
 
   it.each(["message_appended", "complete", "session_history_committed"] as const)(

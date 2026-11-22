@@ -1,17 +1,11 @@
 import { StateCreator } from "zustand";
 
-import { AgentClient } from "@services/chat/AgentService";
+import { AgentClient, type TaskItem as SessionTaskItem, type TaskItemStatus } from "@services/chat/AgentService";
 
-// Task item status
-export type TaskItemStatus = "pending" | "in_progress" | "completed" | "blocked";
+export type { TaskItemStatus } from "@services/chat/AgentService";
 
 // Task item
-export interface TaskItem {
-  id: string;
-  description: string;
-  status: TaskItemStatus;
-  depends_on: string[];
-  notes: string;
+export interface TaskItem extends SessionTaskItem {
   tool_calls_count?: number; // NEW: number of tool calls
   summary?: string; // Concise summary of what was accomplished (for completed tasks)
 }
