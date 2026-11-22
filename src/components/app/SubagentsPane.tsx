@@ -134,7 +134,7 @@ export function SubagentsPane({
             </Button>
             <SubagentPicker child={child} topology={topology} onSelect={onSelectChild} />
           </div>
-          <p className="px-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{path} / {actorTitle(child)}</p>
+          <p className="max-h-16 overflow-y-auto px-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{path} / {actorTitle(child)}</p>
         </div>
       ) : null}
       {state.gapReason ? (
