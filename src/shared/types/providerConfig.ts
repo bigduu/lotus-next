@@ -107,7 +107,7 @@ export type ProviderInstanceConfig = Record<string, unknown> & {
   runtime_models?: string[];
   /** Exact model ID in this instance; missing/null supports_vision inherits. */
   model_capabilities?: Record<string, { supports_vision?: boolean | null; [key: string]: unknown }>;
-
+  litellm_wire_types?: boolean;
 };
 
 /**
@@ -123,6 +123,10 @@ export interface ProviderInstance {
   label: string;
   enabled: boolean;
   config: ProviderInstanceConfig;
+  /** Effective settings advertised by the backend for supported experiments. */
+  experiments?: {
+    litellm_wire_types?: boolean;
+  };
 }
 
 /**

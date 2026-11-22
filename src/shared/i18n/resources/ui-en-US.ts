@@ -835,6 +835,9 @@ export const uiEnUs = {
   "workflow_run_failure_dependency_skipped": "A required dependency was skipped.",
   "workflow_run_failure_storage": "Workflow storage is unavailable.",
 
+  "provider_experiments": "Experimental features",
+  "provider_experiments_litellm": "LiteLLM protocol adapter",
+  "provider_experiments_litellm_hint": "Save to apply to this provider. Turning it off restores Bamboo’s original adapter.",
   "runtime_models_legacy_assignments": "Legacy model assignments",
   "runtime_models_legacy_assignments_hint": "These saved instance assignments also use Runtime models. Change or clear an assignment before removing its model.",
   "runtime_models_legacy_fast_model": "Legacy fast model",
