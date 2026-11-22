@@ -1,15 +1,15 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react"
 
 /** Follow content and viewport growth until the reader scrolls upward. */
-export function useStickyScroll(currentSessionId: string | null | undefined) {
+export function useStickyScroll(currentSessionId: string | null | undefined, restoreReading = false) {
   // Callback refs reconnect when HomeDashboard gives way to MessageList.
   const [scrollElement, scrollRef] = useState<HTMLDivElement | null>(null)
   const [contentElement, contentRef] = useState<HTMLDivElement | null>(null)
-  const stickRef = useRef(true)
+  const stickRef = useRef(!restoreReading)
   const lastScrollTop = useRef(0)
   const readerScrollUntil = useRef(0)
   const pointerActive = useRef(false)
-  const [atBottom, setAtBottom] = useState(true)
+  const [atBottom, setAtBottom] = useState(!restoreReading)
 
   const followBottom = useCallback(() => {
     if (!scrollElement || !stickRef.current) return
@@ -44,10 +44,10 @@ export function useStickyScroll(currentSessionId: string | null | undefined) {
   }
 
   useLayoutEffect(() => {
-    stickRef.current = true
+    stickRef.current = !restoreReading
     readerScrollUntil.current = 0
     pointerActive.current = false
-    setAtBottom(true)
+    setAtBottom(!restoreReading)
     followBottom()
     if (!scrollElement || !contentElement) return
     const observer = new ResizeObserver(followBottom)
@@ -113,7 +113,7 @@ export function useStickyScroll(currentSessionId: string | null | undefined) {
       ownerWindow?.removeEventListener("pointerup", pointerUp)
       ownerWindow?.removeEventListener("pointercancel", pointerUp)
     }
-  }, [scrollElement, contentElement, currentSessionId, followBottom])
+  }, [scrollElement, contentElement, currentSessionId, followBottom, restoreReading])
 
   return { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom: pinToBottom, pinToBottom }
 }

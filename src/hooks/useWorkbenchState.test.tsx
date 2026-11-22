@@ -64,6 +64,25 @@ describe("session workbench persistence", () => {
     expect(latest.state.tools).toEqual(["subagents"])
   })
 
+  it("keeps in-memory per-session state and rejects a setter from an earlier visit to the same session", () => {
+    vi.spyOn(localStorage, "getItem").mockImplementation(() => { throw new Error("blocked") })
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("blocked") })
+    render("a")
+    act(() => latest.setField("subagents", {
+      childId: "child-a", view: "messages", expandedActorIds: ["a", "branch-a"],
+    }))
+    const stale = latest.setField
+    render("b")
+    act(() => latest.setField("tools", ["review"]))
+    render("a")
+    act(() => stale("subagents", { childId: "stale", view: "messages" }))
+    expect(latest.state.subagents).toEqual({
+      childId: "child-a", view: "messages", expandedActorIds: ["a", "branch-a"],
+    })
+    render("b")
+    expect(latest.state.tools).toEqual(["review"])
+  })
+
   it("persists close, reorder and active selection changes", () => {
     render("a")
     act(() => {
