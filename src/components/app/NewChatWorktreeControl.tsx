@@ -3,7 +3,7 @@ import { AlertCircle, Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, R
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { getErrorMessage } from "@services/api/errors"
 import { worktreeService, type ProjectWorktrees } from "@services/workspace/WorktreeService"
-import type { NewChatWorktreeControlProps } from "@services/workspace/newChatWorktreeTypes"
+import { createWorktreeSelection, type NewChatWorktreeControlProps } from "@services/workspace/newChatWorktreeTypes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -12,7 +12,6 @@ import { cn } from "@/lib/utils"
 
 const normalizePath = (path: string | null | undefined) => path?.replace(/\/+$/, "") || "/"
 const folderName = (path: string) => path.split("/").filter(Boolean).at(-1) || path
-const generateName = () => `chat-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 6)}`
 
 type Inventory = {
   context: string
@@ -23,7 +22,7 @@ type Inventory = {
 
 /** A draft-only selector. Creating and binding a worktree belongs to first-send preparation. */
 export function NewChatWorktreeControl({
-  projectId, workspacePath, value, onChange, disabled = false, preparedPath, error,
+  projectId, workspacePath, value, onChange, automatic = false, disabled = false, preparedPath, error,
 }: NewChatWorktreeControlProps) {
   useUiLocale()
   const id = useId()
@@ -39,6 +38,7 @@ export function NewChatWorktreeControl({
   const source = value ? selectedSource : defaultSource
   const sourceDiffers = !!workspacePath && !!source && normalizePath(source.path) !== normalizePath(workspacePath)
   const locked = disabled || !!preparedPath
+  const newWorktree = automatic || !!value
   const validName = !value || /^[A-Za-z0-9_-]{1,80}$/.test(value.name)
   const target = value?.root && value.name ? `${value.root.replace(/\/+$/, "")}/${value.name}` : null
 
@@ -56,17 +56,16 @@ export function NewChatWorktreeControl({
 
   const selectWorktree = () => {
     if (locked || loading || !projectId || !defaultSource || value) return
-    const name = generateName()
-    onChange({ repository: defaultSource.path, root: current?.data?.default_root ?? "", name, branch: `chat/${name}` })
+    onChange(createWorktreeSelection(defaultSource.path, current?.data?.default_root ?? ""))
   }
 
   return <div className="min-w-0 max-w-full space-y-1" data-new-chat-worktree-control>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button type="button" aria-label={uiText("chat_worktree_control")} title={preparedPath || value?.repository || workspacePath || uiText("chat_worktree_current")}
-          className={cn(composerControlClassName, value && "bg-primary/10 text-primary")}>
-          {error ? <AlertCircle className="size-4 shrink-0" /> : preparedPath ? <Check className="size-4 shrink-0" /> : value ? <GitBranch className="size-4 shrink-0" /> : <FolderGit2 className="size-4 shrink-0" />}
-          <span className="truncate">{preparedPath ? uiText("chat_worktree_ready") : value ? uiText("chat_worktree_new") : uiText("chat_worktree_current")}</span>
+          className={cn(composerControlClassName, newWorktree && "bg-primary/10 text-primary")}>
+          {error ? <AlertCircle className="size-4 shrink-0" /> : preparedPath ? <Check className="size-4 shrink-0" /> : newWorktree ? <GitBranch className="size-4 shrink-0" /> : <FolderGit2 className="size-4 shrink-0" />}
+          <span className="truncate">{preparedPath ? uiText("chat_worktree_ready") : newWorktree ? uiText("chat_worktree_new") : uiText("chat_worktree_current")}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
       </PopoverTrigger>
@@ -77,16 +76,17 @@ export function NewChatWorktreeControl({
           <p className="text-xs leading-relaxed text-muted-foreground">{uiText("chat_worktree_draft_hint")}</p>
         </div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label={uiText("chat_worktree_mode")}>
-          <button type="button" aria-pressed={!value} disabled={locked} onClick={() => { if (!locked && value) onChange(null) }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg border p-2 text-xs disabled:opacity-50 ${!value ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`}>
+          <button type="button" aria-pressed={!newWorktree} disabled={locked} onClick={() => { if (!locked && newWorktree) onChange(null) }}
+            className={`flex items-center justify-center gap-1.5 rounded-lg border p-2 text-xs disabled:opacity-50 ${!newWorktree ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`}>
             <FolderGit2 className="size-3.5" />{uiText("chat_worktree_current")}
           </button>
-          <button type="button" aria-pressed={!!value} disabled={locked || loading || !projectId || !defaultSource} onClick={selectWorktree}
-            className={`flex items-center justify-center gap-1.5 rounded-lg border p-2 text-xs disabled:opacity-50 ${value ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`}>
+          <button type="button" aria-pressed={newWorktree} disabled={locked || loading || !projectId || !defaultSource} onClick={selectWorktree}
+            className={`flex items-center justify-center gap-1.5 rounded-lg border p-2 text-xs disabled:opacity-50 ${newWorktree ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`}>
             <GitBranch className="size-3.5" />{uiText("chat_worktree_new")}
           </button>
         </div>
-        {!value && <div className="space-y-1 text-xs">
+        {automatic && !value && <p className="text-xs text-muted-foreground">{uiText("chat_worktree_project_default")}</p>}
+        {!newWorktree && <div className="space-y-1 text-xs">
           <p className="font-medium">{uiText("chat_worktree_selected_workspace")}</p>
           <p className="break-all text-muted-foreground">{workspacePath || uiText("chat_worktree_default_workspace")}</p>
         </div>}

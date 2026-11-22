@@ -37,6 +37,8 @@ export interface ProjectSummary {
   project_path: string | null;
   /** Migration/configuration state for the authoritative primary path. */
   project_path_status: ProjectPathStatus;
+  /** Default for user-started Project chats. Absent on older Bamboo servers. */
+  new_chat_worktree?: boolean;
   /** Primary path plus additional workspace bindings. */
   workspace_count: number;
   created_at: string;
@@ -67,6 +69,7 @@ export interface PatchProjectRequest {
   section?: string | null;
   /** CAS-updated primary folder; never inferred from workspace binding order. */
   project_path?: string;
+  new_chat_worktree?: boolean;
   sidebar?: ProjectSidebar;
   /** One-time import; Bamboo filters stale assignments and never overwrites a snapshot. */
   import_sidebar?: ProjectSidebar;

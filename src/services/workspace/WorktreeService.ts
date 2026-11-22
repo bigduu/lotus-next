@@ -37,7 +37,10 @@ export const worktreeService = {
   preferences: () => apiClient.get<WorktreePreferences>("worktrees/preferences"),
   saveRoot: (root: string | null, projectId?: string) =>
     apiClient.putOnce<WorktreePreferences>("worktrees/preferences", { root, ...(projectId ? { project_id: projectId } : {}) }),
-  list: (projectId: string) => apiClient.get<ProjectWorktrees>(`projects/${encodeURIComponent(projectId)}/worktrees`),
+  list: (projectId: string, { sourcesOnly = false }: { sourcesOnly?: boolean } = {}) =>
+    apiClient.get<ProjectWorktrees>(`projects/${encodeURIComponent(projectId)}/worktrees${sourcesOnly ? "?sources_only=true" : ""}`),
   create: (projectId: string, request: { repository: string; root: string; name: string; branch: string }) =>
-    apiClient.postOnce<{ path: string }>(`projects/${encodeURIComponent(projectId)}/worktrees`, request),
+    apiClient.postOnce<{ path: string; project_owned_at_revision?: number | null }>(
+      `projects/${encodeURIComponent(projectId)}/worktrees`, request,
+    ),
 }
