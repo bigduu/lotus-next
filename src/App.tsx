@@ -813,6 +813,11 @@ function App() {
         }}
         onNewChat={() => {
           setSettingsOpen(false)
+          const project = pendingProjectId ? useAppStore.getState().projects[pendingProjectId] : undefined
+          if (project?.new_chat_worktree === true && pickedWorktree?.projectId === project.id) {
+            setPickedWorkspace(null)
+            setPickedWorktree(null)
+          }
           newChat()
         }}
         onSettings={openSettings}

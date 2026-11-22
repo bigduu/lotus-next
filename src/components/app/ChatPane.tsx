@@ -98,6 +98,10 @@ function worktreeErrorMessage(error: NewChatWorktreePreparationError | null) {
   if (!error) return null
   switch (error.kind) {
     case "invalid": return uiText("chat_worktree_invalid_config")
+    case "missing-root": return uiText("chat_worktree_missing_root")
+    case "no-source": return uiText("chat_worktree_no_git")
+    case "source-unavailable": return uiText("chat_worktree_source_unavailable")
+    case "ambiguous-source": return uiText("chat_worktree_ambiguous_source")
     case "uncertain": return uiText("chat_worktree_uncertain")
     case "context-changed": return uiText("chat_worktree_context_changed")
     default: return uiText("chat_worktree_prepare_failed")
@@ -639,6 +643,9 @@ export function ChatPane({
   const selectedProjectPath = useAppStore((state) =>
     pendingProjectId ? state.projects[pendingProjectId]?.project_path : undefined,
   )
+  const projectWorktreeDefault = useAppStore((state) =>
+    !!pendingProjectId && state.projects[pendingProjectId]?.new_chat_worktree === true,
+  )
   const [, refreshPreparation] = useState(0)
   const preparationDrafts = useRef({ epoch: newChatEpoch, entries: new Map<string, NewChatWorktreePreparation>() })
   if (preparationDrafts.current.epoch !== newChatEpoch) {
@@ -651,6 +658,8 @@ export function ChatPane({
       () => { if (mountedRef.current) refreshPreparation((revision) => revision + 1) })
     preparationDrafts.current.entries.set(preparationKey, preparation)
   }
+  const automaticWorktree = !currentSessionId && !worktreePath
+    && projectWorktreeDefault && preparation.useProjectDefault
   const submissionScope = useMemo(() => ({ currentSessionId, pendingProjectId, pickedWorkspace, worktreePath, selectedProjectPath, newChatEpoch }), [currentSessionId, pendingProjectId, pickedWorkspace, worktreePath, selectedProjectPath, newChatEpoch])
   const submissionScopeRef = useRef(submissionScope)
   submissionScopeRef.current = submissionScope
@@ -1007,7 +1016,7 @@ export function ChatPane({
       return
     }
     const frozenReference = ticketReference
-    const prepareWorktree = !currentSessionId && preparation.selection !== null
+    const prepareWorktree = !currentSessionId && (preparation.selection !== null || automaticWorktree)
     const originNavigationVersion = getNavigationVersion?.()
     const isOriginCurrent = () => mountedRef.current
       && submissionScopeRef.current === submissionScope
@@ -1046,7 +1055,7 @@ export function ChatPane({
       ? (async () => {
           setPreparationPending(true)
           try {
-            const path = await preparation.prepare(isOriginCurrent)
+            const path = await preparation.prepare(isOriginCurrent, automaticWorktree)
             if (!isOriginCurrent()) throw new NewChatWorktreePreparationError("context-changed")
             return await sendSnapshot(path)
           } catch (error) {
@@ -1469,6 +1478,7 @@ export function ChatPane({
             <NewChatWorktreeControl projectId={pendingProjectId ?? null}
               workspacePath={worktreePath ?? selectedProjectPath ?? pickedWorkspace}
               value={preparation.selection} onChange={(value) => preparation.select(value)}
+              automatic={automaticWorktree}
               disabled={preparation.locked || submissionPending || preparationPending}
               preparedPath={preparation.path} error={worktreeErrorMessage(preparation.error)} />
             {preparationPending ? <span role="status" className="px-2 text-xs text-muted-foreground">{uiText("chat_worktree_preparing")}</span> : null}

@@ -13,6 +13,7 @@ test("selects a child repository, creates a checkout, and opens Project-owned an
   const observation = await installArtifactRuntime(page, standaloneScenario)
   let project: ProjectManifest = { id: "project-a", name: "Zenith", status: "active", revision: 1, resource_revision: 1,
     schema_version: 3, project_path: "/repo", project_path_status: "configured", workspace_bindings: [], workspace_count: 1,
+    new_chat_worktree: true,
     created_at: "2026-10-15T00:00:00Z", updated_at: "2026-10-15T00:00:00Z" }
   const preferences = { default_root: "/Volumes/External/worktrees", project_roots: {} as Record<string, string> }
   const repositories = [
@@ -113,5 +114,12 @@ test("selects a child repository, creates a checkout, and opens Project-owned an
   await revealComposerSettings(page)
   await expect(page.getByRole("button", { name: "task", exact: true }).and(page.getByTitle(target, { exact: true }))).toBeVisible()
   await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("当前工作区")
+
+  if (await page.getByRole("dialog", { name: "更多", exact: true }).isVisible()) await page.keyboard.press("Escape")
+  await page.keyboard.press("Control+k")
+  await page.getByRole("option", { name: "新建对话", exact: true }).click()
+  await revealComposerSettings(page)
+  await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("新建 worktree")
+  expect(creates).toHaveLength(1)
   expect(observation.pageErrors).toEqual([])
 })

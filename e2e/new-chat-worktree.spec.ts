@@ -11,7 +11,7 @@ const selection = { repository: "/repo/zenith", root, name: "first-chat", branch
 const sectionInZenith = { id: "section:00000000-0000-4000-8000-0000000000a1", name: "Section chat" }
 
 async function install(page: Page, mode: "success" | "bind-conflict" | "uncertain" | "delayed" | "chat-delayed" = "success",
-  options: { section?: { id: string; name: string } } = {}) {
+  options: { section?: { id: string; name: string }; projectDefault?: boolean; defaultRoot?: string | null } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
@@ -25,6 +25,7 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
     // Only the section-scoped regression needs durable sidebar state; every
     // other case keeps the original sectionless manifest.
     ...(options.section ? { sidebar: { sections: [options.section], session_sections: {}, hidden_legacy: false } } : {}),
+    new_chat_worktree: options.projectDefault,
   }
   const creates: unknown[] = []
   const bindings: Array<{ body: unknown; revision: string | undefined }> = []
@@ -32,14 +33,19 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
   const executes: unknown[] = []
   const order: string[] = []
   const sidebarWrites: ProjectSidebar[] = []
+  const preferenceWrites: Array<{ enabled: boolean; revision: string | undefined }> = []
+  const sourceLookups: string[] = []
+  const destination = options.defaultRoot === undefined ? root : options.defaultRoot
   let releaseCreate = () => {}
   const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
   let releaseChat = () => {}
   const chatGate = new Promise<void>((resolve) => { releaseChat = resolve })
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
-    const path = new URL(request.url()).pathname
+    const url = new URL(request.url())
+    const path = url.pathname
     if (path === "/api/v1/projects") return route.fulfill({ json: { projects: [project] } })
+    if (path === "/api/v1/worktrees/preferences") return route.fulfill({ json: { default_root: destination } })
     if (path === "/api/v1/projects/project-a") {
       if (request.method() === "PATCH") {
         // Durable section assignment writes land here, not in composer state.
@@ -48,6 +54,10 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
           sidebarWrites.push(structuredClone(body.sidebar))
           project = { ...project, sidebar: structuredClone(body.sidebar), revision: project.revision + 1 }
         }
+        if (typeof body.new_chat_worktree === "boolean") {
+          preferenceWrites.push({ enabled: body.new_chat_worktree, revision: request.headers()["if-match"] })
+          project = { ...project, new_chat_worktree: body.new_chat_worktree, revision: project.revision + 1 }
+        }
         return route.fulfill({ json: project, headers: { ETag: `"${project.revision}"` } })
       }
       // Match the real server's omission of an empty binding list.
@@ -55,23 +65,26 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
     }
     if (path === "/api/v1/projects/project-a/worktrees") {
       if (request.method() === "POST") {
-        creates.push(request.postDataJSON())
+        const create = request.postDataJSON() as { root: string; name: string }
+        creates.push(create)
         order.push("create")
         if (mode === "uncertain") return route.fulfill({ status: 400, json: { error: "checkout failed after branch registration" } })
         if (mode === "delayed") await createGate
-        return route.fulfill({ status: 201, json: { path: target } })
+        return route.fulfill({ status: 201, json: { path: `${create.root}/${create.name}` } })
       }
-      return route.fulfill({ json: { project_id: project.id, default_root: root,
+      if (url.searchParams.get("sources_only") === "true") sourceLookups.push(project.id)
+      return route.fulfill({ json: { project_id: project.id, default_root: destination,
         repositories: [{ path: "/repo/zenith", error: null, worktrees: [] }] } })
     }
     if (path === "/api/v1/projects/project-a/workspaces") {
-      bindings.push({ body: request.postDataJSON(), revision: request.headers()["if-match"] })
+      const binding = request.postDataJSON() as { path: string }
+      bindings.push({ body: binding, revision: request.headers()["if-match"] })
       order.push("bind")
       if (mode === "bind-conflict" && bindings.length === 1) {
         project = { ...project, revision: 2 }
         return route.fulfill({ status: 412, json: { error: "Project revision changed" } })
       }
-      project = { ...project, revision: project.revision + 1, workspace_count: 2, workspace_bindings: [{ path: target }] }
+      project = { ...project, revision: project.revision + 1, workspace_count: 2, workspace_bindings: [binding] }
       return route.fulfill({ json: project })
     }
     if (path === "/api/v1/chat") {
@@ -89,7 +102,7 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
   })
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
-  return { observation, creates, bindings, chats, executes, order, sidebarWrites, releaseCreate, releaseChat }
+  return { observation, creates, bindings, chats, executes, order, sidebarWrites, preferenceWrites, sourceLookups, releaseCreate, releaseChat }
 }
 
 async function revealSidebar(page: Page) {
@@ -232,6 +245,58 @@ test("current workspace remains the default and sends without worktree side effe
   expect(state.creates).toEqual([])
   expect(state.bindings).toEqual([])
   expect(state.chats[0]).toMatchObject({ project_id: "project-a", workspace_path: "/repo/zenith" })
+  expect(state.observation.pageErrors).toEqual([])
+})
+
+test("the saved Project default creates and binds a worktree on first send after reloading", async ({ page }, info) => {
+  const state = await install(page, "success", { projectDefault: false })
+  await revealSidebar(page)
+  await page.getByRole("button", { name: "Worktree 管理", exact: true }).click()
+  const toggle = page.getByRole("switch", { name: "新会话默认使用 Worktree", exact: true })
+  await expect(toggle).toHaveAttribute("aria-checked", "false")
+  await toggle.click()
+  await expect(toggle).toHaveAttribute("aria-checked", "true")
+  expect(state.preferenceWrites).toEqual([{ enabled: true, revision: '"1"' }])
+  await page.screenshot({ path: info.outputPath("project-new-chat-worktree-default.png"), animations: "disabled" })
+
+  await page.reload()
+  await newProjectChat(page)
+  await revealComposerSettings(page)
+  await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("新建 worktree")
+  expect(state.creates).toEqual([])
+  if (await page.getByRole("dialog", { name: "更多", exact: true }).isVisible()) await page.keyboard.press("Escape")
+  await submit(page)
+  await expect.poll(() => state.executes.length).toBe(1)
+  expect(state.order).toEqual(["create", "bind", "chat", "execute"])
+  expect(state.sourceLookups).toEqual(["project-a"])
+  const create = state.creates[0] as { name: string; branch: string }
+  expect(create).toMatchObject({ repository: "/repo/zenith", root, name: expect.stringMatching(/^chat-\d{8}-[a-z0-9]{6}$/) })
+  expect(create.branch).toBe(`chat/${create.name}`)
+  const checkout = `${root}/${create.name}`
+  expect(state.bindings).toEqual([{ body: { path: checkout }, revision: '"2"' }])
+  expect(state.chats[0]).toMatchObject({ project_id: "project-a", workspace_path: checkout })
+  expect(state.observation.pageErrors).toEqual([])
+})
+
+test("an unresolved Project default preserves the draft and lets the user opt out for that chat", async ({ page }) => {
+  const state = await install(page, "success", { projectDefault: true, defaultRoot: null })
+  await newProjectChat(page)
+  const message = "This draft survives missing Worktree configuration"
+  await submit(page, message)
+  await expect(page.getByText(/请在 Worktree 管理中保存目标根目录/).first()).toBeVisible()
+  await expectComposerText(page.getByRole("textbox", { name: "消息", exact: true }), message)
+  expect(state.order).toEqual([])
+
+  await dismissErrorNotice(page)
+  await revealComposerSettings(page)
+  await page.getByRole("button", { name: "会话工作区", exact: true }).click()
+  await page.getByRole("button", { name: "当前工作区", exact: true }).click()
+  await closeSettings(page)
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => state.executes.length).toBe(1)
+  expect(state.creates).toEqual([])
+  expect(state.preferenceWrites).toEqual([])
+  expect(state.chats[0]).toMatchObject({ project_id: "project-a", workspace_path: "/repo/zenith", message })
   expect(state.observation.pageErrors).toEqual([])
 })
 

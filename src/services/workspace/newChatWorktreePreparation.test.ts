@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { ApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
 import type { ProjectManifest } from "@services/project/types"
+import type { WorktreeRepository } from "./WorktreeService"
 import { NewChatWorktreePreparation } from "./newChatWorktreePreparation"
 
 const selection = { repository: "/repo", root: "/trees", name: "task", branch: "task-branch" }
@@ -16,18 +17,82 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
 }
-function setup(projectId: string | null = "p1") {
+const source = (repoPath: string): WorktreeRepository => ({ path: repoPath, error: null, worktrees: [] })
+const inventory = (repositories = [source("/repo")], defaultRoot: string | null = "/trees") => ({
+  project_id: "p1", default_root: defaultRoot, repositories,
+})
+
+function setup(projectId: string | null = "p1", automatic = false) {
   const dependencies = {
-    getProject: vi.fn().mockResolvedValue(project()),
+    getProject: vi.fn().mockResolvedValue({ ...project(), new_chat_worktree: automatic }),
+    list: vi.fn().mockResolvedValue(inventory()),
     create: vi.fn().mockResolvedValue({ path }),
     bindWorkspace: vi.fn().mockResolvedValue(project(2, true)),
   }
   const ledger = new NewChatWorktreePreparation(projectId, vi.fn(), dependencies)
-  ledger.select(selection)
+  if (!automatic) ledger.select(selection)
   return { ledger, ...dependencies }
 }
 
 describe("new-chat worktree preparation", () => {
+  it.each([
+    { repositories: [source("/other"), source("/repo")], expected: "/repo" },
+    { repositories: [source("/repo/nested")], expected: "/repo/nested" },
+  ])("uses the Project checkout or its only discovered repository ($expected)", async ({ repositories, expected }) => {
+    const context = setup("p1", true)
+    context.list.mockResolvedValueOnce(inventory(repositories))
+    await expect(context.ledger.prepare(() => true, true)).resolves.toBe(path)
+    const request = context.create.mock.calls[0][1]
+    expect(context.list).toHaveBeenCalledExactlyOnceWith("p1", { sourcesOnly: true })
+    expect(request).toMatchObject({ repository: expected, root: "/trees", name: expect.stringMatching(/^chat-\d{8}-[a-z0-9]{6}$/) })
+    expect(request.branch).toBe(`chat/${request.name}`)
+    expect(context.bindWorkspace).toHaveBeenCalledExactlyOnceWith("p1", 1, { path })
+  })
+
+  it.each([
+    { listing: inventory([source("/repo")], null), kind: "missing-root" },
+    { listing: inventory([]), kind: "no-source" },
+    { listing: inventory([{ ...source("/repo"), error: "Checkout disappeared" }, source("/other")]), kind: "source-unavailable" },
+    { listing: inventory([source("/a"), source("/b")]), kind: "ambiguous-source" },
+  ])("does not mutate Git when the Project default cannot be resolved ($kind)", async ({ listing, kind }) => {
+    const context = setup("p1", true)
+    context.list.mockResolvedValueOnce(listing)
+    await expect(context.ledger.prepare(() => true, true)).rejects.toMatchObject({ kind })
+    expect(context.create).not.toHaveBeenCalled()
+    expect(context.bindWorkspace).not.toHaveBeenCalled()
+    expect(context.ledger.selection).toBeNull()
+    expect(context.ledger.locked).toBe(false)
+    await expect(context.ledger.prepare(() => true, true)).resolves.toBe(path)
+  })
+
+  it("stops before creation if the user leaves during automatic source discovery", async () => {
+    const context = setup("p1", true)
+    const discovery = deferred<ReturnType<typeof inventory>>()
+    context.list.mockReturnValueOnce(discovery.promise)
+    let current = true
+    const pending = context.ledger.prepare(() => current, true)
+    await vi.waitFor(() => expect(context.list).toHaveBeenCalledOnce())
+    current = false
+    discovery.resolve(inventory())
+    await expect(pending).rejects.toMatchObject({ kind: "context-changed" })
+    expect(context.create).not.toHaveBeenCalled()
+  })
+
+  it.each([1, 4])("uses server-confirmed Project ownership at revision %s without adding an overlapping binding", async (revision) => {
+    const context = setup("p1", true)
+    context.create.mockResolvedValueOnce({ path, project_owned_at_revision: 1 })
+    context.getProject.mockResolvedValueOnce({ ...project(), new_chat_worktree: true }).mockResolvedValueOnce(project(revision))
+    context.list.mockResolvedValueOnce(inventory()).mockResolvedValueOnce(inventory([
+      { ...source("/repo"), worktrees: [{
+        path, project_owned: true, openable: true, branch: "chat/task", head: "abc123",
+        locked: false, prunable: false, dirty: false, error: null, occupied: false, sessions: [],
+      }] },
+    ]))
+    await expect(context.ledger.prepare(() => true, true)).resolves.toBe(path)
+    expect(context.list).toHaveBeenCalledTimes(revision === 1 ? 1 : 2)
+    expect(context.bindWorkspace).not.toHaveBeenCalled()
+  })
+
   it("creates once with frozen config, tolerates omitted bindings, and binds using a fresh revision", async () => {
     const context = setup()
     context.getProject.mockResolvedValueOnce(project(1)).mockResolvedValueOnce(project(7))
