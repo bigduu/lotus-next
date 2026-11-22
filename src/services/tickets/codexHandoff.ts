@@ -106,7 +106,13 @@ export function codexHandoffCommand(offer: PreparedOffer, url: URL, windows: boo
   const payload = JSON.stringify({ offer_id: offer.offer_id })
   if (windows) return powershellHandoffCommand(offer.cwd, url, payload)
   const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
-  return `(command -v codex >/dev/null || { printf '%s\\n' 'Codex CLI is required.' >&2; exit 127; }; bamboo_handoff_prompt=$(curl -q -fsS --noproxy '*' --max-time 15 -H 'Content-Type: application/json' --data ${quote(payload)} ${quote(url.href)}) && codex --cd ${quote(offer.cwd)} -- "$bamboo_handoff_prompt")`
+  const workspace = quote(offer.cwd)
+  return `(
+  command -v codex >/dev/null || { printf '%s\\n' 'Codex CLI is required.' >&2; exit 127; }
+  (cd -- ${workspace}) >/dev/null 2>&1 || { printf '%s\\n' 'The Work checkout is unavailable.' >&2; exit 1; }
+  bamboo_handoff_prompt=$(curl -q -fsS --noproxy '*' --max-time 15 -H 'Content-Type: application/json' --data ${quote(payload)} ${quote(url.href)}) &&
+    codex --cd ${workspace} -- "$bamboo_handoff_prompt"
+)`
 }
 
 export async function prepareCodexHandoff(selector: CodexHandoffSelector, signal: AbortSignal): Promise<string | null> {

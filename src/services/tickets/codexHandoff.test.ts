@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { delimiter, dirname, join, toNamespacedPath } from "node:path"
@@ -11,16 +11,27 @@ vi.mock("@services/api", () => ({ apiClient: {} }))
 
 const offer = { offer_id: "11a11111-22b2-43c3-84d4-55e555555555", cwd: "/worktree/陈's project $(false)" }
 const claimUrl = new URL("http://127.0.0.1:8542/api/v1/tickets/codex-handoff/claim")
+const unixShells = existsSync("/bin/zsh") ? ["/bin/bash", "/bin/zsh"] : ["/bin/bash"]
 
-it.skipIf(process.platform === "win32")("passes the Work directory and claimed prompt as literal arguments", () => {
+it.skipIf(process.platform === "win32").each(unixShells)("checks the Work directory and keeps arguments literal in %s", (shell) => {
   const paths = mkdtempSync(join(tmpdir(), "lotus-codex-handoff-"))
   try {
-    writeFileSync(join(paths, "curl"), "#!/bin/sh\nprintf '%s' '目标; $(false) \"quoted\"'\n", { mode: 0o700 })
+    const workspace = join(paths, "陈's project $(false)")
+    const claimLog = join(paths, "claim.log")
+    writeFileSync(join(paths, "curl"), "#!/bin/sh\n: > \"$LOTUS_TEST_CLAIM_LOG\"\nprintf '%s' '目标; $(false) \"quoted\"'\n", { mode: 0o700 })
     writeFileSync(join(paths, "codex"), "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", { mode: 0o700 })
-    const argv = execFileSync("/bin/sh", ["-c", codexHandoffCommand(offer, claimUrl, false)], {
-      env: { PATH: paths }, encoding: "utf8",
-    }).trimEnd().split("\n")
-    expect(argv).toEqual(["--cd", offer.cwd, "--", '目标; $(false) "quoted"'])
+    const args = ["-c", codexHandoffCommand({ ...offer, cwd: workspace }, claimUrl, false)]
+    const options = { env: { PATH: paths, LOTUS_TEST_CLAIM_LOG: claimLog }, encoding: "utf8" as const }
+
+    const missing = spawnSync(shell, args, options)
+    expect(missing.status).toBe(1)
+    expect(missing.stderr).toContain("The Work checkout is unavailable.")
+    expect(existsSync(claimLog)).toBe(false)
+
+    mkdirSync(workspace)
+    const argv = execFileSync(shell, args, options).trimEnd().split("\n")
+    expect(existsSync(claimLog)).toBe(true)
+    expect(argv).toEqual(["--cd", workspace, "--", '目标; $(false) "quoted"'])
   } finally {
     rmSync(paths, { recursive: true, force: true })
   }
