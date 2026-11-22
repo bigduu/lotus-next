@@ -7,7 +7,6 @@ import { uiLanguage, uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useRenderProbe } from "@/lib/renderProbe"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
-import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { isTerminalRunStatus } from "@shared/store/appStore/slices/executionStateSlice"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -17,9 +16,6 @@ import {
   RotateCcw,
   Download,
   FileDown,
-  Columns2,
-  X,
-  PanelRightOpen,
   BookText,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
@@ -78,14 +74,6 @@ import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationCon
 import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
 import { SessionTaskDag } from "@/components/chat/SessionTaskDag"
 import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import type { ChatItem } from "@shared/types/chatMessages"
 import type { SessionPermissionMode } from "@services/chat/AgentService"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
 import {
@@ -111,16 +99,6 @@ function worktreeErrorMessage(error: NewChatWorktreePreparationError | null) {
     case "context-changed": return uiText("chat_worktree_context_changed")
     default: return uiText("chat_worktree_prepare_failed")
   }
-}
-
-/** Secondary (split) pane config — a slim header with its own session picker. */
-type SecondaryConfig = {
-  sessionId: string | null
-  chats: ChatItem[]
-  onPickSession: (id: string | null) => void
-  onClose: () => void
-  hideClose?: boolean
-  historyRead?: { status: "loading" | "ready" | "error"; retry: () => void }
 }
 
 type Attachment = { id: string; base64: string; name: string; type: string; size: number; url: string }
@@ -205,15 +183,7 @@ function fileToAttachment(file: File): Promise<Attachment> {
 type ChatState = ReturnType<typeof useChat>
 const EMPTY_PENDING_USER_IMAGES = [] as const
 
-/**
- * A self-contained chat column: header + messages + composer + this pane's
- * transient overlays (toasts, image lightbox, question/approval dialogs). It is
- * driven entirely by the `chat` bundle it receives (any `useChat(...)` instance),
- * so the same component renders the main pane and — later — additional panes
- * each bound to a different session. Per-pane input state (draft, attachments,
- * skill, scroll anchor, …) lives here; cross-pane globals (sidebar, settings,
- * workspace picker, inspector) stay in the parent and arrive as callbacks.
- */
+/** The primary chat controls the transcript, composer and its transient dialogs. */
 export function ChatPane({
   chat,
   pickedWorkspace,
@@ -232,12 +202,10 @@ export function ChatPane({
   onWorkReference,
   sidePaneOpen,
   onToggleSidePane,
-  splitOpen,
-  onToggleSplit,
+  onOpenSubagents,
   onSelectSubAgent,
   onOpenSidebar,
   sidebarCollapsed,
-  secondary,
   pageVisible = true,
 }: {
   chat: ChatState
@@ -263,20 +231,16 @@ export function ChatPane({
   onWorkReference?: () => void
   sidePaneOpen?: boolean
   onToggleSidePane?: () => void
-  splitOpen: boolean
-  onToggleSplit: () => void
+  onOpenSubagents?: () => void
   /** Opens a child without replacing this pane's current session. */
   onSelectSubAgent?: (childId: string) => void
   onOpenSidebar: () => void
   sidebarCollapsed: boolean
-  /** When set, render a slim split-pane header (session picker) instead of the full one. */
-  secondary?: SecondaryConfig
   /** Retain the mounted conversation while another app page is visible. */
   pageVisible?: boolean
 }) {
   useUiLocale()
   useRenderProbe("app.ChatPane")
-  const historyBlocked = !!secondary?.historyRead && secondary.historyRead.status !== "ready"
   const {
     chats,
     currentSessionId,
@@ -334,7 +298,7 @@ export function ChatPane({
     !executionBlocked && pendingQuestion?.interaction_kind === "permission" ? pendingQuestion : null,
     chat.recordedPermission, currentChat?.config?.workspacePath, questionControls)
   const supervisorApprovalTimeline = useSupervisorApprovalTimeline(
-    !secondary && !historyBlocked && pageVisible !== false && !!currentChat && isDefaultSupervisor(currentChat),
+    pageVisible !== false && !!currentChat && isDefaultSupervisor(currentChat),
     messages.at(-1)?.id ?? null, onOpenRecordedSession)
   const actionableApproval = chat.approvalCompatibility?.blocked ? null : pendingApproval
   const { approvalSubmitting, approvalError } = chat
@@ -455,12 +419,9 @@ export function ChatPane({
     ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
     : ticketReference
   useEffect(() => { setWorkFocusRequest(null); setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
-  // The secondary chat hook remains mounted when its pane closes. Read state
-  // follows the rendered pane, including the same breakpoint as its md:flex.
-  const splitVisible = useMediaQuery("(min-width: 768px)")
   const [chatLayoutRef, chatLayoutWidth] = useContainerWidth<HTMLDivElement>()
   const environmentHasRoom = chatLayoutWidth >= ENVIRONMENT_AUTO_SHOW_MIN_WIDTH
-  useMarkSessionRead(pageVisible && (!secondary || splitVisible) ? currentChat : null)
+  useMarkSessionRead(pageVisible ? currentChat : null)
   const [environmentPreference, setEnvironmentPreference] =
     useState<EnvironmentPreference>("auto")
   const environmentId = useId()
@@ -471,7 +432,7 @@ export function ChatPane({
 
   const environmentOpen = environmentPreference === "open"
     || (environmentPreference === "auto" && environmentHasRoom)
-  const environmentVisible = !secondary && environmentOpen && !(sidePaneOpen ?? false)
+  const environmentVisible = environmentOpen && !(sidePaneOpen ?? false)
   const environmentReservedWidth = environmentVisible && environmentHasRoom
     ? ENVIRONMENT_OCCUPIED_WIDTH
     : 0
@@ -483,10 +444,8 @@ export function ChatPane({
   )
   const tokenUsage = liveTokenUsage ?? currentChat?.config?.tokenUsage
 
-  // Per-session in-memory draft (survives session switches via the
-  // inputStates slice). New-chat drafts key off a per-pane sentinel so the
-  // main pane's and a split pane's empty composers don't share one draft.
-  const draftKey = currentSessionId ?? (secondary ? "__new_chat_pane2__" : "")
+  // Drafts remain available when switching sessions or returning to a new chat.
+  const draftKey = currentSessionId ?? ""
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
   const loopDraft = isSessionLoopCommand(draft)
   const loopRequests = useRef(new Set<string>())
@@ -503,7 +462,7 @@ export function ChatPane({
     const prev = store.inputStates[draftKey]?.content ?? ""
     store.setInputContent(draftKey, typeof value === "function" ? value(prev) : value)
   }
-  const sessionDrop = useSessionDrop(secondary?.chats ?? chats, secondary?.onPickSession ?? select)
+  const sessionDrop = useSessionDrop(chats, select)
   const [dragOver, setDragOver] = useState(false)
   const [goalSaving, setGoalSaving] = useState(false)
   const goalRequestActive = useRef(false)
@@ -563,7 +522,7 @@ export function ChatPane({
 
   const skills = useAppStore(useShallow((s) => s.skills))
   const subAgents = useAppStore(useShallow((s) => selectChildren(currentSessionId)(s)))
-  const subAgentView = useSubAgentView(currentChat, chats, subAgents, pageVisible && (!secondary || splitVisible))
+  const subAgentView = useSubAgentView(currentChat, chats, subAgents, pageVisible)
   const mergedSubAgents = subAgentView.agents
   const providerSnapshot = useProviderStore((s) => s.providerSnapshot)
   const providerStatus = useProviderStore((s) => s.providerStatus)
@@ -781,7 +740,7 @@ export function ChatPane({
     if (!currentSessionId) return uiText("compact_open_session")
     if (rootMode.child || managedHistoryStatus || (currentChat && isDefaultSupervisor(currentChat))
       || ticketScope?.binding.supervisor_session_id === currentSessionId) return uiText("compact_root_only")
-    if (executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked
+    if (executionBlocked || isSessionExecutionBlocked(currentSessionId)
       || rootSessionUnsafe()) return uiText("compact_session_unavailable")
     if (currentlyRunning || yieldedWaiting || currentChat?.lastRunStatus === "suspended"
       || pendingApproval || pendingQuestion || questionLoading || questionSubmitting
@@ -897,7 +856,7 @@ export function ChatPane({
       showToast(uiText("session_loop_standard_only"))
       return false
     }
-    if (executionBlocked || isSessionExecutionBlocked(sessionId) || historyBlocked
+    if (executionBlocked || isSessionExecutionBlocked(sessionId)
       || rootSessionUnsafe() || semanticComposer || ticketIngress.busy) {
       showToast(uiText("session_loop_session_unavailable"))
       return false
@@ -938,7 +897,7 @@ export function ChatPane({
       return
     }
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionActiveRef.current || executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current
+    if (submissionActiveRef.current || executionBlocked || isSessionExecutionBlocked(currentSessionId) || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current
       || (currentSessionId && compactionRequests.current.has(currentSessionId))) return
     if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
@@ -1024,7 +983,7 @@ export function ChatPane({
         : null,
       workspacePath: selectedWorktreePath ?? selectedProjectPath ?? pickedWorkspace,
       projectId: pendingProjectId ?? null,
-      templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
+      templatePrompt: !currentSessionId ? peekPendingTemplatePrompt() : null,
       // The home picker's selection only applies when this send creates a new
       // session; an existing session keeps its stored permission mode.
       permissionMode: !currentSessionId ? useNewSessionPermission.getState().mode : null,
@@ -1040,12 +999,12 @@ export function ChatPane({
       return
     }
     const frozenReference = ticketReference
-    const prepareWorktree = !currentSessionId && !secondary && preparation.selection !== null
+    const prepareWorktree = !currentSessionId && preparation.selection !== null
     const originNavigationVersion = getNavigationVersion?.()
     const isOriginCurrent = () => mountedRef.current
       && submissionScopeRef.current === submissionScope
       && liveSendRef.current === send
-      && (!!secondary || useAppStore.getState().currentSessionId === currentSessionId)
+      && useAppStore.getState().currentSessionId === currentSessionId
       && getNavigationVersion?.() === originNavigationVersion
     const sendSnapshot = (path: string | null) => {
       const submitSnapshot = (liveBootstrapResume: boolean) => send(snapshot.text, {
@@ -1204,7 +1163,7 @@ export function ChatPane({
   const launchWorkbench = (action: () => void) => {
     action()
   }
-  const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
+  const selectSubAgentInPane = onSelectSubAgent ?? select
   const overflowItems = [
     ...(currentSessionId ? [{ label: uiText("conversation_clear_action"), icon: <RotateCcw className="size-4" />,
       onClick: () => setClearTarget({ id: currentSessionId, title: currentChat?.title || currentSessionId }) }] : []),
@@ -1224,13 +1183,8 @@ export function ChatPane({
           },
         ]
       : []),
-    {
-      label: splitOpen ? uiText("close_side_by_side_comparison_2b7637f6") : uiText("compare_side_by_side_a17b7763"),
-      icon: <Columns2 className="size-4" />,
-      onClick: () => launchWorkbench(onToggleSplit),
-    },
   ]
-  const environmentCard = !secondary && currentSessionId ? (
+  const environmentCard = currentSessionId ? (
     <EnvironmentCard
       id={environmentId}
       workspace={displayWorkspace}
@@ -1249,7 +1203,7 @@ export function ChatPane({
     <>
       <div
         className="relative flex min-w-0 flex-1 flex-col"
-        data-session-drop-target={secondary ? "secondary" : "main"}
+        data-session-drop-target="main"
         {...sessionDrop.handlers}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) {
@@ -1271,79 +1225,38 @@ export function ChatPane({
             {uiText(sessionDrop.active ? "drop_to_open_session" : "drop_to_add_images_6ccb05f2")}</div>
         ) : null}
 
-        {secondary ? (
-          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-            <Select
-              value={secondary.sessionId ?? undefined}
-              onValueChange={(v) => secondary.onPickSession(v || null)}
-            >
-              <SelectTrigger size="sm" className="min-w-0 flex-1">
-                <SelectValue placeholder={uiText("select_a_session_to_compare_74d69a72")} />
-              </SelectTrigger>
-              <SelectContent>
-                {secondary.chats
-                  .filter((c) => !c.parentSessionId || c.id === secondary.sessionId)
-                  .map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.title || uiText("new_session_c57c30bc")}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-            {currentSessionId ? (
-              <>
-                <Button size="icon" variant="ghost" aria-label={uiText("workflow_run_title")} onClick={openWorkflowRuns}>
-                  <BookText className="size-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={uiText("inspector_fc48a7f2")}
-                  onClick={() => launchWorkbench(onOpenInspector)}
-                >
-                  <PanelRightOpen />
-                </Button>
-              </>
-            ) : null}
-            {!secondary.hideClose ? (
-              <Button size="icon" variant="ghost" aria-label={uiText("close_pane_1cd5deec")} onClick={secondary.onClose}>
-                <X />
-              </Button>
-            ) : null}
-          </div>
-        ) : (
-          <ChatHeader
-            title={currentChat?.title || "Bodhi"}
-            hasSession={!!currentSessionId}
-            overflowItems={overflowItems}
-            onOpenSidebar={onOpenSidebar}
-            environment={
-              <EnvironmentLauncher
-                open={environmentVisible}
-                controlsId={environmentId}
-                onToggle={() => setEnvironmentPreference(environmentOpen ? "closed" : "open")}
-              />
-            }
-            sidePaneOpen={sidePaneOpen ?? false}
-            onToggleSidePane={() => launchWorkbench(onToggleSidePane ?? onOpenInspector)}
-            sidebarCollapsed={sidebarCollapsed}
-            supervisorControl={currentChat && isDefaultSupervisor(currentChat) && ticketScope?.binding.supervisor_session_id === currentSessionId ? (
-              <SupervisorOverview controller={tickets} running={currentlyRunning} onSelectWork={onOpenWork ? openTicketWork : undefined} />
-            ) : null}
-          />
-        )}
+        <ChatHeader
+          title={currentChat?.title || "Bodhi"}
+          hasSession={!!currentSessionId}
+          overflowItems={overflowItems}
+          onOpenSidebar={onOpenSidebar}
+          environment={
+            <EnvironmentLauncher
+              open={environmentVisible}
+              controlsId={environmentId}
+              onToggle={() => setEnvironmentPreference(environmentOpen ? "closed" : "open")}
+            />
+          }
+          onOpenSubagents={onOpenSubagents}
+          sidePaneOpen={sidePaneOpen ?? false}
+          onToggleSidePane={() => launchWorkbench(onToggleSidePane ?? onOpenInspector)}
+          sidebarCollapsed={sidebarCollapsed}
+          supervisorControl={currentChat && isDefaultSupervisor(currentChat) && ticketScope?.binding.supervisor_session_id === currentSessionId ? (
+            <SupervisorOverview controller={tickets} running={currentlyRunning} onSelectWork={onOpenWork ? openTicketWork : undefined} />
+          ) : null}
+        />
 
         <div ref={chatLayoutRef} data-chat-layout className="relative flex min-h-0 min-w-0 flex-1">
           <div
             data-chat-body
             className="relative flex min-w-0 flex-1 flex-col"
             style={{ paddingInlineEnd: environmentReservedWidth, transition: "padding-inline-end 200ms ease-out" }}
-        data-session-drop-target={secondary ? "secondary" : "main"}
+        data-session-drop-target="main"
         {...sessionDrop.handlers}
           >
         <SessionCompatibilityNotice state={chat.executionCompatibility} sessionId={currentSessionId} />
         {currentSessionId && currentChat?.id === currentSessionId && currentChat.kind !== "child"
-          && !currentChat.parentSessionId && !historyBlocked && pageVisible !== false ? (
+          && !currentChat.parentSessionId && pageVisible !== false ? (
           <SessionTaskDag key={`task-dag:${currentSessionId}`} sessionId={currentSessionId} running={currentlyRunning} />
         ) : null}
         {pendingApproval && chat.approvalCompatibility?.blocked ? (
@@ -1362,28 +1275,13 @@ export function ChatPane({
 
         {currentChat?.parentSessionId ? (
           <button
-            onClick={() =>
-              secondary
-                ? secondary.onPickSession(currentChat.parentSessionId as string)
-                : select(currentChat.parentSessionId as string)
-            }
+            onClick={() => select(currentChat.parentSessionId as string)}
             className="flex w-full items-center gap-1.5 border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             <ChevronLeft className="size-3.5" />{uiText("subagent_back_to_parent_session_5f5fc758")}</button>
         ) : null}
 
-        {historyBlocked ? (
-          <div role={secondary?.historyRead?.status === "error" ? "alert" : "status"}
-            className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
-            <p>{uiText(secondary?.historyRead?.status === "error"
-              ? "this_session_cannot_be_loaded_right_now_please_try_agai_502f5a61"
-              : "loading_side_by_side_session_f5d66e68")}</p>
-            {secondary?.historyRead?.status === "error" ? (
-              <Button variant="outline" size="sm" onClick={secondary.historyRead.retry}>{uiText("retry_b8784c8d")}</Button>
-            ) : null}
-            {currentlyRunning ? <Button variant="outline" size="sm" onClick={stopWithLiveFence}>{uiText("stop_generation_9ad0aac3")}</Button> : null}
-          </div>
-        ) : !currentSessionId && !secondary && !sending && !pendingUserText && pendingUserImages.length === 0 && !pendingUserMessages?.length ? (
+        {!currentSessionId && !sending && !pendingUserText && pendingUserImages.length === 0 && !pendingUserMessages?.length ? (
           // Main-pane home view: session shortcuts + quick-start templates.
           // The composer below stays live — a template only prefills it.
           <HomeDashboard
@@ -1539,10 +1437,10 @@ export function ChatPane({
               </button>
             </div>
           )}
-          <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
+          <div className="shrink-0">
           <ContextCompressionNotice
             feedback={contextCompression}
-            sessionId={pageVisible && !historyBlocked && currentChat?.kind === "root" ? currentSessionId : null}
+            sessionId={pageVisible && currentChat?.kind === "root" ? currentSessionId : null}
             manualPending={compacting}
             runActive={currentlyRunning}
           />
@@ -1559,7 +1457,7 @@ export function ChatPane({
           onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer && !loopDraft ? queue.setMode : undefined}
           sendWhileRunning={semanticComposer || loopDraft}
           queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
-          workspaceControl={!currentSessionId && !secondary ? <Suspense fallback={null}>
+          workspaceControl={!currentSessionId ? <Suspense fallback={null}>
             <NewChatWorktreeControl projectId={pendingProjectId ?? null}
               workspacePath={worktreePath ?? selectedProjectPath ?? pickedWorkspace}
               value={preparation.selection} onChange={(value) => preparation.select(value)}
@@ -1682,7 +1580,7 @@ export function ChatPane({
         </div>
       </div>
 
-      <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false && !historyBlocked) composerInputRef.current?.focus() }} />
+      <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false) composerInputRef.current?.focus() }} />
       {clearTarget ? <ConversationClearDialog key={clearTarget.id} sessionId={clearTarget.id} title={clearTarget.title}
         onClose={() => setClearTarget(null)} /> : null}
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}

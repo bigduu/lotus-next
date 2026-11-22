@@ -3,6 +3,9 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 import { expectComposerText } from "./support/composer.js"
 
 const sessionId = "all-surface-session"
+const otherSessionId = "workflow-other-session"
+const primaryTitle = "All-surface acceptance"
+const otherTitle = "Other workflow session"
 const definition = {
   id: "inspect-files", name: "Inspect files", description: "Read the project files",
   kind: "orchestration", source: "user", revision: 7, status: "valid", winner: true,
@@ -34,6 +37,22 @@ test("chat offers executable Workflow Runs while preserving the user's draft", a
   const legacyRequests: string[] = []
   const chatWrites: string[] = []
   const starts: unknown[] = []
+  if (testInfo.project.name === "desktop-chromium") {
+    const primary = {
+      id: sessionId, title: primaryTitle, root_session_id: sessionId, kind: "root",
+      model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
+      created_at: at, updated_at: at, last_activity_at: at, message_count: 0,
+      is_running: false, last_run_status: "completed", permission_mode: "default",
+    }
+    const other = { ...primary, id: otherSessionId, root_session_id: otherSessionId, title: otherTitle }
+    await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
+      json: { sessions: [primary, other], total: 2, limit: 200, offset: 0 },
+    }))
+    await page.route("**/api/v1/sessions/" + otherSessionId, (route) => route.fulfill({ json: { session: other } }))
+    await page.route("**/api/v1/history/" + otherSessionId, (route) => route.fulfill({ json: { session_id: otherSessionId, messages: [] } }))
+    await page.route("**/api/v1/respond/" + otherSessionId + "/pending", (route) => route.fulfill({ json: { has_pending_question: false } }))
+    await page.route("**/api/v1/task/" + otherSessionId, (route) => route.fulfill({ json: { session_id: otherSessionId, items: [] } }))
+  }
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname
     if (/^\/api\/v1\/(?:commands|bamboo\/workflows)(?:\/|$)/.test(path)) legacyRequests.push(path)
@@ -42,17 +61,22 @@ test("chat offers executable Workflow Runs while preserving the user's draft", a
     }
   })
   await page.route("**/api/v1/bamboo/workflow-catalog?*", (route) => {
-    catalogQueries.push(new URL(route.request().url()).searchParams)
+    const query = new URL(route.request().url()).searchParams
+    catalogQueries.push(query)
+    const visible = query.get("session_id") === otherSessionId
+      ? { ...definition, id: "inspect-other", name: "Inspect other files" }
+      : definition
     // Older Hosts can still return both kinds in the same response.
-    return route.fulfill({ json: { revision: 100, entries: [legacy, definition] } })
+    return route.fulfill({ json: { revision: 100, entries: [legacy, visible] } })
   })
   await page.route("**/api/v1/sessions/*/workflow-runs", (route) => {
-    expect(new URL(route.request().url()).pathname).toBe("/api/v1/sessions/" + sessionId + "/workflow-runs")
+    const routeSession = new URL(route.request().url()).pathname.split("/").at(-2)
     if (route.request().method() === "POST") {
+      expect(routeSession).toBe(sessionId)
       starts.push(route.request().postDataJSON())
       return route.fulfill({ status: 202, json: run })
     }
-    return route.fulfill({ json: starts.length ? [run] : [] })
+    return route.fulfill({ json: routeSession === sessionId && starts.length ? [run] : [] })
   })
   await page.route("**/api/v1/sessions/*/workflow-runs/inspect-run", (route) => route.fulfill({ json: run }))
   await page.route("**/api/v1/sessions/*/workflow-runs/inspect-run/events?*", (route) => route.fulfill({ json: [] }))
@@ -88,6 +112,19 @@ test("chat offers executable Workflow Runs while preserving the user's draft", a
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
   await expectComposerText(composer, "/workflow")
+  if (testInfo.project.name === "desktop-chromium") {
+    await page.getByRole("button", { name: otherTitle, exact: true }).click()
+    await expectComposerText(composer, "")
+    await composer.fill("/workflow")
+    await page.getByRole("button", { name: /\/workflow/ }).click()
+    await expect(dialog.getByRole("option", { name: /Inspect other files/ })).toHaveCount(1)
+    await expect(dialog.getByRole("option", { name: /Inspect files/ })).toHaveCount(0)
+    expect(catalogQueries.at(-1)?.get("session_id")).toBe(otherSessionId)
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+    await page.getByRole("button", { name: primaryTitle, exact: true }).click()
+    await expectComposerText(composer, "/workflow")
+  }
   expect(chatWrites).toEqual([])
   expect(legacyRequests).toEqual([])
   expect(observation.pageErrors).toEqual([])

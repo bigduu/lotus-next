@@ -1,3 +1,4 @@
+import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { expect, test, type Page, type TestInfo } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
@@ -432,24 +433,17 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   expect(observation.errorResponses).toEqual([])
 })
 
-test("the side composer updates only its own model and effort", async ({ page }, info) => {
-  test.skip(info.project.name !== "desktop-chromium", "desktop side composer acceptance")
+test("switching sessions updates only the active session's model and effort", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation")
   const { observation, main, side, patches } = await setup(page)
-  await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
-  const workbench = page.locator("#right-workbench")
-  await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
-  await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
-  await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
-  await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
-  const pickers = modelEffortPicker(page)
-  await expect(pickers).toHaveCount(2)
-  const sidePicker = workbench.getByTestId("model-effort-picker")
+  await page.getByRole("button", { name: "Side model and effort", exact: true }).click()
+  const sidePicker = modelEffortPicker(page)
+  await expect(sidePicker).toHaveCount(1)
   await expect(sidePicker).toContainText("低")
   await selectEffort(page, "高", sidePicker)
   await expect(sidePicker).toContainText("高")
   expect(patches).toEqual([{ id: sideId, body: { reasoning_effort: "high" } }])
   expect(main.reasoning_effort).toBe("medium")
-  await expect(pickers.nth(0)).toContainText("中")
 
   await sidePicker.click()
   await page.getByTestId("model-picker-model").click()
@@ -459,64 +453,54 @@ test("the side composer updates only its own model and effort", async ({ page },
   expect(side.model).toBe(alternateModel)
   expect(main.model).toBe("fixture-model")
   expect(patches.every((patch) => patch.id === sideId)).toBe(true)
-  await screenshot(page, info, "combined-picker-side-composer")
+  await page.getByRole("button", { name: mainTitle, exact: true }).click()
+  await expect(modelEffortPicker(page)).toContainText("中")
+  await screenshot(page, info, "combined-picker-after-switching-sessions")
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
 })
 
-for (const target of ["main", "side"] as const) {
-  test(`a pending Ultra selection keeps the ${target} composer geometry stable`, async ({ page }, info) => {
-    test.skip(target === "side" && info.project.name !== "desktop-chromium", "desktop side composer acceptance")
-    let release!: () => void
-    const confirmation = new Promise<void>((resolve) => { release = resolve })
-    const { operations, observation } = await setup(page, undefined, () => confirmation)
-    if (target === "side") {
-      await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
-      const workbench = page.locator("#right-workbench")
-      await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
-      await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
-      await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
-      await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
-      await expect(workbench.getByTestId("model-effort-picker")).toBeEnabled()
-    }
-    const picker = target === "side" ? page.locator("#right-workbench").getByTestId("model-effort-picker") : modelEffortPicker(page)
-    const surfaces = page.locator("[data-composer-surface]")
-    const before = await surfaces.evaluateAll((elements) => elements.map((element) => {
-      const { x, y, width, height } = element.getBoundingClientRect()
-      return { x, y, width, height }
-    }))
-    await picker.click()
-    try {
-      await page.getByRole("slider", { name: "推理强度", exact: true }).press("End")
-      await expect.poll(() => operations.length).toBe(1)
-      await expect(surfaces.getByRole("alert")).toHaveCount(0)
-      await expect(surfaces.getByRole("status").filter({ hasText: "等待服务器确认" })).toHaveCount(1)
-      const pendingSamples = await surfaces.evaluateAll(async (elements) => {
-        const view = elements[0]!.ownerDocument.defaultView!
-        const samples = []
-        for (let frame = 0; frame < 24; frame++) {
-          await new Promise<void>((resolve) => view.requestAnimationFrame(() => resolve()))
-          samples.push(elements.map((element) => {
-            const { x, y, width, height } = element.getBoundingClientRect()
-            return { x, y, width, height }
-          }))
-        }
-        return samples
-      })
-      for (const sample of pendingSamples) {
-        sample.forEach((bounds, index) => expectCloseBounds(bounds, before[index]!))
-      }
-    } finally {
-      release()
-    }
-    await expect(picker).toContainText("Ultra")
+test("a pending Ultra selection keeps the composer geometry stable", async ({ page }) => {
+  let release!: () => void
+  const confirmation = new Promise<void>((resolve) => { release = resolve })
+  const { operations, observation } = await setup(page, undefined, () => confirmation)
+  const picker = modelEffortPicker(page)
+  const surfaces = page.locator("[data-composer-surface]")
+  const before = await surfaces.evaluateAll((elements) => elements.map((element) => {
+    const { x, y, width, height } = element.getBoundingClientRect()
+    return { x, y, width, height }
+  }))
+  await picker.click()
+  try {
+    await page.getByRole("slider", { name: "推理强度", exact: true }).press("End")
+    await expect.poll(() => operations.length).toBe(1)
     await expect(surfaces.getByRole("alert")).toHaveCount(0)
-    for (let index = 0; index < before.length; index++) {
-      expect(await surfaces.nth(index).boundingBox()).toEqual(before[index]!)
+    await expect(surfaces.getByRole("status").filter({ hasText: "等待服务器确认" })).toHaveCount(1)
+    const pendingSamples = await surfaces.evaluateAll(async (elements) => {
+      const view = elements[0]!.ownerDocument.defaultView!
+      const samples = []
+      for (let frame = 0; frame < 24; frame++) {
+        await new Promise<void>((resolve) => view.requestAnimationFrame(() => resolve()))
+        samples.push(elements.map((element) => {
+          const { x, y, width, height } = element.getBoundingClientRect()
+          return { x, y, width, height }
+        }))
+      }
+      return samples
+    })
+    for (const sample of pendingSamples) {
+      sample.forEach((bounds, index) => expectCloseBounds(bounds, before[index]!))
     }
-    expect(observation.pageErrors).toEqual([])
-  })
-}
+  } finally {
+    release()
+  }
+  await expect(picker).toContainText("Ultra")
+  await expect(surfaces.getByRole("alert")).toHaveCount(0)
+  for (let index = 0; index < before.length; index++) {
+    expect(await surfaces.nth(index).boundingBox()).toEqual(before[index]!)
+  }
+  expect(observation.pageErrors).toEqual([])
+})
 
 test("model failures remain readable with keyboard details and dismissal", async ({ page }, info) => {
   const { observation } = await setup(page)
@@ -561,7 +545,26 @@ test("model failures remain readable with keyboard details and dismissal", async
   expect(observation.pageErrors).toEqual([])
 })
 
-test("narrow workbench survives repeated Tab and keeps nested model popovers usable across resizing", async ({ page }, info) => {
+async function openFixtureSubagent(page: Page, workbench: ReturnType<Page["locator"]>) {
+  const snapshot = actorSnapshotFixture(mainId, 2)
+  snapshot.nodes[1].title = "Capture evidence"
+  snapshot.nodes[2].title = "Compare evidence"
+  await page.route("**/api/v1/actors/" + mainId + "/snapshot?*", (route) => route.fulfill({ json: snapshot }))
+  await page.route("**/api/v1/sessions/actor-*/history?*", (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-2)
+    return route.fulfill({ json: { session_id: id, projection: "messages", is_delta: false,
+      truncated: false, total_message_count: 1,
+      messages: [{ id: "fixture-answer", role: "assistant", created_at: at, content: "Evidence transcript" }],
+    } })
+  })
+  await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "子代理", exact: true }).click()
+  await workbench.getByRole("treeitem", { name: /Capture evidence/ }).click()
+  await expect(workbench.getByText("Evidence transcript")).toBeVisible()
+  return workbench.getByRole("button", { name: "切换子代理", exact: true })
+}
+
+test("narrow workbench survives repeated Tab and keeps the nested subagent picker usable across resizing", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-chromium", "Explicit narrow and wide breakpoint acceptance")
   await page.setViewportSize({ width: 1024, height: 900 })
   const { observation } = await setup(page)
@@ -579,26 +582,21 @@ test("narrow workbench survives repeated Tab and keeps nested model popovers usa
       expect(await workbench.evaluate((node) => node.contains(node.ownerDocument.activeElement))).toBe(true)
     }
   }
-  await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
-  await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
-  await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
-  await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
-  const sidePicker = workbench.getByTestId("model-effort-picker")
+  const switcher = await openFixtureSubagent(page, workbench)
   const popover = page.locator('[data-slot="popover-content"]')
-  await sidePicker.click()
+  await switcher.click()
   await expect(popover).toBeVisible()
   await page.setViewportSize({ width: 1440, height: 900 })
   await expect(popover).toBeVisible()
   await page.setViewportSize({ width: 1024, height: 900 })
   await expect(popover).toBeVisible()
-  await page.getByTestId("model-picker-model").click()
-  const search = page.getByRole("searchbox", { name: "搜索模型", exact: true })
-  await search.fill("local-analysis")
-  await expect(search).toHaveValue("local-analysis")
+  const search = page.getByRole("combobox", { name: "搜索子代理", exact: true })
+  await search.fill("Compare")
+  await expect(page.getByRole("option", { name: /Compare evidence/ })).toBeVisible()
   await page.keyboard.press("Escape")
   await expect(popover).not.toBeVisible()
   await expect(workbench).toBeVisible()
-  await expect(sidePicker).toBeFocused()
+  await expect(switcher).toBeFocused()
   await page.keyboard.press("Escape")
   await expect(workbench).not.toBeVisible()
   await expect(launcher).toBeFocused()
@@ -616,32 +614,27 @@ for (const width of [1024, 390]) {
     // Keep two sortable targets: one tab alone cannot move with ArrowRight.
     await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
     await page.getByRole("menuitem", { name: "Review", exact: true }).click()
-    await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
-    await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
-    await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
-    await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
-    const sideEditor = workbench.locator('[contenteditable="true"][role="textbox"]')
-    await sideEditor.click()
-    await page.keyboard.type("Retained side draft")
+    const switcher = await openFixtureSubagent(page, workbench)
+    await switcher.focus()
+    const expectTranscript = () => expect(workbench.getByText("Evidence transcript")).toBeAttached()
     await page.keyboard.press("Control+k")
     const search = page.getByPlaceholder("搜索会话或操作…")
     await expect(search).toBeFocused()
     await page.keyboard.type("系统设置")
     await expect(search).toHaveValue("系统设置")
-    await expectComposerText(sideEditor, "Retained side draft")
+    await expectTranscript()
     await page.keyboard.press("Escape")
     await expect(search).toBeHidden()
-    await expect(sideEditor).toBeFocused()
+    await expect(switcher).toBeFocused()
     await page.keyboard.press("Control+k")
     await expect(search).toBeFocused()
     await page.keyboard.type("系统设置")
     await page.keyboard.press("Enter")
     const settings = page.locator('[data-slot="settings-page"]')
     await expect(settings.getByRole("heading", { name: "系统设置", exact: true })).toBeFocused()
-    await expectComposerText(sideEditor, "Retained side draft")
     await settings.getByRole("button", { name: "返回聊天", exact: true }).click()
-    await expect(sideEditor).toBeFocused()
-    await expectComposerText(sideEditor, "Retained side draft")
+    await expect(switcher).toBeFocused()
+    await expectTranscript()
     await expect(workbench.getByRole("tab")).toHaveCount(2)
     const handle = workbench.locator("button[aria-keyshortcuts]").first()
     const tabOrder = await workbench.getByRole("tab").allTextContents()
@@ -661,7 +654,7 @@ for (const width of [1024, 390]) {
     await expect(page.locator("[data-dnd-placeholder]")).toHaveCount(0)
     await page.keyboard.type(" tail")
     await expect(search).toHaveValue("Alpha movable tail")
-    await expectComposerText(sideEditor, "Retained side draft")
+    await expectTranscript()
     await page.keyboard.press("Escape")
     await expect(handle).toBeFocused()
     await expect(workbench.getByRole("tab")).toHaveText(tabOrder)
@@ -678,14 +671,14 @@ for (const width of [1024, 390]) {
     await expect(settings.getByRole("heading", { name: "系统设置", exact: true })).toBeFocused()
     await settings.getByRole("button", { name: "返回聊天", exact: true }).click()
     await expect(handle).toBeFocused()
-    await expectComposerText(sideEditor, "Retained side draft")
+    await expectTranscript()
     await expect(workbench.getByRole("tab")).toHaveText(tabOrder)
     await handle.press("Space")
     await expect(handle.locator("..")).toHaveCSS("opacity", "0.6")
     await handle.press("Escape")
     await expect(workbench).toBeVisible()
     await expect(workbench.getByRole("tab")).toHaveText(tabOrder)
-    await workbench.getByTestId("model-effort-picker").click()
+    await switcher.click()
     await expect(page.locator('[data-slot="popover-content"]')).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(page.locator('[data-slot="popover-content"]')).toBeHidden()

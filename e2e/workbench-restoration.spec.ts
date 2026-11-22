@@ -1,3 +1,4 @@
+import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { expect, test, type Locator, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -40,6 +41,9 @@ async function installSessions(page: Page, includeSupervisor = false) {
       return route.fulfill({ json: { sessions: listed, total: listed.length, limit: 200, offset: 0 } })
     }
     for (const session of sessions) {
+      if (path === "/api/v1/actors/" + session.id + "/snapshot") {
+        return route.fulfill({ json: actorSnapshotFixture(session.id, 0) })
+      }
       if (path === `/api/v1/sessions/${session.id}`) {
         return route.fulfill({ json: { session }, headers: { ETag: '"1"' } })
       }
@@ -75,7 +79,7 @@ async function openTool(page: Page, label: string) {
   await page.getByRole("menuitem", { name: label, exact: true }).click()
 }
 
-test("workbench restores each session's tools, order, selected tab, side session, and collapsed state", async ({ page }, testInfo) => {
+test("workbench restores each session's tools, order, selected tab and collapsed state", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop persistence acceptance")
   const observation = await installSessions(page)
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
@@ -84,12 +88,10 @@ test("workbench restores each session's tools, order, selected tab, side session
   const order = () => panel.getByRole("tablist", { name: "工作面板标签页" }).getByRole("tab").allTextContents()
   await openTool(page, "检查器")
   await openTool(page, "Review")
-  await openTool(page, "并排会话")
-  await panel.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
-  await page.getByRole("option", { name: "Session B", exact: true }).click()
+  await openTool(page, "子代理")
   await panel.getByRole("button", { name: "调整Review标签页顺序" }).press("Alt+ArrowLeft")
   await panel.getByRole("tab", { name: "检查器", exact: true }).click()
-  await expect.poll(order).toEqual(["Review", "检查器", "Session B"])
+  await expect.poll(order).toEqual(["Review", "检查器", "子代理"])
 
   await page.getByRole("button", { name: "Session B", exact: true }).click()
   await expectCollapsedWorkbench(panel)
@@ -99,14 +101,14 @@ test("workbench restores each session's tools, order, selected tab, side session
   await panel.getByRole("button", { name: "收起工作面板" }).click()
 
   await page.getByRole("button", { name: "Session A", exact: true }).click()
-  await expect.poll(order).toEqual(["Review", "检查器", "Session B"])
+  await expect.poll(order).toEqual(["Review", "检查器", "子代理"])
   await expect(panel.getByRole("tab", { name: "检查器", exact: true })).toHaveAttribute("aria-selected", "true")
   await page.reload({ waitUntil: "domcontentloaded" })
-  await expect.poll(order).toEqual(["Review", "检查器", "Session B"])
+  await expect.poll(order).toEqual(["Review", "检查器", "子代理"])
   await expect(panel.getByRole("tab", { name: "检查器", exact: true })).toHaveAttribute("aria-selected", "true")
-  await panel.getByRole("tab", { name: "Session B", exact: true }).click()
-  await expect(panel.getByRole("combobox").filter({ hasText: "Session B" })).toBeVisible()
-  await expect(panel.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+  await panel.getByRole("tab", { name: "子代理", exact: true }).click()
+  await expect(panel.getByText("当前会话暂无子代理")).toBeVisible()
+  await expect(panel.getByRole("textbox", { name: "消息", exact: true })).toHaveCount(0)
 
   await page.getByRole("button", { name: "Session B", exact: true }).click()
   await expectCollapsedWorkbench(panel)
@@ -295,7 +297,7 @@ test("desktop workbench grows past 840px and 46vw while preserving chat space an
   await testInfo.attach("wide-restored-workbench", { body: await page.screenshot(), contentType: "image/png" })
 })
 
-test("sidebar drag opens sessions in the targeted chat pane without moving projects", async ({ page }, testInfo) => {
+test("sidebar drag opens sessions in the main chat while the workbench stays scoped", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop native session drag acceptance")
   await installSessions(page)
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
@@ -304,9 +306,11 @@ test("sidebar drag opens sessions in the targeted chat pane without moving proje
   await rowB.dragTo(page.locator('[data-chat-body="true"][data-session-drop-target="main"]'))
   await expect(rowB.getByRole("button", { name: "Session B", exact: true })).toHaveAttribute("aria-current", "page")
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  await openTool(page, "并排会话")
-  await rowA.dragTo(page.locator('#right-workbench [data-chat-body="true"][data-session-drop-target="secondary"]'))
-  await expect(page.locator("#right-workbench").getByRole("combobox").filter({ hasText: "Session A" })).toBeVisible()
+  await openTool(page, "子代理")
+  const panel = page.locator("#right-workbench")
+  await expect(panel.getByText("当前会话暂无子代理")).toBeVisible()
+  await rowA.dragTo(panel.locator("[data-subagents-pane]"), { force: true })
+  await expect(panel.getByText("当前会话暂无子代理")).toBeVisible()
   await expect(rowB.getByRole("button", { name: "Session B", exact: true })).toHaveAttribute("aria-current", "page")
-  await testInfo.attach("session-drop-main-and-secondary", { body: await page.screenshot(), contentType: "image/png" })
+  await testInfo.attach("session-drop-main-workbench-scoped", { body: await page.screenshot(), contentType: "image/png" })
 })

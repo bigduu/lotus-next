@@ -29,10 +29,10 @@ describe("session workbench persistence", () => {
     render("a")
     act(() => {
       latest.setField("open", true)
-      latest.setField("tools", ["session", "review"])
+      latest.setField("tools", ["subagents", "review"])
       latest.setField("tab", "review")
-      latest.setField("order", ["browser:page-1", "tool:session", "tool:review"])
-      latest.setField("secondSid", "child-2")
+      latest.setField("order", ["browser:page-1", "tool:subagents", "tool:review"])
+      latest.setField("subagents", { childId: "child-2", view: "messages" })
       latest.setField("reviewTarget", "src/App.tsx")
       latest.setField("browserActiveId", "page-1")
       latest.setField("browserPresent", true)
@@ -41,7 +41,7 @@ describe("session workbench persistence", () => {
     act(() => root.unmount())
     root = createRoot(container)
     render("a")
-    expect(latest.state).toEqual({ ...expected, tools: ["session", "review"] })
+    expect(latest.state).toEqual({ ...expected, tools: ["subagents", "review"] })
     expect(localStorage.getItem(latest.scope!)).not.toMatch(/password|cookie|token|pageContent/)
   })
 
@@ -53,7 +53,7 @@ describe("session workbench persistence", () => {
     expect(latest.state).toEqual(emptyWorkbenchState())
     act(() => stale("tab", "review"))
     expect(latest.state.tab).toBeNull()
-    act(() => latest.setField("tools", ["session"]))
+    act(() => latest.setField("tools", ["subagents"]))
     render("same-id")
     expect(latest.state.tools).toEqual(["inspector"])
     runtime.backend = "https://two.example/api/v1"
@@ -61,7 +61,7 @@ describe("session workbench persistence", () => {
     expect(latest.state).toEqual(emptyWorkbenchState())
     runtime.backend = "https://one.example/api/v1"
     render("other")
-    expect(latest.state.tools).toEqual(["session"])
+    expect(latest.state.tools).toEqual(["subagents"])
   })
 
   it("persists close, reorder and active selection changes", () => {
@@ -83,14 +83,29 @@ describe("session workbench persistence", () => {
 
   it("rejects malformed and future snapshots, and validates descriptors", () => {
     const key = workbenchStorageKey(runtime.backend, "a")!
-    for (const value of ["broken", "null", JSON.stringify({ version: 2, state: { open: true } })]) {
+    for (const value of ["broken", "null", JSON.stringify({ version: 99, state: { open: true } })]) {
       localStorage.setItem(key, value)
       expect(readWorkbenchState(key)).toEqual(emptyWorkbenchState())
     }
     localStorage.setItem(key, JSON.stringify({ version: 1, state: {
       open: "yes", tools: ["shell", "review", "review"], tab: "shell", order: ["tool:shell", "tool:review", "tool:review", 5], secondSid: {}, browserActiveId: 8,
     } }))
-    expect(readWorkbenchState(key)).toMatchObject({ open: false, tools: ["review"], tab: null, order: ["tool:review"], secondSid: null, browserActiveId: null })
+    expect(readWorkbenchState(key)).toMatchObject({ open: false, tools: ["review"], tab: null, order: ["tool:review"], subagents: { childId: null, view: "tree" }, browserActiveId: null })
+  })
+
+  it("migrates a legacy side selection to a candidate in the Subagents tab", () => {
+    const key = workbenchStorageKey(runtime.backend, "a")!
+    localStorage.setItem(key, JSON.stringify({ version: 1, state: {
+      open: true, tools: ["review", "session"], tab: "session",
+      order: ["tool:session", "tool:review"], secondSid: "legacy-target",
+    } }))
+    render("a")
+    expect(latest.state).toMatchObject({
+      open: true, tab: "subagents", tools: ["review", "subagents"],
+      order: ["tool:subagents", "tool:review"],
+      subagents: { childId: "legacy-target", view: "messages" },
+    })
+    expect(JSON.parse(localStorage.getItem(key)!).version).toBe(2)
   })
 
   it("tolerates unavailable storage and does not persist a draft session", () => {
@@ -125,12 +140,12 @@ describe("session workbench persistence", () => {
 
   it("merges same-session navigation with preceding updates in the same event", () => {
     render("a")
-    act(() => latest.setField("secondSid", "b"))
+    act(() => latest.setField("subagents", { childId: "b", view: "messages" }))
     act(() => {
-      latest.setField("secondSid", null)
+      latest.setField("subagents", { childId: null, view: "tree" })
       latest.openToolForSession("a", "inspector")
     })
-    expect(latest.state).toMatchObject({ secondSid: null, open: true, tab: "inspector", tools: ["inspector"] })
+    expect(latest.state).toMatchObject({ subagents: { childId: null, view: "tree" }, open: true, tab: "inspector", tools: ["inspector"] })
   })
 
   it("strips credentials and URL query/fragment from backend identity", () => {

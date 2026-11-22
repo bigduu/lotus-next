@@ -25,7 +25,7 @@ async function prepare(page: Page, target: string, childApproval = false,
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
-  }, mainId)
+  }, target)
   const observation = await installArtifactRuntime(page, standaloneScenario)
   let generation = 1
   const decisions: unknown[] = []
@@ -110,13 +110,6 @@ async function prepare(page: Page, target: string, childApproval = false,
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
-  if (target === sideId) {
-    await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
-    const workbench = page.locator("#right-workbench")
-    await workbench.getByRole("button", { name: /并排会话.*打开另一个会话/ }).click()
-    await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
-    await page.getByRole("option", { name: "Approval side", exact: true }).click()
-  }
   return { observation, decisions, childDecisions, channels, setChildBlocked: (value: boolean) => { childBlocked = value },
     sendChildRequest: (requestId: string, seq: number) => socket!.send(JSON.stringify({
       ch: `agent.${target}`, seq, event: { type: "child_approval_requested", child_session_id: "fixture-child",
@@ -286,7 +279,7 @@ test("Supervisor shows the actual operation and decides the exact managed reques
 
 for (const target of [mainId, sideId]) {
   test(`shared typed approval in ${target === mainId ? "main" : "side"} chat ignores held Enter across requests`, async ({ page }, testInfo) => {
-    test.skip(target === sideId && testInfo.project.name !== "desktop-chromium", "desktop interactive side pane")
+    test.skip(target === sideId && testInfo.project.name !== "desktop-chromium", "Additional session isolation")
     const fixture = await prepare(page, target)
     const timeline = page.locator("[data-message-list-content]")
     const card = timeline.locator("[data-approval-presentation]").filter({ hasText: /Fixture approval/ })
@@ -297,8 +290,7 @@ for (const target of [mainId, sideId]) {
     await expect(card.locator("textarea")).toHaveCount(0)
     await expect(card.getByRole("button")).toHaveCount(4)
     await page.screenshot({ path: testInfo.outputPath(`approval-${target}-${testInfo.project.name}.png`), animations: "disabled" })
-    const pane = page.locator(`[data-session-drop-target="${target === sideId ? "secondary" : "main"}"]`)
-    await pane.getByRole("textbox", { name: "消息", exact: true }).focus()
+    await page.getByRole("textbox", { name: "消息", exact: true }).focus()
     await page.keyboard.down("Enter")
     await allowForSession.focus()
     await page.keyboard.down("Enter")
