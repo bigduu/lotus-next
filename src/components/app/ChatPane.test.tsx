@@ -1,8 +1,7 @@
 import { observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
-import { act, type ComponentProps, type ReactElement, type ReactNode } from "react"
+import { act, type ComponentProps, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { CommandItem } from "@services/command"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
@@ -25,7 +24,6 @@ type ReasoningPickerProps = Pick<ModelEffortPickerProps,
 type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type TicketController = ReturnType<(typeof import("@/hooks/useTicketWork"))["useTicketWork"]>
-type WorkflowControlProps = ComponentProps<(typeof import("@/components/chat/WorkflowSelectionControl"))["WorkflowSelectionControl"]>
 type State = {
   bindWorkspace: typeof import("@services/project/ProjectService").projectService.bindWorkspace
   currentSessionId: string | null
@@ -60,7 +58,7 @@ const runtime = vi.hoisted(() => ({
   reasoningPicker: null as ReasoningPickerProps | null,
   providerState: { providerSnapshot: null as ProviderInstancesConfig | null, providerStatus: "ready" },
   stickyAtBottom: true, scrollToBottom: vi.fn(),
-  queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
+  queueSend: vi.fn(), revision: 0, peekTemplate: vi.fn(),
   ticketWork: null as TicketController | null,
   worktreeControl: null as import("@services/workspace/newChatWorktreeTypes").NewChatWorktreeControlProps | null,
   getProject: vi.fn(), createWorktree: vi.fn(), bindWorkspace: vi.fn(),
@@ -117,7 +115,6 @@ vi.mock("@services/command/workflowCatalog", async (original) => ({
   ...await original<typeof import("@services/command/workflowCatalog")>(),
   getWorkflowCatalog: vi.fn().mockResolvedValue({ revision: 1, entries: [] }),
 }))
-vi.mock("@services/command", () => ({ commandService: { listCommands: runtime.listCommands, getWorkflowCommand: runtime.getWorkflow } }))
 vi.mock("@services/workspace", () => ({ workspaceService: { listWorkspaceFiles: vi.fn().mockResolvedValue([]) } }))
 vi.mock("@services/project/ProjectService", () => ({ projectService: { getProject: runtime.getProject, bindWorkspace: runtime.bindWorkspace } }))
 vi.mock("@services/workspace/WorktreeService", () => ({ worktreeService: { create: runtime.createWorktree } }))
@@ -209,11 +206,8 @@ import { ChatPane } from "./ChatPane"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { uiText } from "@shared/i18n/ui"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
-const workflow = (id: string): CommandItem => ({ id, name: id, display_name: id, description: id, type: "workflow", metadata: null })
 const skillA = skill("skill-a")
 const skillB = skill("skill-b")
-const workflowA = workflow("workflow-a")
-const workflowB = workflow("workflow-b")
 const roots: Root[] = []
 const rootFields = { root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64) }
 const beginRootModeTransition = (id: string, enabled: boolean) => beginRootModeOperation(id, 0, rootFields.root_mode_birth_token, enabled)
@@ -222,16 +216,6 @@ actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
 function notify() { for (const listener of runtime.listeners) listener() }
 function write(id: string, content: string) { runtime.state.setInputContent(id, content) }
 function composer() { if (!runtime.composer) throw new Error("Composer did not render"); return runtime.composer }
-function workflowControl() { return (composer().workflowControl as ReactElement<WorkflowControlProps>).props }
-async function openWorkflowCatalog() {
-  expect(composer().workflowControl).toBeNull()
-  await act(async () => composer().onPickCatalog?.())
-  expect(composer().workflowControl).not.toBeNull()
-}
-const typedEntry: import("@services/command/workflowCatalog").WorkflowCatalogEntry = {
-  id: "review-exact", name: "Review", description: "Review", kind: "instruction", source: "workspace", revision: 9,
-  winner: true, status: "valid", invocation_policy: { explicit: true }, argument_schema: { type: "object", required: ["target"], properties: { target: { type: "string" } } },
-}
 function thinkingPicker() {
   if (!runtime.reasoningPicker) throw new Error("Thinking picker did not render")
   return {
@@ -324,7 +308,6 @@ function change(textarea: HTMLTextAreaElement, value: string) {
   act(() => { setter?.call(textarea, value); textarea.dispatchEvent(new Event("input", { bubbles: true })) })
 }
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve() }) }
-async function pickWorkflow(command: CommandItem) { await act(async () => { composer().onPickWorkflow(command); await Promise.resolve() }) }
 async function addImage(name: string) {
   const readComplete = deferred<void>()
   const nativeReadAsDataUrl = FileReader.prototype.readAsDataURL
@@ -346,7 +329,7 @@ async function addImage(name: string) {
   )
 }
 async function fill(textarea: HTMLTextAreaElement) {
-  act(() => composer().onPickSkill(skillA)); await pickWorkflow(workflowA); await addImage("before.png"); change(textarea, "original request")
+  act(() => composer().onPickSkill(skillA)); await addImage("before.png"); change(textarea, "original request")
 }
 let mediaMatches = true
 const mediaListeners = new Set<(event: MediaQueryListEvent) => void>()
@@ -462,8 +445,7 @@ beforeEach(() => {
       write(target, current?.content ?? ""); write(source, ""); return true
     },
   }
-  runtime.getWorkflow.mockReset().mockImplementation((name: string) => Promise.resolve({ name, content: `${name} body`, type: "workflow" }))
-  runtime.listCommands.mockReset().mockResolvedValue({ commands: [], total: 0 }); runtime.peekTemplate.mockReset().mockReturnValue(null)
+  runtime.peekTemplate.mockReset().mockReturnValue(null)
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 
@@ -718,10 +700,9 @@ describe("ChatPane new-chat worktree lifecycle fences", () => {
     expect(send.mock.calls[0][1]?.isOriginCurrent?.()).toBe(false)
     await act(async () => acknowledgement.resolve(outcome === "accepted"
       ? { kind: "accepted", operationId: 1, sessionId: "late-session", navigated: false }
-      : { kind: "unconfirmed", operationId: 1, workflowError: { code: "workflow_revision_mismatch", message: "late error" } }))
+      : { kind: "unconfirmed", operationId: 1 }))
     await flush()
     expect(runtime.state.inputStates[""]?.content).toBe("replacement draft")
-    expect(composer().workflowControl).toBeNull()
     expect(worktreeControl().value).toBeNull()
   })
 
@@ -1383,7 +1364,6 @@ describe("ChatPane composer acknowledgement", () => {
     expect(runtime.state.inputStates["old-source"]?.content).toBe(draft)
     expect(composer().attachments).toEqual(attachments)
     expect(composer().selectedSkill).toEqual(skillA)
-    expect(composer().selectedWorkflow?.name).toBe("workflow-a")
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     expect(alert?.textContent).toContain("Bamboo 已拒绝此请求，内容已保留")
     expect(alert?.textContent).toContain("请等待当前运行结束后核对来源")
@@ -1431,12 +1411,12 @@ describe("ChatPane composer acknowledgement", () => {
     })
     const textarea = await mount(send, "session-1")
     await fill(textarea); act(() => composer().onSubmit()); await flush()
-    expect(send).toHaveBeenCalledWith("workflow-a body\n\noriginal request", {
+    expect(send).toHaveBeenCalledWith("original request", {
       skillIds: ["skill-a"], images: [expect.objectContaining({ name: "before.png" })],
       workspacePath: "/picked", projectId: null, templatePrompt: null,
       permissionMode: undefined, rootOrchestrationOnly: undefined,
     })
-    expect(runtime.state.inputStates["session-1"]?.content).toBe(""); expect(composer()).toMatchObject({ attachments: [], selectedSkill: null, selectedWorkflow: null })
+    expect(runtime.state.inputStates["session-1"]?.content).toBe(""); expect(composer()).toMatchObject({ attachments: [], selectedSkill: null })
   })
   it("keeps every field edited during ACK wait, including an external draft write", async () => {
     write("session-1", "")
@@ -1444,12 +1424,12 @@ describe("ChatPane composer acknowledgement", () => {
     const send = vi.fn<Send>().mockReturnValue(ack.promise)
     const textarea = await mount(send, "session-1")
     await fill(textarea); act(() => composer().onSubmit()); act(() => composer().onPickSkill(skillB))
-    await pickWorkflow(workflowB); await addImage("after.png"); act(() => write("session-1", "external pane draft"))
+    await addImage("after.png"); act(() => write("session-1", "external pane draft"))
     ack.resolve({ kind: "accepted", operationId: 3, sessionId: "session-1", navigated: false })
     await flush()
     expect(runtime.state.inputStates["session-1"]?.content).toBe("external pane draft")
     expect(composer().attachments.map((item) => item.name)).toEqual(["before.png", "after.png"])
-    expect(composer().selectedSkill).toEqual(skillB); expect(composer().selectedWorkflow).toEqual({ name: "workflow-b", content: "workflow-b body" }); expect(send).toHaveBeenCalledTimes(1)
+    expect(composer().selectedSkill).toEqual(skillB); expect(send).toHaveBeenCalledTimes(1)
   })
   it("re-keys a newer new-chat draft after ACK without overwriting it", async () => {
     const ack = deferred<Awaited<ReturnType<Send>>>()
@@ -1758,158 +1738,6 @@ describe("Root orchestration-only control", () => {
     expect(send).toHaveBeenCalledWith("apply skill", expect.objectContaining({ rootOrchestrationOnly: undefined }))
     expect(document.body.textContent).not.toContain("拒绝本次模式切换")
     expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认 Ultra 编排")
-  })
-
-  it("blocks a text-expanded Workflow while Root mode is selected", async () => {
-    vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
-    }) as Awaited<ReturnType<typeof agentClient.getSession>>)
-    const send = vi.fn<Send>()
-    const textarea = await mount(send, "root-session")
-    await pickWorkflow(workflowA)
-    change(textarea, "run workflow")
-    act(() => composer().onSubmit())
-
-    expect(send).not.toHaveBeenCalled()
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("在思考强度中选择普通档位")
-    act(() => composer().onClearWorkflow())
-    expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain("在思考强度中选择普通档位")
-  })
-
-  it("opens the directory only on demand and dismisses it without leaving an empty panel", async () => {
-    const textarea = await mount(vi.fn<Send>(), "root-session")
-    expect(composer().workflowControl).toBeNull()
-    change(textarea, "/目录工作流")
-    act(() => composer().onPickCatalog?.())
-    expect(composer().workflowControl).not.toBeNull()
-    expect(composer().draft).toBe("")
-    act(() => workflowControl().onOpenChange(false))
-    expect(composer().workflowControl).toBeNull()
-  })
-
-  it.each(["root_orchestration_incompatible_mode", "workflow_revision_mismatch"])("sends typed Workflow to Bamboo and preserves draft, exact choice and durable Root on %s", async (code) => {
-    vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
-    }) as Awaited<ReturnType<typeof agentClient.getSession>>)
-    const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1,
-      workflowError: { code, message: "Bamboo rejected exact selection" } })
-    const textarea = await mount(send, "root-session")
-    await openWorkflowCatalog()
-    act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
-    change(textarea, "keep original task")
-    const reads = vi.mocked(agentClient.getSession).mock.calls.length
-    act(() => composer().onSubmit()); await flush()
-    expect(send).toHaveBeenCalledWith("keep original task", expect.objectContaining({
-      workflowSelection: { id: "review-exact", source: "workspace", revision: 9, args: { target: "src" } }, rootOrchestrationOnly: undefined,
-    }))
-    expect(runtime.state.inputStates["root-session"]?.content).toBe("keep original task")
-    expect(workflowControl().selected?.entry.revision).toBe(9)
-    expect(workflowControl().error).toContain(code)
-    expect(workflowControl().error).toContain(code === "root_orchestration_incompatible_mode" ? "所选工作流与 Ultra 编排不兼容" : "版本已变化")
-    expect(vi.mocked(agentClient.getSession).mock.calls.length).toBeGreaterThan(reads)
-    expect(thinkingPicker().checked).toBe(true)
-    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
-  })
-
-  it("selects a catalog slash result without expanding text or changing Root mode", async () => {
-    const send = vi.fn<Send>(); await mount(send, "root-session")
-    act(() => composer().onPickCatalogEntry?.(typedEntry))
-    expect(workflowControl().selected?.entry).toEqual(typedEntry)
-    expect(workflowControl().open).toBe(true)
-    expect(composer().selectedWorkflow).toBeNull()
-    expect(send).not.toHaveBeenCalled()
-    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
-    act(() => workflowControl().onRemove())
-    expect(composer().workflowControl).toBeNull()
-    expect(composer().workflowUndoControl).not.toBeNull()
-    const undo = composer().workflowUndoControl as ReactElement<{ children: ReactNode[] }>
-    act(() => (undo.props.children[1] as ReactElement<{ onClick: () => void }>).props.onClick())
-    expect(workflowControl().selected?.entry).toEqual(typedEntry)
-    act(() => composer().onPickCatalogEntry?.({ ...typedEntry, revision: 10 }))
-    expect(composer().workflowUndoControl).toBeNull()
-    expect(workflowControl().selected?.entry.revision).toBe(10)
-  })
-
-  it("opens the toolbar catalog without consuming a slash-prefixed task", async () => {
-    const textarea = await mount(vi.fn<Send>(), "root-session")
-    change(textarea, "/goal literal task")
-    act(() => composer().onOpenCatalog?.())
-    expect(workflowControl().open).toBe(true)
-    expect(runtime.state.inputStates["root-session"]?.content).toBe("/goal literal task")
-    expect(composer().slashQuery).toBeNull()
-  })
-
-  it("does not admit invalid or disabled catalog rows via the slash callback", async () => {
-    await mount(vi.fn<Send>(), "root-session")
-    act(() => composer().onPickCatalogEntry?.({ ...typedEntry, winner: false }))
-    expect(composer().workflowControl).toBeNull()
-  })
-
-  it("rejects invalid typed arguments before sending and retains the draft", async () => {
-    const send = vi.fn<Send>(); const textarea = await mount(send, "root-session")
-    await openWorkflowCatalog()
-    act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{}' }))
-    change(textarea, "keep request"); act(() => composer().onSubmit())
-    expect(send).not.toHaveBeenCalled()
-    expect(workflowControl().error).toContain("target")
-    expect(runtime.state.inputStates["root-session"]?.content).toBe("keep request")
-  })
-
-  it("does not turn typed selection into queued text during a run", async () => {
-    const send = vi.fn<Send>(); const textarea = await mount(send, "root-session", true)
-    await openWorkflowCatalog()
-    act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
-    change(textarea, "keep request"); act(() => composer().onSubmit())
-    expect(send).not.toHaveBeenCalled(); expect(runtime.queueSend).not.toHaveBeenCalled()
-    expect(workflowControl().error).toContain("消息队列只接收文本")
-  })
-
-  it("preserves a newer typed selection across a late ACK", async () => {
-    const ack = deferred<Awaited<ReturnType<Send>>>()
-    const send = vi.fn<Send>().mockReturnValue(ack.promise); const textarea = await mount(send, "root-session")
-    await openWorkflowCatalog()
-    act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
-    change(textarea, "first request"); act(() => composer().onSubmit())
-    act(() => workflowControl().onChange({ entry: { ...typedEntry, revision: 10 }, argsText: '{"target":"tests"}' }))
-    ack.resolve({ kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false }); await flush()
-    expect(workflowControl().selected?.entry.revision).toBe(10)
-  })
-
-  it("does not let a late legacy expansion replace a newer typed choice", async () => {
-    const pending = deferred<{ name: string; content: string; type: string }>()
-    runtime.getWorkflow.mockReturnValueOnce(pending.promise)
-    await mount(vi.fn<Send>(), "root-session")
-    await openWorkflowCatalog()
-    act(() => composer().onPickWorkflow(workflowA))
-    act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
-    pending.resolve({ name: "legacy", content: "legacy instructions", type: "workflow" }); await flush()
-    expect(workflowControl().selected?.entry.id).toBe("review-exact")
-    expect(composer().selectedWorkflow).toBeNull()
-  })
-
-  it("drops typed catalog authority when switching Sessions without moving draft text", async () => {
-    const send = vi.fn<Send>(); const textarea = await mount(send, "root-session")
-    await openWorkflowCatalog()
-    act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
-    change(textarea, "root draft")
-    const root = roots.at(-1)!
-    await act(async () => root.render(<ChatPane chat={createChat(send, "other-session")} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
-    expect(composer().workflowControl).toBeNull()
-    expect(runtime.state.inputStates["root-session"]?.content).toBe("root draft")
-  })
-
-  it("dismisses command menus before JSON editing while preserving a slash-prefixed typed task", async () => {
-    const textarea = await mount(vi.fn<Send>(), "root-session")
-    await openWorkflowCatalog()
-    act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
-    change(textarea, "/goal literal task")
-    expect(composer().slashQuery).toBe("goal literal task")
-    act(() => workflowControl().onArgsFocus?.())
-    expect(composer().slashQuery).toBeNull()
-    expect(workflowControl().selected?.entry.id).toBe(typedEntry.id)
-    expect(runtime.state.inputStates["root-session"]?.content).toBe("/goal literal task")
   })
 
   it("dispatches a menu reset only when a dismissed draft changes, not on every typed prefix", async () => {
@@ -2763,20 +2591,6 @@ describe("scoped notifications", () => {
     expect(runtime.toastProps?.toast).toBeNull()
   })
 
-  it("marks real workflow failures as persistent errors but drops stale selections", async () => {
-    runtime.getWorkflow.mockRejectedValueOnce(new Error("workflow diagnostic"))
-    await mount(vi.fn<Send>(), "session-1")
-    await pickWorkflow(workflowA)
-    expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", details: "workflow diagnostic" })
-    act(() => runtime.toastProps!.onDismiss())
-    let reject!: (error: Error) => void
-    runtime.getWorkflow.mockReturnValueOnce(new Promise((_, fail) => { reject = fail }))
-    await pickWorkflow(workflowA)
-    await pickWorkflow(workflowB)
-    await act(async () => reject(new Error("old selection")))
-    expect(runtime.toastProps?.toast).toBeNull()
-  })
-
   it("ends fork progress and shows a typed failure when a fork rejects", async () => {
     const chat = createChat(vi.fn<Send>(), "session-1")
     chat.fork = vi.fn().mockRejectedValue(new Error("fork unavailable"))
@@ -2803,10 +2617,12 @@ it.each([false, true])("handles intentional fork navigation without replacing a 
       onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   await renderChat(original)
   act(() => runtime.messageList!.onFork("message-1"))
+  if (raiseDestinationError) {
+    runtime.state.changeSessionModel = vi.fn().mockRejectedValueOnce(new Error("destination diagnostic"))
+  }
   await renderChat(createChat(vi.fn<Send>(), "fork-session"))
   if (raiseDestinationError) {
-    runtime.getWorkflow.mockRejectedValueOnce(new Error("destination diagnostic"))
-    await pickWorkflow(workflowA)
+    await act(async () => runtime.modelPicker?.onChange({ provider: "easycli", model: "grok-4.7" }))
   }
   await act(async () => pending.resolve("fork-session"))
   expect(runtime.toastProps?.forking).toBe(false)

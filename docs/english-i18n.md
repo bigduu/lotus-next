@@ -13,10 +13,10 @@ Locale changes subscribe existing components without remounting the composer. Su
 | Surface | Covered application copy and verification |
 | --- | --- |
 | Navigation and sessions | Sidebar, search, projects, session actions, date groups, toolbar and inspector; names stay verbatim. |
-| Composer and workflows | Placeholders, accessible names, attachments, workflow selection, queued guidance, permission/reasoning states, goals and notifications; existing composer #219 retained. |
+| Composer and Workflow Runs | Placeholders, accessible names, attachments, executable workflow selection, queued guidance, permission/reasoning states, goals and notifications. |
 | Messages and approvals | Tool presentation, question/approval controls, notices, empty/error states and technical-detail wrappers; raw model/tool output stays verbatim. |
 | General and model/tool settings | Language, appearance, experience mode, providers/model preferences, model limits, MCP, plugins, skills, permissions, environment variables and masking. |
-| Advanced settings | Prompts, workflows, schedules, clusters, metrics, Jiandu memory, notification configuration and system confirmation dialogs. |
+| Advanced settings | Prompts, schedules, clusters, metrics, Jiandu memory, notification configuration and system confirmation dialogs. |
 | Validation and failures | Frontend-owned validation and recovery text; existing known-error guidance; backend error text is retained for diagnosis rather than replaced with fabricated translations. |
 | Supervisor Tickets | Work/request status, question/approval actions, receipt recovery, artifacts and references; work titles, questions, answers, action data and evidence stay verbatim. |
 | Formatting and accessibility | Interpolated complete phrases, English singular/plural counts, locale calendar/relative-time/number formatting, labels and document language. |
