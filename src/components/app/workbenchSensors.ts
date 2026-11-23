@@ -1,4 +1,4 @@
-import { KeyboardSensor, PointerSensor } from "@dnd-kit/react"
+import { KeyboardSensor, PointerSensor } from "@dnd-kit/dom"
 
 // DnD 0.5's sensors remove their listeners on their own end gesture, but an
 // external manager.actions.stop() does not run that cleanup. Global dialogs and

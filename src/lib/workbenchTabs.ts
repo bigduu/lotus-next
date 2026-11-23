@@ -1,5 +1,5 @@
 import type { BrowserTabSummary } from "@services/browser/types"
-import type { WorkbenchToolTab } from "@/components/app/RightWorkbench"
+import type { WorkbenchToolTab } from "./workbenchTabTypes"
 
 export function visibleWorkbenchTabIds(
   openToolTabs: WorkbenchToolTab[],

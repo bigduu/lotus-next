@@ -1,5 +1,5 @@
 import { Feedback } from "@dnd-kit/dom"
-import type { DragDropManager } from "@dnd-kit/react"
+import type { DragDropManager } from "@dnd-kit/dom"
 
 /** External navigation owns focus; an old drop animation must not reclaim it. */
 export function workbenchDragCancellation(manager: DragDropManager, isActive: () => boolean) {
