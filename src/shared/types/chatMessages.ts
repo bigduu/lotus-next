@@ -67,6 +67,8 @@ export interface ToolExecutionResult {
 export type ExecutionStatus = "success" | "error" | "warning";
 
 interface BaseMessage {
+  /** Visible occurrence in a paged Bamboo transcript, used for rendering only. */
+  historyIndex?: number;
   id: string;
   createdAt: string;
   isError?: boolean;
@@ -190,8 +192,22 @@ export type Message =
   | WorkflowResultMessage
   | SystemMessage;
 
+/** Keep distinct visible occurrences separate without rewriting Bamboo IDs. */
+export const messageOccurrenceKey = (message: Message): string => message.historyIndex === undefined
+  ? message.id : `history-${message.historyIndex}:${message.id}`;
+
+export interface ChatHistoryWindow {
+  startIndex: number;
+  /** Stable Bamboo IDs, before mapping tool calls to transcript rows. */
+  messageIds: string[];
+  beforeMessageId: string | null;
+  /** A confirmed deletion moved visible positions. Wait for a fresh window. */
+  invalidated?: true;
+}
+
 export interface ChatItem {
   id: string;
+  historyWindow?: ChatHistoryWindow;
   // Backend session metadata (V2).
   kind?: "root" | "child";
   parentSessionId?: string | null;

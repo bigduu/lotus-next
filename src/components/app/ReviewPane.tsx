@@ -7,6 +7,7 @@ import type { SessionFileChangeGroup, SessionFileChangeSummary } from "@/lib/ses
 export function ReviewPane({
   sessionId,
   groups,
+  historyStatus,
   summary,
   subagentChanges,
   workspace,
@@ -14,6 +15,7 @@ export function ReviewPane({
 }: {
   sessionId: string | null
   groups: readonly SessionFileChangeGroup[]
+  historyStatus?: string
   summary: SessionFileChangeSummary
   subagentChanges: { loading: boolean; unavailable: boolean; truncated: boolean; retry: () => void }
   workspace?: string | null
@@ -23,8 +25,9 @@ export function ReviewPane({
   const selectedId = groups.find((group) => group.id === targetFile)?.id
     ?? groups.find((group) => group.filePath === targetFile)?.id
   const { loading, unavailable, truncated, retry } = subagentChanges
-  const status = loading || unavailable || truncated ? (
+  const status = historyStatus || loading || unavailable || truncated ? (
     <div role="status" className="mb-3 space-y-1 text-xs text-muted-foreground">
+      {historyStatus ? <p>{historyStatus}</p> : null}
       {loading ? <p>{uiText("review_subagent_changes_loading")}</p> : null}
       {unavailable && !loading ? (
         <div className="flex items-center gap-2">

@@ -42,6 +42,10 @@ export function useStickyScroll(currentSessionId: string | null | undefined, res
     pointerActive.current = false
     followBottom()
   }
+  const releaseBottomPin = useCallback(() => {
+    stickRef.current = false
+    setAtBottom(false)
+  }, [])
 
   useLayoutEffect(() => {
     stickRef.current = !restoreReading
@@ -115,5 +119,5 @@ export function useStickyScroll(currentSessionId: string | null | undefined, res
     }
   }, [scrollElement, contentElement, currentSessionId, followBottom, restoreReading])
 
-  return { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom: pinToBottom, pinToBottom }
+  return { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom: pinToBottom, pinToBottom, releaseBottomPin }
 }
