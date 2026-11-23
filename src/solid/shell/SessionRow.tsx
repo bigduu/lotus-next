@@ -22,7 +22,7 @@ export function SessionRow(props: {
   chat: ChatItem
   active: boolean
   unread: boolean
-  running: boolean
+  running?: boolean
   projectId?: string
   sectionId?: string | null
   mergeState?: CheckoutMergeState
@@ -44,8 +44,10 @@ export function SessionRow(props: {
   const [draft, setDraft] = createSignal("")
   const context = createSidebarContextMenu()
   let dragged = false
+  let internalPointer = false
 
-  const runFailed = () => !props.running && props.chat.lastRunStatus === "error"
+  const running = () => props.running ?? props.chat.isRunning === true
+  const runFailed = () => !running() && props.chat.lastRunStatus === "error"
   const failureDetail = () => runFailed()
     ? props.chat.lastRunError?.trim() || text("session_last_run_failed_hint")
     : undefined
@@ -91,8 +93,15 @@ export function SessionRow(props: {
         data-sidebar-session={props.chat.id}
         data-session-project={props.projectId}
         draggable="true"
-        onPointerDown={() => { dragged = false }}
+        ref={(row) => row.addEventListener("pointerdown", (event) => {
+          dragged = false
+          internalPointer = event.target instanceof Element && event.target.closest("[data-sidebar-drag-handle]") !== null
+        }, { capture: true })}
         onDragStart={(event) => {
+          if (internalPointer) {
+            event.preventDefault()
+            return
+          }
           dragged = true
           event.dataTransfer?.setData(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({
             projectId: props.projectId ?? null,
@@ -112,7 +121,10 @@ export function SessionRow(props: {
           aria-current={props.active ? "page" : undefined}
           aria-describedby={description()}
           onClick={(event) => {
-            if (dragged && event.detail !== 0) return
+            if (dragged && event.detail !== 0) {
+              event.preventDefault()
+              return
+            }
             props.onSelect()
           }}
           class={cn(
@@ -122,7 +134,7 @@ export function SessionRow(props: {
         >
           <span title={failureDetail()} data-session-run-failure={runFailed() ? "" : undefined}
             class="flex size-3.5 shrink-0 items-center justify-center">
-            {props.running ? (
+            {running() ? (
               <span data-session-running="" role="img" aria-label={text("running_1f0eb99b")}
                 title={text("running_1f0eb99b")} class="size-1.5 animate-pulse rounded-full bg-primary" />
             ) : runFailed() ? (
@@ -142,7 +154,7 @@ export function SessionRow(props: {
         <Show when={props.mergeState}>{(merge) => (
           <span class={merge().state === "merged" || merge().state === "in_progress"
             ? undefined : "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 transition-opacity"}>
-            <WorktreeStateBadge merge={merge()} running={props.running} />
+            <WorktreeStateBadge merge={merge()} running={running()} />
           </span>
         )}</Show>
         {props.dragHandle}
