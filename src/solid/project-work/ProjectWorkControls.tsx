@@ -1,13 +1,17 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js"
-import type { WorkState } from "@services/tickets/types"
 import {
   commandMatches, deadlineInstant, planningValue, workDeadlineStatus, workPriorities,
   type ControlCapability, type WorkCommandContext, type WorkControlCopy, type WorkPlanningDraft,
-  type WorkPlanningQuery, type WorkPlanningValue, type WorkRequestReceipt, type WorkRequestStatus,
+  type ProjectWorkOwnerControlsProps, type ProjectWorkPlanningControlsProps,
+  type WorkOwnerAction, type WorkOwnerIntent, type WorkPlanningQuery, type WorkRequestReceipt, type WorkRequestStatus,
 } from "@/lib/project-work/projectWorkControls"
 import { Button } from "../ui/button"
 
-type WorkIdentity = { id: string; generation: number; recordRevision: number; state: WorkState }
+export type {
+  ProjectWorkOwnerControlsProps, ProjectWorkPlanningControlsProps, WorkAcceptanceConfirmation,
+  WorkOwnerAction, WorkOwnerIntent, WorkUserAcceptance,
+} from "@/lib/project-work/projectWorkControls"
+
 const controlClass = "min-w-0 w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 function capabilityReason(capability: ControlCapability, fallback: string) {
@@ -91,24 +95,6 @@ function WorkRequestFeedback(props: {
       </Show>
     </div>
   )
-}
-
-export interface ProjectWorkPlanningControlsProps {
-  work: WorkIdentity
-  current: WorkPlanningValue | null
-  draft: WorkPlanningDraft
-  query: WorkPlanningQuery
-  owner: boolean
-  editCapability: ControlCapability
-  queryCapability: ControlCapability
-  command: WorkCommandContext | null
-  request: WorkRequestStatus
-  copy: WorkControlCopy
-  onDraftChange: (value: WorkPlanningDraft) => void
-  onQueryChange: (query: WorkPlanningQuery) => void
-  onSavePlanning: (value: WorkPlanningValue, context: WorkCommandContext) => Promise<WorkRequestReceipt>
-  onReload: () => void
-  onReconcile?: (operationId: string) => void
 }
 
 export function ProjectWorkPlanningControls(props: ProjectWorkPlanningControlsProps) {
@@ -221,37 +207,6 @@ export function ProjectWorkPlanningControls(props: ProjectWorkPlanningControlsPr
       }</p>
     </section>
   )
-}
-
-export type WorkOwnerAction = "pause" | "resume" | "cancel" | "accept"
-export interface WorkUserAcceptance {
-  submissionId: string
-  generation: number
-  contractRevision: number
-  stale: boolean
-  stopGuardEnforced: boolean
-  processStopped: boolean | null
-  evidence: readonly string[]
-  unverifiedItems: readonly string[]
-}
-export type WorkAcceptanceConfirmation = Pick<WorkUserAcceptance, "submissionId" | "generation" | "contractRevision">
-export type WorkOwnerIntent = { kind: "pause" | "resume" | "cancel" }
-  | { kind: "accept"; source: "user"; submissionId: string; generation: number; contractRevision: number; unverifiedItems: readonly string[] }
-
-export interface ProjectWorkOwnerControlsProps {
-  work: WorkIdentity & { contractRevision: number; currentSubmissionId: string | null; paused: boolean | null }
-  owner: boolean
-  capabilities: Record<WorkOwnerAction, ControlCapability>
-  commands: Partial<Record<WorkOwnerAction, WorkCommandContext>>
-  request: WorkRequestStatus
-  acceptance: WorkUserAcceptance | null
-  acceptanceConfirmation: WorkAcceptanceConfirmation | null
-  acceptedByUser: boolean
-  copy: WorkControlCopy
-  onAcceptanceConfirmationChange: (confirmation: WorkAcceptanceConfirmation | null) => void
-  onRequestAction: (intent: WorkOwnerIntent, context: WorkCommandContext) => Promise<WorkRequestReceipt>
-  onReload: () => void
-  onReconcile?: (operationId: string) => void
 }
 
 export function ProjectWorkOwnerControls(props: ProjectWorkOwnerControlsProps) {

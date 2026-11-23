@@ -42,6 +42,58 @@ export interface WorkControlCopy {
   states: Record<WorkState, string>
 }
 
+
+type WorkIdentity = { id: string; generation: number; recordRevision: number; state: WorkState }
+
+export interface ProjectWorkPlanningControlsProps {
+  work: WorkIdentity
+  current: WorkPlanningValue | null
+  draft: WorkPlanningDraft
+  query: WorkPlanningQuery
+  owner: boolean
+  editCapability: ControlCapability
+  queryCapability: ControlCapability
+  command: WorkCommandContext | null
+  request: WorkRequestStatus
+  copy: WorkControlCopy
+  onDraftChange: (value: WorkPlanningDraft) => void
+  onQueryChange: (query: WorkPlanningQuery) => void
+  onSavePlanning: (value: WorkPlanningValue, context: WorkCommandContext) => Promise<WorkRequestReceipt>
+  onReload: () => void
+  onReconcile?: (operationId: string) => void
+}
+
+export type WorkOwnerAction = "pause" | "resume" | "cancel" | "accept"
+export interface WorkUserAcceptance {
+  submissionId: string
+  generation: number
+  contractRevision: number
+  stale: boolean
+  stopGuardEnforced: boolean
+  processStopped: boolean | null
+  evidence: readonly string[]
+  unverifiedItems: readonly string[]
+}
+export type WorkAcceptanceConfirmation = Pick<WorkUserAcceptance, "submissionId" | "generation" | "contractRevision">
+export type WorkOwnerIntent = { kind: "pause" | "resume" | "cancel" }
+  | { kind: "accept"; source: "user"; submissionId: string; generation: number; contractRevision: number; unverifiedItems: readonly string[] }
+
+export interface ProjectWorkOwnerControlsProps {
+  work: WorkIdentity & { contractRevision: number; currentSubmissionId: string | null; paused: boolean | null }
+  owner: boolean
+  capabilities: Record<WorkOwnerAction, ControlCapability>
+  commands: Partial<Record<WorkOwnerAction, WorkCommandContext>>
+  request: WorkRequestStatus
+  acceptance: WorkUserAcceptance | null
+  acceptanceConfirmation: WorkAcceptanceConfirmation | null
+  acceptedByUser: boolean
+  copy: WorkControlCopy
+  onAcceptanceConfirmationChange: (confirmation: WorkAcceptanceConfirmation | null) => void
+  onRequestAction: (intent: WorkOwnerIntent, context: WorkCommandContext) => Promise<WorkRequestReceipt>
+  onReload: () => void
+  onReconcile?: (operationId: string) => void
+}
+
 /** A known offset is required. In RFC3339, -00:00 means the offset is unknown. */
 export function deadlineInstant(value: string | null | undefined): bigint | null {
   if (typeof value !== "string") return null

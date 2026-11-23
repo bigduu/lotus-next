@@ -10,7 +10,7 @@ import { sprintOwnerControlsChinese } from "@/test/fixtures/sprintOwnerCopy"
 let host: HTMLDivElement
 let dispose: () => void
 let setProps: (props: SprintOwnerControlsProps) => void
-async function settle(action: () => void | Promise<void>) {
+async function settle(action: () => unknown) {
   await action()
   await Promise.resolve()
   flush()

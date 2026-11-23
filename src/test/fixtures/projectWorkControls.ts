@@ -1,5 +1,5 @@
 import { vi } from "vitest"
-import type { ProjectWorkOwnerControlsProps, ProjectWorkPlanningControlsProps } from "@/solid/project-work/ProjectWorkControls"
+import type { ProjectWorkOwnerControlsProps, ProjectWorkPlanningControlsProps } from "@/lib/project-work/projectWorkControls"
 import type { WorkCommandContext, WorkControlCopy } from "@/lib/project-work/projectWorkControls"
 
 export const controlCopy: WorkControlCopy = {

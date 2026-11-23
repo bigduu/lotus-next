@@ -7,7 +7,7 @@ import { projectBoardClient, type ProjectBoardPage } from "@services/tickets/pro
 import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
 import { ProjectWorkBoard, type ProjectWorkBoardControls } from "./ProjectWorkBoard"
-import { ownerProps, planningProps } from "./project-work/testFixtures"
+import { ownerProps, planningProps } from "@/test/fixtures/projectWorkControls"
 
 vi.mock("@services/tickets/projectBoard", async (original) => ({ ...await original<typeof import("@services/tickets/projectBoard")>(), projectBoardClient: { page: vi.fn(), inspect: vi.fn() } }))
 const project = { id: "project", name: "Project", revision: 1, resource_revision: 1, workspace_bindings: [] } as unknown as ProjectManifest
