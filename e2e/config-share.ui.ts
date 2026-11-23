@@ -17,7 +17,7 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
     }
     return route.continue()
   })
-  await page.route("**/e2e/config-share.html", (route) => route.fulfill({ contentType: "text/html", body: '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>(type)=>type;window.__vite_plugin_react_preamble_installed__=true;await import("/e2e/support/configShareHarness.tsx")</script></body></html>' }))
+  await page.route("**/e2e/config-share.html", (route) => route.fulfill({ contentType: "text/html", body: '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/e2e/support/configShareHarness.tsx"></script></body></html>' }))
   await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
     default_provider_instance_id: "sample", instances: [{ id: "sample", type: "openai", label: "Sample provider", enabled: true, config: { model: "sample-model", base_url: "https://current.example:9443/v1", api_key: "****...****" } }],
     defaults: { chat: { provider: "sample", model: "sample-model" }, fast: { provider: "sample", model: "sample-fast" }, subagent_models: { helper: { provider: "sample", model: "sample-model" } } },
