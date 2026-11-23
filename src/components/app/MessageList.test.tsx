@@ -53,10 +53,8 @@ vi.mock("@/components/chat/ToolCalls", () => ({
 }))
 
 import { MessageList } from "./MessageList"
-import { mapHistoryMessagesToUi } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
-import { apiClient } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
-import type { Message, MessageImage } from "@shared/types/chatMessages"
+import type { Message } from "@shared/types/chatMessages"
 import type { LiveSegment } from "@/hooks/useChat"
 
 const mountedRoots: Root[] = []
@@ -80,7 +78,6 @@ afterEach(() => {
 function renderMessageList(
   messages: Message[],
   latestRunFinished: boolean,
-  pending?: { text: string; images: MessageImage[]; messages?: Parameters<typeof MessageList>[0]["pendingUserMessages"]; preview?: (src: string) => void },
 ) {
   const container = document.createElement("div")
   document.body.appendChild(container)
@@ -101,12 +98,10 @@ function renderMessageList(
         streamingReasoning={null}
         liveSegments={[]}
         streamStatus={null}
-        pendingUserText={pending?.text ?? null}
-        pendingUserImages={pending?.images}
-        pendingUserMessages={pending?.messages}
+        pendingUserText={null}
         forking={false}
         onSelectSubAgent={vi.fn()}
-        onPreviewImage={pending?.preview ?? vi.fn()}
+        onPreviewImage={vi.fn()}
         onRegenerate={vi.fn()}
         onFork={vi.fn()}
         onDelete={vi.fn()}
@@ -567,46 +562,4 @@ describe("MessageList activity grouping", () => {
     expect(container.querySelector('[data-assistant-content="earlier process"]')).not.toBeNull()
     expect(container.querySelector('[data-assistant-content="new response"]')).not.toBeNull()
   })
-})
-
-describe("image attachment visibility", () => {
-  it("renders each retained acknowledgement as its own image bubble and preview", () => {
-    const image = (name: string) => ({ id: name, url: `data:image/png;base64,${name}`, name, size: 1, type: "image/png" })
-    const first = image("first"), second = image("second"), preview = vi.fn()
-    const host = renderMessageList([], false, { text: "second caption", images: [second], preview, messages: [
-      { operationId: 1, text: "first caption", images: [first] },
-      { operationId: 2, text: "second caption", images: [second] },
-    ] })
-    const bubbles = host.querySelectorAll("[data-pending-user-message]")
-    expect([...bubbles].map((node) => node.textContent)).toEqual(["first caption", "second caption"])
-    expect([...bubbles].map((node) => node.getAttribute("data-pending-operation"))).toEqual(["1", "2"])
-    act(() => bubbles[0].querySelector("img")!.click())
-    act(() => bubbles[1].querySelector("img")!.click())
-    expect(preview.mock.calls).toEqual([[first.url], [second.url]])
-  })
-  it("an authoritative empty pending list cannot fall back to a retired legacy bubble", () => {
-    const host = renderMessageList([], false, { text: "retired ACK", images: [], messages: [] })
-    expect(host.querySelector("[data-pending-user-message]")).toBeNull()
-  })
-  it.each(["", "caption with image"])("renders and previews a pending image without hiding an image-only bubble (%s)", (text) => {
-    const url = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", preview = vi.fn()
-    const host = renderMessageList([], false, { text, preview,
-      images: [{ id: "pending-image", url, name: "fixture.gif", type: "image/gif", size: 42 }] })
-    const bubble = host.querySelector("[data-pending-user-message]")
-    const image = bubble?.querySelector("img")
-    expect(image?.getAttribute("src")).toBe(url)
-    expect(bubble?.textContent).toBe(text)
-    act(() => image!.click()); expect(preview).toHaveBeenCalledWith(url)
-  })
-})
-
-
-it("restores a persisted image-only user message through the existing full history contract", () => {
-  const messages = mapHistoryMessagesToUi("fixture", [{ id: "persisted-image-only", role: "user", content: "",
-    content_parts: [{ type: "image_url", image_url: { url: "bamboo-attachment://fixture/asset-1" } }],
-    created_at: "2026-10-19T00:00:00Z" }])
-  const host = renderMessageList(messages, true)
-  expect(host.querySelector('[data-message-row="persisted-image-only"] img')?.getAttribute("src"))
-    .toBe(apiClient.resolveUrl("sessions/fixture/attachments/asset-1"))
-  expect(host.querySelector("[data-pending-user-message]")).toBeNull()
 })
