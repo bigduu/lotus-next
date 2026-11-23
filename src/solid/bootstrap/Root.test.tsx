@@ -1,16 +1,9 @@
-import { StrictMode, act, useContext } from "react"
-import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
-import { createRoot, type Root as ReactRoot } from "react-dom/client"
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest"
+import { render, type JSX } from "@solidjs/web"
+import { flush } from "solid-js"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { BootstrapOutcome, PasswordVerificationOutcome } from "@services/bootstrap/serverBootstrap"
+import { ServiceFactory } from "@services/common/ServiceFactory"
+import { SolidRoot, useOwnerAccess } from "./Root"
 
 const bootstrapMocks = vi.hoisted(() => ({
   requestServerBootstrap: vi.fn(),
@@ -18,8 +11,10 @@ const bootstrapMocks = vi.hoisted(() => ({
 }))
 const runtimeMocks = vi.hoisted(() => ({ sidecarBackend: false }))
 
-vi.mock("./App", () => ({
-  default: function MockApp() { return <div data-app-mounted data-owner-access={String(useContext(OwnerAccessContext))}>Lotus Next App</div> },
+// Vitest compiles application JSX. A browser build renders the package's SVG.
+vi.mock("@lucide/solid", () => ({
+  Loader2: (props: Pick<JSX.IntrinsicElements["svg"], "class" | "aria-hidden">) =>
+    <svg class={props.class} aria-hidden={props["aria-hidden"]} />,
 }))
 
 vi.mock("@/services/bootstrap/serverBootstrap", () => ({
@@ -51,16 +46,9 @@ vi.mock("@/runtime/runtimeConfig", () => ({
   }),
 }))
 
-import Root from "./Root"
-import type {
-  BootstrapOutcome,
-  PasswordVerificationOutcome,
-} from "@/services/bootstrap/serverBootstrap"
-import { ServiceFactory } from "@services/common/ServiceFactory"
-
 interface MountedView {
   container: HTMLDivElement
-  root: ReactRoot
+  dispose: () => void
   mounted: boolean
 }
 
@@ -70,12 +58,14 @@ interface Deferred<T> {
 }
 
 const mountedViews: MountedView[] = []
-const reactActEnvironment = globalThis as typeof globalThis & {
-  IS_REACT_ACT_ENVIRONMENT?: boolean
-}
 const utilityService = ServiceFactory.getInstance()
 let getSetupStatusMock = vi.fn()
 let markSetupCompleteMock = vi.fn()
+
+function AppProbe(props: { ownerAccess: boolean }) {
+  return <div data-app-mounted="" data-owner-access={String(useOwnerAccess())}
+    data-prop-owner-access={String(props.ownerAccess)}>Lotus Next App</div>
+}
 
 const deferred = <T,>(): Deferred<T> => {
   let resolve!: (value: T) => void
@@ -86,31 +76,29 @@ const deferred = <T,>(): Deferred<T> => {
 }
 
 const flushMicrotasks = async () => {
-  await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-  })
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  flush()
 }
 
-const mountRoot = async (strict = false): Promise<MountedView> => {
-  const container = document.createElement("div")
-  document.body.appendChild(container)
-  const root = createRoot(container)
-  const view = { container, root, mounted: true }
-  mountedViews.push(view)
+const advanceTimers = async (milliseconds: number) => {
+  await vi.advanceTimersByTimeAsync(milliseconds)
+  await flushMicrotasks()
+}
 
-  await act(async () => {
-    root.render(strict ? <StrictMode><Root /></StrictMode> : <Root />)
-    await Promise.resolve()
-    await Promise.resolve()
-  })
+const mountRoot = async (): Promise<MountedView> => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <SolidRoot renderApp={(ownerAccess) => <AppProbe ownerAccess={ownerAccess} />} />, container)
+  const view = { container, dispose, mounted: true }
+  mountedViews.push(view)
+  await flushMicrotasks()
   return view
 }
 
 const unmountView = (view: MountedView) => {
   if (!view.mounted) return
-  act(() => view.root.unmount())
+  view.dispose()
   view.mounted = false
   view.container.remove()
 }
@@ -119,32 +107,18 @@ const clickButton = async (container: HTMLElement, label: string) => {
   const button = [...container.querySelectorAll("button")].find(
     (candidate) => candidate.textContent === label,
   )
-  expect(button, `button '${label}' should exist`).toBeDefined()
-  await act(async () => {
-    button?.click()
-    await Promise.resolve()
-    await Promise.resolve()
-  })
+  expect(button, `Expected a button labeled ${label}`).toBeDefined()
+  button!.click()
+  await flushMicrotasks()
 }
 
 const enterPassword = (container: HTMLElement, password: string) => {
   const input = container.querySelector<HTMLInputElement>("#access-password")
   expect(input).not.toBeNull()
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
-  expect(setter).toBeDefined()
-  act(() => {
-    setter?.call(input, password)
-    input?.dispatchEvent(new Event("input", { bubbles: true }))
-  })
+  input!.value = password
+  input!.dispatchEvent(new Event("input", { bubbles: true }))
+  flush()
 }
-
-beforeAll(() => {
-  reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true
-})
-
-afterAll(() => {
-  Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT")
-})
 
 beforeEach(() => {
   runtimeMocks.sidecarBackend = false
@@ -273,24 +247,16 @@ describe("Root canonical bootstrap composition", () => {
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain("正在连接 Bamboo")
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(249)
-    })
+    await advanceTimers(249)
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(1)
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
+    await advanceTimers(1)
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(2)
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(499)
-    })
+    await advanceTimers(499)
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(2)
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
+    await advanceTimers(1)
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(3)
     expect(container.textContent).toContain("暂时无法连接后端")
     expect(vi.getTimerCount()).toBe(0)
@@ -307,19 +273,15 @@ describe("Root canonical bootstrap composition", () => {
 
     const { container } = await mountRoot()
     expect(container.querySelector('[role="status"]')?.textContent).toContain("正在启动 Bodhi")
-    expect(container.querySelector(".animate-spin")).not.toBeNull()
+    expect(container.querySelector('[role="status"] svg.animate-spin')?.getAttribute("aria-hidden")).toBe("true")
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000)
-    })
+    await advanceTimers(10_000)
     expect(bootstrapMocks.requestServerBootstrap.mock.calls.length).toBeGreaterThan(3)
     expect(container.textContent).toContain("正在等待本地 Bamboo 引擎")
     expect(container.textContent).not.toContain("暂时无法连接后端")
 
     bootstrapMocks.requestServerBootstrap.mockResolvedValue({ kind: "ready" })
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000)
-    })
+    await advanceTimers(2_000)
     expect(container.querySelector("[data-app-mounted]")).not.toBeNull()
     expect(getSetupStatusMock).toHaveBeenCalledTimes(1)
   })
@@ -333,15 +295,11 @@ describe("Root canonical bootstrap composition", () => {
     })
 
     const { container } = await mountRoot()
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(59_999)
-    })
+    await advanceTimers(59_999)
     expect(container.textContent).toContain("正在启动 Bodhi")
     expect(container.textContent).not.toContain("暂时无法连接后端")
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
+    await advanceTimers(1)
     expect(container.textContent).toContain("暂时无法连接后端")
     expect(vi.getTimerCount()).toBe(0)
   })
@@ -355,9 +313,7 @@ describe("Root canonical bootstrap composition", () => {
     const { container } = await mountRoot()
     expect(container.textContent).toContain("后端启动响应无效")
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000)
-    })
+    await advanceTimers(10_000)
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(1)
 
     await clickButton(container, "重试")
@@ -365,7 +321,7 @@ describe("Root canonical bootstrap composition", () => {
     expect(container.textContent).toContain("后端缺少启动契约")
   })
 
-  it("aborts StrictMode's first generation and ignores its late ready result", async () => {
+  it("aborts a disposed owner and ignores its late ready result after remount", async () => {
     const first = deferred<BootstrapOutcome>()
     const second = deferred<BootstrapOutcome>()
     const signals: AbortSignal[] = []
@@ -379,7 +335,12 @@ describe("Root canonical bootstrap composition", () => {
         return second.promise
       })
 
-    const { container } = await mountRoot(true)
+    const previous = await mountRoot()
+    expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(1)
+    expect(signals[0]?.aborted).toBe(false)
+    unmountView(previous)
+
+    const { container } = await mountRoot()
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(2)
     expect(signals[0]?.aborted).toBe(true)
     expect(signals[1]?.aborted).toBe(false)
@@ -392,6 +353,7 @@ describe("Root canonical bootstrap composition", () => {
     await flushMicrotasks()
     expect(container.textContent).toContain("后端启动响应无效")
     expect(container.querySelector("[data-app-mounted]")).toBeNull()
+    expect(previous.container.querySelector("[data-app-mounted]")).toBeNull()
     expect(getSetupStatusMock).not.toHaveBeenCalled()
   })
 
@@ -506,7 +468,6 @@ describe("Root password revalidation", () => {
   })
 })
 
-
 describe("Root ticket owner access", () => {
   it.each([
     ["local_bypass", "true"],
@@ -519,24 +480,37 @@ describe("Root ticket owner access", () => {
       return { kind: "ready" }
     })
     const { container } = await mountRoot()
-    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe(expected)
+    const app = container.querySelector("[data-app-mounted]")
+    expect(app?.getAttribute("data-owner-access")).toBe(expected)
+    expect(app?.getAttribute("data-prop-owner-access")).toBe(expected)
   })
 
-  it("ignores a late owner admission from the aborted StrictMode generation", async () => {
+  it("ignores a late owner admission from the disposed owner after remount", async () => {
     const stale = deferred<BootstrapOutcome>()
     let admitStale!: (state: string) => void
+    let staleSignal!: AbortSignal
     bootstrapMocks.requestServerBootstrap
-      .mockImplementationOnce((_signal, admitted) => { admitStale = admitted; return stale.promise })
+      .mockImplementationOnce((signal: AbortSignal, admitted) => {
+        staleSignal = signal
+        admitStale = admitted
+        return stale.promise
+      })
       .mockImplementationOnce(async (_signal, admitted) => {
         admitted("unauthenticated")
         return { kind: "ready" }
       })
-    const { container } = await mountRoot(true)
+    const previous = await mountRoot()
+    expect(staleSignal.aborted).toBe(false)
+    unmountView(previous)
+    expect(staleSignal.aborted).toBe(true)
+
+    const { container } = await mountRoot()
     expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
     admitStale("local_bypass")
     stale.resolve({ kind: "ready" })
     await flushMicrotasks()
     expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
+    expect(previous.container.querySelector("[data-app-mounted]")).toBeNull()
     expect(getSetupStatusMock).toHaveBeenCalledTimes(1)
   })
 
