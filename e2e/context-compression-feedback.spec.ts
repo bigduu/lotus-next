@@ -184,10 +184,13 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
     { ...task, id: "bamboo", description: "Check Bamboo source", parent_id: "review", depends_on: ["review"] },
     { ...task, id: "lotus", description: "Check Lotus source", status: "in_progress", parent_id: "review", depends_on: ["review"] },
     { ...task, id: "notes", description: "Review the notes", status: "pending", parent_id: "review" },
+    { ...task, id: "config", description: "Check configuration", status: "pending", parent_id: "review", depends_on: ["review"] },
     { ...task, id: "report", description: "Combine the findings", status: "pending", depends_on: ["bamboo", "lotus"] },
     { ...task, id: "verify", description: "Verify the findings", status: "pending", depends_on: ["report"] },
     { ...task, id: "send", description: "Send the report", status: "pending", depends_on: ["verify"] },
     { ...task, id: "archive", description: "Archive the report", status: "pending", depends_on: ["send"] },
+    { ...task, id: "handoff", description: "Record the handoff", status: "pending", depends_on: ["archive"] },
+    { ...task, id: "close", description: "Close the review", status: "pending", depends_on: ["handoff"] },
   ]
   f.emit({ type: "task_list_updated", task_list: { session_id: primary, title: "Evidence review", items, created_at: at, updated_at: at }, version: 3 })
   await expect(shortcut).toBeVisible()
@@ -197,13 +200,19 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
   const tab = workbench.getByRole("tab", { name: f.copy("session_task_dag_title"), exact: true })
   await expect(tab).toHaveAttribute("aria-selected", "true")
   await expect(card).toBeVisible()
-  await expect(card.getByText(f.phone ? "已完成 3 / 9" : "3 of 9 complete", { exact: true })).toBeVisible()
+  await expect(card.getByText(f.phone ? "已完成 3 / 12" : "3 of 12 complete", { exact: true })).toBeVisible()
   const graph = card.getByRole("region", { name: f.copy("session_task_dag_dependencies"), exact: true })
-  await expect(graph.locator("path[marker-end]")).toHaveCount(8)
+  await expect(graph.locator("path[marker-end]")).toHaveCount(11)
   await expect(graph.locator("path[stroke-dasharray]")).toHaveCount(1)
-  const savedCheck = graph.getByRole("button", { name: /Prepare the evidence/ }).locator("svg.lucide-check")
+  const prepareNode = graph.getByRole("button", { name: /Prepare the evidence/ })
+  const reviewNode = graph.getByRole("button", { name: /Review each component/ })
+  const savedCheck = prepareNode.locator("svg.lucide-check")
   await expect(savedCheck).toHaveCount(1)
   expect(await savedCheck.getAttribute("data-e2e-check-plays")).toBeNull()
+  const [first, second, canvas] = await Promise.all([prepareNode.boundingBox(), reviewNode.boundingBox(), graph.boundingBox()])
+  expect(first!.y).toBeLessThan(second!.y)
+  expect(first!.x).toBeGreaterThanOrEqual(canvas!.x)
+  expect(first!.x + first!.width).toBeLessThanOrEqual(canvas!.x + canvas!.width)
   const zoom = (key: "session_task_dag_zoom_in" | "session_task_dag_zoom_out" | "session_task_dag_fit") =>
     card.getByRole("button", { name: f.copy(key), exact: true }).click()
   await zoom("session_task_dag_zoom_in")
@@ -222,12 +231,14 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
     await expect.poll(async () => (await workbench.boundingBox())!.width).toBeGreaterThan(before.width + 95)
 
     const viewport = (await graph.boundingBox())!
+    const beforePan = await graph.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }))
     expect(viewport.height).toBeGreaterThan(400)
     await page.mouse.move(viewport.x + viewport.width - 25, viewport.y + viewport.height - 25)
     await page.mouse.down()
-    await page.mouse.move(viewport.x + viewport.width - 125, viewport.y + viewport.height - 25, { steps: 6 })
+    await page.mouse.move(viewport.x + viewport.width - 85, viewport.y + viewport.height - 135, { steps: 6 })
     await page.mouse.up()
-    await expect.poll(() => graph.evaluate((element) => element.scrollLeft)).toBeGreaterThan(50)
+    await expect.poll(() => graph.evaluate((element) => element.scrollLeft)).toBeGreaterThan(beforePan.x + 30)
+    await expect.poll(() => graph.evaluate((element) => element.scrollTop)).toBeGreaterThan(beforePan.y + 50)
 
     await card.getByRole("button", { name: f.copy("session_task_dag_expand") }).click()
     const expanded = page.getByRole("dialog", { name: f.copy("workbench_c2730bc7"), exact: true })
@@ -239,9 +250,9 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
   await expect.poll(() => graph.evaluate((element) =>
     element.scrollWidth - element.clientWidth <= 1 && element.scrollHeight - element.clientHeight <= 1,
   )).toBe(true)
-  await graph.getByRole("button", { name: /Review each component/ }).click()
+  await reviewNode.click()
   const steps = card.getByRole("list", { name: f.copy("session_task_dag_steps"), exact: true })
-  await expect(steps.getByRole("listitem")).toHaveCount(3)
+  await expect(steps.getByRole("listitem")).toHaveCount(4)
   const lotus = steps.getByRole("listitem").filter({ hasText: "Check Lotus source" })
   await expect(lotus).toContainText(f.copy("ticket_in_progress_5026a63b"))
   const completion = { type: "task_list_item_progress", session_id: primary, item_id: "lotus",
@@ -252,12 +263,14 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
   await expect(check).toHaveAttribute("data-e2e-check-plays", "1")
   await f.emitChange(completion)
   await expect(check).toHaveAttribute("data-e2e-check-plays", "1")
-  await expect(card.getByText(f.phone ? "已完成 4 / 9" : "4 of 9 complete", { exact: true })).toBeVisible()
+  await expect(card.getByText(f.phone ? "已完成 4 / 12" : "4 of 12 complete", { exact: true })).toBeVisible()
+  await zoom("session_task_dag_fit")
   await capture(f, "session-task-dag")
   if (info.project.name === "desktop-chromium") {
     await card.getByRole("button", { name: f.copy("session_task_dag_restore") }).click()
     await expect(workbench).not.toHaveAttribute("aria-modal", "true")
     await expect(steps).toBeVisible()
+    await capture(f, "session-task-dag-docked")
   }
   await verifyIsolation(f)
 })

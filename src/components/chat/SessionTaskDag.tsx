@@ -112,11 +112,20 @@ export function SessionTaskDag({ sessionId, expanded, onToggleExpanded }: {
   const selectedArrowId = useId()
   const detailId = useId()
   const layout = useMemo(() => items.length ? layoutSessionTaskDag(items) : null, [items])
+  const hasLayout = layout !== null
   const selected = items.find((item) => item.id === selectedId)
   const completed = items.filter((item) => item.status === "completed").length
   const parents = useMemo(() => new Set(items.flatMap((item) =>
     item.parent_id && item.parent_id !== item.id ? [item.parent_id] : [],
   )), [items])
+
+  useLayoutEffect(() => {
+    const element = viewport.current
+    if (hasLayout && element) {
+      // Keep the first row in view when a later row is wider than the panel.
+      element.scrollLeft = (element.scrollWidth - element.clientWidth) / 2
+    }
+  }, [hasLayout])
 
   useLayoutEffect(() => {
     const next = scrollAfterZoom.current
@@ -126,9 +135,10 @@ export function SessionTaskDag({ sessionId, expanded, onToggleExpanded }: {
 
   const zoom = (nextScale: number) => {
     const element = viewport.current
-    if (!element || nextScale === scale) return
+    if (!element || !layout || nextScale === scale) return
     const ratio = nextScale / scale
-    const left = (element.scrollLeft + element.clientWidth / 2) * ratio - element.clientWidth / 2
+    const margin = Math.max(0, (element.clientWidth - layout.width * scale) / 2)
+    const left = (element.scrollLeft + element.clientWidth / 2 - margin) * ratio - element.clientWidth / 2
     const top = (element.scrollTop + element.clientHeight / 2) * ratio - element.clientHeight / 2
     scrollAfterZoom.current = { left, top }
     setScale(nextScale)
@@ -205,7 +215,7 @@ export function SessionTaskDag({ sessionId, expanded, onToggleExpanded }: {
       onLostPointerCapture={(event) => {
         if (drag.current?.pointerId === event.pointerId) drag.current = null
       }}>
-      <div className="relative min-h-full min-w-full overflow-hidden"
+      <div className="relative mx-auto overflow-hidden"
         style={{ width: Math.ceil(layout.width * scale), height: Math.ceil(layout.height * scale) }}>
         <div className="absolute left-0 top-0"
           style={{ width: layout.width, height: layout.height, transform: `scale(${scale})`, transformOrigin: "top left" }}>
