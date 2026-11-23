@@ -1,7 +1,7 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js"
 import {
   commandMatches, deadlineInstant, planningValue, workDeadlineStatus, workPriorities,
-  type ControlCapability, type WorkCommandContext, type WorkControlCopy, type WorkPlanningDraft,
+  type ControlCapability, type WorkControlCopy, type WorkPlanningDraft,
   type ProjectWorkOwnerControlsProps, type ProjectWorkPlanningControlsProps,
   type WorkOwnerAction, type WorkOwnerIntent, type WorkPlanningQuery, type WorkRequestReceipt, type WorkRequestStatus,
 } from "@/lib/project-work/projectWorkControls"
