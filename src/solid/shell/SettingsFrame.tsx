@@ -2,7 +2,7 @@ import { ArrowLeft } from "@lucide/solid"
 import { createUniqueId, onSettled } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import { isCommandComposing } from "@/lib/commandComposition"
-import { createUiText } from "../shell/uiText"
+import { createUiText } from "./uiText"
 import { Button } from "../ui/button"
 
 export function SettingsFrame(props: { onClose: () => void; children: JSX.Element }) {

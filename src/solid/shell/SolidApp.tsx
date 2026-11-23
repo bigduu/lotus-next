@@ -44,7 +44,7 @@ import { createRunInteractionTimeline, RunInteractions } from "../chat/RunIntera
 import { SessionVersionMigrationGate } from "../chat/status/version-migration/SessionVersionMigrationAction"
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { SettingsTab } from "../settings/SettingsPage"
-import { SettingsFrame } from "../settings/SettingsFrame"
+import { SettingsFrame } from "./SettingsFrame"
 import { Sidebar } from "./Sidebar"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"
 import { createProjectSections } from "./createProjectSections"
