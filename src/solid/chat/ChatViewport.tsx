@@ -1,11 +1,11 @@
-import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js"
 import { ArrowDown, LoaderCircle } from "@lucide/solid"
 import { messageOccurrenceKey } from "@shared/types/chatMessages"
 import { appStore } from "@shared/store/appStore/state"
 import { readLocalImage } from "@shared/services/FileOperationsService"
 import { Button } from "../ui/button"
 import { AssistantMarkdown } from "../markdown/AssistantMarkdown"
-import { VirtualHistory } from "../history/VirtualHistory"
+import { VirtualHistory, type HistoryReadingAnchor } from "../history/VirtualHistory"
 import { createUiText } from "../shell/uiText"
 import { MessageBody } from "./MessageBody"
 import type { createChat } from "./createChat"
@@ -17,14 +17,17 @@ export function ChatViewport(props: {
   theme: "light" | "dark"
   onOpenLink: (url: string) => void
   onPreviewImage: (url: string) => void
+  initialReadingAnchor?: HistoryReadingAnchor | null
+  onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
 }) {
   const text = createUiText()
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
   const [earlierError, setEarlierError] = createSignal(false)
-  const [following, setFollowing] = createSignal(true)
+  const [following, setFollowing] = createSignal(untrack(() => !props.initialReadingAnchor))
   let viewport: HTMLDivElement | null = null
   let loadRequest: AbortController | undefined
   let pendingScroll: number | undefined
+  let contentResize: ResizeObserver | undefined
 
   const messages = createMemo(() => props.chat.messages
     .filter((message) => message.role !== "system")
@@ -50,6 +53,7 @@ export function ChatViewport(props: {
     followTail()
     return () => {
       loadRequest?.abort()
+      contentResize?.disconnect()
       if (pendingScroll !== undefined) cancelAnimationFrame(pendingScroll)
     }
   })
@@ -86,7 +90,17 @@ export function ChatViewport(props: {
         entries={messages()}
         estimateSize={() => 96}
         preserveOnPrepend
-        onScrollElement={(element) => { viewport = element }}
+        initialReadingAnchor={props.initialReadingAnchor}
+        onReadingAnchor={props.onReadingAnchor}
+        onMissingReadingAnchor={restoreFollowing}
+        onScrollElement={(element) => {
+          contentResize?.disconnect()
+          viewport = element
+          if (element?.firstElementChild) {
+            contentResize = new ResizeObserver(followTail)
+            contentResize.observe(element.firstElementChild)
+          }
+        }}
         onScroll={onScroll}
         before={<Show when={before()}>
           <div class="mx-auto flex w-full max-w-4xl flex-col items-center pb-3">

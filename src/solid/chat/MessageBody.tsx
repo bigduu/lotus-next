@@ -8,7 +8,12 @@ function Images(props: { images?: MessageImage[]; onPreview: (src: string) => vo
   return <Show when={props.images?.length}>
     <div class="mt-2 flex flex-wrap gap-2">
       <For each={props.images} keyed={(image) => image.id}>{(entry) => {
-        const src = () => entry().url || entry().base64
+        const src = () => {
+          const image = entry()
+          if (image.url) return image.url
+          if (!image.base64) return undefined
+          return image.base64.startsWith("data:") ? image.base64 : `data:${image.type || "image/png"};base64,${image.base64}`
+        }
         return <Show when={src()}>
           {(value) => (
             <button type="button" class="overflow-hidden rounded-md border" onClick={() => props.onPreview(value())}>

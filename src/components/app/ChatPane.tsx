@@ -1,3 +1,4 @@
+import { fileToAttachment } from "@/lib/chatImageAttachments"
 import { LiveBootstrapRetryNotice } from "@/components/chat/LiveBootstrapRetryNotice"
 import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
@@ -168,27 +169,6 @@ type ComposerSubmissionSnapshot = Readonly<{
   /** One-shot new-session picker override captured with the submission. */
   reasoningSelection: ReasoningEffortSelection | undefined
 }>
-
-function fileToAttachment(file: File): Promise<Attachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const url = String(reader.result)
-      // data URL → strip the "data:...;base64," prefix for the API payload.
-      const base64 = url.includes(",") ? url.slice(url.indexOf(",") + 1) : url
-      resolve({
-        id: `${file.name}-${file.size}-${url.length}`,
-        base64,
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        url,
-      })
-    }
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
 
 type ChatState = ReturnType<typeof useChat>
 const EMPTY_PENDING_USER_IMAGES = [] as const

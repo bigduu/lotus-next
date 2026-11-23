@@ -97,6 +97,15 @@ vi.mock("@shared/store/appStore", async () => {
   )
   return { useAppStore, selectChildren: () => (state: State) => state.childProgress }
 })
+vi.mock("@shared/store/appStore/state", () => ({
+  appStore: {
+    getState: () => runtime.state,
+    subscribe: (listener: () => void) => {
+      runtime.listeners.add(listener)
+      return () => runtime.listeners.delete(listener)
+    },
+  },
+}))
 type ProviderState = typeof runtime.providerState
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useLiveBootstrapRetry", () => ({ useLiveBootstrapRetry: () => runtime.liveRetry }))
