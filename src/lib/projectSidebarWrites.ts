@@ -123,4 +123,3 @@ export async function assignSessionToSection(getState: GetProjectState, projectI
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
 }
-

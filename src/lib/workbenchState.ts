@@ -85,4 +85,3 @@ export function writeWorkbenchState(key: string, state: WorkbenchState) {
     // Keep the in-memory view usable when storage is disabled or full.
   }
 }
-
