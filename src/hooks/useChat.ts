@@ -1386,7 +1386,9 @@ export function useChat(
           // loads, so terminal delivery never flashes an empty assistant row.
           const finalText = flushBufferedText()
           const acknowledgedMessageId = streamUserMessageIdRef.current
-          const observed = useAppStore.getState().chats.find((chat) => chat.id === runSid)?.messages ?? []
+          const observedChat = useAppStore.getState().chats.find((chat) => chat.id === runSid)
+          const observed = observedChat?.messages ?? []
+          let needsEarlierAnchor = false
           if (finalText.trim() && answerLease.valid) {
             const baseline = baselineMessages.find((message) => message.id === streamBaselineMessageIdRef.current)
             const handoff: CompletedAnswerHandoff = {
@@ -1401,9 +1403,16 @@ export function useChat(
             const retained = { ...handoff, lease: answerLease }
             retainedTerminalRef.current = retained
             const id = retainCompletedAnswer(answerLease, handoff)
-            if (id) retained.handoffId = id
+            if (id) {
+              retained.handoffId = id
+              const anchor = acknowledgedMessageId ?? handoff.baselineMessageId
+              // A prior control/status read may have reached the durable reply
+              // before this handoff existed to request its earlier User anchor.
+              needsEarlierAnchor = Boolean(observedChat?.historyWindow?.beforeMessageId && anchor
+                && !observed.some((message) => message.id === anchor && (acknowledgedMessageId === null || message.role === "user")))
+            }
           }
-          if (!historyReady) {
+          if (!historyReady || needsEarlierAnchor) {
             try {
               // waitForAssistant is a no-op without a real retry budget.
               await useAppStore.getState().loadChatHistory(runSid, {

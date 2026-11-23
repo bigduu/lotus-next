@@ -524,8 +524,12 @@ export function ChatPane({
   // useChat. The tool card still flips reactively from the store.
 
   // Sticky-scroll machinery (refs + ResizeObserver + open-session re-pin).
-  const { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom, pinToBottom } =
+  const { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom, pinToBottom, releaseBottomPin } =
     useStickyScroll(currentSessionId)
+  const loadEarlierHistory = useCallback((signal: AbortSignal) => {
+    if (!currentSessionId) return Promise.resolve()
+    return useAppStore.getState().loadEarlierChatHistory(currentSessionId, signal, releaseBottomPin)
+  }, [currentSessionId, releaseBottomPin])
 
   const addFiles = async (files: FileList | File[]) => {
     const imgs = Array.from(files).filter((f) => f.type.startsWith("image/"))
@@ -1313,6 +1317,8 @@ export function ChatPane({
           scrollRef={scrollRef}
           contentRef={contentRef}
           onScroll={handleScroll}
+          historyBeforeMessageId={managedHistoryStale ? undefined : currentChat?.historyWindow?.beforeMessageId}
+          onLoadEarlierHistory={loadEarlierHistory}
           messages={messages}
           timelineAttachments={timelineAttachments}
           mergedSubAgents={mergedSubAgents}

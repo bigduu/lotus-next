@@ -106,10 +106,13 @@ export interface ChatSlice {
   reconcileClearedConversation: (sessionId: string) => void;
   /** Read a cold target's root tree without changing the session cache. */
   stageSessionForNavigation: (target: SessionSummary) => Promise<SessionSummary[] | null>;
+  loadEarlierChatHistory: (sessionId: string, signal: AbortSignal, beforePrepend: () => void) => Promise<void>;
   loadChatHistory: (
     sessionId: string,
     options?: {
       mode?: "replace" | "monotonic";
+      /** A retired cursor needs a fresh recent page. */
+      resetHistoryWindow?: boolean;
       retries?: number;
       retryDelayMs?: number;
       waitForAssistant?: boolean;

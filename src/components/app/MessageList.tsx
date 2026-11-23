@@ -43,7 +43,7 @@ import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
 import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
-import type { Message } from "@shared/types/chatMessages"
+import { messageOccurrenceKey, type Message } from "@shared/types/chatMessages"
 import type { SubAgentCard } from "@/hooks/useSubAgentView"
 import type { LiveSegment, PendingUserMessageView } from "@/hooks/useChat"
 
@@ -254,10 +254,10 @@ function buildRenderItems(messages: Message[]): RenderItem[] {
   for (const m of messages) {
     if (m.role === "system") continue
     if (isToolMessage(m)) {
-      appendProcessPart(out, m.id, { kind: "tools", items: [m] })
+      appendProcessPart(out, messageOccurrenceKey(m), { kind: "tools", items: [m] })
     } else {
       const reasoning = m.role === "assistant" ? messageReasoning(m) : ""
-      if (reasoning.trim()) appendProcessPart(out, m.id, { kind: "reasoning", text: reasoning, createdAt: m.createdAt })
+      if (reasoning.trim()) appendProcessPart(out, messageOccurrenceKey(m), { kind: "reasoning", text: reasoning, createdAt: m.createdAt })
       const images = (m as { images?: unknown[] }).images
       if (messageText(m).trim() || images?.length) out.push({ kind: "msg", m })
     }
@@ -418,7 +418,7 @@ function buildDisplayItems(
     const finishedAt = [...timestamps].reverse().map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
     collapses.set(first, {
       kind: "collapsedTurn",
-      key: `collapsed-turn-${items[summary].kind === "msg" ? items[summary].m.id : first}`,
+      key: `collapsed-turn-${items[summary].kind === "msg" ? messageOccurrenceKey(items[summary].m) : first}`,
       finalId: items[summary].kind === "msg" ? items[summary].m.id : "",
       items: indexes.map((index) => items[index]),
       indexes,
@@ -455,7 +455,7 @@ function toolCallCount(items: RenderItem[]): number {
 }
 
 function renderItemKey(item: RenderItem, index: number): string {
-  if (item.kind === "msg") return `message-${item.m.id}`
+  if (item.kind === "msg") return `message-${messageOccurrenceKey(item.m)}`
   return item.key || `activity-${index}`
 }
 
@@ -625,6 +625,8 @@ export const MessageList = memo(function MessageList({
   initialReadingAnchor,
   onReadingAnchor,
   onMissingReadingAnchor,
+  historyBeforeMessageId,
+  onLoadEarlierHistory,
   messages,
   timelineAttachments = EMPTY_TIMELINE_ATTACHMENTS,
   mergedSubAgents,
@@ -659,6 +661,8 @@ export const MessageList = memo(function MessageList({
   initialReadingAnchor?: HistoryReadingAnchor | null
   onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
   onMissingReadingAnchor?: () => void
+  historyBeforeMessageId?: string | null
+  onLoadEarlierHistory?: (signal: AbortSignal) => Promise<void>
   messages: Message[]
   timelineAttachments?: readonly TimelineAttachment[]
   mergedSubAgents: Record<string, SubAgentCard>
@@ -771,6 +775,8 @@ export const MessageList = memo(function MessageList({
     getItemKey,
     estimateSize,
     scrollMargin: historyScrollMargin,
+    // Use virtual-row identity to hold the viewport through paged prepends.
+    anchorTo: historyBeforeMessageId === undefined ? "start" : "end",
     gap: HISTORY_ROW_GAP,
     overscan: 6,
     initialRect: INITIAL_VIRTUAL_RECT,
@@ -783,6 +789,27 @@ export const MessageList = memo(function MessageList({
   })
 
   const restoredReading = useRef(false)
+  const earlierRequest = useRef<AbortController | null>(null)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const [earlierLoadFailed, setEarlierLoadFailed] = useState(false)
+  useLayoutEffect(() => () => earlierRequest.current?.abort(), [])
+
+  const loadEarlier = async () => {
+    if (!onLoadEarlierHistory || !historyBeforeMessageId || earlierRequest.current) return
+    const request = new AbortController()
+    earlierRequest.current = request
+    setLoadingEarlier(true)
+    setEarlierLoadFailed(false)
+    try {
+      await onLoadEarlierHistory(request.signal)
+    } catch {
+      if (!request.signal.aborted) setEarlierLoadFailed(true)
+    } finally {
+      if (earlierRequest.current === request) earlierRequest.current = null
+      if (!request.signal.aborted) setLoadingEarlier(false)
+    }
+  }
+
   useLayoutEffect(() => {
     if (!initialReadingAnchor || !hasHistory || restoredReading.current) return
     // Wait for the virtual list to establish its viewport and header offset.
@@ -1180,6 +1207,14 @@ export const MessageList = memo(function MessageList({
         }}
       >
         <div ref={historyPrefixRef} className="flex flex-col gap-2 empty:hidden">
+          {historyBeforeMessageId && onLoadEarlierHistory ? (
+            <div className="flex flex-col items-center gap-1">
+              <Button variant="ghost" size="sm" disabled={loadingEarlier} onClick={() => void loadEarlier()}>
+                {uiText(loadingEarlier ? "loading_earlier_messages" : "load_earlier_messages")}
+              </Button>
+              {earlierLoadFailed ? <p role="status" className="text-xs text-muted-foreground">{uiText("load_earlier_messages_failed")}</p> : null}
+            </div>
+          ) : null}
           {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
             {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
           </div> : null}
