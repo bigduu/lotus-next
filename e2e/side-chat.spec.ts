@@ -1,6 +1,7 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { expectComposerText } from "./support/composer.js"
+
 type FixtureSideChat = {
   id: string
   model: { provider: string; model: string }
@@ -194,4 +195,44 @@ test("asks from a selection, stops only the side turn, and restores the side tra
   expect(writes).toEqual([prefix + "/turns", expect.stringMatching(new RegExp("^" + prefix + "/runs/[^/]+/stop$")), prefix + "/turns"])
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
+})
+
+test("reveals a loaded source while the main transcript follows the bottom", async ({ page }) => {
+  const source = "all-surface-session"
+  const quote = { message_id: "source-message", text: "An earlier build failed." }
+  const messages = [
+    { id: quote.message_id, role: "user", content: quote.text, created_at: "2026-09-03T00:00:00Z" },
+    ...Array.from({ length: 39 }, (_, index) => ({
+      id: "newer-" + index,
+      role: index % 2 === 0 ? "assistant" : "user",
+      content: "Later build message " + index,
+      created_at: new Date(Date.UTC(2026, 8, 3, 0, 1, index)).toISOString(),
+    })),
+  ]
+  const sideChat: FixtureSideChat = {
+    id: "side-fixture",
+    model: { provider: "fixture", model: "fixture-model" },
+    preview: "",
+    turns: [{ id: "side-turn", message: "What failed?", quote, answer: "A build failed.", status: "completed" }],
+  }
+
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  await installArtifactRuntime(page, standaloneScenario, [], { sessionFeatures: ["session_side_chat"] })
+  await page.route("**/api/v1/history/" + source + "*", (route) => route.fulfill({ json: { session_id: source, messages } }))
+  await page.route("**/api/v1/sessions/" + source + "/side-chat", (route) =>
+    route.fulfill({ json: { source_generation: "a".repeat(64), side_chat: sideChat } }),
+  )
+  await page.goto(standaloneScenario.entryUrl)
+  const earlierMessage = page.locator('[data-message-row="' + quote.message_id + '"]')
+  const latestMessage = page.locator('[data-message-row="newer-38"]')
+  const bottomButton = page.locator("[data-scroll-to-bottom-anchor] button")
+  await expect(latestMessage).toBeInViewport()
+  await expect(earlierMessage).not.toBeInViewport()
+  await expect(bottomButton).toHaveCount(0)
+
+  await page.getByRole("button", { name: "打开侧聊", exact: true }).click()
+  await page.getByRole("button", { name: "定位到主会话原文", exact: true }).click()
+  await expect(bottomButton).toBeVisible()
+  await expect(earlierMessage).toBeInViewport()
+  await expect(latestMessage).not.toBeInViewport()
 })

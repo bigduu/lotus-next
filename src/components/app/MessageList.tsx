@@ -663,6 +663,7 @@ export const MessageList = memo(function MessageList({
   onEditMessage,
   onAskSideChat,
   revealMessage,
+  onBeforeRevealMessage,
   onMissingRevealedMessage,
 }: {
   scrollRef: Ref<HTMLDivElement>
@@ -708,6 +709,7 @@ export const MessageList = memo(function MessageList({
   onEditMessage: (id: string, text: string) => void
   onAskSideChat?: (quote: SideChatQuote) => void
   revealMessage?: { id: string; token: number }
+  onBeforeRevealMessage?: () => void
   onMissingRevealedMessage?: () => void
 }) {
   useUiLocale()
@@ -828,6 +830,7 @@ export const MessageList = memo(function MessageList({
     const index = historyEntries.findIndex((entry) => entry.item?.kind === "msg" && entry.item.m.id === revealMessage.id)
     if (index >= 0) {
       revealedToken.current = revealMessage.token
+      onBeforeRevealMessage?.()
       virtualizer.scrollToIndex(index, { align: "center" })
       return
     }
@@ -843,7 +846,7 @@ export const MessageList = memo(function MessageList({
     }
     revealedToken.current = revealMessage.token
     onMissingRevealedMessage?.()
-  }, [historyEntries, historyBeforeMessageId, onLoadEarlierHistory, onMissingRevealedMessage, revealMessage, virtualizer])
+  }, [historyEntries, historyBeforeMessageId, onLoadEarlierHistory, onBeforeRevealMessage, onMissingRevealedMessage, revealMessage, virtualizer])
 
   const restoredReading = useRef(false)
   const earlierRequest = useRef<AbortController | null>(null)

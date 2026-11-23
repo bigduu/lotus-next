@@ -1427,6 +1427,7 @@ export function ChatPane({
           onEditMessage={handleEditMessage}
           onAskSideChat={onOpenSideChat ? (quote) => onOpenSideChat({ quote }) : undefined}
           revealMessage={sideChatSourceRequest}
+          onBeforeRevealMessage={releaseBottomPin}
           onMissingRevealedMessage={notifyMissingSideChatSource}
         />
         )}
