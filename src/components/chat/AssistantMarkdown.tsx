@@ -1,37 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { BUILTIN_TOOL_RE, findPendingProviderBlock } from "@/lib/assistantProviderBlocks"
 import { LazyAssistantMarkdown as Markdown } from "./LazyAssistantMarkdown"
 import { BuiltinToolBlock } from "./BuiltinToolBlock"
-
-// Matches a provider "built-in tool" block the model narrates inline:
-//   **🌐 Z.ai Built-in Tool: analyze_image**  ... **Output:** ...  (up to a blank line)
-// Conservative: requires BOTH the "Built-in Tool: <name>" header and an
-// "**Output:**" marker, so normal prose is never collapsed.
-const BUILTIN_TOOL_RE =
-  /(?:\*\*)?\s*🌐?\s*(?:Z\.ai\s+)?Built-in Tool[:：]\s*([A-Za-z0-9_]+)\s*(?:\*\*)?[\s\S]*?\*\*Output:\*\*[\s\S]*?(?=\n\n|$)/
-const BUILTIN_TOOL_HEADER_RE =
-  /(?:\*\*\s*🌐?\s*(?:Z\.ai\s+)?|🌐\s*(?:Z\.ai\s+)?|Z\.ai\s+)Built-in Tool[:：]\s*([A-Za-z0-9_]+)\s*(?:\*\*)?/
-const DECORATED_PROVIDER_LINE_RE =
-  /(?:^|\n)(?:\*\*\s*🌐?\s*(?:Z\.ai\s+)?|🌐\s*(?:Z\.ai\s+)?|Z\.ai\s+)([^\n]*)/g
-
-function findPendingProviderBlock(text: string): { index: number; name?: string } | null {
-  DECORATED_PROVIDER_LINE_RE.lastIndex = 0
-  for (const candidate of text.matchAll(DECORATED_PROVIDER_LINE_RE)) {
-    const line = candidate[1].trim().replace(/\*\*\s*$/, "").trimEnd()
-    const normalizedLine = line.replace("：", ":").toLowerCase()
-    const canonicalHeader = "built-in tool:"
-    const isHeaderPrefix = canonicalHeader.startsWith(normalizedLine)
-    const hasStartedName = /^built-in tool:\s*[a-z0-9_]*$/i.test(normalizedLine)
-    if (!isHeaderPrefix && !hasStartedName) continue
-
-    const index = (candidate.index ?? 0) + (candidate[0].startsWith("\n") ? 1 : 0)
-    const header = text.slice(index).match(BUILTIN_TOOL_HEADER_RE)
-    return {
-      index,
-      name: header?.index === 0 ? header[1] : undefined,
-    }
-  }
-  return null
-}
 
 /**
  * Renders an assistant message as markdown, but folds any inline provider

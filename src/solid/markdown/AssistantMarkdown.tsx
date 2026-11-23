@@ -10,6 +10,7 @@ import { MermaidBlock } from "./MermaidBlock"
 import type { MermaidTheme } from "../../lib/mermaid/strictConfig"
 import { attribute, contentText, parseAssistantMarkdown } from "./markdownTree"
 import { englishMarkdownText, type MarkdownText } from "./text"
+import { ProviderMarkdown } from "./ProviderMarkdown"
 import "../../components/chat/StreamdownLayout.css"
 import "./markdown.css"
 
@@ -267,7 +268,7 @@ function ContentElement(props: ElementProps) {
   )
 }
 
-export function AssistantMarkdown(props: AssistantMarkdownProps) {
+export function MarkdownProse(props: AssistantMarkdownProps) {
   const idPrefix = `markdown-${createUniqueId()}-`
   const reveal = createRevealPlugin(idPrefix)
   const seen = new WeakSet<globalThis.Element>()
@@ -304,4 +305,8 @@ export function AssistantMarkdown(props: AssistantMarkdownProps) {
       </div>
     </div>
   )
+}
+
+export function AssistantMarkdown(props: AssistantMarkdownProps) {
+  return <ProviderMarkdown {...props} prose={MarkdownProse} />
 }
