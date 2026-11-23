@@ -23,8 +23,8 @@ import { workbenchSensors } from "./workbenchSensors"
 import { type WorkbenchTabDrag, useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
 
-export type RightWorkbenchTab = "inspector" | "review" | "browser" | "subagents" | "work" | "task-dag"
-export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
+import type { RightWorkbenchTab, WorkbenchToolTab } from "@/lib/workbenchTabTypes"
+export type { RightWorkbenchTab, WorkbenchToolTab } from "@/lib/workbenchTabTypes"
 
 const toolEntries = [
   { id: "work", get label() { return uiText("supervisor_work_tab") }, get description() { return uiText("supervisor_work_description") }, icon: ListChecks },
