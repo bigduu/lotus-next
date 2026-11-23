@@ -1,14 +1,17 @@
-import { act, StrictMode } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createRoot, flush } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api/errors"
 import { projectService, type PatchProjectRequest, type ProjectManifest, type ProjectSidebar } from "@services/project"
-import { useAppStore } from "@shared/store/appStore"
+import { appStore } from "@shared/store/appStore/state"
+import { uiText } from "@shared/i18n/text"
 import {
   PROJECT_SECTIONS_STORAGE_KEY, createProjectSection, readProjectSectionPreferences,
   setSessionSection, writeProjectSectionPreferences,
 } from "@/lib/projectSidebarPreferences"
-import { assignSessionToSectionDurable, useProjectSidebarSections } from "./useProjectSidebarSections"
+import { assignSessionToSection } from "@/lib/projectSidebarWrites"
+import { createStoreSelector } from "../state/createStoreSelector"
+import { createProjectSections } from "./createProjectSections"
+import { sectionWriteErrorText } from "./ProjectSectionDialog"
 
 const sectionId = "section:00000000-0000-4000-8000-000000000001"
 const empty: ProjectSidebar = { sections: [], session_sections: {}, hidden_legacy: false }
@@ -19,24 +22,40 @@ const manifest = (sidebar: ProjectSidebar | null | undefined = null): ProjectMan
   created_at: "2026-10-15T00:00:00Z", updated_at: "2026-10-15T00:00:00Z",
 })
 
-let root: Root
-let container: HTMLDivElement
-let hook: ReturnType<typeof useProjectSidebarSections>
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+let dispose: (() => void) | undefined
+let sections: ReturnType<typeof createProjectSections>
 const projectActions = {
-  ensureProject: useAppStore.getState().ensureProject,
-  updateProject: useAppStore.getState().updateProject,
+  ensureProject: appStore.getState().ensureProject,
+  updateProject: appStore.getState().updateProject,
 }
 
-function Harness() {
-  const projects = useAppStore((state) => state.projects)
-  hook = useProjectSidebarSections(projects)
-  return null
+function flushSidebar(action: () => unknown) {
+  const result = action()
+  flush()
+  return result
 }
-
-async function mount(strict = false) {
-  await act(async () => root.render(strict ? <StrictMode><Harness /></StrictMode> : <Harness />))
+async function settle(action: () => unknown) {
+  await flushSidebar(action)
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  flush()
 }
+const mount = () => settle(() => {
+  dispose = createRoot((cleanup) => {
+    const projects = createStoreSelector(appStore, (state) => state.projects)
+    sections = createProjectSections(projects, appStore.getState)
+    return cleanup
+  })
+})
+function unmount() {
+  dispose?.()
+  dispose = undefined
+}
+function writeError(projectId: string) {
+  const failure = sections.failures()[projectId]
+  return failure ? uiText(sectionWriteErrorText[failure]) : undefined
+}
+const assignSessionToSectionDurable = (projectId: string, sessionId: string, targetSection: string | null) =>
+  assignSessionToSection(appStore.getState, projectId, sessionId, targetSection)
 
 function seedLegacy() {
   let preferences = createProjectSection(readProjectSectionPreferences(), "p1", "Research", "Development", sectionId)
@@ -44,42 +63,55 @@ function seedLegacy() {
   writeProjectSectionPreferences(preferences)
 }
 
-const create = () => hook.update("p1", (previous) => createProjectSection(previous, "p1", "Research", "Development", sectionId))
+const create = () => sections.update("p1", (previous) => createProjectSection(previous, "p1", "Research", "Development", sectionId))
 
 beforeEach(() => {
-  environment.IS_REACT_ACT_ENVIRONMENT = true
   localStorage.clear()
-  container = document.body.appendChild(document.createElement("div"))
-  root = createRoot(container)
-  useAppStore.setState({
+  appStore.setState({
     projects: { p1: manifest() },
     ensureProject: vi.fn().mockResolvedValue(undefined),
     updateProject: vi.fn(async (id: string, revision: number, request: PatchProjectRequest) => {
-      const current = useAppStore.getState().projects[id]!
+      const current = appStore.getState().projects[id]!
       expect(revision).toBe(current.revision)
       const saved = { ...current, sidebar: request.sidebar ?? request.import_sidebar!, revision: revision + 1 }
-      useAppStore.setState((state) => ({ projects: { ...state.projects, [id]: saved } }))
+      appStore.setState((state) => ({ projects: { ...state.projects, [id]: saved } }))
       return saved
     }),
   })
 })
 
 afterEach(() => {
-  act(() => root.unmount())
-  container.remove()
+  unmount()
   vi.restoreAllMocks()
 })
 
 describe("durable Project sidebar sections", () => {
-  it("imports once under StrictMode and removes only the acknowledged Project's local data", async () => {
+  it("imports once across an owner remount and removes only the acknowledged Project's local data", async () => {
     seedLegacy()
     writeProjectSectionPreferences(createProjectSection(readProjectSectionPreferences(), "other", "Keep me"))
-    await mount(true)
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledWith("p1", 1, {
+    const save = appStore.getState().updateProject
+    let acknowledge!: () => void
+    const pending = new Promise<void>((resolve) => { acknowledge = resolve })
+    appStore.setState({ updateProject: vi.fn(async (id: string, revision: number, request: PatchProjectRequest) => {
+      await pending
+      return save(id, revision, request)
+    }) })
+    try {
+      await mount()
+      expect(sections.busy().has("p1")).toBe(true)
+      unmount()
+      await mount()
+      expect(appStore.getState().updateProject).toHaveBeenCalledOnce()
+      expect(readProjectSectionPreferences().projects.p1).toBeDefined()
+      await settle(acknowledge)
+    } finally {
+      acknowledge()
+    }
+    expect(appStore.getState().updateProject).toHaveBeenCalledOnce()
+    expect(appStore.getState().updateProject).toHaveBeenCalledWith("p1", 1, {
       import_sidebar: { sections: [{ id: sectionId, name: "Research" }], session_sections: { "root-1": sectionId }, hidden_legacy: false },
     })
-    expect(hook.preferences.projects.p1?.sessionSections["root-1"]).toBe(sectionId)
+    expect(sections.preferences().projects.p1?.sessionSections["root-1"]).toBe(sectionId)
     expect(readProjectSectionPreferences().projects.p1).toBeUndefined()
     expect(readProjectSectionPreferences().projects.other?.sections[0]?.name).toBe("Keep me")
   })
@@ -88,105 +120,105 @@ describe("durable Project sidebar sections", () => {
     seedLegacy()
     const old = localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)
     let acknowledge!: (project: ProjectManifest) => void
-    useAppStore.setState({ updateProject: vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve })) })
+    appStore.setState({ updateProject: vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve })) })
     await mount()
-    expect(hook.busy.has("p1")).toBe(true)
+    expect(sections.busy().has("p1")).toBe(true)
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBe(old)
-    await act(async () => {
+    await settle(async () => {
       const saved = manifest({ sections: [{ id: sectionId, name: "Research" }], session_sections: {}, hidden_legacy: false })
-      useAppStore.setState({ projects: { p1: saved } })
+      appStore.setState({ projects: { p1: saved } })
       acknowledge(saved)
     })
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
     // The server can discard stale assignments; its receipt is authoritative.
-    expect(hook.preferences.projects.p1?.sessionSections).toEqual({})
+    expect(sections.preferences().projects.p1?.sessionSections).toEqual({})
   })
 
   it("keeps failed import data and retries import before a subsequent edit", async () => {
     seedLegacy()
-    const save = useAppStore.getState().updateProject
-    useAppStore.setState({ updateProject: vi.fn().mockRejectedValueOnce(new Error("offline")).mockImplementation(save) })
+    const save = appStore.getState().updateProject
+    appStore.setState({ updateProject: vi.fn().mockRejectedValueOnce(new Error("offline")).mockImplementation(save) })
     await mount()
-    expect(hook.errors.p1).toContain("未保存")
+    expect(writeError("p1")).toContain("未保存")
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
-    await act(async () => { await hook.update("p1", (previous) => setSessionSection(previous, "p1", "root-1", null, "Development")) })
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledTimes(3)
+    await settle(async () => { await sections.update("p1", (previous) => setSessionSection(previous, "p1", "root-1", null, "Development")) })
+    expect(appStore.getState().updateProject).toHaveBeenCalledTimes(3)
     expect(readProjectSectionPreferences().projects.p1).toBeUndefined()
-    expect(hook.preferences.projects.p1?.sessionSections["root-1"]).toBeNull()
-    expect(hook.errors.p1).toBeUndefined()
+    expect(sections.preferences().projects.p1?.sessionSections["root-1"]).toBeNull()
+    expect(writeError("p1")).toBeUndefined()
   })
 
   it("keeps newer edits made by a legacy tab during import", async () => {
     seedLegacy()
     let acknowledge!: (project: ProjectManifest) => void
-    useAppStore.setState({ updateProject: vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve })) })
+    appStore.setState({ updateProject: vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve })) })
     await mount()
     writeProjectSectionPreferences(createProjectSection(readProjectSectionPreferences(), "p1", "New legacy edit"))
-    await act(async () => {
+    await settle(async () => {
       const saved = manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] })
-      useAppStore.setState({ projects: { p1: saved } })
+      appStore.setState({ projects: { p1: saved } })
       acknowledge(saved)
     })
     expect(readProjectSectionPreferences().projects.p1?.sections).toHaveLength(2)
-    expect(hook.preferences.projects.p1?.sections).toHaveLength(1)
+    expect(sections.preferences().projects.p1?.sections).toHaveLength(1)
   })
 
   it("never reimports browser data over an existing empty server snapshot", async () => {
     seedLegacy()
-    useAppStore.setState({ projects: { p1: manifest(empty) } })
+    appStore.setState({ projects: { p1: manifest(empty) } })
     await mount()
-    expect(hook.preferences.projects.p1?.sections).toEqual([])
-    expect(hook.preferences.projects.p1?.sessionSections).toEqual({})
-    expect(useAppStore.getState().updateProject).not.toHaveBeenCalled()
+    expect(sections.preferences().projects.p1?.sections).toEqual([])
+    expect(sections.preferences().projects.p1?.sessionSections).toEqual({})
+    expect(appStore.getState().updateProject).not.toHaveBeenCalled()
   })
 
   it("shows saved sections in a clean browser without writing local section data", async () => {
-    useAppStore.setState({ projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) } })
+    appStore.setState({ projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) } })
     await mount()
-    expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Research")
+    expect(sections.preferences().projects.p1?.sections[0]?.name).toBe("Research")
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
-    expect(useAppStore.getState().updateProject).not.toHaveBeenCalled()
+    expect(appStore.getState().updateProject).not.toHaveBeenCalled()
   })
 
   it("waits for confirmation and serializes simultaneous edits for one Project", async () => {
     let acknowledge!: (project: ProjectManifest) => void
-    useAppStore.setState({ updateProject: vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve })) })
+    appStore.setState({ updateProject: vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve })) })
     await mount()
     let pending!: Promise<boolean>
-    act(() => { pending = create() })
-    expect(hook.preferences.projects.p1?.sections).toEqual([])
-    expect(hook.busy.has("p1")).toBe(true)
-    await act(async () => { expect(await create()).toBe(false) })
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
-    await act(async () => {
+    flushSidebar(() => { pending = create() })
+    expect(sections.preferences().projects.p1?.sections).toEqual([])
+    expect(sections.busy().has("p1")).toBe(true)
+    await settle(async () => { expect(await create()).toBe(false) })
+    expect(appStore.getState().updateProject).toHaveBeenCalledOnce()
+    await settle(async () => {
       const saved = manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] })
-      useAppStore.setState({ projects: { p1: saved } })
+      appStore.setState({ projects: { p1: saved } })
       acknowledge(saved)
       expect(await pending).toBe(true)
     })
-    expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Research")
+    expect(sections.preferences().projects.p1?.sections[0]?.name).toBe("Research")
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
   })
 
   it("does not commit a failed save locally", async () => {
-    useAppStore.setState({ updateProject: vi.fn().mockRejectedValue(new Error("offline")) })
+    appStore.setState({ updateProject: vi.fn().mockRejectedValue(new Error("offline")) })
     await mount()
-    await act(async () => { expect(await create()).toBe(false) })
-    expect(hook.preferences.projects.p1?.sections).toEqual([])
-    expect(hook.errors.p1).toContain("未保存")
+    await settle(async () => { expect(await create()).toBe(false) })
+    expect(sections.preferences().projects.p1?.sections).toEqual([])
+    expect(writeError("p1")).toContain("未保存")
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
   })
 
   it("reloads the winning snapshot after a stale revision without replaying the failed intent", async () => {
     const winner = { ...manifest({ ...empty, sections: [{ id: sectionId, name: "Other client" }] }), revision: 3 }
-    const reload = vi.fn(async () => { useAppStore.setState({ projects: { p1: winner } }) })
-    useAppStore.setState({ updateProject: vi.fn().mockRejectedValue(new ApiError("stale", 412, "Precondition Failed")), ensureProject: reload })
+    const reload = vi.fn(async () => { appStore.setState({ projects: { p1: winner } }) })
+    appStore.setState({ updateProject: vi.fn().mockRejectedValue(new ApiError("stale", 412, "Precondition Failed")), ensureProject: reload })
     await mount()
-    await act(async () => { expect(await create()).toBe(false) })
+    await settle(async () => { expect(await create()).toBe(false) })
     expect(reload).toHaveBeenCalledWith("p1", { force: true })
-    expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Other client")
-    expect(hook.errors.p1).toContain("其他客户端")
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
+    expect(sections.preferences().projects.p1?.sections[0]?.name).toBe("Other client")
+    expect(writeError("p1")).toContain("其他客户端")
+    expect(appStore.getState().updateProject).toHaveBeenCalledOnce()
   })
 
   it("starts a fresh conflict read after an older in-flight Project read settles", async () => {
@@ -196,23 +228,23 @@ describe("durable Project sidebar sections", () => {
       .mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { finishOlderRead = resolve }))
       .mockResolvedValueOnce(winner)
     const patch = vi.spyOn(projectService, "patchProject").mockRejectedValueOnce(new ApiError("stale", 412, "Precondition Failed"))
-    useAppStore.setState(projectActions)
+    appStore.setState(projectActions)
     const olderRead = projectActions.ensureProject("p1", { force: true })
     await mount()
     let losingSave!: Promise<boolean>
-    await act(async () => { losingSave = create(); await Promise.resolve() })
+    await settle(async () => { losingSave = create(); await Promise.resolve() })
     expect(get).toHaveBeenCalledOnce()
-    await act(async () => {
+    await settle(async () => {
       finishOlderRead(manifest())
       await olderRead
       expect(await losingSave).toBe(false)
     })
     expect(get).toHaveBeenCalledTimes(2)
-    expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Other client")
+    expect(sections.preferences().projects.p1?.sections[0]?.name).toBe("Other client")
     patch.mockImplementationOnce(async (_id, revision, request) => ({ ...winner, sidebar: request.sidebar!, revision: revision + 1 }))
-    await act(async () => { expect(await create()).toBe(true) })
+    await settle(async () => { expect(await create()).toBe(true) })
     expect(patch).toHaveBeenLastCalledWith("p1", 3, expect.any(Object))
-    expect(hook.preferences.projects.p1?.sections.map((section) => section.name)).toEqual(["Other client", "Research"])
+    expect(sections.preferences().projects.p1?.sections.map((section) => section.name)).toEqual(["Other client", "Research"])
   })
 
   it.each([false, true])("confirms a save rejected by an event-ahead store (refresh fails: %s)", async (refreshFails) => {
@@ -226,32 +258,32 @@ describe("durable Project sidebar sections", () => {
     else get.mockResolvedValueOnce(winner)
     let confirmPatch!: (project: ProjectManifest) => void
     const patch = vi.spyOn(projectService, "patchProject").mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { confirmPatch = resolve }))
-    useAppStore.setState(projectActions)
+    appStore.setState(projectActions)
     await projectActions.ensureProject("p1", { force: true })
     await mount()
     let pending!: Promise<boolean>
-    await act(async () => {
+    await settle(async () => {
       pending = create()
-      useAppStore.getState().applyProjectEvent({ type: "project_updated", project_id: "p1", revision: 3 })
+      appStore.getState().applyProjectEvent({ type: "project_updated", project_id: "p1", revision: 3 })
       confirmPatch(saved)
       await Promise.resolve()
     })
     // The event advertised revision 3, but PATCH's revision 2 was rejected by the merge.
-    expect(hook.preferences.projects.p1?.sections).toEqual([])
-    expect(hook.busy.has("p1")).toBe(true)
-    await act(async () => {
+    expect(sections.preferences().projects.p1?.sections).toEqual([])
+    expect(sections.busy().has("p1")).toBe(true)
+    await settle(async () => {
       failEventRead(new Error("older event read failed"))
       expect(await pending).toBe(!refreshFails)
     })
     expect(get).toHaveBeenCalledTimes(3)
     expect(patch).toHaveBeenCalledOnce()
     if (refreshFails) {
-      expect(hook.errors.p1).toContain("已保存")
-      expect(hook.errors.p1).toContain("重新加载")
-      expect(hook.preferences.projects.p1?.sections).toEqual([])
+      expect(writeError("p1")).toContain("已保存")
+      expect(writeError("p1")).toContain("重新加载")
+      expect(sections.preferences().projects.p1?.sections).toEqual([])
     } else {
-      expect(hook.errors.p1).toBeUndefined()
-      expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Research")
+      expect(writeError("p1")).toBeUndefined()
+      expect(sections.preferences().projects.p1?.sections[0]?.name).toBe("Research")
     }
   })
 
@@ -262,173 +294,173 @@ describe("durable Project sidebar sections", () => {
       .mockResolvedValueOnce({ ...manifest(empty), revision: 2 })
       .mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { finishFreshRead = resolve }))
     vi.spyOn(projectService, "patchProject").mockRejectedValueOnce(new ApiError("stale", 412, "Precondition Failed"))
-    useAppStore.setState(projectActions)
+    appStore.setState(projectActions)
     await projectActions.ensureProject("p1", { force: true })
     await mount()
     let pending!: Promise<boolean>
-    await act(async () => { pending = create(); await Promise.resolve() })
+    await settle(async () => { pending = create(); await Promise.resolve() })
     expect(get).toHaveBeenCalledTimes(3)
-    await act(async () => {
-      useAppStore.getState().applyProjectEvent({ type: "project_updated", project_id: "p1", revision: 4 })
+    await settle(async () => {
+      appStore.getState().applyProjectEvent({ type: "project_updated", project_id: "p1", revision: 4 })
       finishFreshRead({ ...manifest(empty), revision: 3 })
       expect(await pending).toBe(false)
     })
-    expect(hook.errors.p1).toContain("无法读取最新版本")
-    expect(useAppStore.getState().projects.p1!.revision).toBe(4)
+    expect(writeError("p1")).toContain("无法读取最新版本")
+    expect(appStore.getState().projects.p1!.revision).toBe(4)
   })
 
   it("retains the legacy import source when its committed receipt cannot reach the store", async () => {
     seedLegacy()
     const saved = { ...manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }), revision: 2 }
     const pendingImport = { ...manifest(), revision: 3, confirmed_revision: 1 }
-    useAppStore.setState({
+    appStore.setState({
       projects: { p1: pendingImport },
       updateProject: vi.fn().mockResolvedValue(saved),
       ensureProject: vi.fn().mockRejectedValue(new Error("offline")),
     })
     await mount()
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledWith("p1", 1, expect.objectContaining({ import_sidebar: expect.any(Object) }))
+    expect(appStore.getState().updateProject).toHaveBeenCalledWith("p1", 1, expect.objectContaining({ import_sidebar: expect.any(Object) }))
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
-    expect(hook.errors.p1).toContain("已保存")
-    expect(hook.errors.p1).toContain("重新加载")
+    expect(writeError("p1")).toContain("已保存")
+    expect(writeError("p1")).toContain("重新加载")
   })
 
   it("uses the snapshot revision when an event advertises a newer Project revision", async () => {
     const pendingPayload = { ...manifest(), revision: 2, confirmed_revision: 1 }
     const save = vi.fn().mockRejectedValue(new ApiError("stale", 412, "Precondition Failed"))
-    useAppStore.setState({ projects: { p1: pendingPayload }, updateProject: save })
+    appStore.setState({ projects: { p1: pendingPayload }, updateProject: save })
     await mount()
-    await act(async () => { await create() })
+    await settle(async () => { await create() })
     expect(save).toHaveBeenCalledWith("p1", 1, expect.objectContaining({ sidebar: expect.any(Object) }))
   })
 
   it("refreshes an already-imported conflict without discarding the local source", async () => {
     seedLegacy()
-    useAppStore.setState({ updateProject: vi.fn().mockRejectedValue(new ApiError("already imported", 409, "Conflict")) })
+    appStore.setState({ updateProject: vi.fn().mockRejectedValue(new ApiError("already imported", 409, "Conflict")) })
     await mount()
-    expect(useAppStore.getState().ensureProject).toHaveBeenCalledWith("p1", { force: true })
+    expect(appStore.getState().ensureProject).toHaveBeenCalledWith("p1", { force: true })
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
-    expect(hook.errors.p1).toContain("其他客户端")
+    expect(writeError("p1")).toContain("其他客户端")
   })
 
   it("keeps local data and disables writes for an unsupported backend", async () => {
     seedLegacy()
-    useAppStore.setState({ projects: { p1: { ...manifest(), sidebar: undefined } } })
+    appStore.setState({ projects: { p1: { ...manifest(), sidebar: undefined } } })
     await mount()
-    await act(async () => { expect(await create()).toBe(false) })
-    expect(useAppStore.getState().updateProject).not.toHaveBeenCalled()
-    expect(hook.errors.p1).toContain("更新 Bamboo")
+    await settle(async () => { expect(await create()).toBe(false) })
+    expect(appStore.getState().updateProject).not.toHaveBeenCalled()
+    expect(writeError("p1")).toContain("更新 Bamboo")
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
   })
 
   it("keeps a failed Project's error when another Project saves successfully", async () => {
-    const save = useAppStore.getState().updateProject
-    useAppStore.setState({
+    const save = appStore.getState().updateProject
+    appStore.setState({
       projects: { p1: manifest(), p2: { ...manifest(), id: "p2", name: "Other Project" } },
       updateProject: vi.fn((id, revision, request) => id === "p1" ? Promise.reject(new Error("offline")) : save(id, revision, request)),
     })
     await mount()
-    await act(async () => { await create() })
-    const originalError = hook.errors.p1
+    await settle(async () => { await create() })
+    const originalError = writeError("p1")
     expect(originalError).toContain("未保存")
-    await act(async () => {
-      expect(await hook.update("p2", (previous) => createProjectSection(previous, "p2", "Other section"))).toBe(true)
+    await settle(async () => {
+      expect(await sections.update("p2", (previous) => createProjectSection(previous, "p2", "Other section"))).toBe(true)
     })
-    expect(hook.errors.p1).toBe(originalError)
-    expect(hook.errors.p2).toBeUndefined()
-    expect(useAppStore.getState().projects.p2!.sidebar?.sections[0]?.name).toBe("Other section")
+    expect(writeError("p1")).toBe(originalError)
+    expect(writeError("p2")).toBeUndefined()
+    expect(appStore.getState().projects.p2!.sidebar?.sections[0]?.name).toBe("Other section")
   })
 
   it("does not clear legacy data when a response lacks an import receipt", async () => {
     seedLegacy()
-    useAppStore.setState({ updateProject: vi.fn().mockResolvedValue({ ...manifest(), sidebar: undefined }) })
+    appStore.setState({ updateProject: vi.fn().mockResolvedValue({ ...manifest(), sidebar: undefined }) })
     await mount()
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
-    expect(hook.errors.p1).toContain("更新 Bamboo")
+    expect(writeError("p1")).toContain("更新 Bamboo")
   })
 })
 
 describe("durable session section assignment", () => {
   it("assigns a newly created session to its section through the single-writer core", async () => {
-    useAppStore.setState({
+    appStore.setState({
       projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
     })
     await expect(assignSessionToSectionDurable("p1", "new-session", sectionId)).resolves.toBe(true)
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
-    const saved = useAppStore.getState().projects.p1!
+    expect(appStore.getState().updateProject).toHaveBeenCalledOnce()
+    const saved = appStore.getState().projects.p1!
     expect(saved.sidebar?.session_sections["new-session"]).toBe(sectionId)
     expect(saved.revision).toBe(2)
   })
 
-  it("serializes with a concurrent hook update instead of racing the revision", async () => {
+  it("serializes with a concurrent sidebar update instead of racing the revision", async () => {
     let acknowledge!: (project: ProjectManifest) => void
     const save = vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve }))
-    useAppStore.setState({
+    appStore.setState({
       projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
       updateProject: save,
     })
     await mount()
     const durable = assignSessionToSectionDurable("p1", "new-session", sectionId)
-    // The hook's own edit arrives while the durable assignment is in flight.
-    await act(async () => { await hook.update("p1", (previous) => previous) })
+    // The sidebar edit arrives while the durable assignment is in flight.
+    await settle(async () => { await sections.update("p1", (previous) => previous) })
     expect(save).toHaveBeenCalledOnce()
-    await act(async () => {
+    await settle(async () => {
       const saved = manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }], session_sections: { "new-session": sectionId } })
-      useAppStore.setState({ projects: { p1: saved } })
+      appStore.setState({ projects: { p1: saved } })
       acknowledge(saved)
     })
     await expect(durable).resolves.toBe(true)
-    expect(useAppStore.getState().projects.p1!.sidebar?.session_sections["new-session"]).toBe(sectionId)
+    expect(appStore.getState().projects.p1!.sidebar?.session_sections["new-session"]).toBe(sectionId)
   })
 
   it("keeps the session unsectioned when the durable assignment fails", async () => {
-    useAppStore.setState({
+    appStore.setState({
       projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
       updateProject: vi.fn().mockRejectedValue(new Error("offline")),
     })
     await expect(assignSessionToSectionDurable("p1", "new-session", sectionId)).resolves.toBe(false)
-    expect(useAppStore.getState().projects.p1!.sidebar?.session_sections).toEqual({})
+    expect(appStore.getState().projects.p1!.sidebar?.session_sections).toEqual({})
   })
 
   it("skips the PATCH when the session already has the requested section", async () => {
-    useAppStore.setState({
+    appStore.setState({
       projects: { p1: manifest({ sections: [{ id: sectionId, name: "Research" }], session_sections: { "root-1": sectionId }, hidden_legacy: false }) },
     })
     await expect(assignSessionToSectionDurable("p1", "root-1", sectionId)).resolves.toBe(true)
-    expect(useAppStore.getState().updateProject).not.toHaveBeenCalled()
+    expect(appStore.getState().updateProject).not.toHaveBeenCalled()
   })
 
   it("waits for a concurrent write to settle instead of dropping the assignment", async () => {
-    useAppStore.setState({
+    appStore.setState({
       projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
     })
-    // The first PATCH (the hook's own edit) is held until acknowledged; every
+    // The first PATCH (the sidebar edit) is held until acknowledged; every
     // later PATCH (the durable retry) saves immediately.
     let acknowledge!: (project: ProjectManifest) => void
-    useAppStore.setState({ updateProject: vi.fn()
+    appStore.setState({ updateProject: vi.fn()
       .mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve }))
       .mockImplementation(async (id: string, revision: number, request: PatchProjectRequest) => {
-        const current = useAppStore.getState().projects[id]!
+        const current = appStore.getState().projects[id]!
         const saved = { ...current, sidebar: request.sidebar ?? request.import_sidebar!, revision: revision + 1 }
-        useAppStore.setState((state) => ({ projects: { ...state.projects, [id]: saved } }))
+        appStore.setState((state) => ({ projects: { ...state.projects, [id]: saved } }))
         return saved
       }) })
     await mount()
-    const updateStarted = hook.update("p1", (previous) => setSessionSection(previous, "p1", "other", null))
-    await act(async () => { await Promise.resolve() })
+    const updateStarted = sections.update("p1", (previous) => setSessionSection(previous, "p1", "other", null))
+    await settle(async () => { await Promise.resolve() })
     const durable = assignSessionToSectionDurable("p1", "new-session", sectionId)
     // The first attempt hits the busy core and schedules a delayed retry.
-    await act(async () => { await Promise.resolve() })
-    expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
+    await settle(async () => { await Promise.resolve() })
+    expect(appStore.getState().updateProject).toHaveBeenCalledOnce()
     const saved = manifest({ sections: [{ id: sectionId, name: "Research" }], session_sections: {}, hidden_legacy: false })
     saved.revision = 2
-    await act(async () => {
-      useAppStore.setState({ projects: { p1: saved } })
+    await settle(async () => {
+      appStore.setState({ projects: { p1: saved } })
       acknowledge(saved)
       await updateStarted
     })
     // The durable retry lands once the core is quiet.
     await expect(durable).resolves.toBe(true)
-    expect(useAppStore.getState().projects.p1!.sidebar?.session_sections["new-session"]).toBe(sectionId)
+    expect(appStore.getState().projects.p1!.sidebar?.session_sections["new-session"]).toBe(sectionId)
   })
 })
