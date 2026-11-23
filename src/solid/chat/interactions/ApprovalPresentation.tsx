@@ -7,6 +7,8 @@ export type ApprovalAction = { id: string; label: string; onSelect: () => void }
 /** Present the actions supplied by the exact request's authority adapter. */
 export function ApprovalPresentation(props: {
   title: string
+  label?: string
+  source?: JSX.Element
   description?: string
   actions: readonly ApprovalAction[]
   disabled?: boolean
@@ -26,10 +28,11 @@ export function ApprovalPresentation(props: {
   })
 
   return (
-    <article ref={(element) => { card = element }} aria-label={props.title}
+    <article ref={(element) => { card = element }} aria-label={props.label ?? props.title}
       class="min-w-0 space-y-2 rounded-xl border bg-card p-3 text-card-foreground" data-approval-presentation="">
       <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 class="text-sm font-semibold">{props.title}</h2>
+        {props.source}
       </div>
       <Show when={props.description}>
         <p class="whitespace-pre-wrap break-words text-sm text-muted-foreground">{props.description}</p>
