@@ -1,4 +1,4 @@
-import type { SideChatIntent } from "../../workbench/side-chat/SideChatPane"
+import type { SideChatIntent } from "@/lib/sideChatIntent"
 import { createEffect, createMemo, createSignal, onSettled, untrack, type Accessor } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import type { InputState } from "@shared/store/appStore/slices/inputStateSlice"

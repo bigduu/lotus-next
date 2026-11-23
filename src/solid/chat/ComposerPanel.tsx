@@ -5,7 +5,7 @@ import { newSessionPermissionStore } from "@shared/store/newSessionPermissionSta
 import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
 import { isSessionLoopCommand } from "@services/chat/sessionLoop"
 import { getDraftCompletionEnabled, subscribeDraftCompletionEnabled } from "@shared/store/draftCompletionPreferenceState"
-import type { SideChatIntent } from "../workbench/side-chat/SideChatPane"
+import type { SideChatIntent } from "@/lib/sideChatIntent"
 import { fileToAttachment, type ChatImageAttachment } from "@/lib/chatImageAttachments"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"

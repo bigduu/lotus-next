@@ -55,7 +55,7 @@ import {
 } from "@/components/app/RightPanelLauncher"
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
-import type { SideChatIntent } from "@/components/app/SideChatPane"
+import type { SideChatIntent } from "@/lib/sideChatIntent"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"

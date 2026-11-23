@@ -24,7 +24,7 @@ import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription,
 import type { HistoryReadingAnchor } from "../history/VirtualHistory"
 import { createChat } from "../chat/createChat"
 import { createExternalSnapshot } from "../chat/snapshots"
-import type { PendingSideChatIntent, SideChatIntent } from "../workbench/side-chat/SideChatPane"
+import type { PendingSideChatIntent, SideChatIntent } from "@/lib/sideChatIntent"
 import { ChatViewport } from "../chat/ChatViewport"
 import { ComposerPanel } from "../chat/ComposerPanel"
 import { ConversationClearDialog } from "../chat/ConversationClearDialog"

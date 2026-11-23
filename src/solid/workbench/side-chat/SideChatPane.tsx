@@ -6,6 +6,7 @@ import {
   type SideChatQuote, type SideChatSnapshot, type SideChatSource, type SideChatTurn, type SideChatTurnRequest,
 } from "@services/chat/sideChat"
 import { readLocalImage } from "@shared/services/FileOperationsService"
+import type { PendingSideChatIntent } from "@/lib/sideChatIntent"
 import { AssistantMarkdown } from "../../markdown/AssistantMarkdown"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
@@ -22,8 +23,6 @@ type Draft = {
 type Preview = { chatId: string; runId: string; text: string }
 type Operation = "send" | "stop"
 type SourceIdentity = { sourceId: string; scope: string }
-export type SideChatIntent = { prompt?: string; quote?: SideChatQuote; onApplied?: () => void }
-export type PendingSideChatIntent = SideChatIntent & { token: number }
 export type SideChatPaneProps = SourceIdentity & {
   active: boolean
   intent?: PendingSideChatIntent
