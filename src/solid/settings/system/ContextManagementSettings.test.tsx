@@ -1,29 +1,30 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import i18n from "@shared/i18n"
-import { SectionContextManagement } from "./SectionContextManagement"
-import type {
-  ContextManagementStrategy,
-  SystemBambooConfig,
-  SystemConfigApi,
-} from "./useSystemConfig"
+import { render } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import i18n from "@shared/i18n/runtime"
+import type { ContextManagementStrategy, SystemBambooConfig } from "@shared/types/systemConfig"
+import type { SaveSystemSection } from "./createSystemConfig"
+import { ContextManagementSettings } from "./RuntimeConfigSections"
 
-const roots: Root[] = []
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+vi.mock("../../ui/select", () => ({ Select: () => null }))
+vi.mock("../../ui/switch", () => ({ Switch: () => null }))
 
-const mount = async (
-  config: SystemBambooConfig,
-  saveSection: SystemConfigApi["saveSection"]
-) => {
-  const container = document.createElement("div")
-  document.body.append(container)
-  const root = createRoot(container)
-  roots.push(root)
-  await act(async () => {
-    root.render(<SectionContextManagement config={config} saveSection={saveSection} />)
-  })
-  return root
+const cleanups: Array<() => void> = []
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 4; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
+
+const mount = async (config: SystemBambooConfig, saveSection: SaveSystemSection) => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const [configuration, update] = createSignal(config)
+  const dispose = render(() => <ContextManagementSettings config={configuration()} saveSection={saveSection} />, container)
+  cleanups.push(() => { dispose(); container.remove() })
+  await settle(() => {})
+  return update
 }
 
 const choice = (strategy: ContextManagementStrategy) =>
@@ -35,28 +36,20 @@ const saveButton = () =>
   )!
 
 const click = async (element: HTMLElement) => {
-  await act(async () => {
+  await settle(async () => {
     element.click()
   })
 }
 
-beforeAll(async () => {
-  environment.IS_REACT_ACT_ENVIRONMENT = true
-  await i18n.changeLanguage("zh-CN")
-})
-
-afterAll(() => {
-  Reflect.deleteProperty(environment, "IS_REACT_ACT_ENVIRONMENT")
-})
+beforeAll(async () => { await i18n.changeLanguage("zh-CN") })
 
 afterEach(async () => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+  for (const cleanup of cleanups.splice(0)) cleanup()
   vi.restoreAllMocks()
   await i18n.changeLanguage("zh-CN")
 })
 
-describe("SectionContextManagement", () => {
+describe("ContextManagementSettings", () => {
   it("defaults to full summaries and explicitly selects a fail-closed retrieval window", async () => {
     const save = vi.fn(async (patch: SystemBambooConfig) => patch)
     await mount({}, save)
@@ -177,11 +170,11 @@ describe("SectionContextManagement", () => {
 
   it("preserves an unsaved choice when another settings section refreshes the shared config", async () => {
     const save = vi.fn(async (patch: SystemBambooConfig) => patch)
-    const root = await mount({}, save)
+    const updateConfig = await mount({}, save)
     await click(choice("message_summary"))
 
-    await act(async () => {
-      root.render(<SectionContextManagement config={{ proxy_auth_mode: "auto" }} saveSection={save} />)
+    await settle(async () => {
+      updateConfig({ proxy_auth_mode: "auto" })
     })
 
     expect(choice("message_summary").checked).toBe(true)
@@ -190,7 +183,7 @@ describe("SectionContextManagement", () => {
 
   it("localizes all three choices in English without changing the persisted selection", async () => {
     await mount({ context_management: { strategy: "message_summary" } }, vi.fn())
-    await act(async () => {
+    await settle(async () => {
       await i18n.changeLanguage("en-US")
     })
 
