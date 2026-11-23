@@ -153,6 +153,25 @@ test("ordinary and Supervisor expose the same confirmation; cancelling preserves
   expect(f.writes).toEqual([])
   expect(f.runtime.pageErrors).toEqual([])
 })
+test("a missing optional confirmation chunk leaves the conversation usable with no clear request", async ({ page }) => {
+  let contentRequests = 0
+  const f = await fixture(page, null, () => page.route(/\/assets\/ConversationClearDialogContent-[A-Za-z0-9_-]+\.js$/, async (route) => {
+    contentRequests += 1
+    await route.abort("failed")
+  }))
+  const history = page.getByText(`Synthetic history ${ordinary}`, { exact: true })
+  await expect(history).toBeVisible()
+  expect(contentRequests).toBe(0)
+
+  const dialog = await openHeader(page)
+  await expect(dialog).toContainText("无法打开确认框。请重新加载页面后再试。未发送清理请求。")
+  await dialog.getByRole("button", { name: "取消", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(history).toBeVisible()
+  expect(contentRequests).toBe(1)
+  expect(f.writes).toEqual([])
+  expect(f.runtime.pageErrors).toEqual([])
+})
 test("ordinary clear waits for exact receipt and readback, preserving the independent Supervisor", async ({ page }) => {
   const f = await fixture(page), dialog = await openHeader(page)
   await dialog.getByRole("button", { name: "清除会话消息", exact: true }).click()

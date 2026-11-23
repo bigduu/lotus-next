@@ -20,6 +20,7 @@ describe("local feature preload error policy", () => {
     new Error("Failed to fetch dynamically imported module: https://app.example/assets/BrowserPane-AbC_123.js"),
     "Unable to preload CSS for /base/assets/BrowserPane-z9-Y.css?revision=next",
     new Error("Failed to fetch dynamically imported module: https://app.example/assets/TicketWorkPanel-AbC_123.js"),
+    new Error("Failed to fetch dynamically imported module: https://app.example/assets/ConversationClearDialogContent-AbC_123.js"),
   ])("routes only known shell-preserving feature failures locally", (payload) => {
     expect(isLocalFeaturePreloadError(payload)).toBe(true)
   })
@@ -39,6 +40,8 @@ describe("local feature preload error policy", () => {
     "Failed to fetch /assets/BrowserPane.js",
     "Failed to fetch /assets/LazyBrowserPaneView-AbC.js",
     "Failed to fetch /assets/LazyTicketWorkPanel-AbC.js",
+    "Failed to fetch /assets/ConversationClearDialog-AbC.js",
+    "Failed to fetch /assets/ConversationClearDialogContent.js",
     new Error("Failed to fetch /assets/renderPdf-AbC.js"),
     { message: "Failed to fetch /assets/Settings-AbC.js" },
     null,
