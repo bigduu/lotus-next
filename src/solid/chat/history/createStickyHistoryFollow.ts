@@ -12,7 +12,7 @@ export function createStickyHistoryFollow(startAtBottom: boolean) {
   let draggingScrollbar = false
 
   const follow = () => {
-    if (!viewport || frame !== undefined || !following()) return
+    if (!viewport || frame !== undefined) return
     frame = requestAnimationFrame(() => {
       frame = undefined
       if (!viewport || !following()) return
