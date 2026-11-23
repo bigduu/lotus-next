@@ -54,6 +54,7 @@ export function SettingsSystem() {
             <SectionWork flags={{
               ticket_mutation: workMutation,
               ticket_dispatch: workDispatch,
+              work_ultra_by_default: config.features?.work_ultra_by_default,
               work_execution: config.features?.work_execution,
             }} />
           ) : null}

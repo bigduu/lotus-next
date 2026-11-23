@@ -189,10 +189,12 @@ test("Work panel reviews and marks the exact oldest chat message", async ({ page
 })
 
 test("Supervisor settings save Work flags, reasoning, and parallel limit with confirmed readback", async ({ page }, testInfo) => {
-  type WorkPolicy = { reasoning_effort: string | null; ultra_by_default?: boolean; max_parallel: number | null }
-  const features = {
+  type WorkPolicy = { reasoning_effort: string | null; max_parallel: number | null }
+  type WorkSettings = WorkFlags & { provider_model_ref: boolean; work_ultra_by_default?: boolean; work_execution: WorkPolicy }
+  const features: WorkSettings = {
     ticket_mutation: false, ticket_dispatch: false, provider_model_ref: true,
-    work_execution: { reasoning_effort: null, ultra_by_default: false, max_parallel: null } as WorkPolicy,
+    work_ultra_by_default: false,
+    work_execution: { reasoning_effort: null, max_parallel: null },
   }
   await fixture(page, "v1-ready", features)
   const patches: unknown[] = []
@@ -200,7 +202,7 @@ test("Supervisor settings save Work flags, reasoning, and parallel limit with co
     const request = route.request()
     if (request.method() === "POST") {
       const patch = request.postDataJSON() as {
-        features: Partial<WorkFlags> & { work_execution?: Partial<WorkPolicy> }
+        features: Partial<Omit<WorkSettings, "work_execution">> & { work_execution?: Partial<WorkPolicy> }
       }
       patches.push(patch)
       // A success response can still fail to confirm the requested setting.
@@ -258,7 +260,7 @@ test("Supervisor settings save Work flags, reasoning, and parallel limit with co
   await page.getByRole("option", { name: "Ultra", exact: true }).click()
   await save.click()
   await expect(work).toContainText("已保存")
-  expect(patches.at(-1)).toEqual({ features: { work_execution: { ultra_by_default: true } } })
+  expect(patches.at(-1)).toEqual({ features: { work_ultra_by_default: true } })
   expect(features.work_execution.reasoning_effort).toBe("max")
   await work.screenshot({ path: testInfo.outputPath("work-settings.png") })
   await closeSettings(settings)
@@ -271,11 +273,11 @@ test("Supervisor settings save Work flags, reasoning, and parallel limit with co
   await save.click()
   await expect(work).toContainText("已保存")
   expect(patches.at(-1)).toEqual({
-    features: { work_execution: { reasoning_effort: null, ultra_by_default: false, max_parallel: null } },
+    features: { work_ultra_by_default: false, work_execution: { reasoning_effort: null, max_parallel: null } },
   })
   await closeSettings(settings)
 
-  delete features.work_execution.ultra_by_default
+  delete features.work_ultra_by_default
   await openSystemSettings()
   await expect(reasoning).toHaveText("自动")
   await reasoning.click()

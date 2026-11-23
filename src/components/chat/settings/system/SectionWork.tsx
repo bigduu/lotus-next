@@ -27,11 +27,15 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<SectionMessage>(null)
   const work = draft.work_execution
-  const ultraSupported = typeof work?.ultra_by_default === "boolean"
+  const ultraSupported = typeof draft.work_ultra_by_default === "boolean"
+  const ultraSelected = draft.work_ultra_by_default === true
 
-  const changes: Partial<Pick<WorkFeatureFlags, "ticket_mutation" | "ticket_dispatch">> = {}
+  const changes: Partial<Omit<WorkFeatureFlags, "work_execution">> = {}
   for (const { flag } of controls) {
     if (draft[flag] !== savedFlags[flag]) changes[flag] = draft[flag]
+  }
+  if (ultraSupported && draft.work_ultra_by_default !== savedFlags.work_ultra_by_default) {
+    changes.work_ultra_by_default = draft.work_ultra_by_default
   }
   const workChanges: Partial<WorkExecutionSettings> = {}
   const trimmed = parallelInput.trim()
@@ -41,9 +45,6 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
   if (work && savedFlags.work_execution) {
     if (work.reasoning_effort !== savedFlags.work_execution.reasoning_effort) {
       workChanges.reasoning_effort = work.reasoning_effort
-    }
-    if (ultraSupported && work.ultra_by_default !== savedFlags.work_execution.ultra_by_default) {
-      workChanges.ultra_by_default = work.ultra_by_default
     }
     if (maxParallel !== savedFlags.work_execution.max_parallel) {
       workChanges.max_parallel = maxParallel
@@ -64,8 +65,8 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
         || controls.some(({ flag }) => changes[flag] !== undefined && confirmed[flag] !== changes[flag])
         || (workChanges.reasoning_effort !== undefined
           && confirmed.work_execution?.reasoning_effort !== workChanges.reasoning_effort)
-        || (workChanges.ultra_by_default !== undefined
-          && confirmed.work_execution?.ultra_by_default !== workChanges.ultra_by_default)
+        || (changes.work_ultra_by_default !== undefined
+          && confirmed.work_ultra_by_default !== changes.work_ultra_by_default)
         || (workChanges.max_parallel !== undefined
           && confirmed.work_execution?.max_parallel !== workChanges.max_parallel)) {
         throw new Error(uiText("work_settings_unconfirmed"))
@@ -73,6 +74,7 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
       const next = {
         ticket_mutation: confirmed.ticket_mutation,
         ticket_dispatch: confirmed.ticket_dispatch,
+        work_ultra_by_default: confirmed.work_ultra_by_default,
         work_execution: confirmed.work_execution,
       }
       setSavedFlags(next)
@@ -120,20 +122,23 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
             <div className="min-w-0 space-y-1">
               <label htmlFor={`${id}-effort`} className="block text-sm">{uiText("work_settings_reasoning")}</label>
               <p id={`${id}-effort-description`} className="text-xs leading-relaxed text-muted-foreground">
-                {uiText(work.ultra_by_default ? "work_settings_ultra_description" : "work_settings_reasoning_description")}
+                {uiText(ultraSelected ? "work_settings_ultra_description" : "work_settings_reasoning_description")}
               </p>
             </div>
             <Select
-              value={work.ultra_by_default ? "ultra" : work.reasoning_effort ?? "auto"}
+              value={ultraSelected ? "ultra" : work.reasoning_effort ?? "auto"}
               disabled={saving}
               onValueChange={(value) => {
                 setDraft((previous) => {
                   if (!previous.work_execution) return previous
                   const next = { ...previous.work_execution }
-                  if (typeof next.ultra_by_default === "boolean") next.ultra_by_default = value === "ultra"
                   if (value === "auto") next.reasoning_effort = null
                   else if (isReasoningEffort(value)) next.reasoning_effort = value
-                  return { ...previous, work_execution: next }
+                  return {
+                    ...previous,
+                    work_ultra_by_default: ultraSupported ? value === "ultra" : undefined,
+                    work_execution: next,
+                  }
                 })
                 setMessage(null)
               }}
