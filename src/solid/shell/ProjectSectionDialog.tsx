@@ -7,7 +7,7 @@ import { Input } from "../ui/input"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogTitle, ResponsiveDialogDescription } from "../ui/responsive-dialog"
 import { createUiText } from "./uiText"
 
-const requestErrors = {
+export const sectionWriteErrorText = {
   busy: "sidebar_sections_save_failed",
   unavailable: "sidebar_sections_unavailable",
   "save-failed": "sidebar_sections_save_failed",
@@ -45,7 +45,7 @@ export function ProjectSectionDialog(props: {
     setError(null)
     if (props.mode === "create") props.onClose()
   }
-  const failure = () => props.unavailable ? "sidebar_sections_unavailable" : props.error ? requestErrors[props.error] : null
+  const failure = () => props.unavailable ? "sidebar_sections_unavailable" : props.error ? sectionWriteErrorText[props.error] : null
 
   return (
     <ResponsiveDialog open onOpenChange={(open) => { if (!open && !props.busy) props.onClose() }}>

@@ -1,5 +1,5 @@
-import { Archive, ArchiveRestore, CalendarDays, ChevronRight, Cog, FolderClosed, FolderOpen, GitBranch, List, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, X } from "@lucide/solid"
-import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, onSettled, Show } from "solid-js"
+import { Archive, ArchiveRestore, CalendarDays, ChevronRight, Cog, FolderClosed, FolderOpen, GitBranch, List, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, SquarePen, X } from "@lucide/solid"
+import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, omit, onSettled, Show } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import type { ProjectManifest } from "@services/project"
 import { getErrorMessage } from "@services/api"
@@ -23,7 +23,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "../ui/input"
 import { ConfirmActionDialog } from "../ui/confirm-action-dialog"
 import type { createProjectSections } from "./createProjectSections"
-import { ProjectSectionDialog } from "./ProjectSectionDialog"
+import { ProjectSectionDialog, sectionWriteErrorText } from "./ProjectSectionDialog"
 import { createSidebarProjectDragMoves } from "./project-drag/createSidebarProjectDragMoves"
 import type { SidebarDragParts } from "./project-drag/SidebarProjectDrag"
 import { SessionRow } from "./SessionRow"
@@ -34,6 +34,8 @@ const GROUPING_KEY = "lotus.sidebar.grouping-mode.v1"
 const PROJECT_PREVIEW_COUNT = 7
 const SidebarProjectDrag = lazy(() => import("./project-drag/SidebarProjectDrag"), { export: "SidebarProjectDrag" })
 type Grouping = "date" | "project"
+
+const StaticDropTarget: SidebarDragParts["Target"] = (props) => <div {...omit(props, "target", "disabled")} />
 
 type Props = {
   open: boolean
@@ -80,6 +82,8 @@ function Disclosure(props: {
   actions?: JSX.Element
   wrapHeader?: (header: JSX.Element) => JSX.Element
   sectionHeader?: boolean
+  projectId?: string
+  projectBusy?: boolean
   children: JSX.Element
 }) {
   const id = createUniqueId()
@@ -97,7 +101,8 @@ function Disclosure(props: {
       </div>
   )
   return (
-    <div class="rounded-md">
+    <div class={cn("rounded-md", props.projectId && "mb-1")} data-sidebar-project={props.projectId}
+      aria-busy={props.projectId ? (props.projectBusy ? "true" : "false") : undefined}>
       {props.wrapHeader ? props.wrapHeader(header()) : header()}
       <div id={id} hidden={!props.expanded}><Show when={props.expanded}>{props.children}</Show></div>
     </div>
@@ -195,31 +200,35 @@ export function Sidebar(props: Props) {
   const projectKey = (id: string) => `project:${id}`
   const sectionKey = (projectId: string, sectionId: string | null) => `section:${JSON.stringify([projectId, sectionId])}`
 
-  createEffect(
-    () => ({ group: activeGroup(), id: props.currentSessionId, projectMode: projectMode(), older: older() }),
-    ({ group, id, projectMode, older }) => {
-      if (!group) return
-      if (older.some((item) => group.key === item.key)) setOlderOpen(true)
-      if (!projectMode) {
-        setClosedDates((state) => {
-          if (!state.has(group.key)) return state
-          const next = new Set(state)
-          next.delete(group.key)
-          return next
-        })
-      } else {
-        setDisclosures((state) => {
-          const next = new Map(state)
-          if (!next.has(projectKey(group.key))) next.set(projectKey(group.key), true)
-          if (id) {
-            const sectionId = getSessionSection(props.sections.preferences(), group.key, id, props.projects[group.key]?.section)
-            if (!next.has(sectionKey(group.key, sectionId))) next.set(sectionKey(group.key, sectionId), true)
-          }
-          return next
-        })
-      }
-    },
-  )
+  const activePath = createMemo(() => {
+    const group = activeGroup()
+    const id = props.currentSessionId
+    const project = group && projectMode() ? props.projects[group.key] : undefined
+    const section = project && id
+      ? getSessionSection(props.sections.preferences(), project.id, id, project.section) : null
+    const selection = props.booted ? JSON.stringify([grouping(), id]) : null
+    return [group?.key, project?.id, section, older().some((item) => item.key === group?.key), selection] as const
+  }, { equals: (previous, next) => previous?.every((value, index) => value === next[index]) ?? false })
+  let previousSelection: string | null = null
+  let navigated = false
+  createEffect(activePath, ([group, project, section, activeIsOlder, selection]) => {
+    if (previousSelection !== null && selection !== null && previousSelection !== selection) navigated = true
+    previousSelection = selection
+    if (activeIsOlder) setOlderOpen(true)
+    if (group && !projectMode()) {
+      setClosedDates((state) => {
+        if (!state.has(group)) return state
+        const next = new Set(state)
+        next.delete(group)
+        return next
+      })
+    }
+    // Keep saved folds through restoration. Later selection, including through
+    // search, reveals the newly selected session's path without rewriting storage.
+    if (project && navigated) {
+      setDisclosures((state) => new Map(state).set(projectKey(project), true).set(sectionKey(project, section), true))
+    }
+  })
 
   const setDisclosure = (key: string, expanded: boolean) => {
     writeProjectDisclosure(key, expanded)
@@ -246,8 +255,11 @@ export function Sidebar(props: Props) {
     props.onNewChat(projectId, sectionId)
     props.onClose()
   }
-  const dragDisabled = (id: string) => !props.ownerAccess || !!query() || !!props.suspended
-    || props.projects[id]?.status !== "active" || props.projects[id]?.sidebar === undefined || props.sections.busy().has(id)
+  const sectionUnavailable = (id: string) => props.projects[id]?.status !== "active"
+    || props.projects[id]?.sidebar === undefined || props.sections.busy().has(id)
+  const dragDisabled = (id: string) => !props.ownerAccess || !!query() || !!props.suspended || sectionUnavailable(id)
+  const showDragHandle = (id: string) => !query() && props.projects[id]?.status === "active"
+    && props.projects[id]?.sidebar !== undefined
   const moves = createSidebarProjectDragMoves({
     state: () => ({ projects: props.projects, chats: rootChats(), preferences: props.sections.preferences(), busy: props.sections.busy() }),
     bucketSessionIds: (id, section) => {
@@ -299,7 +311,7 @@ export function Sidebar(props: Props) {
             projectId={sessionProjectId()}
             sectionId={sessionSection()}
             sections={sessionSections()}
-            dragHandle={drag && projectId ? <drag.Handle source={{ kind: "session", projectId, id: entry().id }} disabled={dragDisabled(projectId)}
+            dragHandle={drag && projectId && showDragHandle(projectId) ? <drag.Handle source={{ kind: "session", projectId, id: entry().id }} disabled={dragDisabled(projectId)}
               label={`${text("sidebar_session_drag_hint")} · ${entry().title || text("new_session_c57c30bc")}`} /> : undefined}
             onMoveToSection={sessionProject() && !dragDisabled(sessionProject()!.id) ? (id) => {
               const current = sessionProject()
@@ -331,6 +343,7 @@ export function Sidebar(props: Props) {
 
   const renderGroup = (group: () => ChatGroup, drag?: SidebarDragParts) => {
     const project = () => projectMode() ? props.projects[group().key] : undefined
+    const DropTarget = drag?.Target ?? StaticDropTarget
     const expanded = () => !!query() || (projectMode()
       ? disclosures().get(projectKey(group().key)) ?? true
       : !closedDates().has(group().key))
@@ -348,10 +361,17 @@ export function Sidebar(props: Props) {
     }
     return (
       <Disclosure label={group().label} expanded={expanded()} disabled={!!query()} onToggle={toggle}
-        detail={text("project_sessions", { count: group().chats.length })}
-        wrapHeader={drag && project() ? (header) => <drag.Target target={{ projectId: group().key, sectionId: null }}
-          disabled={dragDisabled(group().key)} data-project-drop="">{header}</drag.Target> : undefined}
-        actions={<Show when={project()}>{(current) => (
+        projectId={project()?.id} projectBusy={props.sections.busy().has(group().key)}
+        detail={text("project_sessions", { count: groups().find((item) => item.key === group().key)?.chats.length ?? group().chats.length })}
+        wrapHeader={project() ? (header) => <DropTarget target={{ projectId: group().key, sectionId: null }}
+          disabled={dragDisabled(group().key)} data-project-drop={group().key} title={text("sidebar_project_drop_hint")}
+          class="rounded-md feedback-motion switch-feedback">{header}</DropTarget> : undefined}
+        actions={<Show when={project()}>{(current) => <>
+          <button type="button" aria-label={text("new_session_in_1e893198", { v0: current().name })}
+            disabled={current().status !== "active"} onClick={() => openNew(current().id)}
+            class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default">
+            <SquarePen class="size-3.5" />
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger aria-label={text("project_actions_4bc7fa27", { v0: current().name })}
               class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
@@ -400,46 +420,70 @@ export function Sidebar(props: Props) {
               </Show>
             </DropdownMenuContent>
           </DropdownMenu>
-        )}</Show>}>
+        </>}</Show>}>
         <Show when={project()} fallback={renderSessions(() => group().chats, group().key)}>
           {(current) => {
             const sections = createMemo(() => getProjectSections(props.sections.preferences(), current().id, current().section))
-            return <>
-              <Button variant="ghost" size="sm" class="w-full justify-start" disabled={current().status !== "active"} onClick={() => openNew(current().id)}>
-                <Plus />{text("new_session_58e21b87")}
-              </Button>
-              <Show when={sections().length > 0} fallback={drag ? <drag.Target target={{ projectId: current().id, sectionId: null }}
-                disabled={dragDisabled(current().id)} data-project-section="" data-section-id="none" data-section-project={current().id}>
+            return <Show when={sections().length > 0} fallback={<DropTarget target={{ projectId: current().id, sectionId: null }}
+                disabled={dragDisabled(current().id)} data-project-section="" data-section-id="none" data-section-project={current().id}
+                aria-disabled={sectionUnavailable(current().id) ? "true" : "false"} class="mb-1 ms-3 rounded-md feedback-motion switch-feedback">
                 {renderSessions(() => group().chats, projectKey(current().id), current().id, undefined, sections, drag)}
-              </drag.Target> : renderSessions(() => group().chats, projectKey(current().id), current().id)}>
+              </DropTarget>}>
                 <For each={[...sections(), { id: null, name: text("sidebar_no_section") }]} keyed={(section) => section.id}>
                   {(section) => {
                     const groupId = () => sectionKey(current().id, section().id)
                     const selected = () => group().chats.filter((chat) =>
                       getSessionSection(props.sections.preferences(), current().id, chat.id, current().section) === section().id,
                     )
-                    const bucket = () => (
-                      <Disclosure label={section().name} sectionHeader
-                        expanded={!!query() || (disclosures().get(groupId()) ?? true)}
-                        actions={drag && section().id && section().id !== LEGACY_PROJECT_SECTION_ID ? <drag.Handle
-                          source={{ kind: "section", projectId: current().id, id: section().id! }} disabled={dragDisabled(current().id)}
-                          label={`${text("sidebar_section_drag_hint")} · ${section().name}`} /> : undefined}
-                        onToggle={() => setDisclosure(groupId(), !(disclosures().get(groupId()) ?? true))}>
-                        <Button variant="ghost" size="sm" class="w-full justify-start" disabled={current().status !== "active"}
-                          onClick={() => openNew(current().id, section().id)}>
-                          <Plus />{text("new_session_58e21b87")}
-                        </Button>
-                        {renderSessions(selected, groupId(), current().id, section(), sections, drag)}
-                      </Disclosure>
-                    )
-                    return drag ? <drag.Target target={{ projectId: current().id, sectionId: section().id }} disabled={dragDisabled(current().id)}
-                      data-project-section={section().name} data-section-id={section().id ?? "none"} data-section-project={current().id}>
-                      {bucket()}
-                    </drag.Target> : bucket()
+                    return <Show when={!query() || selected().length > 0}>
+                      <DropTarget target={{ projectId: current().id, sectionId: section().id }} disabled={dragDisabled(current().id)}
+                        data-project-section={section().name} data-section-id={section().id ?? "none"} data-section-project={current().id}
+                        aria-disabled={sectionUnavailable(current().id) ? "true" : "false"} class="mb-1 ms-3 rounded-md feedback-motion switch-feedback">
+                        <Disclosure label={section().name} sectionHeader disabled={!!query()}
+                          detail={text("project_sessions", { count: selected().length })}
+                          expanded={!!query() || (disclosures().get(groupId()) ?? true)}
+                          actions={<>
+                            <Show when={drag && showDragHandle(current().id) && section().id !== LEGACY_PROJECT_SECTION_ID && section().id}>
+                              {(id) => drag && <drag.Handle source={{ kind: "section", projectId: current().id, id: id() }}
+                                disabled={dragDisabled(current().id)} label={`${text("sidebar_section_drag_hint")} · ${section().name}`} />}
+                            </Show>
+                            <Show when={!dragDisabled(current().id)}>
+                              <button type="button" aria-label={text("sidebar_section_new_session", { v0: section().name })}
+                                class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={() => openNew(current().id, section().id)}>
+                                <SquarePen class="size-3.5" />
+                              </button>
+                            </Show>
+                            <Show when={props.ownerAccess}>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger aria-label={text("sidebar_manage_sections")}
+                                  class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+                                  <MoreHorizontal class="size-3.5" />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent>
+                                  <Show when={!dragDisabled(current().id)}>
+                                    <DropdownMenuItem onSelect={() => openNew(current().id, section().id)}>
+                                      <Plus />{text("sidebar_section_new_session", { v0: section().name })}
+                                    </DropdownMenuItem>
+                                  </Show>
+                                  <DropdownMenuItem onSelect={() => setSectionDialog({ id: current().id, mode: "manage" })}>
+                                    <List />{text("sidebar_manage_sections")}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </Show>
+                          </>}
+                          onToggle={() => setDisclosure(groupId(), !(disclosures().get(groupId()) ?? true))}>
+                          {renderSessions(selected, groupId(), current().id, section(), sections, drag)}
+                          <Show when={selected().length === 0}>
+                            <p class="px-2 py-2 text-xs text-muted-foreground">{text("sidebar_section_empty")}</p>
+                          </Show>
+                        </Disclosure>
+                      </DropTarget>
+                    </Show>
                   }}
                 </For>
               </Show>
-            </>
           }}
         </Show>
       </Disclosure>
@@ -502,8 +546,13 @@ export function Sidebar(props: Props) {
           </div>
         </div>
         <div class="flex items-center gap-2 px-3">
-          <span class="min-w-0 flex-1 text-xs font-medium text-muted-foreground">
-            {projectMode() ? text("project_79f326be") : text("recent_997a5e6e")}
+          <span class="relative min-w-0 flex-1 text-xs font-medium text-muted-foreground">
+            <span class={props.sections.busy().size ? "invisible" : undefined}>
+              {projectMode() ? text("project_79f326be") : text("recent_997a5e6e")}
+            </span>
+            <Show when={props.sections.busy().size > 0}>
+              <span role="status" class="absolute inset-x-0 top-0 truncate">{text("sidebar_sections_saving")}</span>
+            </Show>
           </span>
           <Button size="sm" variant="ghost" class="text-muted-foreground" onClick={changeGrouping}
             aria-label={projectMode() ? text("switch_to_recent_view_fce00dbe") : text("switch_to_project_view_43561b9a")}>
@@ -512,11 +561,24 @@ export function Sidebar(props: Props) {
           </Button>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          <Show when={projectMode() && Object.values(props.projects).some((project) =>
+            project.sidebar === undefined && getProjectSections(props.sections.preferences(), project.id, project.section).length
+          )}>
+            <p role="status" class="px-3 py-2 text-xs text-muted-foreground">{text("sidebar_sections_unavailable")}</p>
+          </Show>
+          <For each={Object.entries(props.sections.failures()).filter(([id]) => props.projects[id] && id !== sectionDialog()?.id)}
+            keyed={([id]) => id}>
+            {(entry) => <p role="alert" class="px-3 py-2 text-xs text-destructive">
+              {props.projects[entry()[0]].name} · {text(sectionWriteErrorText[entry()[1]])}
+            </p>}
+          </For>
           <Show when={!rootChats().length}>
             <p class="px-2 py-4 text-xs text-muted-foreground">{text(props.booted ? "no_sessions_yet_69e71f03" : "loading_4927a53b")}</p>
           </Show>
           <Show when={projectMode() && props.ownerAccess} fallback={<For each={shownGroups()} keyed={(group) => group.key}>{(group) => renderGroup(group)}</For>}>
-            <Loading fallback={<For each={shownGroups()} keyed={(group) => group.key}>{(group) => renderGroup(group)}</For>}>
+            <Loading fallback={<div inert aria-busy="true">
+              <For each={shownGroups()} keyed={(group) => group.key}>{(group) => renderGroup(group)}</For>
+            </div>}>
               <SidebarProjectDrag projects={props.projects} chats={rootChats()} preferences={props.sections.preferences()} busy={props.sections.busy()}
                 scopeKey={JSON.stringify([props.currentSessionId, query(), props.open, props.collapsed, props.suspended, sectionDialog(), pendingArchive()])}
                 onMoveSession={moves.moveSession} onMoveSection={moves.moveSection}>
