@@ -56,7 +56,13 @@ export function createComposerModelControls(input: {
     sessionId, draftKey: input.draftKey, ordinarySelection, root, disabled,
     defaultChatUltra: () => providerSnapshot()?.features?.chat_ultra_by_default === true,
   })
+  const busy = () => modelSaving() || modelSaveActive || thinking.busy
   const modelDisabled = () => disabled() || thinking.busy || root.unsafe
+  const readOnlyPicker = () => modelSaving() || (root.isRoot && root.unsafe && !disabled())
+  const rootAdmissionBlocked = () => {
+    const id = sessionId()
+    return thinking.blocked || Boolean(id && getRootModeFenceState(id) !== "clear")
+  }
   const legacyModel = () => sessionId() ? input.chat.currentChat?.config?.model : undefined
   const activeModel = createMemo(() => sessionId()
     ? input.chat.currentChat?.config?.model_ref ?? (legacyModel() ? undefined : providerSnapshot()?.defaults?.chat)
@@ -112,12 +118,9 @@ export function createComposerModelControls(input: {
     get model() { return activeModel()?.model || legacyModel() || "" },
     get modelProvider() { return activeModel()?.provider },
     get modelDisabled() { return modelDisabled() },
-    get busy() { return modelSaving() || thinking.busy },
-    get sendBlocked() {
-      const id = sessionId()
-      return modelSaving() || modelSaveActive || thinking.busy || thinking.blocked
-        || Boolean(id && getRootModeFenceState(id) !== "clear")
-    },
+    get readOnlyPicker() { return readOnlyPicker() },
+    get busy() { return busy() },
+    get rootAdmissionBlocked() { return rootAdmissionBlocked() },
     get requestValue() { return thinking.requestValue },
     get thinkingMode() { return thinking.thinkingMode },
     get modelError() {

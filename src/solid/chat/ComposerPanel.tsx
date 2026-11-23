@@ -141,8 +141,9 @@ export function ComposerPanel(props: {
     disabled: () => interactionBlocked() || running() || submitting() || props.chat.submissionPending ||
       queue.busy || queue.hasUnconfirmed || props.ingress.busy || props.ingress.pending || commands.busy,
   })
-  const blocked = () => interactionBlocked() || models.sendBlocked ||
+  const submissionUnavailable = () => interactionBlocked() || models.busy ||
     (props.semantic && (!props.canSendIngress || props.ingress.busy || props.ingress.activationPending))
+  const blocked = () => submissionUnavailable() || models.rootAdmissionBlocked
   const inputId = "lotus-message-input"
   const mentionWorkspace = () => worktree.preparedPath ?? props.workspacePath
   const commands = createComposerCommands({
@@ -201,7 +202,11 @@ export function ComposerPanel(props: {
     const semantic = props.semantic
     const payload = images.length ? images.map(({ base64, name, size, type }) => ({ base64, name, size, type })) : undefined
     if ((!draft.content.trim() && !images.length) || (!semantic && !useQueue && props.chat.sending) ||
-      props.chat.submissionPending || active || blocked() || queue.busy || commands.busy) return
+      props.chat.submissionPending || active || submissionUnavailable() || queue.busy || commands.busy) return
+    if (models.rootAdmissionBlocked) {
+      setCommandNotice({ key, message: text("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f") })
+      return
+    }
     active = true
     setSubmitting(true)
     setCommandNotice(null)
@@ -461,7 +466,7 @@ export function ComposerPanel(props: {
               <Button size="icon" class="size-8 rounded-full" type="button"
                 aria-label={text(queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
                 disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
-                  (!sideChatCommand() && (blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}
+                  (!sideChatCommand() && (submissionUnavailable() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}
                 onClick={() => { void send() }}>
                 <ArrowUp />
               </Button>

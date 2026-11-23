@@ -50,7 +50,7 @@ export function ComposerModelControls(props: {
     </div>
     <ModelEffortPicker modelGroups={props.controls.modelGroups} model={props.controls.model}
       modelProvider={props.controls.modelProvider} onModelChange={(model) => { void props.controls.chooseModel(model) }}
-      modelDisabled={props.controls.modelDisabled} value={thinking().ordinaryValue}
+      modelDisabled={props.controls.modelDisabled} allowReadOnly={props.controls.readOnlyPicker} value={thinking().ordinaryValue}
       allowUltra={root().isRoot} thinkingMode={thinking().thinkingMode}
       disabled={thinking().disabled} onChange={(selection) => { void thinking().choose(selection) }} />
     <Show when={props.controls.modelError} keyed>

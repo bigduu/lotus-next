@@ -35,6 +35,7 @@ export function ModelEffortPicker(props: {
   modelProvider?: string
   onModelChange: (model: ProviderModelRef) => void
   modelDisabled?: boolean
+  allowReadOnly?: boolean
   value: ReasoningEffortSelection
   onChange: (effort: ThinkingPickerSelection) => void
   disabled?: boolean
@@ -60,7 +61,7 @@ export function ModelEffortPicker(props: {
   const unconfirmed = () => Boolean(props.allowUltra && props.thinkingMode === null)
   const effortDisabled = () => Boolean(props.disabled || unconfirmed())
   const unavailableModels = () => Boolean(props.modelDisabled || props.modelGroups.length === 0)
-  const triggerDisabled = () => effortDisabled() && unavailableModels()
+  const triggerDisabled = () => effortDisabled() && unavailableModels() && !props.allowReadOnly
   const index = () => Math.max(0, efforts().indexOf(selected()))
   const displayIndex = () => effortDisabled() ? index() : preview() ?? index()
   const displayed = () => efforts()[displayIndex()] ?? selected()
@@ -83,7 +84,7 @@ export function ModelEffortPicker(props: {
   const providerDescription = () => props.model && providerLabel() ? ` · ${providerLabel()}` : ""
   const focus = (screen: "effort" | "models", disabled: boolean) => {
     if (screen === "models") searchRef?.focus()
-    else if (disabled) modelButtonRef?.focus()
+    else if (disabled && !unavailableModels()) modelButtonRef?.focus()
     else sliderRef?.focus()
   }
 
