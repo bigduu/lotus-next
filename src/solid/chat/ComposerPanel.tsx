@@ -396,7 +396,7 @@ export function ComposerPanel(props: {
             return <ComposerEditor
               id={inputId}
               value={value()}
-              busy={submitting() || props.chat.submissionPending || queue.busy || commands.busy}
+              busy={submitting() || props.chat.submissionPending || queue.busy || commands.busy || (props.semantic && props.ingress.busy)}
               label={text("messages_4da199fa")}
               title={text("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
               placeholder={text(queuedSend() ? "type_a_message_to_add_to_the_queue_38c6f67b" : "send_a_message_ae2f86f0")}
