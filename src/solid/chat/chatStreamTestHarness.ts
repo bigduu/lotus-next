@@ -43,9 +43,10 @@ export function savedSession(id: string) {
   return chat
 }
 export const history = () => vi.mocked(appStore.getState().loadChatHistory)
-export const feedMessages = (id: string, messages: Message[]) => appStore.setState((state) => ({
-  chats: state.chats.map((item) => item.id === id ? { ...item, messages } : item),
+export const patchSession = (id: string, patch: Partial<ChatItem>) => appStore.setState((state) => ({
+  chats: state.chats.map((item) => item.id === id ? { ...item, ...patch } : item),
 }))
+export const feedMessages = (id: string, messages: Message[]) => patchSession(id, { messages })
 
 export const appendPersistedUser = (id: string, content: string, messageId: string) =>
   feedMessages(id, [...savedSession(id).messages, user(messageId, content)])
@@ -111,11 +112,12 @@ export function useChatStreamFixture() {
   return async function mount(bound?: string | null, options: {
     observe?: (chat: Chat) => void
     pageVisible?: () => boolean
+    onSessionCreated?: (id: string) => void
   } = {}) {
     const pane = createRoot((dispose) => {
       roots.add(dispose)
       const [id, setId] = createSignal(bound ?? null)
-      const chat = createChat(bound === undefined ? undefined : id, undefined, { pageVisible: options.pageVisible })
+      const chat = createChat(bound === undefined ? undefined : id, options.onSessionCreated, { pageVisible: options.pageVisible })
       options.observe?.(chat)
       return {
         chat,
