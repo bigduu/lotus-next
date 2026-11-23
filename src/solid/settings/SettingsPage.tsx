@@ -1,4 +1,4 @@
-import { BookOpen, Cpu, Gauge, Plug, RotateCw, Settings2, ShieldCheck, X } from "@lucide/solid"
+import { Bell, BookOpen, CalendarClock, Cpu, FileText, Gauge, Globe, Plug, RotateCw, Settings2, ShieldCheck, X } from "@lucide/solid"
 import { createMemo, createUniqueId, For, lazy, Loading, Show } from "solid-js"
 import { Dynamic, type JSX } from "@solidjs/web"
 import { ADVANCED_ONLY_SETTINGS_TABS, experienceModeStore } from "@shared/store/experienceModeState"
@@ -14,10 +14,16 @@ const SettingsSkills = lazy(() => import("./skills/SettingsSkills"), { export: "
 const SettingsMcp = lazy(() => import("./mcp/SettingsMcp"), { export: "SettingsMcp" })
 const SettingsModelLimits = lazy(() => import("./model-limits/SettingsModelLimits"), { export: "SettingsModelLimits" })
 const SettingsPermissions = lazy(() => import("./permissions/SettingsPermissions"), { export: "SettingsPermissions" })
+const SettingsEnv = lazy(() => import("./env/SettingsEnv"), { export: "SettingsEnv" })
+const SettingsMasking = lazy(() => import("./masking/SettingsMasking"), { export: "SettingsMasking" })
+const SettingsSchedules = lazy(() => import("./schedules/SettingsSchedules"), { export: "SettingsSchedules" })
+const SettingsPrompts = lazy(() => import("./prompts/SettingsPrompts"), { export: "SettingsPrompts" })
+const SettingsNotifications = lazy(() => import("./notifications/SettingsNotifications"), { export: "SettingsNotifications" })
 
 const groups = [
   { label: "settings_group_appearance", tabs: [
     { id: "general", label: "general_835b700e", icon: Settings2, owner: false },
+    { id: "notifications", label: "notifications_4b6ded8a", icon: Bell, owner: true },
   ] },
   { label: "settings_group_connections", tabs: [
     { id: "providers", label: "provider_9e218722", icon: Cpu, owner: true },
@@ -27,9 +33,13 @@ const groups = [
   ] },
   { label: "settings_group_capabilities", tabs: [
     { id: "skills", label: "skills_99aea2f9", icon: BookOpen, owner: true },
+    { id: "prompts", label: "prompts_4b47dbae", icon: FileText, owner: true },
+    { id: "schedules", label: "scheduled_tasks_3c39e9bd", icon: CalendarClock, owner: true },
   ] },
   { label: "settings_group_safety", tabs: [
     { id: "permissions", label: "permission_978cbca6", icon: ShieldCheck, owner: true },
+    { id: "masking", label: "keyword_masking_62e701d9", icon: ShieldCheck, owner: true },
+    { id: "env", label: "environment_variables_ae27b474", icon: Globe, owner: true },
   ] },
 ] as const
 
@@ -44,6 +54,11 @@ const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
   mcp: () => <SettingsMcp />,
   skills: () => <SettingsSkills />,
   permissions: (owner) => <SettingsPermissions ownerAccess={owner} />,
+  env: () => <SettingsEnv />,
+  masking: () => <SettingsMasking />,
+  schedules: () => <SettingsSchedules />,
+  prompts: () => <SettingsPrompts />,
+  notifications: () => <SettingsNotifications />,
 }
 
 export function SettingsPage(props: {
