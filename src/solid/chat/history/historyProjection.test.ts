@@ -45,7 +45,7 @@ it.each([false, true])("keeps all four completed assistant bodies separate from 
   const items = historyEntries(raw).map((entry) => entry.item)
 
   expect(items.filter((item) => item.kind === "collapsedTurn")).toHaveLength(4)
-  expect(items.filter((item) => item.kind === "msg" && item.m.role === "assistant").map((item) => item.m.id))
+  expect(items.flatMap((item) => item.kind === "msg" && item.m.role === "assistant" ? [item.m.id] : []))
     .toEqual(["synthetic-final-0", "synthetic-final-1", "synthetic-final-2", "synthetic-final-3"])
 })
 
@@ -97,7 +97,7 @@ it("shows one local completed body with no mutation target while exact-turn hist
     baselineMessageId: null, baselineMessageIds: new Set(), anchorSeen: true,
   }])
   const items = buildRenderItems(projected.messages)
-  expect(items.filter((item) => item.kind === "msg" && item.m.role === "assistant").map((item) => item.m))
+  expect(items.flatMap((item) => item.kind === "msg" && item.m.role === "assistant" ? [item.m] : []))
     .toEqual([expect.objectContaining({ id: "completed-answer-handoff-1", content: "Synthetic handoff body" })])
   expect(items.filter((item) => item.kind === "process").flatMap((item) => item.parts))
     .toEqual([expect.objectContaining({ kind: "reasoning", text: "Synthetic reasoning" })])
