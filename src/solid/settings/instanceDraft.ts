@@ -1,7 +1,7 @@
 import { getErrorMessage } from "@services/api"
 import type { uiText as translate } from "@shared/i18n/text"
 import { getRuntimeModelIds, PROVIDER_LABELS, type ProviderInstance, type ProviderKind } from "@shared/types/providerConfig"
-import { isMaskedSecret } from "@/lib/secrets"
+import { isMaskedSecret } from "@/lib/maskedSettingsValue"
 
 export interface InstanceSavePayload {
   type: ProviderKind

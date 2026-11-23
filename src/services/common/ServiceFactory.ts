@@ -41,7 +41,7 @@ export interface DesktopChannelConfig {
  *
  * `token` is `#[serde(skip_serializing)]` on the backend: GET omits the key
  * entirely when nothing is configured, and redacts it to `"****...****"`
- * when a token IS configured. See `isMaskedSecret` (`@/lib/secrets`) for the
+ * when a token IS configured. See `isMaskedSecret` (`@/lib/maskedSettingsValue`) for the
  * load/save contract this implies.
  */
 export interface NtfyChannelConfig {

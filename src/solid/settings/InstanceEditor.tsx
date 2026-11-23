@@ -6,7 +6,7 @@ import {
 } from "@shared/types/providerConfig"
 import i18n from "@shared/i18n/runtime"
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
-import { isMaskedSecret } from "@/lib/secrets"
+import { isMaskedSecret } from "@/lib/maskedSettingsValue"
 import { VENDOR_PRESETS } from "@/lib/providerPresets"
 import { createUiText } from "../shell/uiText"
 import { Button } from "../ui/button"

@@ -2,7 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { apiClient, getErrorMessage } from "@services/api"
 import type { BambooConfig, NotificationsConfig } from "@services/common/ServiceFactory"
-import { isMaskedSecret } from "@/lib/secrets"
+import { isMaskedSecret } from "@/lib/maskedSettingsValue"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -80,7 +80,7 @@ function Field({
  * the existing document and never clobbers sibling channels.
  *
  * The ntfy `token` / Bark `device_key` fields follow the `isMaskedSecret`
- * contract exactly (see `@/lib/secrets`): the server never emits a plaintext
+ * contract exactly (see `@/lib/maskedSettingsValue`): the server never emits a plaintext
  * secret on GET — it's either absent (nothing configured) or redacted to
  * `****...****` (configured) — so these fields always load empty, and a save
  * only sends a value when the user actually typed a new one. An untouched

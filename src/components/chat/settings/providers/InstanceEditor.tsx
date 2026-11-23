@@ -5,7 +5,7 @@ import type { DefaultsConfig, NewProviderKind, ProviderInstance, ProviderKind } 
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
 import { getRuntimeModelIds, PROVIDER_KINDS, PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { getErrorMessage } from "@services/api"
-import { isMaskedSecret } from "@/lib/secrets"
+import { isMaskedSecret } from "@/lib/maskedSettingsValue"
 import { VENDOR_PRESETS } from "@/lib/providerPresets"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"

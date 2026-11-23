@@ -6,7 +6,7 @@ import {
   type McpServerConfig, type TransportConfig,
 } from "@services/mcp"
 import { MCP_SERVER_ID_PATTERN } from "@services/mcp/types"
-import { isMaskedSecret } from "@/lib/secrets"
+import { isMaskedSecret } from "@/lib/maskedSettingsValue"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
