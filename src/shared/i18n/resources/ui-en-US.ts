@@ -986,6 +986,7 @@ export const uiEnUs = {
   "work_settings_dispatch_description": "Requires Work to be enabled.",
   "work_settings_reasoning": "Work reasoning effort",
   "work_settings_reasoning_description": "Applies to new Work sessions. Auto inherits the selected model’s default.",
+  "work_settings_ultra_description": "New Work sessions use the model’s highest supported reasoning tier and the tools allowed by the Work contract.",
   "work_settings_parallel": "Parallel Work limit",
   "work_settings_parallel_description": "Maximum Work dispatches in flight. Leave blank to use the scheduler’s existing limits.",
   "work_settings_parallel_invalid": "Enter a positive whole number up to 4,294,967,295.",

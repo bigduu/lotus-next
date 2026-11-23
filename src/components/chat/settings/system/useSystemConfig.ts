@@ -40,6 +40,7 @@ export interface WorkFeatureFlags {
 
 export interface WorkExecutionSettings {
   reasoning_effort: ReasoningEffort | null
+  ultra_by_default?: boolean
   max_parallel: number | null
 }
 

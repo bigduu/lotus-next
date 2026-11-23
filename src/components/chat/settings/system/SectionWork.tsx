@@ -26,6 +26,8 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
   const [parallelInput, setParallelInput] = useState(() => String(flags.work_execution?.max_parallel ?? ""))
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<SectionMessage>(null)
+  const work = draft.work_execution
+  const ultraSupported = typeof work?.ultra_by_default === "boolean"
 
   const changes: Partial<Pick<WorkFeatureFlags, "ticket_mutation" | "ticket_dispatch">> = {}
   for (const { flag } of controls) {
@@ -36,9 +38,12 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
   const maxParallel = trimmed === "" ? null : Number(trimmed)
   const parallelValid = maxParallel === null
     || (/^\d+$/.test(trimmed) && Number.isInteger(maxParallel) && maxParallel >= 1 && maxParallel <= MAX_PARALLEL)
-  if (draft.work_execution && savedFlags.work_execution) {
-    if (draft.work_execution.reasoning_effort !== savedFlags.work_execution.reasoning_effort) {
-      workChanges.reasoning_effort = draft.work_execution.reasoning_effort
+  if (work && savedFlags.work_execution) {
+    if (work.reasoning_effort !== savedFlags.work_execution.reasoning_effort) {
+      workChanges.reasoning_effort = work.reasoning_effort
+    }
+    if (ultraSupported && work.ultra_by_default !== savedFlags.work_execution.ultra_by_default) {
+      workChanges.ultra_by_default = work.ultra_by_default
     }
     if (maxParallel !== savedFlags.work_execution.max_parallel) {
       workChanges.max_parallel = maxParallel
@@ -59,6 +64,8 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
         || controls.some(({ flag }) => changes[flag] !== undefined && confirmed[flag] !== changes[flag])
         || (workChanges.reasoning_effort !== undefined
           && confirmed.work_execution?.reasoning_effort !== workChanges.reasoning_effort)
+        || (workChanges.ultra_by_default !== undefined
+          && confirmed.work_execution?.ultra_by_default !== workChanges.ultra_by_default)
         || (workChanges.max_parallel !== undefined
           && confirmed.work_execution?.max_parallel !== workChanges.max_parallel)) {
         throw new Error(uiText("work_settings_unconfirmed"))
@@ -107,26 +114,27 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
           </div>
         )
       })}
-      {draft.work_execution ? (
+      {work ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0 space-y-1">
               <label htmlFor={`${id}-effort`} className="block text-sm">{uiText("work_settings_reasoning")}</label>
               <p id={`${id}-effort-description`} className="text-xs leading-relaxed text-muted-foreground">
-                {uiText("work_settings_reasoning_description")}
+                {uiText(work.ultra_by_default ? "work_settings_ultra_description" : "work_settings_reasoning_description")}
               </p>
             </div>
             <Select
-              value={draft.work_execution.reasoning_effort ?? "auto"}
+              value={work.ultra_by_default ? "ultra" : work.reasoning_effort ?? "auto"}
               disabled={saving}
               onValueChange={(value) => {
-                setDraft((previous) => previous.work_execution ? {
-                  ...previous,
-                  work_execution: {
-                    ...previous.work_execution,
-                    reasoning_effort: isReasoningEffort(value) ? value : null,
-                  },
-                } : previous)
+                setDraft((previous) => {
+                  if (!previous.work_execution) return previous
+                  const next = { ...previous.work_execution }
+                  if (typeof next.ultra_by_default === "boolean") next.ultra_by_default = value === "ultra"
+                  if (value === "auto") next.reasoning_effort = null
+                  else if (isReasoningEffort(value)) next.reasoning_effort = value
+                  return { ...previous, work_execution: next }
+                })
                 setMessage(null)
               }}
             >
@@ -138,6 +146,9 @@ export function SectionWork({ flags }: { flags: WorkFeatureFlags }) {
                 {REASONING_OPTIONS.map(({ value, label }) => (
                   <SelectItem key={value} value={value}>{label}</SelectItem>
                 ))}
+                {ultraSupported ? (
+                  <SelectItem value="ultra">{uiText("ultra_orchestration_5857fcd7")}</SelectItem>
+                ) : null}
               </SelectContent>
             </Select>
           </div>
