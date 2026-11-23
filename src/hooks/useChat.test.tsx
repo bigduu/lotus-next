@@ -135,8 +135,6 @@ vi.mock("@shared/utils/systemPromptEnhancement", () => ({
 }))
 import { useChat, type GenerationFailure, type SendSubmissionResult } from "./useChat"
 import { resetCompletedAnswerHandoffsForTest } from "@/lib/completedAnswerHandoffRegistry"
-import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
-import { diagnosticFixture, diagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { getUsedModels } from "@shared/utils/usedModels"
 type HookValue = ReturnType<typeof useChat>
@@ -158,7 +156,7 @@ type SubscriptionHandlers = {
   onMessageAppended(sessionId: string, messageId?: string): void
   onSessionHistoryCommitted(sessionId: string): void
   onComplete(): void
-  onError(message: string, diagnostic?: Readonly<PublicRunDiagnostic>): void
+  onError(message: string): void
   onCancelled(): void
   onContextCompressionStatus(phase: string, status: string): void
   onContextSummarized(summary: ContextSummaryInfo): void
@@ -2510,44 +2508,5 @@ describe("useChat context compression feedback", () => {
     expect(hook.current.contextCompression).toEqual({ status: "running" })
     await act(async () => { stream.handlers.onContextCompressionStatus("preflight", "completed") })
     expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: true })
-  })
-})
-
-describe("owned public error diagnostic lifecycle", () => {
-  it("retains only this failure and rejects old terminal diagnostics after the next same-session run", async () => {
-    const sid = "diagnostic-hook-session"
-    const first = deferred<void>(), second = deferred<void>()
-    let old!: SubscriptionHandlers, current!: SubscriptionHandlers
-    mocks.appState.chats = [{ id:sid,messages:[] }]
-    mocks.sendMessage.mockResolvedValue({ session_id:sid,message_id:"synthetic-user" })
-    mocks.subscribeToEvents
-      .mockImplementationOnce((_id: string,h: SubscriptionHandlers) => { old=h; return first.promise })
-      .mockImplementationOnce((_id: string,h: SubscriptionHandlers) => { current=h; return second.promise })
-    const hook = await mountUseChat({ mode:"bound",sessionId:sid })
-    await act(async () => { await hook.current.send("synthetic first") })
-    await act(async () => { old.onError(diagnosticFixtureError,diagnosticFixture(sid)); first.resolve() })
-    const previous = hook.current.sendFailure as GenerationFailure
-    expect(previous.diagnostic?.diagnostic_id).toBe(diagnosticFixture(sid).diagnostic_id)
-    await act(async () => { await hook.current.send("synthetic next") })
-    expect(hook.current.sendFailure).toBeNull()
-    await act(async () => { old.onError(diagnosticFixtureError,diagnosticFixture(sid)) })
-    expect(hook.current.sendFailure).toBeNull()
-    await act(async () => { current.onError("legacy current error"); second.resolve() })
-    const next = hook.current.sendFailure as GenerationFailure
-    expect(next.operationId).toBeGreaterThan(previous.operationId)
-    expect(next.message).toBe("legacy current error"); expect(next.diagnostic).toBeUndefined()
-  })
-  it("does not apply a late error/diagnostic after switching the bound conversation", async () => {
-    const sid = "diagnostic-original"
-    const stream = deferred<void>()
-    let old!: SubscriptionHandlers
-    mocks.appState.chats = [{ id:sid,messages:[] },{ id:"diagnostic-other",messages:[] }]
-    mocks.sendMessage.mockResolvedValue({ session_id:sid,message_id:"synthetic-user" })
-    mocks.subscribeToEvents.mockImplementationOnce((_id: string,h: SubscriptionHandlers) => { old=h; return stream.promise })
-    const hook = await mountUseChat({ mode:"bound",sessionId:sid })
-    await act(async () => { await hook.current.send("synthetic request") })
-    await hook.rerender({ mode:"bound",sessionId:"diagnostic-other" })
-    await act(async () => { old.onError(diagnosticFixtureError,diagnosticFixture(sid)); stream.resolve() })
-    expect(hook.current.currentSessionId).toBe("diagnostic-other"); expect(hook.current.sendFailure).toBeNull()
   })
 })

@@ -75,6 +75,8 @@ export function startedRun(sessionId: string, runId: string): ExecuteResponse {
 export function useChatStreamFixture() {
   const roots = new Set<() => void>()
   beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
     resetCompletedAnswerHandoffsForTest()
     clearSessionCompatibilityObservations()
     appStore.setState({ ...appStore.getInitialState(),
