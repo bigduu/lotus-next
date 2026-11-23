@@ -1,15 +1,36 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { flush } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
 import { currentUserScopeFixture, httpScopeFixture, scopeFixture } from "@services/supervisorScope/testFixtures"
-import type { ProjectScopeDependencies } from "@/hooks/useSupervisorProjectScope"
+import type { ProjectScopeDependencies } from "./createSupervisorProjectScope"
 import type { ProjectScopeIntent, ProjectScopeReceipt, ProjectScopeResponse } from "@services/supervisorScope/types"
 import { SupervisorProjectScopeDialog } from "./SupervisorProjectScopeDialog"
-Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-const roots: Root[] = []
-afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren() })
+vi.mock("@kobalte/core/dialog", async () => {
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (specifier: string) => string }
+  }>("node:module")
+  const entry = createRequire(import.meta.url).resolve("@kobalte/core/dialog")
+  return vi.importActual(entry.replace(/\.jsx$/, ".js"))
+})
+vi.mock("@lucide/solid", () => ({ X: () => null }))
+
+const roots: Array<() => void> = []
+afterEach(() => { for (const dispose of roots.splice(0)) dispose(); document.body.replaceChildren() })
+
+function dispatch(action: () => void) {
+  action()
+  flush()
+}
+
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 5; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
 const button = (key: Parameters<typeof uiText>[0]) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === uiText(key))!
 async function mount(initial: ProjectScopeResponse = httpScopeFixture(), missingProject = false) {
   let scope = initial
@@ -17,20 +38,21 @@ async function mount(initial: ProjectScopeResponse = httpScopeFixture(), missing
   const close = vi.fn()
   const dependencies: ProjectScopeDependencies = { read: vi.fn(async () => structuredClone(scope)), update,
     projects: async () => missingProject ? [{ id: "p2", name: "Two", status: "active" }] : [{ id: "p1", name: "One", status: "active" }, { id: "p2", name: "Two", status: "active" }] }
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => root.render(<SupervisorProjectScopeDialog open onOpenChange={close} dependencies={dependencies} />))
+  const container = document.body.appendChild(document.createElement("div"))
+  roots.push(render(() => <SupervisorProjectScopeDialog open onOpenChange={close} dependencies={dependencies} />, container))
+  await settle(() => {})
   const dialog = document.querySelector('[role="dialog"]')!
   return { dialog, update, dependencies, close, setScope(value: ProjectScopeResponse) { scope = value },
-    check(id: string) { const label = [...dialog.querySelectorAll("label")].find((el) => el.querySelector("code")?.textContent === id)!; act(() => label.querySelector<HTMLInputElement>("input")!.click()) },
-    preview() { act(() => button("supervisor_scope_preview").click()) },
-    async confirm() { await act(async () => button("supervisor_scope_http_confirm").click()) } }
+    check(id: string) { const label = [...dialog.querySelectorAll("label")].find((el) => el.querySelector("code")?.textContent === id)!; dispatch(() => label.querySelector<HTMLInputElement>("input")!.click()) },
+    preview() { dispatch(() => button("supervisor_scope_preview").click()) },
+    async confirm() { await settle(async () => button("supervisor_scope_http_confirm").click()) } }
 }
 it("allows admitted web confirmation without any native bridge", async () => {
   const h = await mount(); h.check("p2"); h.preview()
   expect(h.dialog.textContent).toContain(uiText("supervisor_scope_http_ready"))
   expect([...h.dialog.querySelectorAll('[data-testid="project-scope-review"] code')].map((c) => c.textContent)).toEqual(["p1", "p2"])
   expect(button("supervisor_scope_http_confirm").disabled).toBe(false); expect(h.update).not.toHaveBeenCalled()
-  act(() => button("supervisor_scope_close").click()); expect(h.close).toHaveBeenCalledWith(false); expect(h.update).not.toHaveBeenCalled()
+  dispatch(() => button("supervisor_scope_close").click()); expect(h.close).toHaveBeenCalledWith(false); expect(h.update).not.toHaveBeenCalled()
 })
 it.each([{ allowed_projects: [] }, { allowed_projects: ["p1"] }])("shows default current-user management with legacy metadata %j, without an access editor", async ({ allowed_projects }) => {
   const current = currentUserScopeFixture()
@@ -42,7 +64,7 @@ it.each([{ allowed_projects: [] }, { allowed_projects: ["p1"] }])("shows default
   expect(button("supervisor_scope_preview")).toBeUndefined()
   expect(button("supervisor_scope_http_confirm")).toBeUndefined()
   expect(h.update).not.toHaveBeenCalled()
-  await act(async () => button("supervisor_scope_refresh").click())
+  await settle(async () => button("supervisor_scope_refresh").click())
   expect(h.update).not.toHaveBeenCalled()
 })
 it.each([
@@ -66,7 +88,7 @@ it("shows global access refusal without embedding a scope login", async () => {
 it("keeps unavailable current IDs visible until explicitly removed", async () => {
   const h = await mount(httpScopeFixture(), true); h.preview()
   expect(h.dialog.textContent).toContain(uiText("supervisor_scope_invalid_selection")); expect(button("supervisor_scope_http_confirm").disabled).toBe(true)
-  act(() => button("supervisor_scope_edit").click()); h.check("p1"); h.check("p2"); h.preview()
+  dispatch(() => button("supervisor_scope_edit").click()); h.check("p1"); h.check("p2"); h.preview()
   expect(button("supervisor_scope_http_confirm").disabled).toBe(false)
   expect(h.dialog.textContent).toContain(uiText("supervisor_scope_removal_effect")); expect(h.update).not.toHaveBeenCalled()
 })

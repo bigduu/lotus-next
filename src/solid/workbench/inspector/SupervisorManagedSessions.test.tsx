@@ -1,16 +1,43 @@
-import { act, useState } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
 import { NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
 import { uiText } from "@shared/i18n/ui"
 import type { ManagedSessionsResponse } from "@services/supervisorScope/managedSessions"
-import type { ManagedSessionsDependencies } from "@/hooks/useSupervisorManagedSessions"
+import type { ManagedSessionsDependencies } from "./createSupervisorManagedSessions"
 import { SupervisorManagedSessionsDialog, SupervisorManagedSessionsPanel } from "./SupervisorManagedSessions"
 import { currentUserManagedSessionsFixture } from "@services/supervisorScope/testFixtures"
-Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-const roots: Root[] = []
-afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren() })
+vi.mock("@kobalte/core/dialog", async () => {
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (specifier: string) => string }
+  }>("node:module")
+  const entry = createRequire(import.meta.url).resolve("@kobalte/core/dialog")
+  return vi.importActual(entry.replace(/\.jsx$/, ".js"))
+})
+vi.mock("@lucide/solid", () => ({ X: () => null, RefreshCw: () => null }))
+
+const roots: Array<() => void> = []
+afterEach(() => { for (const dispose of roots.splice(0)) dispose(); document.body.replaceChildren() })
+
+function dispatch(action: () => void) {
+  action()
+  flush()
+}
+
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 5; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
+
+async function mountView(renderView: Parameters<typeof render>[0]) {
+  const container = document.body.appendChild(document.createElement("div"))
+  roots.push(render(renderView, container))
+  await settle(() => {})
+}
 const fixture = (): ManagedSessionsResponse => ({ capabilities: { managed_sessions_http_v1: true }, scope: { supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: "11111111-1111-4111-8111-111111111111" }, state_revision: 4, allowed_projects: ["p1"] },
   sessions: [
     { session_id: "a", link_revision: 1, enabled: true, authorized: true, target_created_at: "2026-10-25T00:00:00Z", target_project_id: "p1", target_metadata_version: 0 },
@@ -23,12 +50,10 @@ async function mount(options: { canonical?: ManagedSessionsResponse; panel?: boo
   const dependencies: ManagedSessionsDependencies = { read: options.read ?? vi.fn(async () => { if (options.unavailable) throw new ApiError("old", 404, ""); return canonical }),
     candidates: vi.fn(async () => ({ sessions: ["a", "stale", "detached", "new"].map((id) => ({ session_id: id, title: `Target ${id}`, project_id: "p1", model: "independent-model", is_running: false })), nextOffset: null })),
     update: vi.fn(async () => { throw new Error("lost response") }) }
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  function Probe() {
-    const [open, setOpen] = useState(true)
-    return options.panel ? <SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} /> : <SupervisorManagedSessionsDialog open={open} onOpenChange={(next) => { setOpen(next); close(next) }} dependencies={dependencies} />
-  }
-  await act(async () => root.render(<Probe />))
+  await mountView(() => {
+    const [open, setOpen] = createSignal(true)
+    return options.panel ? <SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} /> : <SupervisorManagedSessionsDialog open={open()} onOpenChange={(next) => { setOpen(next); close(next) }} dependencies={dependencies} />
+  })
   return { dependencies, close, select }
 }
 it("browses current-user Root/Child sessions without displaying Project authorization or attach/detach", async () => {
@@ -45,7 +70,7 @@ it("opens the selected current-user Child through existing navigation without ma
   const h = await mount({ canonical: currentUserManagedSessionsFixture(), panel: true })
   const child = document.querySelector('[data-managed-session="child-a"]')!
   expect(child.textContent).toContain("Child")
-  await act(async () => button("supervisor_sessions_open", child).click())
+  await settle(async () => button("supervisor_sessions_open", child).click())
   expect(h.select).toHaveBeenCalledExactlyOnceWith("child-a", { target: currentUserManagedSessionsFixture().sessions[1]!.current_user_target, supervisor: currentUserManagedSessionsFixture().scope.supervisor }, expect.any(Function)); expect(h.dependencies.update).not.toHaveBeenCalled()
 })
 it("distinguishes canonical authorized, stale and detached rows with explicit review before any write", async () => {
@@ -55,10 +80,10 @@ it("distinguishes canonical authorized, stale and detached rows with explicit re
   expect(document.body.textContent).toContain(uiText("supervisor_sessions_detached"))
   expect(document.body.textContent).toContain("independent-model")
   const row = document.querySelector('[data-managed-session="stale"]')!
-  act(() => button("supervisor_sessions_reconfirm_action", row).click())
+  dispatch(() => button("supervisor_sessions_reconfirm_action", row).click())
   expect(document.querySelector('[data-testid="managed-session-review"]')?.textContent).toContain("Target stale")
   expect(h.dependencies.update).not.toHaveBeenCalled()
-  act(() => button("cancel_2cd0f3be").click())
+  dispatch(() => button("cancel_2cd0f3be").click())
   expect(document.querySelector('[data-testid="managed-session-review"]')).toBeNull()
   expect(h.dependencies.update).not.toHaveBeenCalled()
 })
@@ -69,16 +94,16 @@ it("shows unavailable target authority without an enabled add action, retaining 
   expect(row.textContent).toContain(uiText("supervisor_sessions_unverified"))
   expect(button("supervisor_sessions_attach", row).disabled).toBe(true)
   expect(button("supervisor_sessions_detach", row).disabled).toBe(false)
-  act(() => button("supervisor_sessions_detach", row).click())
+  dispatch(() => button("supervisor_sessions_detach", row).click())
   expect(h.dependencies.update).not.toHaveBeenCalled()
 })
 it("keeps a lost mutation outcome unconfirmed and refreshes without replaying", async () => {
   const h = await mount(), row = document.querySelector('[data-managed-session="new"]')!
-  act(() => button("supervisor_sessions_attach", row).click())
-  await act(async () => button("supervisor_sessions_confirm").click())
+  dispatch(() => button("supervisor_sessions_attach", row).click())
+  await settle(async () => button("supervisor_sessions_confirm").click())
   expect(document.body.textContent).toContain(uiText("supervisor_sessions_unknown"))
   expect(document.body.textContent).not.toContain(uiText("supervisor_sessions_saved"))
-  await act(async () => button("supervisor_scope_refresh").click())
+  await settle(async () => button("supervisor_scope_refresh").click())
   expect(h.dependencies.update).toHaveBeenCalledTimes(1)
 })
 it("keeps old backend management unsupported without inventing an empty authorized list", async () => {
@@ -119,7 +144,7 @@ it("makes managed independent sessions the panel contents and opens the selected
   const h = await mount({ panel: true })
   const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
   expect(panel.textContent).toContain("Target a"); expect(panel.textContent).not.toContain("Target new")
-  await act(async () => button("supervisor_sessions_open", panel.querySelector('[data-managed-session="a"]')!).click())
+  await settle(async () => button("supervisor_sessions_open", panel.querySelector('[data-managed-session="a"]')!).click())
   expect(h.select).toHaveBeenCalledExactlyOnceWith("a"); expect(h.dependencies.update).not.toHaveBeenCalled()
 })
 
@@ -129,12 +154,12 @@ it("opens a later current-user page directly from Browse using the observed targ
   const later = { ...first, next_after: null, sessions: [{ ...old, session_id: "later-child", current_user_target: target }] }
   const read: ManagedSessionsDependencies["read"] = async (_signal, page) => page?.after ? later : first
   const h = await mount({ panel: true, read })
-  await act(async () => button("supervisor_sessions_browse").click())
+  await settle(async () => button("supervisor_sessions_browse").click())
   const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!
-  await act(async () => button("supervisor_sessions_more", dialog).click())
+  await settle(async () => button("supervisor_sessions_more", dialog).click())
   const row = dialog.querySelector('[data-managed-session="later-child"]')!
   expect(row).not.toBeNull()
-  await act(async () => button("supervisor_sessions_open", row).click())
+  await settle(async () => button("supervisor_sessions_open", row).click())
   expect(h.select).toHaveBeenCalledExactlyOnceWith("later-child", { target, supervisor: first.scope.supervisor }, expect.any(Function))
 })
 it("returns keyboard focus to a stable control when the last directory page loads", async () => {
@@ -143,8 +168,8 @@ it("returns keyboard focus to a stable control when the last directory page load
   await mount({ panel: true, read })
   const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
   const more = button("supervisor_sessions_more", panel); more.focus(); expect(document.activeElement).toBe(more)
-  await act(async () => more.click())
-  expect(document.activeElement).toBe(button("supervisor_sessions_browse", panel))
+  await settle(async () => more.click())
+  await vi.waitFor(() => expect(document.activeElement).toBe(button("supervisor_sessions_browse", panel)))
 })
 
 
@@ -152,16 +177,16 @@ it("keeps current-user Open disabled when owner access is unavailable", async ()
   const canonical = currentUserManagedSessionsFixture(), h = await mount({ panel: true, canonical: { ...canonical, owner_authorization: { ...canonical.owner_authorization, available: false } } })
   const row = document.querySelector('[data-managed-session="child-a"]')!
   const open = button("supervisor_sessions_open", row)
-  expect(open.disabled).toBe(true); await act(async () => open.click()); expect(h.select).not.toHaveBeenCalled()
+  expect(open.disabled).toBe(true); await settle(async () => open.click()); expect(h.select).not.toHaveBeenCalled()
 })
 it("preserves useful keyboard focus when Browse loads its last page", async () => {
   const first = currentUserManagedSessionsFixture("child-a"), later = { ...first, next_after: null, sessions: [] }
   const read: ManagedSessionsDependencies["read"] = async (_signal, page) => page?.after ? later : first
-  await mount({ panel: true, read }); await act(async () => button("supervisor_sessions_browse").click())
+  await mount({ panel: true, read }); await settle(async () => button("supervisor_sessions_browse").click())
   const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!, surface = dialog.closest('[role="dialog"]')!
   const more = button("supervisor_sessions_more", dialog); more.focus(); expect(document.activeElement).toBe(more)
-  await act(async () => more.click())
-  expect(document.activeElement).toBe(button("supervisor_scope_refresh", surface))
+  await settle(async () => more.click())
+  await vi.waitFor(() => expect(document.activeElement).toBe(button("supervisor_scope_refresh", surface)))
 })
 
 
@@ -175,10 +200,10 @@ it("withdraws conflicting directory rows and keeps them unavailable if refresh f
     throw new ApiError("unavailable", 503, "")
   }
   const h = await mount({ panel: true, read }), panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
-  await act(async () => button("supervisor_sessions_more", panel).click())
+  await settle(async () => button("supervisor_sessions_more", panel).click())
   expect(panel.querySelectorAll('[data-managed-session]')).toHaveLength(0)
   expect(panel.textContent).toContain(uiText("supervisor_sessions_conflict"))
-  await act(async () => panel.querySelector<HTMLButtonElement>(`button[aria-label="${uiText("supervisor_sessions_refresh")}"]`)!.click())
+  await settle(async () => panel.querySelector<HTMLButtonElement>(`button[aria-label="${uiText("supervisor_sessions_refresh")}"]`)!.click())
   expect(panel.querySelectorAll('[data-managed-session]')).toHaveLength(0); expect(h.select).not.toHaveBeenCalled()
 })
 
@@ -187,14 +212,13 @@ it("invalidates an in-flight open as soon as its directory is refreshed", async 
   const first = currentUserManagedSessionsFixture(), pending = new Promise<boolean>(() => {}), select = vi.fn((_id: string, _selection?: unknown, _current?: () => boolean) => pending)
   let calls = 0
   const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => { if (++calls > 1) throw new ApiError("denied", 403, ""); return first }), candidates: vi.fn(), update: vi.fn() }
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
+  await mountView(() => <SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />)
   const row = document.querySelector('[data-managed-session="child-a"]')!
-  await act(async () => button("supervisor_sessions_open", row).click())
+  await settle(async () => button("supervisor_sessions_open", row).click())
   const guard = select.mock.calls[0]![2] as (() => boolean) | undefined
   expect(typeof guard).toBe("function"); expect(guard!()).toBe(true)
   const refresh = document.querySelector<HTMLButtonElement>(`button[aria-label="${uiText("supervisor_sessions_refresh")}"]`)!
-  await act(async () => refresh.click()); expect(guard!()).toBe(false)
+  await settle(async () => refresh.click()); expect(guard!()).toBe(false)
 })
 
 
@@ -202,11 +226,10 @@ it("can open a fresh Browse result while the panel's initial directory read is p
   const fixture = currentUserManagedSessionsFixture(), pending = new Promise<ManagedSessionsResponse>(() => {}), select = vi.fn()
   let calls = 0
   const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => ++calls === 1 ? pending : fixture), candidates: vi.fn(), update: vi.fn() }
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
-  await act(async () => button("supervisor_sessions_manage").click())
+  await mountView(() => <SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />)
+  await settle(async () => button("supervisor_sessions_manage").click())
   const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!, row = dialog.querySelector('[data-managed-session="child-a"]')!
-  await act(async () => button("supervisor_sessions_open", row).click())
+  await settle(async () => button("supervisor_sessions_open", row).click())
   expect(select).toHaveBeenCalledExactlyOnceWith("child-a", { target: fixture.sessions[1]!.current_user_target, supervisor: fixture.scope.supervisor }, expect.any(Function))
 })
 
@@ -214,11 +237,10 @@ it("can open a fresh Browse result while the panel's initial directory read is p
 it("lets a fresh Browse observation open after an earlier panel read failed", async () => {
   const fixture = currentUserManagedSessionsFixture(), select = vi.fn(); let calls = 0
   const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => { if (++calls === 1) throw new ApiError("denied", 403, ""); return fixture }), candidates: vi.fn(), update: vi.fn() }
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
-  await act(async () => button("supervisor_sessions_manage").click())
+  await mountView(() => <SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />)
+  await settle(async () => button("supervisor_sessions_manage").click())
   const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!, row = dialog.querySelector('[data-managed-session="child-a"]')!
-  await act(async () => button("supervisor_sessions_open", row).click())
+  await settle(async () => button("supervisor_sessions_open", row).click())
   expect(select).toHaveBeenCalledExactlyOnceWith("child-a", { target: fixture.sessions[1]!.current_user_target, supervisor: fixture.scope.supervisor }, expect.any(Function))
 })
 it("invalidates a Browse open when an older pending panel read reports a denial", async () => {
@@ -226,13 +248,12 @@ it("invalidates a Browse open when an older pending panel read reports a denial"
   const pending = new Promise<ManagedSessionsResponse>((_resolve, reject) => { rejectInitial = reject }); let calls = 0
   const select = vi.fn((_id: string, _selection?: unknown, _guard?: () => boolean) => new Promise<boolean>(() => {}))
   const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => ++calls === 1 ? pending : fixture), candidates: vi.fn(), update: vi.fn() }
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
-  await act(async () => button("supervisor_sessions_manage").click())
+  await mountView(() => <SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />)
+  await settle(async () => button("supervisor_sessions_manage").click())
   const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!, row = dialog.querySelector('[data-managed-session="child-a"]')!
-  await act(async () => button("supervisor_sessions_open", row).click())
+  await settle(async () => button("supervisor_sessions_open", row).click())
   const guard = select.mock.calls[0]![2]!; expect(guard()).toBe(true)
-  await act(async () => { rejectInitial(new ApiError("denied", 403, "")); await Promise.resolve() }); expect(guard()).toBe(false)
+  await settle(async () => { rejectInitial(new ApiError("denied", 403, "")); await Promise.resolve() }); expect(guard()).toBe(false)
 })
 
 
@@ -243,6 +264,6 @@ it.each([undefined, false])("explains and disables managed opening when bound hi
   expect(document.body.textContent).toContain(uiText("supervisor_sessions_bound_history_unsupported"))
   const row = document.querySelector('[data-managed-session="child-a"]')!
   expect(button("supervisor_sessions_open", row).disabled).toBe(true)
-  await act(async () => button("supervisor_sessions_open", row).click())
+  await settle(async () => button("supervisor_sessions_open", row).click())
   expect(h.select).not.toHaveBeenCalled()
 })
