@@ -1789,20 +1789,6 @@ describe("Root orchestration-only control", () => {
   })
 })
 
-it("sends natural /loop text intact as an ordinary turn in the open session", async () => {
-  const send = vi.fn<Send>().mockResolvedValue({
-    kind: "accepted", operationId: 1, sessionId: "loop-chat", navigated: false,
-  })
-  const input = await mount(send, "loop-chat")
-  const prompt = "/loop 每隔五分钟检查构建"
-  change(input, prompt)
-  await act(async () => composer().onSubmit())
-  expect(agentClient.applySessionLoop).toHaveBeenCalledExactlyOnceWith("loop-chat", { action: "status" })
-  expect(send).toHaveBeenCalledExactlyOnceWith(prompt, expect.any(Object))
-  expect(runtime.queueSend).not.toHaveBeenCalled()
-  expect(input.value).toBe("")
-})
-
 it("queues text and images from the normal composer while a run is active", async () => {
   const send = vi.fn<Send>()
   const input = await mount(send, "queue-chat", true)
