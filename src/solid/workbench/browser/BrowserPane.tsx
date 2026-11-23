@@ -1,12 +1,11 @@
-import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from "solid-js"
 import { ArrowLeft, ArrowRight, Camera, Code2, ExternalLink, Globe2, LoaderCircle, RefreshCw, X } from "@lucide/solid"
 import { matchesActiveBrowserPage, pointInBrowserFrame } from "@/lib/browserFrame"
 import { normalizeBrowserAddress, playwrightKey } from "@/lib/browserInput"
 import { FileOperationsService } from "@shared/services/FileOperationsService"
-import type { BrowserProfileMode } from "@services/browser/types"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
-import { BrowserProfileSelector } from "./BrowserProfileSelector"
+import { BrowserProfileSelector, createBrowserProfileDraft } from "./BrowserProfileSelector"
 import { createBrowserSession, type BrowserSession } from "./createBrowserSession"
 
 const limitPromptText = (value: string): string => {
@@ -22,6 +21,12 @@ const dialogSourceOrigin = (rawUrl: string, fallback: string): string => {
   } catch {
     return fallback
   }
+}
+
+function canFocusBrowserControl(target: HTMLElement) {
+  if (!target.isConnected || target.closest('[hidden], [inert], [aria-hidden="true"]')) return false
+  const foregroundModal = target.ownerDocument.activeElement?.closest('[aria-modal="true"]')
+  return !foregroundModal || foregroundModal.contains(target)
 }
 
 interface BrowserPaneProps {
@@ -47,7 +52,7 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
   const browser = () => props.browser
   const [address, setAddress] = createSignal("")
   const enteredAddress = () => props.newTabEntry ? props.entryDraft ?? address() : address()
-  const [profileDraft, setProfileDraft] = createSignal<{ sessionId: string; mode: BrowserProfileMode } | null>(null)
+  const profileDraft = createBrowserProfileDraft()
   const [addressError, setAddressError] = createSignal<string | null>(null)
   const [saveError, setSaveError] = createSignal<string | null>(null)
   const [promptInput, setPromptInput] = createSignal<{ dialogId: string; value: string; edited: boolean } | null>(null)
@@ -96,11 +101,9 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
     focusedDialogId,
     (id) => {
       const dialog = dialogElement
-      if (!id || !dialog?.isConnected || dialog.closest('[hidden], [inert], [aria-hidden="true"]')) return
+      if (!id || !dialog || !canFocusBrowserControl(dialog)) return
       const document = dialog.ownerDocument
       const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-      const foregroundModal = previous?.closest('[aria-modal="true"]')
-      if (foregroundModal && !foregroundModal.contains(dialog)) return
       const first = dialog.querySelector<HTMLElement>('textarea:not([disabled]),button:not([disabled])')
       ;(first ?? dialog).focus()
       return () => {
@@ -285,8 +288,8 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
       <summary class="cursor-pointer text-muted-foreground">{uiText("browser_profile_label")}</summary>
       <div class="pt-2"><BrowserProfileSelector
         sessionId={session} profile={browser().profilePhase === "unknown" ? { kind: "unreported" } : browser().profile} phase={browser().profilePhase === "closed" ? "closed" : "active"}
-        nextMode={profileDraft()?.sessionId === session ? profileDraft()!.mode : "shared"}
-        onNextModeChange={(mode) => { if (props.sessionId === session) setProfileDraft({ sessionId: session, mode }) }}
+        nextMode={profileDraft.mode(session)}
+        onNextModeChange={(mode) => { if (props.sessionId === session) profileDraft.select(session, mode) }}
         pending={browser().busy || browser().loading || dialogBlocked()}
         actions={browser().profilePhase === "unknown" ? undefined : { openDefault: (id) => { void browser().openDefault(id) }, openClean: (id) => { void browser().openClean(id) }, open: (id, mode) => { void browser().openProfile(id, mode) }, close: (id) => { void browser().closeProfile(id) } }}
       /></div>
@@ -302,7 +305,12 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
       </section>
   )
 
-  const entry = (session: string) => (
+  const entry = (session: string) => {
+    let addressInput: HTMLInputElement | undefined
+    onSettled(() => {
+      if (untrack(() => props.active) && addressInput && canFocusBrowserControl(addressInput)) addressInput.focus({ preventScroll: true })
+    })
+    return (
       <section class="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label={uiText("built_in_browser_42d6809d")} data-browser-empty>
         {profileControls(session)}
         <div class="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Globe2 aria-hidden="true" /></div>
@@ -312,6 +320,7 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
         </div>
         <form class="flex w-full max-w-md gap-2" onSubmit={navigate}>
           <input
+            ref={(element) => { addressInput = element }}
             type="text"
             aria-label={uiText("page_address_eb6f944d")}
             value={enteredAddress()}
@@ -324,7 +333,6 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
             autocomplete="url"
             spellcheck={false}
             class="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            autofocus={props.active}
           />
           <Button type="submit" disabled={browser().busy}>{uiText("open_c771248e")}</Button>
         </form>
@@ -337,7 +345,8 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
         ) : null}
         {dialogOverlay()}
       </section>
-  )
+    )
+  }
 
   const page = (session: string) => (
     <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label={uiText("built_in_browser_42d6809d")} data-browser-pane>

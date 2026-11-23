@@ -1,38 +1,45 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createSignal } from "solid-js"
+import { render } from "@solidjs/web"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import i18n from "@/shared/i18n"
+import i18n from "@shared/i18n/runtime"
 import { readBrowserProfileReport } from "@services/browser/profileMode"
 import type { BrowserProfileReport } from "@services/browser/profileMode"
-import { BrowserProfileSelector } from "./BrowserProfileSelector"
+import { BrowserProfileSelector, createBrowserProfileDraft } from "./BrowserProfileSelector"
+import { settleBrowser } from "./browserSessionTestHarness"
 
 const shared: BrowserProfileReport = { kind: "reported", mode: "shared", storageShared: true }
 const clean: BrowserProfileReport = { kind: "reported", mode: "clean", storageShared: false }
 const open = vi.fn()
 const close = vi.fn()
-let root: Root
+type SelectorProps = Omit<Parameters<typeof BrowserProfileSelector>[0], "nextMode" | "onNextModeChange">
+const defaults: SelectorProps = { sessionId: "chat-a", profile: shared, phase: "closed", actions: { open, close } }
+let dispose: () => void
+let show: (props?: Partial<SelectorProps>) => Promise<void>
 let host: HTMLDivElement
 
 beforeEach(async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   await i18n.changeLanguage("zh-CN")
   host = document.body.appendChild(document.createElement("div"))
-  root = createRoot(host)
+  const [configuration, setConfiguration] = createSignal(defaults)
+  show = (props = {}) => settleBrowser(() => setConfiguration({ ...defaults, ...props }))
+  await settleBrowser(() => {
+    dispose = render(() => {
+      const draft = createBrowserProfileDraft()
+      return <BrowserProfileSelector {...configuration()} nextMode={draft.mode(configuration().sessionId)}
+        onNextModeChange={(mode) => draft.select(configuration().sessionId, mode)} />
+    }, host)
+  })
 })
 
 afterEach(async () => {
-  await act(async () => root.unmount())
+  dispose()
   host.remove()
   vi.clearAllMocks()
   await i18n.changeLanguage("zh-CN")
 })
 
-async function render(props: Partial<Parameters<typeof BrowserProfileSelector>[0]> = {}) {
-  await act(async () => root.render(<BrowserProfileSelector sessionId="chat-a" profile={shared} phase="closed" actions={{ open, close }} {...props} />))
-}
-
 async function chooseClean() {
-  await act(async () => {
+  await settleBrowser(async () => {
     const select = host.querySelector("select")!
     select.value = "clean"
     select.dispatchEvent(new Event("change", { bubbles: true }))
@@ -40,11 +47,11 @@ async function chooseClean() {
 }
 
 async function submit() {
-  await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  await settleBrowser(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
 }
 
 it("defaults a new explicit choice to shared and explains storage sharing and clean freshness", async () => {
-  await render()
+  await show()
   expect(host.querySelector("select")?.value).toBe("shared")
   expect(host.textContent).toContain("共享账户")
   expect(host.textContent).toContain("不构成安全隔离")
@@ -54,7 +61,7 @@ it("defaults a new explicit choice to shared and explains storage sharing and cl
 })
 
 it("changing a choice performs no operation; an explicit open emits one chat-bound mode intent", async () => {
-  await render()
+  await show()
   await chooseClean()
   expect(open).not.toHaveBeenCalled()
   expect(close).not.toHaveBeenCalled()
@@ -64,41 +71,41 @@ it("changing a choice performs no operation; an explicit open emits one chat-bou
 })
 
 it("requires a separate explicit close before opening another mode", async () => {
-  await render({ phase: "active" })
+  await show({ phase: "active" })
   expect(host.querySelector('[role="status"]')?.textContent).toContain("当前模式：共享账户")
   await chooseClean()
   await submit()
   expect(open).not.toHaveBeenCalled()
   expect(close).not.toHaveBeenCalled()
-  await act(async () => host.querySelector("button")!.click())
+  await settleBrowser(async () => host.querySelector("button")!.click())
   expect(close).toHaveBeenCalledExactlyOnceWith("chat-a")
   expect(open).not.toHaveBeenCalled()
-  await render({ phase: "closed" })
+  await show({ phase: "closed" })
   expect(open).not.toHaveBeenCalled()
   await submit()
   expect(open).toHaveBeenCalledExactlyOnceWith("chat-a", "clean")
 })
 
 it("does not reuse a previous clean mode as the default for a new scope", async () => {
-  await render({ profile: clean })
+  await show({ profile: clean })
   expect(host.querySelector("select")?.value).toBe("shared")
   expect(host.querySelector('[role="status"]')?.textContent).toContain("已关闭")
   expect(open).not.toHaveBeenCalled()
 })
 
 it("never turns a conflict notification into an automatic close or reopen", async () => {
-  await render({ phase: "active", notice: "mode_conflict" })
+  await show({ phase: "active", notice: "mode_conflict" })
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("请先关闭")
   expect(open).not.toHaveBeenCalled()
   expect(close).not.toHaveBeenCalled()
 })
 
 it.each(["active", "closed"] as const)("blocks %s operations while an action is pending", async (phase) => {
-  await render({ phase, pending: true })
+  await show({ phase, pending: true })
   expect(host.querySelector("select")?.disabled).toBe(true)
   expect(host.querySelector("button")?.disabled).toBe(true)
   await submit()
-  await act(async () => host.querySelector("button")!.click())
+  await settleBrowser(async () => host.querySelector("button")!.click())
   expect(open).not.toHaveBeenCalled()
   expect(close).not.toHaveBeenCalled()
 })
@@ -107,7 +114,7 @@ it.each([
   readBrowserProfileReport({}),
   readBrowserProfileReport({ profile_mode: "shared", storage_shared: false }),
 ])("exposes no write controls for an unconfirmed report: %j", async (profile) => {
-  await render({ profile })
+  await show({ profile })
   expect(host.querySelector("select")).toBeNull()
   expect(host.querySelector("button")).toBeNull()
   expect(open).not.toHaveBeenCalled()
@@ -115,16 +122,16 @@ it.each([
 })
 
 it("keeps a reported mode read-only until a consumer action port is installed", async () => {
-  await render({ actions: undefined, phase: "active" })
+  await show({ actions: undefined, phase: "active" })
   expect(host.querySelector('[role="status"]')?.textContent).toContain("当前模式：共享账户")
   expect(host.querySelector("select")).toBeNull()
   expect(host.querySelector("button")).toBeNull()
 })
 
 it("does not apply the previous chat's draft mode to another chat", async () => {
-  await render()
+  await show()
   await chooseClean()
-  await render({ sessionId: "chat-b" })
+  await show({ sessionId: "chat-b" })
   expect(host.querySelector("select")?.value).toBe("shared")
   expect(open).not.toHaveBeenCalled()
   await submit()
@@ -132,9 +139,9 @@ it("does not apply the previous chat's draft mode to another chat", async () => 
 })
 
 it("preserves the selected mode while changing locale", async () => {
-  await render()
+  await show()
   await chooseClean()
-  await act(async () => i18n.changeLanguage("en-US"))
+  await settleBrowser(async () => i18n.changeLanguage("en-US"))
   expect(host.querySelector("select")?.value).toBe("clean")
   expect(host.textContent).toContain("Shared account")
   expect(host.textContent).toContain("not a security boundary")
@@ -144,23 +151,23 @@ it("preserves the selected mode while changing locale", async () => {
 
 it("offers only an explicit mode-free default open for an unreported closed scope", async () => {
   const openDefault = vi.fn()
-  await render({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault } })
+  await show({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault } })
   expect(host.querySelector("select")).toBeNull()
   expect(host.textContent).toContain("当前聊天浏览器已关闭")
   expect(host.textContent).not.toContain("当前模式：")
-  await act(async () => host.querySelector("button")!.click())
+  await settleBrowser(async () => host.querySelector("button")!.click())
   expect(openDefault).toHaveBeenCalledExactlyOnceWith("chat-a")
   expect(open).not.toHaveBeenCalled()
 })
 
 it("still blocks a contradictory profile report even if initial opening is allowed", async () => {
-  await render({ profile: { kind: "invalid" }, phase: "closed", actions: { open, close, openDefault: vi.fn() } })
+  await show({ profile: { kind: "invalid" }, phase: "closed", actions: { open, close, openDefault: vi.fn() } })
   expect(host.querySelector("select")).toBeNull()
   expect(open).not.toHaveBeenCalled()
 })
 
 it("does not expose mode choices for a legacy closed scope with no positive profile report", async () => {
-  await render({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault: vi.fn() } })
+  await show({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault: vi.fn() } })
   expect(host.querySelector("select")).toBeNull()
   expect(host.textContent).not.toContain("当前模式：")
   expect(open).not.toHaveBeenCalled()
@@ -168,15 +175,15 @@ it("does not expose mode choices for a legacy closed scope with no positive prof
 
 it("offers a separate explicit clean request without changing the legacy default or claiming a mode", async () => {
   const openDefault = vi.fn(), openClean = vi.fn()
-  await render({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault, openClean } })
+  await show({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault, openClean } })
   expect(host.querySelector("select")).toBeNull()
   expect(host.textContent).not.toContain("当前模式：")
   expect(openClean).not.toHaveBeenCalled()
   const button = [...host.querySelectorAll("button")].find(button => button.textContent === "以干净会话打开")!
-  await act(async () => button.click())
+  await settleBrowser(async () => button.click())
   expect(openClean).toHaveBeenCalledExactlyOnceWith("chat-a")
   expect(openDefault).not.toHaveBeenCalled()
   expect(open).not.toHaveBeenCalled()
-  await render({ profile: { kind: "unreported" }, phase: "closed", pending: true, actions: { open, close, openDefault, openClean } })
+  await show({ profile: { kind: "unreported" }, phase: "closed", pending: true, actions: { open, close, openDefault, openClean } })
   expect([...host.querySelectorAll("button")].every(button => button.disabled)).toBe(true)
 })

@@ -16,6 +16,8 @@ describe("local feature preload error policy", () => {
     new Error("Unable to preload CSS for /base/assets/runDiagnostic-z9-Y.css?revision=next"),
     new Error("Importing a module script failed: /assets/RunDiagnosticsDialogContent-123.js#retry"),
     "Unable to preload CSS for /assets/RunDiagnosticsDialogContent-z9-Y.css",
+    new Error("Failed to fetch dynamically imported module: https://app.example/assets/BrowserPane-AbC_123.js"),
+    "Unable to preload CSS for /base/assets/BrowserPane-z9-Y.css?revision=next",
   ])("routes only known shell-preserving feature failures locally", (payload) => {
     expect(isLocalFeaturePreloadError(payload)).toBe(true)
   })
@@ -32,6 +34,8 @@ describe("local feature preload error policy", () => {
     "Failed to fetch /assets/RunDiagnosticsDialogContent.js",
     "Failed to fetch /assets/runDiagnostics-AbC.js",
     "Failed to fetch /assets/RunDiagnosticsDialog-AbC.js",
+    "Failed to fetch /assets/BrowserPane.js",
+    "Failed to fetch /assets/LazyBrowserPaneView-AbC.js",
     new Error("Failed to fetch /assets/renderPdf-AbC.js"),
     { message: "Failed to fetch /assets/Settings-AbC.js" },
     null,

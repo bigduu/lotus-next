@@ -1,4 +1,4 @@
-import { createUniqueId, Show } from "solid-js"
+import { createSignal, createUniqueId, Show } from "solid-js"
 import type { BrowserProfileMode } from "@services/browser/types"
 import type { BrowserProfileReport } from "@services/browser/profileMode"
 import { createUiText } from "../../shell/uiText"
@@ -9,6 +9,17 @@ export interface BrowserProfileActions {
   close: (sessionId: string) => void
   openDefault?: (sessionId: string) => void
   openClean?: (sessionId: string) => void
+}
+
+export function createBrowserProfileDraft() {
+  const [choice, setChoice] = createSignal<{ sessionId: string; mode: BrowserProfileMode } | null>(null)
+  return {
+    mode: (sessionId: string): BrowserProfileMode => {
+      const current = choice()
+      return current?.sessionId === sessionId ? current.mode : "shared"
+    },
+    select: (sessionId: string, mode: BrowserProfileMode) => setChoice({ sessionId, mode }),
+  }
 }
 
 interface BrowserProfileSelectorProps {

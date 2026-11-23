@@ -1,10 +1,18 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createSignal } from "solid-js"
+import { render } from "@solidjs/web"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { browserService } from "@services/browser/BrowserService"
 import { ApiError } from "@services/api"
 import { FileOperationsService } from "@/shared/services/FileOperationsService"
 import { BrowserPane } from "./BrowserPane"
+import { settleBrowser } from "./browserSessionTestHarness"
+
+vi.mock("@lucide/solid", () => {
+  // Vitest externalizes the icon module as server JSX. Keep the DOM fixture
+  // on client elements. The built browser cases exercise the real icons.
+  const Icon = () => <svg aria-hidden="true" />
+  return { ArrowLeft: Icon, ArrowRight: Icon, Camera: Icon, Code2: Icon, ExternalLink: Icon, Globe2: Icon, LoaderCircle: Icon, RefreshCw: Icon, X: Icon }
+})
 
 vi.mock("@services/browser/BrowserService", () => ({
   browserService: {
@@ -24,11 +32,11 @@ vi.mock("@/shared/services/FileOperationsService", () => ({
   FileOperationsService: { saveBinaryFile: vi.fn() },
 }))
 
-let root: Root
+let dispose: () => void
+let show: (sessionId: string, active?: boolean) => Promise<void>
 let host: HTMLDivElement
 
 beforeEach(async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   vi.mocked(browserService.open).mockResolvedValue({
     page_epoch: 1,
     frame_seq: 0,
@@ -54,18 +62,21 @@ beforeEach(async () => {
   })
   vi.mocked(FileOperationsService.saveBinaryFile).mockResolvedValue({ filename: "browser-screenshot.jpg", success: true })
   host = document.body.appendChild(document.createElement("div"))
-  root = createRoot(host)
-  await act(async () => root.render(<BrowserPane sessionId="sid" active />))
+  const [scope, setScope] = createSignal({ sessionId: "sid", active: true })
+  show = (sessionId, active = true) => settleBrowser(() => setScope({ sessionId, active }))
+  await settleBrowser(() => {
+    dispose = render(() => <BrowserPane sessionId={scope().sessionId} active={scope().active} />, host)
+  })
 })
 
 afterEach(() => {
-  act(() => root.unmount())
+  dispose()
   host.remove()
   vi.resetAllMocks()
 })
 
 it("saves a Bamboo screenshot through the platform file service", async () => {
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
+  await settleBrowser(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
 
   expect(browserService.screenshot).toHaveBeenCalledWith("sid", expect.any(AbortSignal))
   expect(FileOperationsService.saveBinaryFile).toHaveBeenCalledWith(
@@ -82,7 +93,7 @@ it("surfaces a native save failure but treats dialog cancellation as cancellatio
     success: false,
     error: "permission denied",
   })
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
+  await settleBrowser(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("保存截图失败")
 
   vi.mocked(FileOperationsService.saveBinaryFile).mockResolvedValueOnce({
@@ -90,7 +101,7 @@ it("surfaces a native save failure but treats dialog cancellation as cancellatio
     success: false,
     error: "User cancelled save operation",
   })
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
+  await settleBrowser(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
   expect(host.querySelector('[role="alert"]')).toBeNull()
 })
 
@@ -100,21 +111,21 @@ it("clears save errors on chat switch and ignores a previous chat's delayed fail
     success: false,
     error: "permission denied",
   })
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
+  await settleBrowser(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("保存截图失败")
 
-  await act(async () => root.render(<BrowserPane sessionId="second-chat" active />))
+  await show("second-chat")
   expect(host.querySelector('[role="alert"]')).toBeNull()
 
   let finishSave!: (result: { filename: string; success: boolean; error: string }) => void
   vi.mocked(FileOperationsService.saveBinaryFile).mockImplementationOnce(() => new Promise((resolve) => {
     finishSave = resolve
   }))
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
+  await settleBrowser(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
   expect(FileOperationsService.saveBinaryFile).toHaveBeenCalledTimes(2)
 
-  await act(async () => root.render(<BrowserPane sessionId="third-chat" active />))
-  await act(async () => finishSave({ filename: "", success: false, error: "permission denied" }))
+  await show("third-chat")
+  await settleBrowser(async () => finishSave({ filename: "", success: false, error: "permission denied" }))
   expect(host.querySelector('[role="alert"]')).toBeNull()
 })
 
@@ -133,7 +144,7 @@ it("focuses a pending prompt while letting app controls keep focus and keyboard 
   }
   vi.mocked(browserService.open).mockResolvedValueOnce(pending)
   vi.mocked(browserService.get).mockResolvedValue(pending)
-  await act(async () => root.render(<BrowserPane sessionId="prompt-chat" active />))
+  await show("prompt-chat")
 
   const modal = host.querySelector<HTMLDivElement>('[role="dialog"]')!
   expect(modal.textContent).toContain("来自 未知网页")
@@ -148,7 +159,7 @@ it("focuses a pending prompt while letting app controls keep focus and keyboard 
   expect(browserInput.disabled).toBe(true)
 
   const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })
-  await act(async () => {
+  await settleBrowser(async () => {
     accept.focus()
     accept.dispatchEvent(tab)
   })
@@ -156,16 +167,16 @@ it("focuses a pending prompt while letting app controls keep focus and keyboard 
 
   const outside = document.body.appendChild(document.createElement("textarea"))
   outside.setAttribute("aria-label", "消息")
-  await act(async () => outside.focus())
+  await settleBrowser(async () => outside.focus())
   const typed = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true })
   outside.dispatchEvent(typed)
   expect(document.activeElement).toBe(outside)
   expect(typed.defaultPrevented).toBe(false)
-  await act(async () => browserInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+  await settleBrowser(async () => browserInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
   expect(browserService.input).not.toHaveBeenCalled()
 
   vi.mocked(browserService.get).mockResolvedValueOnce({ ...pending, pending_dialog: undefined })
-  await act(async () => root.render(<BrowserPane sessionId="another-chat" active />))
+  await show("another-chat")
   expect(document.activeElement).toBe(outside)
   outside.remove()
 })
@@ -194,16 +205,16 @@ it("clears the dialog overlay after a transient state failure when the model ans
     .mockRejectedValueOnce(new ApiError("temporarily unavailable", 503, "Unavailable"))
     .mockImplementation(() => modelResponse)
 
-  await act(async () => root.render(<BrowserPane sessionId="recovering-dialog" active />))
+  await show("recovering-dialog")
   expect(host.querySelector("[data-browser-dialog]")).not.toBeNull()
 
-  await act(async () => {
+  await settleBrowser(async () => {
     await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(4), { timeout: 3000 })
   })
   expect(host.querySelector("[data-browser-dialog]")).not.toBeNull()
   expect(host.querySelector('[role="alert"]')).toBeNull()
 
-  await act(async () => resolveModel(current))
+  await settleBrowser(async () => resolveModel(current))
   expect(host.querySelector("[data-browser-dialog]")).toBeNull()
   expect(host.querySelector('[role="alert"]')).toBeNull()
   expect(browserService.get).toHaveBeenCalledTimes(4)
@@ -221,7 +232,7 @@ it("shows a focused address entry instead of browser chrome when no page exists"
     url: "", title: "", viewport: { width: 640, height: 480 },
     can_go_back: false, can_go_forward: false,
   })
-  await act(async () => root.render(<BrowserPane sessionId="empty-chat" active />))
+  await show("empty-chat")
 
   expect(host.querySelector("[data-browser-empty]")?.textContent).toContain("还没有打开网页")
   expect(host.querySelector<HTMLInputElement>('input[aria-label="网页地址"]')).toBe(document.activeElement)
@@ -235,11 +246,11 @@ it("does not present a cached mode as current when the canonical reread fails", 
     viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
     profile_mode: "shared", storage_shared: true,
   })
-  await act(async () => root.render(<BrowserPane sessionId="profile-read" active />))
+  await show("profile-read")
   expect(host.textContent).toContain("当前模式：共享账户")
-  await act(async () => root.render(<BrowserPane sessionId="profile-read" active={false} />))
+  await show("profile-read", false)
   vi.mocked(browserService.get).mockRejectedValueOnce(new ApiError("unavailable", 503, "Unavailable"))
-  await act(async () => root.render(<BrowserPane sessionId="profile-read" active />))
+  await show("profile-read")
   expect(host.textContent).not.toContain("当前模式：")
   expect(host.querySelector("select")).toBeNull()
   expect(host.textContent).toContain("暂不能选择")
