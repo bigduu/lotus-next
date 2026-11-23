@@ -1,18 +1,7 @@
 import { uiText } from "@shared/i18n/ui"
 import type { ModelLimitOverride } from "./useSystemConfig"
 
-export interface GlobalDefault {
-  max_context_tokens: number
-  max_output_tokens: number
-  safety_margin: number
-}
-
-export const FALLBACK_DEFAULT: GlobalDefault = {
-  max_context_tokens: 1_000_000,
-  max_output_tokens: 32_000,
-  safety_margin: 10_000,
-}
-
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
 export const UNLIMITED_OUTPUT = "unlimited"
 
 export interface LimitRowDraft {
@@ -20,7 +9,7 @@ export interface LimitRowDraft {
   model_pattern: string
   /** User-added/persisted-only rows can edit the model pattern itself. */
   isCustom: boolean
-  /** False means the row follows Bamboo's global defaults and is not saved. */
+  /** False means this row has no override to save. */
   customized: boolean
   max_context_tokens: string
   max_output_tokens: string | null
@@ -69,7 +58,6 @@ const toRow = (
 
 /** Build display rows = persisted overrides union acknowledged used models. */
 export function buildLimitRows(
-  defaults: GlobalDefault,
   overrides: readonly ModelLimitOverride[],
   usedModels: readonly string[],
 ): LimitRowDraft[] {
@@ -91,8 +79,8 @@ export function buildLimitRows(
       model_pattern: model,
       isCustom: false,
       customized: false,
-      max_context_tokens: formatTokenCount(defaults.max_context_tokens),
-      max_output_tokens: formatTokenCount(defaults.max_output_tokens),
+      max_context_tokens: "",
+      max_output_tokens: null,
       safety_margin: "",
     })
   }
@@ -120,10 +108,10 @@ export function validateLimitRows(
       return { error: uiText("the_context_window_for_must_be_an_integer_of_at_least_1_3efecb54", { v0: pattern }) }
     }
 
-    const rawOutput = row.max_output_tokens
+    const rawOutput = row.max_output_tokens?.trim() || null
     const unlimited = supportsUnlimitedOutput && (
-      rawOutput?.trim().toLowerCase() === UNLIMITED_OUTPUT
-      || rawOutput?.trim() === uiText("unlimited_model_output")
+      rawOutput?.toLowerCase() === UNLIMITED_OUTPUT
+      || rawOutput === uiText("unlimited_model_output")
     )
     const output = rawOutput === null || unlimited ? null : parseTokenCount(rawOutput)
     if (rawOutput !== null && !unlimited && (output === null || output < 1)) {

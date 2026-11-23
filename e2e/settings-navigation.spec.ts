@@ -153,10 +153,11 @@ test("Tailscale settings connect, require a password, and manage the private add
   expect(observation.pageErrors).toEqual([]);
 });
 
-test("maximum output can switch between unlimited and a fixed limit", async ({ page }, testInfo) => {
+test("maximum output preserves automatic, unlimited, and fixed limits", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1");
     localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+    localStorage.setItem("zenith.usedModels.v1", JSON.stringify(["observed-model"]));
   });
   const observation = await installArtifactRuntime(page, standaloneScenario);
   const fixed = {
@@ -187,8 +188,37 @@ test("maximum output can switch between unlimited and a fixed limit", async ({ p
   const output = settings.getByRole("combobox", { name: "fixture-model 最大输出" });
   const expandOutput = settings.getByRole("button", { name: "展开fixture-model 最大输出选项" });
   const save = settings.getByRole("button", { name: "保存", exact: true });
+  const observedRow = settings.getByRole("row").filter({ hasText: "observed-model" });
+  const observedContext = observedRow.getByRole("combobox", { name: "observed-model 上下文窗口" });
+  const observedOutput = observedRow.getByRole("combobox", { name: "observed-model 最大输出" });
 
+  await expect(settings.getByText(/兼容回退/)).toContainText("64K");
   await expect(output).toHaveValue("32K");
+  await expect(observedRow.getByText("跟随默认")).toBeVisible();
+  await expect(observedContext).toBeDisabled();
+  await expect(observedContext).toHaveValue("1M（回退值）");
+  await expect(observedOutput).toBeDisabled();
+  await expect(observedOutput).toHaveValue("");
+  await expect(observedOutput).toHaveAttribute("placeholder", "自动");
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("Model limits with automatic and fixed rows", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  }
+
+  await observedRow.getByRole("button", { name: "自定义", exact: true }).click();
+  await expect(observedContext).toHaveValue("1M");
+  await observedContext.fill("128K");
+  await save.click();
+  await expect(settings.getByText("已保存", { exact: true })).toBeVisible();
+  const automatic = {
+    model_pattern: "observed-model",
+    max_context_tokens: 128_000,
+    max_output_tokens: null,
+  };
+  expect(modelLimits).toEqual([fixed, automatic]);
+
   await expandOutput.click();
   const unlimited = page.getByRole("option", { name: /^不限/ });
   await expect(unlimited).toBeVisible();
@@ -202,7 +232,7 @@ test("maximum output can switch between unlimited and a fixed limit", async ({ p
   await expect(output).toHaveValue("不限");
   await save.click();
   await expect(settings.getByText("已保存", { exact: true })).toBeVisible();
-  expect(modelLimits).toEqual([{ ...fixed, max_output_tokens: null, unlimited_output: true }]);
+  expect(modelLimits).toEqual([{ ...fixed, max_output_tokens: null, unlimited_output: true }, automatic]);
 
   await selectSettingsCategory(settings, "general", "通用");
   await selectSettingsCategory(settings, "model-limits", "模型限额");
@@ -211,7 +241,7 @@ test("maximum output can switch between unlimited and a fixed limit", async ({ p
   await page.getByRole("option", { name: /^32K/ }).click();
   await save.click();
   await expect(settings.getByText("已保存", { exact: true })).toBeVisible();
-  expect(modelLimits).toEqual([fixed]);
+  expect(modelLimits).toEqual([fixed, automatic]);
   expect(observation.errorResponses).toEqual([]);
   expect(observation.pageErrors).toEqual([]);
 });

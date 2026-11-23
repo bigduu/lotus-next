@@ -11,20 +11,19 @@ import {
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { getErrorMessage } from "@services/api"
-import { serviceFactory } from "@services/common/ServiceFactory"
+import { serviceFactory, type ModelLimitDefault } from "@services/common/ServiceFactory"
 import { useAppStore } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getUsedModels, removeUsedModel } from "@shared/utils/usedModels"
 import { ConfirmDialog } from "./ConfirmDialog"
 import { StatusLine } from "./StatusLine"
 import {
-  FALLBACK_DEFAULT,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
   UNLIMITED_OUTPUT,
   buildLimitRows,
   formatTokenCount,
   nextModelLimitRowId,
   validateLimitRows,
-  type GlobalDefault,
   type LimitRowDraft,
 } from "./modelLimits"
 import type {
@@ -60,22 +59,6 @@ const MAX_OUTPUT_PRESETS: ComboOption[] = [
   { value: "64K", label: "64K", description: "64,000 tokens" },
   { value: "128K", label: "128K", description: "128,000 tokens" },
 ]
-
-function parseGlobalDefault(response: {
-  model_limits?: Array<Partial<GlobalDefault>>
-}): GlobalDefault {
-  const first = response.model_limits?.[0]
-  const positive = (value: unknown, fallback: number) =>
-    typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback
-  const nonNegative = (value: unknown, fallback: number) =>
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : fallback
-
-  return {
-    max_context_tokens: positive(first?.max_context_tokens, FALLBACK_DEFAULT.max_context_tokens),
-    max_output_tokens: positive(first?.max_output_tokens, FALLBACK_DEFAULT.max_output_tokens),
-    safety_margin: nonNegative(first?.safety_margin, FALLBACK_DEFAULT.safety_margin),
-  }
-}
 
 function EditableValueCombobox({
   ariaLabel,
@@ -268,14 +251,14 @@ export function SectionModelLimits({
     (state) => state.providerSnapshot ?? state.providerRepairSnapshot,
   )
   const catalogModels = useProviderStore((state) => state.catalog?.models)
-  const [globalDefault, setGlobalDefault] = useState<GlobalDefault>(FALLBACK_DEFAULT)
+  const [compatibilityFallback, setCompatibilityFallback] = useState<ModelLimitDefault>()
   const [supportsUnlimitedOutput, setSupportsUnlimitedOutput] = useState(
     () => config.model_limits?.some((row) => row.unlimited_output === true) ?? false,
   )
   const [usedModels, setUsedModels] = useState<string[]>(getUsedModels)
   // Seed once: another section save must not clobber in-progress edits.
   const [rows, setRows] = useState<LimitRowDraft[]>(() =>
-    buildLimitRows(FALLBACK_DEFAULT, config.model_limits ?? [], getUsedModels()),
+    buildLimitRows(config.model_limits ?? [], getUsedModels()),
   )
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<SectionMessage>(null)
@@ -288,20 +271,13 @@ export function SectionModelLimits({
       .getModelLimitDefaults()
       .then((response) => {
         if (cancelled) return
-        const defaults = parseGlobalDefault(response)
+        const fallback = response.model_limits?.[0]
+        if (fallback
+          && [fallback.max_context_tokens, fallback.max_output_tokens, fallback.safety_margin].every(Number.isSafeInteger)
+          && fallback.max_context_tokens > 0 && fallback.max_output_tokens > 0 && fallback.safety_margin >= 0) {
+          setCompatibilityFallback(fallback)
+        }
         if (response.supports_unlimited_output === true) setSupportsUnlimitedOutput(true)
-        setGlobalDefault(defaults)
-        setRows((current) =>
-          current.map((row) =>
-            row.customized
-              ? row
-              : {
-                  ...row,
-                  max_context_tokens: formatTokenCount(defaults.max_context_tokens),
-                  max_output_tokens: formatTokenCount(defaults.max_output_tokens),
-                },
-          ),
-        )
       })
       .catch(() => {})
     return () => {
@@ -309,6 +285,13 @@ export function SectionModelLimits({
     }
   }, [])
 
+  const automaticLabel = uiText("automatic_model_limit")
+  const defaultContextWindow = formatTokenCount(
+    compatibilityFallback?.max_context_tokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS,
+  )
+  const inheritedContextWindow = compatibilityFallback
+    ? uiText("model_limits_context_fallback", { tokens: defaultContextWindow })
+    : "—"
   const unlimitedLabel = uiText("unlimited_model_output")
   const unlimitedDescription = uiText("unlimited_model_output_description")
   const outputPresets = useMemo(() => (
@@ -365,8 +348,8 @@ export function SectionModelLimits({
         model_pattern: "",
         isCustom: true,
         customized: true,
-        max_context_tokens: formatTokenCount(globalDefault.max_context_tokens),
-        max_output_tokens: formatTokenCount(globalDefault.max_output_tokens),
+        max_context_tokens: defaultContextWindow,
+        max_output_tokens: null,
         safety_margin: "",
       },
     ])
@@ -386,8 +369,8 @@ export function SectionModelLimits({
           ? {
               ...row,
               customized: false,
-              max_context_tokens: formatTokenCount(globalDefault.max_context_tokens),
-              max_output_tokens: formatTokenCount(globalDefault.max_output_tokens),
+              max_context_tokens: "",
+              max_output_tokens: null,
               safety_margin: "",
             }
           : row,
@@ -408,7 +391,7 @@ export function SectionModelLimits({
       const saved = await saveSection({ model_limits: result.overrides })
       const latestUsedModels = getUsedModels()
       setUsedModels(latestUsedModels)
-      setRows(buildLimitRows(globalDefault, saved.model_limits ?? [], latestUsedModels))
+      setRows(buildLimitRows(saved.model_limits ?? [], latestUsedModels))
       setMsg({ kind: "ok", text: uiText("saved_1bd91a7d") })
     } catch (error) {
       setMsg({ kind: "error", text: getErrorMessage(error) })
@@ -424,7 +407,7 @@ export function SectionModelLimits({
       const saved = await saveSection({ model_limits: [] })
       const latestUsedModels = getUsedModels()
       setUsedModels(latestUsedModels)
-      setRows(buildLimitRows(globalDefault, saved.model_limits ?? [], latestUsedModels))
+      setRows(buildLimitRows(saved.model_limits ?? [], latestUsedModels))
       setConfirmReset(false)
       setMsg({ kind: "ok", text: uiText("restored_global_defaults_4f47beee") })
     } catch (error) {
@@ -446,11 +429,14 @@ export function SectionModelLimits({
           <Plus className="size-4" />{uiText("add_model_e552c2ac")}</Button>
       </div>
 
-      <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-        {uiText("global_defaults_context_b7667fd0")} <span className="font-medium text-foreground">{formatTokenCount(globalDefault.max_context_tokens)}</span>
-        {" · "}{uiText("max_output_d6601037")} <span className="font-medium text-foreground">{formatTokenCount(globalDefault.max_output_tokens)}</span>
-        {" · "}{uiText("safety_margin_40253c60")} <span className="font-medium text-foreground">{formatTokenCount(globalDefault.safety_margin)}</span>
-      </div>
+      {compatibilityFallback ? (
+        <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          {uiText("model_limits_compatibility_fallback")}
+          {" · "}{uiText("context_window_bb074b86")} <span className="font-medium text-foreground">{formatTokenCount(compatibilityFallback.max_context_tokens)}</span>
+          {" · "}{uiText("max_output_d6601037")} <span className="font-medium text-foreground">{formatTokenCount(compatibilityFallback.max_output_tokens)}</span>
+          {" · "}{uiText("safety_margin_40253c60")} <span className="font-medium text-foreground">{formatTokenCount(compatibilityFallback.safety_margin)}</span>
+        </div>
+      ) : null}
 
       <p className="text-xs leading-relaxed text-muted-foreground">
         {uiText("choose_or_type_a_model_pattern_context_and_output_limit_eb2906c4")}</p>
@@ -488,7 +474,7 @@ export function SectionModelLimits({
                 <td>
                   <EditableValueCombobox
                     ariaLabel={uiText("context_window_74c09029", { v0: row.model_pattern || uiText("new_model") })}
-                    value={row.max_context_tokens}
+                    value={row.customized ? row.max_context_tokens : inheritedContextWindow}
                     onChange={(value) => updateRow(row.id, { max_context_tokens: value })}
                     options={CONTEXT_WINDOW_PRESETS}
                     placeholder={uiText("e_g_258k_or_1m_0a242a0c")}
@@ -502,9 +488,7 @@ export function SectionModelLimits({
                     value={row.max_output_tokens ?? ""}
                     onChange={(value) => updateRow(row.id, { max_output_tokens: value })}
                     options={outputPresets}
-                    placeholder={uiText(row.max_output_tokens === null
-                      ? "automatic_model_output"
-                      : "e_g_16k_or_32k_95dea87b")}
+                    placeholder={automaticLabel}
                     disabled={!row.customized}
                     inputMode="decimal"
                   />
@@ -514,7 +498,7 @@ export function SectionModelLimits({
                     className="h-8 text-xs"
                     aria-label={uiText("safety_margin_b3945952", { v0: row.model_pattern || uiText("new_model") })}
                     inputMode="decimal"
-                    placeholder={formatTokenCount(globalDefault.safety_margin)}
+                    placeholder={automaticLabel}
                     value={row.safety_margin}
                     disabled={!row.customized}
                     onChange={(event) => updateRow(row.id, { safety_margin: event.target.value })}
@@ -532,7 +516,10 @@ export function SectionModelLimits({
                         size="sm"
                         variant="ghost"
                         className="h-8 px-2"
-                        onClick={() => updateRow(row.id, { customized: true })}
+                        onClick={() => updateRow(row.id, {
+                          customized: true,
+                          max_context_tokens: defaultContextWindow,
+                        })}
                       >
                         {uiText("customize_4eafa9e9")}</Button>
                     ) : !row.isCustom ? (
