@@ -1,10 +1,9 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { browserService } from "@services/browser/BrowserService"
 import { ApiError } from "@services/api"
-import { useBrowserSession } from "./useBrowserSession"
-import { changeLocale } from "@shared/i18n"
+import type { BrowserSession } from "./createBrowserSession"
+import { createBrowserSessionHarness, settleBrowser } from "./browserSessionTestHarness"
+import { changeLocale } from "@shared/i18n/runtime"
 import type { BrowserState } from "@services/browser/types"
 
 vi.mock("@services/browser/BrowserService", () => ({
@@ -67,30 +66,21 @@ const pendingState = (type: "alert" | "confirm" | "prompt" = "prompt"): BrowserS
   },
 })
 
-let root: Root
-let host: HTMLDivElement
-let browser: ReturnType<typeof useBrowserSession>
+let harness: ReturnType<typeof createBrowserSessionHarness>
+let browser: BrowserSession
 const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, "createObjectURL")
 const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL")
 
-function Harness({ sessionId = "sid", active = true }: { sessionId?: string; active?: boolean }) {
-  browser = useBrowserSession(sessionId, active)
-  return null
-}
-
 beforeEach(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:frame-1") })
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() })
   vi.mocked(browserService.get).mockResolvedValue(state(1))
-  host = document.createElement("div")
-  document.body.appendChild(host)
-  root = createRoot(host)
+  harness = createBrowserSessionHarness("sid")
+  browser = harness.browser
 })
 
 afterEach(() => {
-  act(() => root.unmount())
-  host.remove()
+  harness.dispose()
   vi.resetAllMocks()
   if (originalCreateObjectURL) Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL)
   else Reflect.deleteProperty(URL, "createObjectURL")
@@ -109,12 +99,12 @@ it("stops polling and frees the frame when the tab hides without deleting the Ba
     })
     .mockImplementation(() => new Promise(() => {}))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.frame?.frame_seq).toBe(1)
   const signal = vi.mocked(browserService.frame).mock.calls[1]?.[3]
   expect(signal?.aborted).toBe(false)
 
-  await act(async () => root.render(<Harness active={false} />))
+  await harness.show("sid", false)
   expect(signal?.aborted).toBe(true)
   expect(browser.frame).toBeNull()
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:frame-1")
@@ -130,9 +120,9 @@ it("opens the first URL in one tab request without leaving a blank page", async 
     url: "https://example.test/first",
   })
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.state?.tabs).toHaveLength(0)
-  await act(async () => browser.openUrlInNewTab("https://example.test/first"))
+  await settleBrowser(async () => browser.openUrlInNewTab("https://example.test/first"))
 
   expect(browserService.createTab).toHaveBeenCalledExactlyOnceWith("sid", 7, "https://example.test/first")
   expect(browserService.navigate).not.toHaveBeenCalled()
@@ -154,10 +144,10 @@ it("restarts frame polling from zero after navigation changes the page epoch", a
     .mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.navigate).mockResolvedValue(state(2))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(vi.mocked(browserService.frame).mock.calls[1]?.[1]).toBe(5)
-  await act(async () => browser.navigate("https://example.test/next"))
-  await act(async () => releaseSecond(null))
+  await settleBrowser(async () => browser.navigate("https://example.test/next"))
+  await settleBrowser(async () => releaseSecond(null))
 
   expect(vi.mocked(browserService.frame).mock.calls[2]?.[1]).toBe(0)
   expect(browser.state?.page_epoch).toBe(2)
@@ -200,11 +190,11 @@ it("clears an open DOM snapshot when the agent navigates the shared page", async
       url: "https://example.test/next",
     })
 
-  await act(async () => root.render(<Harness />))
-  await act(async () => browser.inspectDom())
+  await harness.show()
+  await settleBrowser(async () => browser.inspectDom())
   expect(browser.dom?.snapshot).toBe("old DOM")
 
-  await act(async () => releaseRemoteFrame({
+  await settleBrowser(async () => releaseRemoteFrame({
     blob: new Blob(["new frame"], { type: "image/jpeg" }),
     frame_seq: 2,
     page_epoch: 2,
@@ -245,20 +235,20 @@ it("discards an in-flight old-tab frame and DOM after a human tab switch", async
   vi.mocked(browserService.dom).mockImplementation(() => delayedDom)
   vi.mocked(browserService.activateTab).mockResolvedValue(tabbedState(2, "tab-b"))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.frame?.active_tab_id).toBe("tab-a")
   let inspect!: Promise<void>
-  await act(async () => { inspect = browser.inspectDom() })
-  await act(async () => browser.activateTab("tab-b"))
+  await settleBrowser(async () => { inspect = browser.inspectDom() })
+  await settleBrowser(async () => browser.activateTab("tab-b"))
   expect(browser.state?.active_tab_id).toBe("tab-b")
   expect(browser.frame).toBeNull()
-  await act(async () => releaseDom({
+  await settleBrowser(async () => releaseDom({
     page_epoch: 1, active_tab_id: "tab-a", url: "https://example.test/tab-a",
     title: "tab-a", snapshot: "old DOM",
   }))
-  await act(async () => inspect)
+  await settleBrowser(async () => inspect)
   expect(browser.dom).toBeNull()
-  await act(async () => releaseFrame({
+  await settleBrowser(async () => releaseFrame({
     blob: new Blob(["late old frame"], { type: "image/jpeg" }),
     frame_seq: 2, page_epoch: 1, active_tab_id: "tab-a",
     viewport: { width: 640, height: 480 },
@@ -278,10 +268,10 @@ it("rejects a delayed screenshot after a popup becomes the active tab", async ()
   vi.mocked(browserService.screenshot).mockImplementation(() => delayedScreenshot)
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(2, "tab-b"))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   let capture!: Promise<Awaited<ReturnType<typeof browser.captureScreenshot>>>
-  await act(async () => { capture = browser.captureScreenshot() })
-  await act(async () => releaseScreenshot({
+  await settleBrowser(async () => { capture = browser.captureScreenshot() })
+  await settleBrowser(async () => releaseScreenshot({
     blob: new Blob(["old screenshot"], { type: "image/jpeg" }),
     page_epoch: 1,
     active_tab_id: "tab-a",
@@ -313,12 +303,12 @@ it("keeps the old frame hidden when its poll returns before tab activation compl
     .mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.activateTab).mockImplementation(() => activation)
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.frame?.active_tab_id).toBe("tab-a")
   let switching!: Promise<BrowserState | null>
-  await act(async () => { switching = browser.activateTab("tab-b") })
+  await settleBrowser(async () => { switching = browser.activateTab("tab-b") })
   expect(browser.frame).toBeNull()
-  await act(async () => releaseOldFrame({
+  await settleBrowser(async () => releaseOldFrame({
     blob: new Blob(["late old frame"], { type: "image/jpeg" }),
     frame_seq: 2, page_epoch: 1, active_tab_id: "tab-a",
     viewport: { width: 640, height: 480 },
@@ -326,8 +316,8 @@ it("keeps the old frame hidden when its poll returns before tab activation compl
   expect(browser.frame).toBeNull()
   expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
 
-  await act(async () => { releaseActivation(tabbedState(2, "tab-b")); await switching })
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)) })
+  await settleBrowser(async () => { releaseActivation(tabbedState(2, "tab-b")); await switching })
+  await settleBrowser(async () => { await new Promise((resolve) => setTimeout(resolve, 60)) })
   expect(browser.frame?.active_tab_id).toBe("tab-b")
 })
 
@@ -347,7 +337,7 @@ it("adopts a lower epoch and reset frame sequence after browser host recovery", 
     })
     .mockImplementation(() => new Promise(() => {}))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
 
   expect(browser.state?.page_epoch).toBe(4)
   expect(browser.state?.active_tab_id).toBe("tab-b")
@@ -383,15 +373,15 @@ it("restarts at zero when a state read sees a recovered host before an old frame
     })
     .mockImplementation(() => new Promise(() => {}))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.frame?.frame_seq).toBe(20)
   expect(vi.mocked(browserService.frame).mock.calls[1]?.[1]).toBe(20)
-  await act(async () => browser.inspectDom())
+  await settleBrowser(async () => browser.inspectDom())
   expect(browser.state?.page_epoch).toBe(4)
   expect(browser.state?.active_tab_id).toBe("tab-b")
   expect(browser.frame).toBeNull()
 
-  await act(async () => releaseOldFrame({
+  await settleBrowser(async () => releaseOldFrame({
     blob: new Blob(["late old host"], { type: "image/jpeg" }),
     frame_seq: 21, page_epoch: 90, active_tab_id: "tab-a",
     viewport: { width: 640, height: 480 },
@@ -418,7 +408,7 @@ it("advances past a stale frame on the same page without a hot poll loop", async
     })
     .mockImplementation(() => new Promise(() => {}))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(vi.mocked(browserService.frame).mock.calls[2]?.[1]).toBe(21)
   expect(browser.frame).toBeNull()
 })
@@ -435,12 +425,12 @@ it("does not let an older state request overwrite a completed tab switch", async
   vi.mocked(browserService.get).mockImplementation(() => staleGet)
   vi.mocked(browserService.activateTab).mockResolvedValue(tabbedState(91, "tab-b"))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   let inspect!: Promise<void>
-  await act(async () => { inspect = browser.inspectDom() })
-  await act(async () => browser.activateTab("tab-b"))
-  await act(async () => releaseGet(tabbedState(90, "tab-a")))
-  await act(async () => inspect)
+  await settleBrowser(async () => { inspect = browser.inspectDom() })
+  await settleBrowser(async () => browser.activateTab("tab-b"))
+  await settleBrowser(async () => releaseGet(tabbedState(90, "tab-a")))
+  await settleBrowser(async () => inspect)
 
   expect(browser.state?.page_epoch).toBe(91)
   expect(browser.state?.active_tab_id).toBe("tab-b")
@@ -466,26 +456,26 @@ it("fences frames when a queued close becomes an active-tab close", async () => 
   vi.mocked(browserService.activateTab).mockImplementation(() => activation)
   vi.mocked(browserService.closeTab).mockImplementation(() => close)
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   let switching!: Promise<BrowserState | null>
   let closing!: Promise<BrowserState | null>
-  await act(async () => {
+  await settleBrowser(async () => {
     switching = browser.activateTab("tab-b")
     closing = browser.closeTab("tab-b")
   })
-  await act(async () => { releaseActivation(tabbedState(2, "tab-b")); await switching })
+  await settleBrowser(async () => { releaseActivation(tabbedState(2, "tab-b")); await switching })
   expect(browser.state?.active_tab_id).toBe("tab-b")
   expect(browserService.closeTab).toHaveBeenCalledWith("sid", "tab-b", 2)
-  await act(async () => releaseOldFrame({
+  await settleBrowser(async () => releaseOldFrame({
     blob: new Blob(["late frame"], { type: "image/jpeg" }),
     frame_seq: 2, page_epoch: 1, active_tab_id: "tab-a",
     viewport: { width: 640, height: 480 },
   }))
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)) })
+  await settleBrowser(async () => { await new Promise((resolve) => setTimeout(resolve, 60)) })
   expect(browser.frame).toBeNull()
   expect(browserService.frame).toHaveBeenCalledTimes(2)
 
-  await act(async () => { releaseClose(tabbedState(3, "tab-a")); await closing })
+  await settleBrowser(async () => { releaseClose(tabbedState(3, "tab-a")); await closing })
   expect(browser.state?.active_tab_id).toBe("tab-a")
 })
 
@@ -501,12 +491,12 @@ it("keeps a cached JPEG and stops incompatible reads while a dialog is pending",
     .mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.get).mockResolvedValue(pendingState())
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
   expect(browser.frame?.frame_seq).toBe(4)
   expect(browser.error).toBeNull()
   expect(browserService.frame).toHaveBeenCalledTimes(2)
-  await act(async () => {
+  await settleBrowser(async () => {
     await browser.navigate("https://another.test/")
     await browser.viewport({ width: 800, height: 600 })
     await browser.inspectDom()
@@ -536,18 +526,18 @@ it("keeps the cached frame and resumes when one pending state read fails before 
     .mockRejectedValueOnce(new ApiError("temporarily unavailable", 503, "Unavailable"))
     .mockImplementation(() => modelResponse)
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
   expect(browser.frame?.frame_seq).toBe(4)
 
-  await act(async () => {
+  await settleBrowser(async () => {
     await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(4), { timeout: 3000 })
   })
   expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
   expect(browser.frame?.frame_seq).toBe(4)
   expect(browser.error).toBeNull()
 
-  await act(async () => resolveModel(current))
+  await settleBrowser(async () => resolveModel(current))
   expect(browserService.get).toHaveBeenCalledTimes(4)
   expect(browser.state?.pending_dialog).toBeUndefined()
   expect(browser.frame?.frame_seq).toBe(4)
@@ -562,8 +552,8 @@ it("answers an exact dialog without prompt text when untouched and refreshes a s
   ))
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(18, "tab-b"))
 
-  await act(async () => root.render(<Harness />))
-  await act(async () => browser.respondDialog(true))
+  await harness.show()
+  await settleBrowser(async () => browser.respondDialog(true))
   expect(browserService.respondDialog).toHaveBeenCalledWith("sid", {
     dialog_id: "a".repeat(24), expected_epoch: 17, accept: true,
   })
@@ -580,8 +570,8 @@ it("answers a background tab dialog using that dialog's identity while another t
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.respondDialog).mockResolvedValue(tabbedState(17, "tab-a"))
 
-  await act(async () => root.render(<Harness />))
-  await act(async () => browser.respondDialog(false))
+  await harness.show()
+  await settleBrowser(async () => browser.respondDialog(false))
   expect(browserService.respondDialog).toHaveBeenCalledWith("sid", {
     dialog_id: "a".repeat(24), expected_epoch: 17, accept: false,
   })
@@ -602,13 +592,13 @@ it("discards a late background tab response after the active tab changes", async
     ...tabbedState(18, "tab-b"), pending_dialog: pending.pending_dialog,
   })
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   let answering!: Promise<void>
-  await act(async () => { answering = browser.respondDialog(true) })
+  await settleBrowser(async () => { answering = browser.respondDialog(true) })
   expect(browserService.respondDialog).toHaveBeenCalledTimes(1)
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
+  await settleBrowser(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
   expect(browser.state?.active_tab_id).toBe("tab-b")
-  await act(async () => { releaseResponse(pending); await answering })
+  await settleBrowser(async () => { releaseResponse(pending); await answering })
   expect(browser.state?.active_tab_id).toBe("tab-b")
   expect(browser.state?.page_epoch).toBe(18)
 })
@@ -621,15 +611,15 @@ it("sends an explicitly empty prompt and discards a late result after model tab 
   vi.mocked(browserService.respondDialog).mockImplementation(() => response)
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(18, "tab-b"))
 
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   let answering!: Promise<void>
-  await act(async () => { answering = browser.respondDialog(true, "") })
+  await settleBrowser(async () => { answering = browser.respondDialog(true, "") })
   expect(browserService.respondDialog).toHaveBeenCalledWith("sid", {
     dialog_id: "a".repeat(24), expected_epoch: 17, accept: true, text: "",
   })
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
+  await settleBrowser(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
   expect(browser.state?.active_tab_id).toBe("tab-b")
-  await act(async () => { releaseResponse(pendingState()); await answering })
+  await settleBrowser(async () => { releaseResponse(pendingState()); await answering })
   expect(browser.state?.page_epoch).toBe(18)
   expect(browser.state?.active_tab_id).toBe("tab-b")
 })
@@ -637,9 +627,9 @@ it("sends an explicitly empty prompt and discards a late result after model tab 
 it("updates an existing browser error after switching language without restarting the browser", async () => {
   const cause = new ApiError("raw 后端诊断", 404, "Not Found")
   vi.mocked(browserService.get).mockRejectedValueOnce(cause)
-  await act(async () => root.render(<Harness />))
+  await harness.show()
   expect(browser.error).toBe("当前 Bamboo 尚未提供内置浏览器。")
-  await act(async () => { await changeLocale("en-US") })
+  await settleBrowser(async () => { await changeLocale("en-US") })
   expect(browser.error).toBe("This Bamboo version does not provide a built-in browser yet.")
   expect(browserService.get).toHaveBeenCalledTimes(1)
   expect(cause.message).toContain("raw 后端诊断")
