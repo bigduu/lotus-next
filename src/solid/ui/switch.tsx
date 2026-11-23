@@ -2,7 +2,7 @@ import { omit } from "solid-js"
 import type { ComponentProps } from "@solidjs/web"
 import * as SwitchPrimitive from "@kobalte/core/switch"
 
-import { feedbackMotion } from "@/components/ui/motion"
+import { feedbackMotion } from "@shared/theme/motion"
 import { cn } from "@/lib/utils"
 
 type SwitchProps = SwitchPrimitive.SwitchRootProps<"div"> &

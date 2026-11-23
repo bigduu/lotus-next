@@ -4,7 +4,7 @@ import * as DropdownMenuPrimitive from "@kobalte/core/dropdown-menu"
 import { Check, ChevronRight, Circle } from "@lucide/solid"
 
 import { cn } from "@/lib/utils"
-import { surfaceMotion } from "@/components/ui/motion"
+import { surfaceMotion } from "@shared/theme/motion"
 
 import { DialogLayerMount } from "./layer-scope"
 

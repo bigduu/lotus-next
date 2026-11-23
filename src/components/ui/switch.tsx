@@ -2,7 +2,7 @@ import * as React from "react"
 import * as SwitchPrimitive from "@radix-ui/react-switch"
 
 import { cn } from "@/lib/utils"
-import { feedbackMotion } from "./motion"
+import { feedbackMotion } from "@shared/theme/motion"
 
 function Switch({
   className,

@@ -1,7 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { Info, Loader2, X } from "lucide-react"
-import { surfaceMotion } from "@/components/ui/motion"
+import { surfaceMotion } from "@shared/theme/motion"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 

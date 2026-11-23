@@ -3,7 +3,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronRight, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { surfaceMotion } from "./motion"
+import { surfaceMotion } from "@shared/theme/motion"
 
 function DropdownMenu(
   props: React.ComponentProps<typeof DropdownMenuPrimitive.Root>

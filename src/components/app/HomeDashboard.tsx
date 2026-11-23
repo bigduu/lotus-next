@@ -21,7 +21,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { BrandMark } from "@/components/ui/brand-mark"
-import { surfaceMotion } from "@/components/ui/motion"
+import { surfaceMotion } from "@shared/theme/motion"
 import { cn } from "@/lib/utils"
 import {
   TASK_TEMPLATES,

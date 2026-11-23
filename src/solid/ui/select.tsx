@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web"
 import * as SelectPrimitive from "@kobalte/core/select"
 import { Check, ChevronDown } from "@lucide/solid"
 
-import { surfaceMotion } from "@/components/ui/motion"
+import { surfaceMotion } from "@shared/theme/motion"
 import { cn } from "@/lib/utils"
 
 import { DialogLayerMount } from "./layer-scope"

@@ -4,7 +4,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { surfaceMotion } from "./motion"
+import { surfaceMotion } from "@shared/theme/motion"
 
 /**
  * A modal that is a bottom-sheet on mobile and a centered card on desktop —

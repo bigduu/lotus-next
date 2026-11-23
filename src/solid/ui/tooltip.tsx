@@ -2,7 +2,7 @@ import { createContext, omit, useContext } from "solid-js"
 import type { ComponentProps, JSX } from "@solidjs/web"
 import * as TooltipPrimitive from "@kobalte/core/tooltip"
 
-import { surfaceMotion } from "@/components/ui/motion"
+import { surfaceMotion } from "@shared/theme/motion"
 import { cn } from "@/lib/utils"
 
 import { DialogLayerMount } from "./layer-scope"

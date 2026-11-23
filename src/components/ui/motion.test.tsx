@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { Button } from "./button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "./dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./dropdown-menu"
-import { feedbackMotion, surfaceMotion } from "./motion"
+import { feedbackMotion, surfaceMotion } from "@shared/theme/motion"
 import { Switch } from "./switch"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogTitle, ResponsiveDialogDescription } from "./responsive-dialog"
 
