@@ -323,6 +323,8 @@ const composeNewSessionSystemPrompt = (
     : taskContent
 }
 
+const STREAM_TEXT_PUBLISH_INTERVAL_MS = 100
+
 // Stable empty array so instances not owning the live stream don't re-render.
 const EMPTY_SEGMENTS: LiveSegment[] = []
 
@@ -548,10 +550,12 @@ export function useChat(
   // (null once the subscription settles). Guards the passive-observe engine
   // against double-subscribing a run we already drive/watch.
   const subscribedSidRef = useRef<string | null>(null)
-  // Token buffer + RAF handle — coalesce many tokens into ≤1 state update/frame.
+  // Keep the full answer for tool boundaries and settlement while publishing
+  // less often to the Markdown renderer.
   const streamBufRef = useRef("")
-  const rafRef = useRef<number | null>(null)
-  // Live reasoning ("思考过程") stream — same RAF-coalescing as content tokens.
+  const cancelTextPublishRef = useRef<(() => void) | null>(null)
+  const lastTextPublishAtRef = useRef<number | null>(null)
+  // Coalesce live reasoning ("思考过程") updates once per animation frame.
   const [streamingReasoningText, setStreamingReasoningText] = useState<string | null>(null)
   const reasonBufRef = useRef("")
   const reasonRafRef = useRef<number | null>(null)
@@ -746,6 +750,19 @@ export function useChat(
     else segRafRef.current = requestAnimationFrame(publish)
   }, [])
 
+  const resetTextPublish = useCallback(() => {
+    cancelTextPublishRef.current?.()
+    cancelTextPublishRef.current = null
+    lastTextPublishAtRef.current = null
+  }, [])
+
+  const flushBufferedText = useCallback(() => {
+    resetTextPublish()
+    const text = streamBufRef.current
+    if (text) setStreamingText(text)
+    return text
+  }, [resetTextPublish])
+
   // Freeze the currently-buffered assistant text/reasoning into a `text`
   // segment (natural "text → tool call" reading order) and restart the buffers
   // for whatever streams after the tool round. Also fixes the multi-round
@@ -757,17 +774,14 @@ export function useChat(
     liveSegRef.current.push({ kind: "text", text, reasoning: reasoning.trim() ? reasoning : null })
     streamBufRef.current = ""
     reasonBufRef.current = ""
-    if (rafRef.current != null) {
-      cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-    }
+    resetTextPublish()
     if (reasonRafRef.current != null) {
       cancelAnimationFrame(reasonRafRef.current)
       reasonRafRef.current = null
     }
     setStreamingText("")
     setStreamingReasoningText(null)
-  }, [])
+  }, [resetTextPublish])
 
   const pushToken = useCallback(
     (c: string) => {
@@ -775,11 +789,24 @@ export function useChat(
       setStreamStatus(null)
       recordOutput(c)
       streamBufRef.current += c
-      if (rafRef.current == null) {
-        rafRef.current = requestAnimationFrame(() => {
-          rafRef.current = null
-          setStreamingText(streamBufRef.current)
-        })
+      if (cancelTextPublishRef.current) return
+
+      const lastPublishAt = lastTextPublishAtRef.current
+      const delay = lastPublishAt === null
+        ? 0 : STREAM_TEXT_PUBLISH_INTERVAL_MS - (performance.now() - lastPublishAt)
+      const publish = () => {
+        cancelTextPublishRef.current = null
+        const text = streamBufRef.current
+        // Leading whitespace should leave the first visible text on the frame path.
+        if (lastPublishAt !== null || text.trim()) lastTextPublishAtRef.current = performance.now()
+        setStreamingText(text)
+      }
+      if (delay > 0) {
+        const timer = setTimeout(publish, Math.ceil(delay))
+        cancelTextPublishRef.current = () => clearTimeout(timer)
+      } else {
+        const frame = requestAnimationFrame(publish)
+        cancelTextPublishRef.current = () => cancelAnimationFrame(frame)
       }
     },
     [setStreamStatus, recordOutput],
@@ -812,10 +839,7 @@ export function useChat(
         const value = compressionRunEnded(compression.value)
         if (value !== compression.value) publishCompression({ ...compression, value: value! })
       }
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
+      resetTextPublish()
       if (reasonRafRef.current != null) {
         cancelAnimationFrame(reasonRafRef.current)
         reasonRafRef.current = null
@@ -846,7 +870,7 @@ export function useChat(
         setStreamPhaseState("finalizing")
       }
     },
-    [setStreamStatus, publishCompression],
+    [setStreamStatus, publishCompression, resetTextPublish],
   )
 
   // Account-feed WebSocket reconciliation updates `messages`. Retire a locally
@@ -1150,6 +1174,7 @@ export function useChat(
       setStreamSid(runSid)
       setStreamPhaseState("streaming")
       resetOutputRate()
+      resetTextPublish()
       streamBufRef.current = ""
       reasonBufRef.current = ""
       childBufRef.current = {}
@@ -1321,13 +1346,8 @@ export function useChat(
         terminal.settlement = (async () => {
           // Freeze the fully-streamed text in place while persisted history
           // loads, so terminal delivery never flashes an empty assistant row.
-          if (rafRef.current != null) {
-            cancelAnimationFrame(rafRef.current)
-            rafRef.current = null
-          }
-          const finalText = streamBufRef.current
+          const finalText = flushBufferedText()
           const acknowledgedMessageId = streamUserMessageIdRef.current
-          if (finalText) setStreamingText(finalText)
           const observed = useAppStore.getState().chats.find((chat) => chat.id === runSid)?.messages ?? []
           if (finalText.trim() && answerLease.valid) {
             const baseline = baselineMessages.find((message) => message.id === streamBaselineMessageIdRef.current)
@@ -1390,6 +1410,7 @@ export function useChat(
 
       const settleFailed = (historyReady = false, error?: unknown, diagnostic?: Readonly<PublicRunDiagnostic> | null): void => {
         if (!ownsStream() || terminal.settlement) return
+        flushBufferedText()
         updateCompression(compressionRunEnded)
         publishSendFailure({
           ...(diagnostic ? { diagnostic } : {}),
@@ -1420,6 +1441,7 @@ export function useChat(
 
       const settleCancelled = (historyReady = false): void => {
         if (!ownsStream() || terminal.settlement) return
+        flushBufferedText()
         updateCompression((previous) => compressionRunEnded(previous, true))
         terminal.settlement = (async () => {
           let historyLoaded = historyReady
@@ -1744,6 +1766,7 @@ export function useChat(
       if (terminal.settlement) {
         await terminal.settlement
       } else if (ownsStream()) {
+        flushBufferedText()
         if (terminal.pendingRead) await terminal.pendingRead
         if (!ownsStream()) return
         const currentQuestion = questionStateRef.current
@@ -1845,6 +1868,8 @@ export function useChat(
       freezeTextSegment,
       pushToken,
       resetOutputRate,
+      resetTextPublish,
+      flushBufferedText,
       pushReasoning,
       setStreamStatus,
       publishCompression,
@@ -1868,6 +1893,7 @@ export function useChat(
     mountedRef.current = true
     return () => {
       mountedRef.current = false
+      resetTextPublish()
       retainTerminalAcrossUnmount()
       if (answerLeaseRef.current) releaseCompletedAnswerLease(answerLeaseRef.current)
       answerLeaseRef.current = null
@@ -1876,7 +1902,7 @@ export function useChat(
       subscribedSidRef.current = null
       abortRef.current?.abort()
     }
-  }, [retainTerminalAcrossUnmount])
+  }, [resetTextPublish, retainTerminalAcrossUnmount])
 
   // ── Passive observation: engage runs driven ELSEWHERE ────────────────
   // A run started on another device, by a schedule, or before a reload flips

@@ -2364,6 +2364,130 @@ describe("useChat pending reads during permission submission", () => {
   })
 })
 
+describe("useChat assistant text publication", () => {
+  const sessionId = "batched-answer"
+  const nextSession = "next-batched-answer"
+
+  async function start() {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance"] })
+    mocks.appState.currentSessionId = sessionId
+    mocks.appState.chats = [{ id: sessionId, messages: [] }, { id: nextSession, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
+    mocks.subscribeToEvents.mockImplementation((_id: string, _handlers: SubscriptionHandlers, controller: AbortController) =>
+      new Promise<void>((resolve) => controller.signal.addEventListener("abort", () => resolve(), { once: true })),
+    )
+    const hook = await mountUseChat({ mode: "main" })
+    await act(async () => { await hook.current.send("stream a long reply") })
+    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
+    return { hook, handlers }
+  }
+
+  async function nextFrame() {
+    await act(async () => { vi.advanceTimersToNextFrame() })
+  }
+
+  async function advance(ms: number) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+  }
+
+  it("displays the first visible text on the next frame and coalesces later chunks to the original deadline", async () => {
+    const { hook, handlers } = await start()
+    act(() => handlers.onToken("  "))
+    await nextFrame()
+    act(() => handlers.onToken("First"))
+    await nextFrame()
+    expect(hook.current.streaming).toBe("  First")
+
+    act(() => handlers.onToken(" second"))
+    await advance(45)
+    act(() => handlers.onToken(" third"))
+    await advance(54)
+    expect(hook.current.streaming).toBe("  First")
+    await advance(1)
+    expect(hook.current.streaming).toBe("  First second third")
+
+    await advance(150)
+    act(() => handlers.onToken(" after a pause"))
+    await nextFrame()
+    expect(hook.current.streaming).toBe("  First second third after a pause")
+  })
+
+  it("moves every buffered character before the tool and shows the next round on its first frame", async () => {
+    const { hook, handlers } = await start()
+    act(() => handlers.onToken("Before"))
+    await nextFrame()
+    act(() => {
+      handlers.onToken(" the tool")
+      handlers.onToolStart("batched-tool", "Read", {})
+    })
+    await nextFrame()
+    expect(hook.current.liveSegments).toMatchObject([
+      { kind: "text", text: "Before the tool" },
+      { kind: "tools", calls: [{ toolCallId: "batched-tool", status: "running" }] },
+    ])
+    expect(hook.current.streaming).toBe("")
+
+    act(() => {
+      handlers.onToolComplete("batched-tool", { success: true, result: "Read completed" })
+      handlers.onToken("After the tool")
+    })
+    await nextFrame()
+    expect(hook.current.streaming).toBe("After the tool")
+  })
+
+  it("publishes a buffered terminal tail while persisted history is still pending", async () => {
+    const { hook, handlers } = await start()
+    act(() => handlers.onToken("Beginning"))
+    await nextFrame()
+    const history = deferred<void>()
+    mocks.appState.loadChatHistory.mockReturnValueOnce(history.promise)
+    await act(async () => {
+      handlers.onToken(" and the terminal tail")
+      handlers.onComplete()
+    })
+    expect(hook.current.streamPhase).toBe("finalizing")
+    expect(hook.current.streaming).toBe("Beginning and the terminal tail")
+    await advance(100)
+    expect(hook.current.streaming).toBe("Beginning and the terminal tail")
+    await act(async () => { history.resolve(); await history.promise })
+  })
+
+  it("shows buffered partial text immediately on Stop until history reconciles", async () => {
+    const { hook, handlers } = await start()
+    const stopping = deferred<void>()
+    mocks.stopGeneration.mockReturnValueOnce(stopping.promise)
+    act(() => handlers.onToken("Beginning"))
+    await nextFrame()
+    await act(async () => {
+      handlers.onToken(" and the buffered partial")
+      hook.current.stop()
+    })
+    expect(hook.current.streaming).toBe("Beginning and the buffered partial")
+    await advance(100)
+    expect(hook.current.streaming).toBe("Beginning and the buffered partial")
+    await act(async () => { stopping.resolve(); await stopping.promise })
+  })
+
+  it("discards a pending publication on navigation and starts the next session on its own frame", async () => {
+    const { hook, handlers } = await start()
+    act(() => handlers.onToken("Old answer"))
+    await nextFrame()
+    await act(async () => {
+      handlers.onToken(" with an unpublished tail")
+      hook.current.select(nextSession)
+    })
+    expect(hook.current.streaming).toBeNull()
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: nextSession })
+    await act(async () => { await hook.current.send("another reply") })
+    const nextHandlers = mocks.subscribeToEvents.mock.calls[1][1] as SubscriptionHandlers
+    act(() => nextHandlers.onToken("New answer"))
+    await nextFrame()
+    expect(hook.current.streaming).toBe("New answer")
+    await advance(100)
+    expect(hook.current.streaming).toBe("New answer")
+  })
+})
+
 describe("owned streams without a terminal frame", () => {
   const sessionId = "orphaned-owned-stream"
   async function start() {
