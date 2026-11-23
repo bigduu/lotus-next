@@ -12,7 +12,7 @@ for (const locale of ["en-US", "zh-CN"]) {
     await page.goto(standaloneScenario.entryUrl)
     await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
     const english = locale === "en-US"
-    const permission = page.getByRole("button", { name: english ? "Permission mode Default" : "权限模式 Default", exact: true })
+    const permission = page.getByRole("combobox", { name: english ? "Permission mode" : "权限模式", exact: true })
     await expect(permission).toBeEnabled()
     await expect(permission).toHaveText("Default")
     await expect(permission).toHaveAttribute("data-slot", "select-trigger")

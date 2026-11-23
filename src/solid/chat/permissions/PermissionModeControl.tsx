@@ -17,7 +17,7 @@ const options = [
   { value: "default", label: "Default" }, { value: "bypass", label: "Bypass" }, { value: "auto", label: "Auto" },
 ]
 const controlClass = cn(composerControlClassName,
-  "border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:size-3")
+  "border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-accent")
 
 function createPermissionText() {
   const locale = createUiLocale()
@@ -30,8 +30,8 @@ export function NewSessionPermissionControl() {
   onSettled(() => { void newSessionPermissionStore.getState().refresh() })
   return (
     <div class="flex min-w-0 items-center" data-permission-scope="new-session" title={text(`help.${mode()}`)}>
-      <ShieldAlert aria-hidden="true" class={cn("size-4 shrink-0", mode() === "auto" ? "text-amber-500" : "text-muted-foreground")} />
-      <Select options={options} label={text("label")} value={mode()} size="sm" placement="top-start"
+      <Select selectOnly options={options} label={text("label")} value={mode()} size="sm" placement="top-start"
+        leadingIcon={<ShieldAlert aria-hidden="true" class={cn("size-4 shrink-0", mode() === "auto" ? "text-amber-500" : "text-muted-foreground")} />}
         class={cn(controlClass, mode() === "auto" && "text-amber-700 dark:text-amber-400")}
         onValueChange={(value) => {
           const mode = parseSessionPermissionMode(value)
@@ -71,8 +71,8 @@ export function PermissionModeControl(props: { sessionId: string; title: string 
   return (
     <section ref={(element) => { control = element }} data-variant="composer" aria-label={text("section")}
       title={[help(), error()].filter(Boolean).join(" ")} class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-      <ShieldAlert aria-hidden="true" class={cn("size-4 shrink-0", confirmed() && mode() === "auto" ? "text-amber-500" : "text-muted-foreground")} />
-      <Select options={options} label={text("label")} value={confirmed() ? mode() ?? "" : ""} size="sm" placement="top-start"
+      <Select selectOnly options={options} label={text("label")} value={confirmed() ? mode() ?? "" : ""} size="sm" placement="top-start"
+        leadingIcon={<ShieldAlert aria-hidden="true" class={cn("size-4 shrink-0", confirmed() && mode() === "auto" ? "text-amber-500" : "text-muted-foreground")} />}
         placeholder={text(request()?.status === "unsupported" ? "unavailable" : busy() ? "loading" : "unconfirmed")}
         class={cn(controlClass, "disabled:opacity-70", confirmed() && mode() === "auto" && "text-amber-700 dark:text-amber-400")}
         describedBy={`${id}-permission-help${error() ? ` ${id}-permission-error` : ""}`}

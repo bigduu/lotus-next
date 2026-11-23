@@ -1,4 +1,4 @@
-import { ArrowUp, ImagePlus, Square, X } from "@lucide/solid"
+import { ArrowUp, Ellipsis, Paperclip, Square, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, For, lazy, Loading, onSettled, Show } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
@@ -9,6 +9,9 @@ import { fileToAttachment, type ChatImageAttachment } from "@/lib/chatImageAttac
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { Button } from "../ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
+import { DialogLayerMount } from "../ui/layer-scope"
+import { composerIconButtonClassName } from "@/components/chat/composerStyles"
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { ComposerFocusSnapshot } from "../composer/ComposerEditor"
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
@@ -18,7 +21,7 @@ import type { createRootModeAuthority } from "./model/createRootModeAuthority"
 import type { createTicketIngress } from "./createTicketIngress"
 import { createComposerModelControls } from "./model/createComposerModelControls"
 import { ComposerModelControls } from "./model/ComposerModelControls"
-import { createUiText } from "../shell/uiText"
+import { createUiLocale, createUiText } from "../shell/uiText"
 import type { createChat } from "./createChat"
 import { createComposerCommands } from "./commands/createComposerCommands"
 import { ComposerCommandMenus } from "./commands/ComposerCommandMenus"
@@ -57,17 +60,41 @@ export function ComposerPanel(props: {
   pageVisible?: boolean
 }) {
   const text = createUiText()
+  const locale = createUiLocale()
   let column!: HTMLDivElement
   let surface!: HTMLDivElement
   const [compactToolbar, setCompactToolbar] = createSignal(false)
+  const [moreOpen, setMoreOpen] = createSignal(false)
+  const [moreLayer, setMoreLayer] = createSignal<HTMLDivElement | undefined>(undefined, { ownedWrite: true })
+  const draftKey = () => props.chat.currentSessionId ?? ""
+  const focusEditor = () => {
+    if (props.pageVisible !== false) surface.querySelector<HTMLElement>('[data-composer-editor][contenteditable="true"]')?.focus()
+  }
+  createEffect(draftKey, () => { setMoreOpen(false) })
   onSettled(() => {
-    const measure = () => setCompactToolbar(column.clientWidth > 0 && column.clientWidth < 600)
+    let focusFrame: number | undefined
+    const measure = () => {
+      const width = column.clientWidth
+      if (!width) return
+      const compact = width < 600
+      if (!compact && moreOpen()) {
+        const key = draftKey()
+        setMoreOpen(false)
+        if (focusFrame !== undefined) cancelAnimationFrame(focusFrame)
+        focusFrame = requestAnimationFrame(() => {
+          if (draftKey() === key && !compactToolbar()) focusEditor()
+        })
+      }
+      setCompactToolbar(compact)
+    }
     const observer = new ResizeObserver(measure)
     observer.observe(column)
     measure()
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      if (focusFrame !== undefined) cancelAnimationFrame(focusFrame)
+    }
   })
-  const draftKey = () => props.chat.currentSessionId ?? ""
   const inputs = createStoreSelector(appStore, (state) => state.inputStates)
   const usage = createStoreSelector(appStore, (state) => {
     const id = props.chat.currentSessionId
@@ -255,8 +282,28 @@ export function ComposerPanel(props: {
     }
   }
 
+  const secondaryControls = () => (
+    <div class="flex min-w-0 max-w-full flex-wrap items-center gap-1" data-composer-secondary-controls="">
+      <Button type="button" variant="ghost" size="icon" class={composerIconButtonClassName}
+        aria-label={text("add_images_9f0d4e46")} onClick={() => filePicker.click()}>
+        <Paperclip class="size-4" />
+      </Button>
+      <Show when={draftKey() === ""}>
+        <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
+          value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
+          disabled={worktree.locked || submitting() || props.chat.submissionPending}
+          preparedPath={worktree.preparedPath} error={worktree.error} />
+        <Show when={worktree.busy}><span role="status" class="px-2 text-xs text-muted-foreground">
+          {text("chat_worktree_preparing")}
+        </span></Show>
+      </Show>
+    </div>
+  )
+
   return (
-    <div ref={(element) => { column = element }} data-composer-column="" data-composer-compact={String(compactToolbar())} class="mx-auto w-full max-w-4xl px-3 pb-3 sm:px-6">
+    <div ref={(element) => { column = element }} data-composer-region="" data-composer-column=""
+      data-composer-compact={String(compactToolbar())}
+      class="relative mx-auto w-[calc(100%-1.5rem)] min-w-0 max-w-full shrink-0 pb-3 pt-1">
       <ContextCompressionNotice feedback={props.pageVisible === false ? null : props.chat.contextCompression}
         sessionId={props.pageVisible !== false && props.chat.currentChat?.kind === "root" ? props.chat.currentSessionId : null}
         manualPending={commands.compactPending} runActive={running()} />
@@ -300,7 +347,7 @@ export function ComposerPanel(props: {
         {commandNotice()?.message}
       </p></Show>
       <div ref={(element) => { surface = element }} data-composer-surface=""
-        class="min-w-0 rounded-3xl border bg-background p-2"
+        class="min-w-0 rounded-3xl border border-transparent bg-card p-1.5"
         onDragOver={(event) => {
           if (event.dataTransfer?.types.includes("Files")) event.preventDefault()
         }}
@@ -359,21 +406,25 @@ export function ComposerPanel(props: {
           }} />
           <div class="flex min-w-0 flex-wrap items-center gap-1"
             style={{ flex: compactToolbar() ? "1 0 100%" : "1 1 auto" }}>
-            <Button type="button" variant="ghost" size="icon" aria-label={text("add_images_9f0d4e46")}
-              onClick={() => filePicker.click()}>
-              <ImagePlus class="size-4" />
-            </Button>
-            <Show when={draftKey() === ""}>
-              <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
-                value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
-                disabled={worktree.locked || submitting() || props.chat.submissionPending}
-                preparedPath={worktree.preparedPath} error={worktree.error} />
-              <Show when={worktree.busy}><span role="status" class="px-2 text-xs text-muted-foreground">
-                {text("chat_worktree_preparing")}
-              </span></Show>
-            </Show>
             <Show when={props.chat.currentSessionId} keyed fallback={<NewSessionPermissionControl />}>
               {(id) => <PermissionModeControl sessionId={id} title={props.chat.currentChat?.title || id} />}
+            </Show>
+            <Show when={compactToolbar()} fallback={secondaryControls()}>
+              <Popover placement="top-start" open={moreOpen()} onOpenChange={setMoreOpen}>
+                <PopoverTrigger as={Button} type="button" variant="ghost" size="icon" class={composerIconButtonClassName}
+                  aria-label={text("more_38844b13")} title={text("more_38844b13")}>
+                  <Ellipsis class="size-4" />
+                </PopoverTrigger>
+                <PopoverContent ref={setMoreLayer} aria-label={text("more_38844b13")} class="max-w-[calc(100vw-24px)]">
+                  <DialogLayerMount value={moreLayer}>{secondaryControls()}</DialogLayerMount>
+                </PopoverContent>
+              </Popover>
+            </Show>
+            <Show when={typeof props.chat.outputRate === "number"}>
+              <span data-output-rate="" class="ml-auto max-w-28 min-w-0 truncate text-xs tabular-nums text-muted-foreground"
+                title={text("estimated_from_streamed_text_not_used_for_billing_1de5fc8d")}>
+                {text("output_rate", { rate: props.chat.outputRate?.toLocaleString(locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}
+              </span>
             </Show>
           </div>
           <div class="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1">
@@ -381,21 +432,19 @@ export function ComposerPanel(props: {
               const id = props.chat.currentSessionId
               if (id) props.onOpenGoal(id)
             }} />
-            <ComposerModelControls controls={models} onRestoreFocus={() => {
-              if (props.pageVisible !== false) surface.querySelector<HTMLElement>('[data-composer-editor][contenteditable="true"]')?.focus()
-            }} />
-            <Show when={queuedSend()}><GuidanceTimingControl queue={queue} disabled={blocked() || submitting()} /></Show>
+            <ComposerModelControls controls={models} onRestoreFocus={focusEditor} />
+            <Show when={queuedSend()}><GuidanceTimingControl queue={queue} compact={compactToolbar()} disabled={blocked() || submitting()} /></Show>
             <Show when={running() || props.chat.sending}>
-              <Button size="icon" class="rounded-full" type="button"
+              <Button size="icon" class="size-8 rounded-full" type="button"
                 aria-label={text("stop_generation_9ad0aac3")} onClick={() => {
                   liveRetry.cancelForStop()
                   void props.chat.stop()
                 }}>
-                <Square class="size-3.5" />
+                <Square class="size-4" fill="currentColor" />
               </Button>
             </Show>
             <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand()}>
-              <Button size="icon" class="rounded-full" type="button"
+              <Button size="icon" class="size-8 rounded-full" type="button"
                 aria-label={text(queuedSend() && !sideChatCommand() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
                 disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
                   (!sideChatCommand() && (blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}

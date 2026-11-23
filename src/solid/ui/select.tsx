@@ -1,4 +1,5 @@
 import { createMemo, useContext } from "solid-js"
+import type { JSX } from "@solidjs/web"
 import * as SelectPrimitive from "@kobalte/core/select"
 import { Check, ChevronDown } from "@lucide/solid"
 
@@ -26,6 +27,8 @@ interface SelectProps {
   disabled?: boolean
   required?: boolean
   size?: "sm" | "default"
+  selectOnly?: boolean
+  leadingIcon?: JSX.Element
   class?: string
 }
 
@@ -67,12 +70,13 @@ function SelectContent() {
   )
 }
 
-type SelectTriggerProps = Pick<SelectProps, "label" | "size" | "class" | "describedBy" | "placeholder">
+type SelectTriggerProps = Pick<SelectProps, "label" | "size" | "class" | "describedBy" | "placeholder" | "selectOnly" | "leadingIcon">
 
 function SelectTrigger(props: SelectTriggerProps) {
   const select = SelectPrimitive.useSelectContext()
   return (
     <SelectPrimitive.Trigger
+      role={props.selectOnly ? "combobox" : undefined}
       aria-label={props.label}
       aria-describedby={props.describedBy}
       data-slot="select-trigger"
@@ -84,10 +88,15 @@ function SelectTrigger(props: SelectTriggerProps) {
         props.class,
       )}
     >
-      <SelectPrimitive.Value<SelectOption> data-slot="select-value">
-        {(state) => state.selectedOption()?.label ?? props.placeholder}
-      </SelectPrimitive.Value>
-      <SelectPrimitive.Icon><ChevronDown class="size-4 opacity-50" /></SelectPrimitive.Icon>
+      {props.leadingIcon}
+      {props.selectOnly ? (
+        <span data-slot="select-value">{select.selectedOptions()[0]?.label ?? props.placeholder}</span>
+      ) : (
+        <SelectPrimitive.Value<SelectOption> data-slot="select-value">
+          {(state) => state.selectedOption()?.label ?? props.placeholder}
+        </SelectPrimitive.Value>
+      )}
+      <SelectPrimitive.Icon aria-hidden="true"><ChevronDown class={props.selectOnly ? "size-3 opacity-50" : "size-4 opacity-50"} /></SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
 }
@@ -116,7 +125,8 @@ export function Select(props: SelectProps) {
       itemComponent={SelectItem}
     >
       <SelectPrimitive.HiddenSelect />
-      <SelectTrigger label={props.label} size={props.size} class={props.class} describedBy={props.describedBy} placeholder={props.placeholder} />
+      <SelectTrigger label={props.label} size={props.size} class={props.class} describedBy={props.describedBy} placeholder={props.placeholder}
+        selectOnly={props.selectOnly} leadingIcon={props.leadingIcon} />
       <SelectContent />
     </SelectPrimitive.Root>
   )
