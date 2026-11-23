@@ -5,10 +5,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { isApiError } from "@services/api"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { sideChatClient, sideChatQuestionFits, type SideChatQuote, type SideChatSnapshot, type SideChatTurnRequest } from "@services/chat/sideChat"
+import { newSideChatRequestId, sideChatClient, sideChatQuestionFits, type SideChatQuote, type SideChatSource, type SideChatTurnRequest } from "@services/chat/sideChat"
 
-type PendingSend = Pick<SideChatTurnRequest, "id" | "expected_chat_id" | "previous_turn_id">
-type Draft = { text: string; quote?: SideChatQuote; chatId?: string; pending?: PendingSend }
+type PendingSend = Pick<SideChatTurnRequest, "id" | "source_generation" | "expected_chat_id" | "previous_turn_id">
+type Draft = { text: string; quote?: SideChatQuote; chatId?: string; sourceGeneration?: string; pending?: PendingSend }
 const EMPTY_DRAFT: Draft = { text: "" }
 type Preview = { chatId: string; runId: string; text: string }
 export type SideChatIntent = { prompt?: string; quote?: SideChatQuote; onApplied?: () => void }
@@ -45,7 +45,9 @@ export function SideChatPane({ sourceId, scope, active, intent, onConsumeIntent,
   const draftKey = scope + ":side-chat-draft"
   const [draft, setDraft] = useState(() => loadDraft(draftKey))
   const draftRef = useRef(draft)
-  const [snapshot, setSnapshot] = useState<SideChatSnapshot | null | undefined>()
+  const [source, setSource] = useState<SideChatSource>()
+  const snapshot = source?.side_chat
+  const generation = source?.source_generation
   const [preview, setPreview] = useState<Preview | null>(null)
   const [readFailed, setReadFailed] = useState(false)
   const [operation, setOperation] = useState<"send" | "stop" | null>(null)
@@ -69,12 +71,21 @@ export function SideChatPane({ sourceId, scope, active, intent, onConsumeIntent,
     const request = new AbortController()
     persisted.current = request
     try {
-      const chat = await sideChatClient.read(sourceId, request.signal)
+      const current = await sideChatClient.read(sourceId, request.signal)
       if (!mounted.current || request.signal.aborted) return
+      const { side_chat: chat, source_generation: observedGeneration } = current
       const editing = draftRef.current
-      const admitted = editing.pending && chat?.turns.some((turn) => turn.id === editing.pending?.id)
-      if (admitted || (editing.chatId && editing.chatId !== chat?.id)) changeDraft(EMPTY_DRAFT)
-      setSnapshot(chat)
+      const pending = editing.pending
+      if (pending?.source_generation === observedGeneration && chat?.turns.some((turn) => turn.id === pending.id)) {
+        changeDraft(EMPTY_DRAFT)
+      } else if ((editing.sourceGeneration && editing.sourceGeneration !== observedGeneration)
+        || (editing.chatId && editing.chatId !== chat?.id)
+        || (pending && pending.source_generation !== observedGeneration)) {
+        // User-authored text stays editable. A source change retires its old
+        // reference and exact send identity before a new intent can be applied.
+        changeDraft({ text: editing.text, sourceGeneration: observedGeneration, chatId: chat?.id })
+      }
+      setSource(current)
       setReadFailed(false)
       setPreview((current) => current && chat?.id === current.chatId
         && chat.turns.at(-1)?.id === current.runId && chat.turns.at(-1)?.status === "running" ? current : null)
@@ -104,13 +115,18 @@ export function SideChatPane({ sourceId, scope, active, intent, onConsumeIntent,
   const consumed = useRef<number | undefined>(undefined)
   useEffect(() => {
     if (!active || !intent || intent.token === consumed.current) return
+    if (intent.prompt || intent.quote) {
+      const previous = draftRef.current
+      if (!generation || readFailed || previous.pending) return
+      const text = intent.prompt ? [previous.text, intent.prompt].filter(Boolean).join("\n\n") : previous.text
+      changeDraft({ text, quote: intent.quote ?? previous.quote, sourceGeneration: generation, chatId: snapshot?.id })
+    } else if (readFailed && !busy.current) {
+      void refresh()
+    }
     consumed.current = intent.token
-    const previous = draftRef.current
-    const text = intent.prompt ? [previous.text, intent.prompt].filter(Boolean).join("\n\n") : previous.text
-    changeDraft({ text, quote: intent.quote ?? previous.quote, chatId: snapshot?.id ?? previous.chatId })
     intent.onApplied?.()
     onConsumeIntent(intent.token)
-  }, [active, changeDraft, intent, onConsumeIntent, snapshot?.id])
+  }, [active, changeDraft, draft.pending, generation, intent, onConsumeIntent, readFailed, refresh, snapshot?.id])
 
   useEffect(() => {
     if (!active) return
@@ -126,16 +142,23 @@ export function SideChatPane({ sourceId, scope, active, intent, onConsumeIntent,
     event?.preventDefault()
     const before = draftRef.current
     const question = before.text.trim()
-    if (busy.current || running || readFailed || snapshot === undefined
+    if (busy.current || running || readFailed || !generation
       || (retry ? !last || last.status === "completed" : !question || !sideChatQuestionFits(question))) return
+    let identity: PendingSend
+    try {
+      identity = (!retry ? before.pending : undefined) ?? {
+        id: newSideChatRequestId(), source_generation: generation,
+        expected_chat_id: snapshot?.id ?? null, previous_turn_id: last?.id ?? null,
+      }
+    } catch {
+      setProblem("send")
+      return
+    }
     busy.current = true
     setOperation("send")
     setProblem(null)
     tail.current = true
-    const identity = (!retry ? before.pending : undefined) ?? {
-      id: crypto.randomUUID(), expected_chat_id: snapshot?.id ?? null, previous_turn_id: last?.id ?? null,
-    }
-    const submitted = { ...before, pending: identity }
+    const submitted = { ...before, sourceGeneration: generation, pending: identity }
     if (!retry) changeDraft(submitted)
     try {
       await sideChatClient.start(sourceId, {
@@ -150,7 +173,8 @@ export function SideChatPane({ sourceId, scope, active, intent, onConsumeIntent,
       try {
         const current = await sideChatClient.read(sourceId)
         if (!mounted.current) return
-        if (current?.turns.some((turn) => turn.id === identity.id)) {
+        if (current.source_generation === identity.source_generation
+          && current.side_chat?.turns.some((turn) => turn.id === identity.id)) {
           if (!retry && draftRef.current === submitted) changeDraft(EMPTY_DRAFT)
         } else {
           if (!retry && draftRef.current === submitted && isApiError(error)
@@ -250,12 +274,13 @@ export function SideChatPane({ sourceId, scope, active, intent, onConsumeIntent,
               <span className="truncate">{draft.quote.text}</span><ArrowUpRight className="size-3.5 shrink-0" />
             </button>
             <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={uiText("side_chat_remove_quote")}
-              onClick={() => changeDraft({ text: draft.text, chatId: draft.chatId })}><X className="size-3.5" /></Button>
+              onClick={() => changeDraft({ text: draft.text, chatId: draft.chatId, sourceGeneration: draft.sourceGeneration })}><X className="size-3.5" /></Button>
           </div>
         ) : null}
         <Textarea ref={editor} rows={2} className="min-h-16 resize-none" value={draft.text}
           aria-label={uiText("side_chat_question")} placeholder={uiText("side_chat_question")}
-          onChange={(event) => { setQuoted(false); changeDraft({ text: event.target.value, quote: draft.quote, chatId: snapshot?.id ?? draft.chatId }) }}
+          onChange={(event) => { setQuoted(false); changeDraft({ text: event.target.value, quote: draft.quote,
+            chatId: snapshot?.id ?? draft.chatId, sourceGeneration: generation ?? draft.sourceGeneration }) }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault()

@@ -19,6 +19,8 @@ export type SideChatSnapshot = {
   preview: string
 }
 
+export type SideChatSource = { source_generation: string; side_chat: SideChatSnapshot | null }
+
 type SideChatUpdate = {
   type: "side_chat_changed" | "side_chat_progress"
   chat_id?: unknown
@@ -27,6 +29,7 @@ type SideChatUpdate = {
 }
 export type SideChatTurnRequest = {
   id: string
+  source_generation: string
   expected_chat_id: string | null
   previous_turn_id: string | null
   message?: string
@@ -50,10 +53,20 @@ export function sideChatQuote(messageId: string, text: string): SideChatQuote {
   return { message_id: messageId, text: selected.slice(0, length) }
 }
 
+export function newSideChatRequestId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID()
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const text = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+  return [text.slice(0, 8), text.slice(8, 12), text.slice(12, 16), text.slice(16, 20), text.slice(20)].join("-")
+}
+
 export const sideChatClient = {
   async read(sourceId: string, signal?: AbortSignal) {
-    const result = await apiClient.get<{ side_chat: SideChatSnapshot | null }>(sessionPath(sourceId), { cache: "no-store", signal })
-    return result.side_chat
+    const source = await apiClient.get<SideChatSource>(sessionPath(sourceId), { cache: "no-store", signal })
+    if (typeof source.source_generation !== "string") throw new Error("Unknown Side Chat source")
+    return source
   },
   async start(sourceId: string, request: SideChatTurnRequest) {
     const result = await apiClient.post<{ side_chat: SideChatSnapshot }>(sessionPath(sourceId) + "/turns", request)

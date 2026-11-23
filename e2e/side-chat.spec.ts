@@ -17,7 +17,21 @@ test("asks from a selection, stops only the side turn, and restores the side tra
   let socket: WebSocketRoute | undefined
   let channel: string | undefined
   let sequence = 0
+  let generation = "a".repeat(64)
   let state: FixtureSideChat | null = null
+  let delayedRead: Promise<void> | undefined
+  const pauseReads = () => {
+    let release = () => {}
+    delayedRead = new Promise<void>((resolve) => { release = resolve })
+    return () => { delayedRead = undefined; release() }
+  }
+  const saveDraft = (value: object) => page.locator("body").evaluate((node, data) => {
+    const view = node.ownerDocument.defaultView!
+    const scope = Object.keys(view.localStorage).find((key) => key.startsWith("lotus-next.workbench.v1:")
+      && key.endsWith(":" + data.source))
+    if (!scope) throw new Error("The source workbench is not persisted")
+    view.sessionStorage.setItem(scope + ":side-chat-draft", JSON.stringify(data.value))
+  }, { source, value })
   const writes: string[] = []
 
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
@@ -45,9 +59,13 @@ test("asks from a selection, stops only the side turn, and restores the side tra
     session_id: source,
     messages: [{ id: rootMessage, role: "assistant", content: sourceText, created_at: "2026-09-03T00:00:01Z" }],
   } }))
-  await page.route("**" + prefix, (route) => route.fulfill({ json: { side_chat: state } }))
+  await page.route("**" + prefix, async (route) => {
+    await delayedRead
+    await route.fulfill({ json: { source_generation: generation, side_chat: state } })
+  })
   await page.route("**" + prefix + "/turns", async (route) => {
     const request = route.request().postDataJSON()
+    expect(request.source_generation).toBe(generation)
     const previous = state?.turns.at(-1)
     expect(request.expected_chat_id).toBe(state?.id ?? null)
     expect(request.previous_turn_id).toBe(previous?.id ?? null)
@@ -67,7 +85,7 @@ test("asks from a selection, stops only the side turn, and restores the side tra
         answer: "", status: "running",
       }],
     }
-    await route.fulfill({ status: 202, json: { side_chat: state } })
+    await route.fulfill({ status: 202, json: { source_generation: generation, side_chat: state } })
     update({ type: "side_chat_changed" })
   })
   await page.route("**" + prefix + "/runs/*/stop", async (route) => {
@@ -141,6 +159,38 @@ test("asks from a selection, stops only the side turn, and restores the side tra
   await expect(question).toHaveValue("如何核实？\n\n有什么影响？")
   await page.getByRole("button", { name: "收起工作面板", exact: true }).click()
   await expectComposerText(main, "")
+  // Reopening before an authoritative read preserves the delivery ID.
+  const oldChatId = state!.id
+  await saveDraft({
+    text: turn.message, chatId: oldChatId, sourceGeneration: generation,
+    pending: { id: turn.id, source_generation: generation, expected_chat_id: oldChatId, previous_turn_id: null },
+  })
+  const resumeReads = pauseReads()
+  await page.reload()
+  await page.getByRole("button", { name: "打开侧聊", exact: true }).click()
+  await expect(question).toHaveValue(turn.message)
+  resumeReads()
+  await expect(question).toHaveValue("")
+  await expect(panel.getByText(turn.answer)).toBeVisible()
+
+  // A deferred /side intent survives a source clear while its initial read is
+  // pending. Its old source quote and exact send identity cannot move forward.
+  await page.getByRole("button", { name: "关闭侧聊标签页", exact: true }).click()
+  await page.getByRole("button", { name: "收起工作面板", exact: true }).click()
+  await saveDraft({
+    text: "清空前草稿", chatId: oldChatId, sourceGeneration: generation, quote: turn.quote,
+    pending: { id: turn.id, source_generation: generation, expected_chat_id: oldChatId, previous_turn_id: null },
+  })
+  generation = "b".repeat(64)
+  state = null
+  const readClearedSource = pauseReads()
+  await main.fill("/side 清空后的新问题")
+  await main.press("Enter")
+  await expect(question).toHaveValue("清空前草稿")
+  readClearedSource()
+  await expect(question).toHaveValue("清空前草稿\n\n清空后的新问题")
+  await expect(panel.getByRole("button", { name: "定位到主会话原文" })).toHaveCount(0)
+
   expect(writes).toEqual([prefix + "/turns", expect.stringMatching(new RegExp("^" + prefix + "/runs/[^/]+/stop$")), prefix + "/turns"])
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
