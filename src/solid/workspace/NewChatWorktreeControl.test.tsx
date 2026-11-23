@@ -1,13 +1,23 @@
-import { act, useState } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import type { ProjectWorktrees } from "@services/workspace/WorktreeService"
 import type { NewChatWorktreeControlProps, NewChatWorktreeSelection } from "@services/workspace/newChatWorktreeTypes"
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), saveRoot: vi.fn(), preferences: vi.fn() }))
 vi.mock("@services/workspace/WorktreeService", () => ({ worktreeService: mocks }))
 import { NewChatWorktreeControl } from "./NewChatWorktreeControl"
+
+vi.mock("@kobalte/core/popover", async () => {
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (specifier: string) => string }
+  }>("node:module")
+  const entry = createRequire(import.meta.url).resolve("@kobalte/core/popover")
+  return vi.importActual(entry.replace(/\.jsx$/, ".js"))
+})
+vi.mock("@lucide/solid", () => ({ AlertCircle: () => null, Check: () => null, ChevronDown: () => null,
+  FolderGit2: () => null, GitBranch: () => null, LoaderCircle: () => null, RefreshCw: () => null }))
 
 const inventory = (projectId = "project-a"): ProjectWorktrees => ({
   project_id: projectId, default_root: "/external/worktrees", repositories: [
@@ -21,42 +31,55 @@ const deferred = <T,>() => {
   const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
 }
-let root: Root
+let dispose: (() => void) | undefined
+function dispatch(action: () => void) { action(); flush() }
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 5; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button:not([aria-haspopup])')].find((entry) => entry.textContent?.trim() === label)!
 const field = (label: string) => {
   const id = [...document.querySelectorAll("label")].find((entry) => entry.textContent === label)?.htmlFor
   return document.getElementById(id!) as HTMLInputElement
 }
-const fill = (label: string, value: string) => act(() => {
+const fill = (label: string, value: string) => dispatch(() => {
   const input = field(label)
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value)
   input.dispatchEvent(new Event("input", { bubbles: true }))
 })
-const open = async () => { await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Chat workspace"]')!.click()) }
+const open = async () => { await settle(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Chat workspace"]')!.click()) }
 const close = async () => {
-  await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  await settle(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
 }
 function mount(overrides: Partial<NewChatWorktreeControlProps> = {}) {
   const onChange = vi.fn()
-  let props: NewChatWorktreeControlProps = { projectId: "project-a", workspacePath: "/repo", value: null, onChange, ...overrides }
-  function Controlled() {
-    const [value, setValue] = useState(props.value)
-    return <NewChatWorktreeControl {...props} value={value} onChange={(next) => { setValue(next); props.onChange(next) }} />
-  }
-  act(() => root.render(<Controlled />))
+  const [props, setProps] = createSignal<NewChatWorktreeControlProps>({
+    projectId: "project-a", workspacePath: "/repo", value: null, onChange, ...overrides,
+  })
+  const [value, setValue] = createSignal(props().value)
+  const host = document.body.appendChild(document.createElement("div"))
+  dispose = render(() => <NewChatWorktreeControl {...props()} value={value()}
+    onChange={(next) => { setValue(next); props().onChange(next) }} />, host)
+  flush()
   return { onChange, rerender: (next: Partial<NewChatWorktreeControlProps>) => {
-    props = { ...props, ...next }
-    act(() => root.render(<Controlled />))
+    dispatch(() => setProps((previous) => ({ ...previous, ...next })))
   } }
 }
 
 beforeEach(async () => {
-  ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  await changeLocale("en-US")
-  root = createRoot(document.body.appendChild(document.createElement("div")))
+  await changeLocale("en-US", { persist: false })
   mocks.list.mockResolvedValue(inventory())
 })
-afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); vi.resetAllMocks() })
+afterEach(async () => {
+  dispose?.()
+  dispose = undefined
+  document.body.replaceChildren()
+  vi.resetAllMocks()
+  await changeLocale("zh-CN", { persist: false })
+})
 
 describe("NewChatWorktreeControl", () => {
   it("defaults to the current workspace and does not load inventory until opened", async () => {
@@ -76,7 +99,7 @@ describe("NewChatWorktreeControl", () => {
   it("emits generated editable draft defaults, configuration changes, and current-workspace mode without mutations", async () => {
     const h = mount()
     await open()
-    act(() => button("New worktree").click())
+    dispatch(() => button("New worktree").click())
     const initial = h.onChange.mock.lastCall![0] as NewChatWorktreeSelection
     expect(initial).toMatchObject({ repository: "/repo", root: "/external/worktrees" })
     expect(initial.name).toMatch(/^chat-\d{8}-[a-z0-9]{6}$/)
@@ -89,7 +112,7 @@ describe("NewChatWorktreeControl", () => {
     fill("New branch", "feature/review")
     expect(h.onChange.mock.lastCall![0]).toEqual({ repository: "/repo", root: "/one-off ", name: "review-task", branch: "feature/review" })
     expect(document.querySelector("[data-worktree-target]")?.textContent).toBe("/one-off /review-task")
-    act(() => button("Current workspace").click())
+    dispatch(() => button("Current workspace").click())
     expect(h.onChange).toHaveBeenLastCalledWith(null)
     expect(field("Destination root")).toBeNull()
     expect(mocks.create).not.toHaveBeenCalled()
@@ -100,11 +123,11 @@ describe("NewChatWorktreeControl", () => {
   it("prefers an exactly authorized selected source and emits repository edits", async () => {
     const h = mount({ workspacePath: "/second/" })
     await open()
-    act(() => button("New worktree").click())
+    dispatch(() => button("New worktree").click())
     expect(h.onChange.mock.lastCall![0].repository).toBe("/second")
     expect(document.querySelector('[role="note"]')).toBeNull()
     const select = field("Source checkout") as unknown as HTMLSelectElement
-    act(() => { select.value = "/repo"; select.dispatchEvent(new Event("change", { bubbles: true })) })
+    dispatch(() => { select.value = "/repo"; select.dispatchEvent(new Event("change", { bubbles: true })) })
     expect(h.onChange.mock.lastCall![0].repository).toBe("/repo")
     expect(document.querySelector('[role="note"]')?.textContent).toContain("/second/")
   })
@@ -112,7 +135,7 @@ describe("NewChatWorktreeControl", () => {
   it("identifies the actual primary source instead of pretending a deduplicated linked worktree is the source", async () => {
     const h = mount({ workspacePath: "/external/feature-a" })
     await open()
-    act(() => button("New worktree").click())
+    dispatch(() => button("New worktree").click())
     expect(h.onChange.mock.lastCall![0].repository).toBe("/repo")
     expect(field("Source checkout").value).toBe("/repo")
     expect(document.querySelector('[role="note"]')?.textContent).toContain("not the selected workspace's HEAD")
@@ -131,10 +154,10 @@ describe("NewChatWorktreeControl", () => {
     h.rerender({ projectId: "project-b", workspacePath: "/second" })
     const next = inventory("project-b")
     next.default_root = "/project-b-root"
-    await act(async () => second.resolve(next))
-    await act(async () => first.resolve(inventory()))
+    await settle(async () => second.resolve(next))
+    await settle(async () => first.resolve(inventory()))
     expect(h.onChange).not.toHaveBeenCalled()
-    act(() => button("New worktree").click())
+    dispatch(() => button("New worktree").click())
     expect(h.onChange.mock.lastCall![0]).toMatchObject({ repository: "/second", root: "/project-b-root" })
   })
 
@@ -146,11 +169,11 @@ describe("NewChatWorktreeControl", () => {
     await open()
     fill("Folder name", "my-edited-name")
     await close()
-    await act(async () => late.resolve({ ...inventory(), default_root: "/old-root" }))
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await settle(async () => late.resolve({ ...inventory(), default_root: "/old-root" }))
+    expect(document.querySelector('[role="dialog"][data-state="open"]')).toBeNull()
     await open()
     fill("Destination root", "/keep-this-root")
-    await act(async () => refreshed.resolve({ ...inventory(), default_root: "/new-default" }))
+    await settle(async () => refreshed.resolve({ ...inventory(), default_root: "/new-default" }))
     expect(field("Folder name").value).toBe("my-edited-name")
     expect(field("Destination root").value).toBe("/keep-this-root")
     expect(h.onChange).toHaveBeenCalledTimes(2)
@@ -162,10 +185,12 @@ describe("NewChatWorktreeControl", () => {
     mocks.list.mockReturnValueOnce(request.promise)
     const h = mount()
     await open()
-    act(() => root.render(null))
-    await act(async () => request.resolve(inventory()))
+    dispose?.()
+    dispose = undefined
+    flush()
+    await settle(async () => request.resolve(inventory()))
     expect(h.onChange).not.toHaveBeenCalled()
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"][data-state="open"]')).toBeNull()
   })
 
   it("supports no-project and no-Git states without mutating selection", async () => {
@@ -176,7 +201,7 @@ describe("NewChatWorktreeControl", () => {
     expect(document.body.textContent).toContain("Select a Project")
     mocks.list.mockResolvedValueOnce({ project_id: "project-a", default_root: null, repositories: [{ path: "/not-git", error: "Not a Git repository", worktrees: [] }] })
     h.rerender({ projectId: "project-a" })
-    await act(async () => {})
+    await settle(async () => {})
     expect(button("New worktree").disabled).toBe(true)
     expect(document.body.textContent).toContain("No available Git repositories")
     expect(document.body.textContent).toContain("Not a Git repository")
@@ -190,7 +215,7 @@ describe("NewChatWorktreeControl", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Backend offline")
     expect(button("New worktree").disabled).toBe(true)
     expect(mocks.list).toHaveBeenCalledTimes(1)
-    await act(async () => button("Reload repositories").click())
+    await settle(async () => button("Reload repositories").click())
     expect(button("New worktree").disabled).toBe(false)
     expect(mocks.list).toHaveBeenCalledTimes(2)
     expect(h.onChange).not.toHaveBeenCalled()
