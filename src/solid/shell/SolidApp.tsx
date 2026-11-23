@@ -45,6 +45,7 @@ import { SessionVersionMigrationGate } from "../chat/status/version-migration/Se
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { SettingsTab } from "../settings/SettingsPage"
 import { SettingsFrame } from "./SettingsFrame"
+import { Toasts, type ToastNotice } from "./Toasts"
 import { Sidebar } from "./Sidebar"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"
 import { createProjectSections } from "./createProjectSections"
@@ -115,7 +116,11 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   let paletteNavigationVersion = 0
   let settingsReturnFocus: () => HTMLElement | null = () => null
   let shell!: HTMLDivElement
-  const [notice, setNotice] = createSignal<{ text: string; error: boolean } | null>(null)
+  const [notice, setNotice] = createSignal<ToastNotice | null>(null)
+  let noticeId = 0
+  const reportNotice = (value: { text: string; error: boolean }) => {
+    setNotice({ id: ++noticeId, message: value.text, kind: value.error ? "error" : "info" })
+  }
   const [newSession, setNewSession] = createSignal<SectionIntent | null>(null)
   const [sessionToDelete, setSessionToDelete] = createSignal<ChatItem | null>(null)
   const [sessionToClear, setSessionToClear] = createSignal<ChatItem | null>(null)
@@ -130,7 +135,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const executions = createStoreSelector(appStore, (state) => state.executionBySession)
   const backgroundBash = createStoreSelector(appStore, (state) => state.backgroundBash)
   const theme = createStoreSelector(themeStore, (state) => state)
-  const openError = (error: unknown) => setNotice({ text: getErrorMessage(error), error: true })
+  const openError = (error: unknown) => reportNotice({ text: getErrorMessage(error), error: true })
   let navigationVersion = 0
   const currentSession = () => chat.currentSessionId
   const openLink = (url: string) => setLink({ url, sessionId: currentSession(), navigation: navigationVersion })
@@ -149,6 +154,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const sessionView = createMemo(() => ({ id: currentSession() }), {
     equals: (previous, next) => previous?.id === next.id,
   })
+  const [forking, setForking] = createSignal<ReturnType<typeof sessionView> | null>(null)
   const showHome = () => !currentSession() && !chat.sending && !chat.pendingUserText
     && chat.pendingUserImages.length === 0 && chat.pendingUserMessages.length === 0
   const focusComposer = () => document.getElementById("lotus-message-input")?.focus()
@@ -487,7 +493,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     }))
   }
   const copySessionId = (id: string) => {
-    void copyText(id).then(() => setNotice({ text: text("session_id_copied_3afb54a6"), error: false })).catch(openError)
+    void copyText(id).then(() => reportNotice({ text: text("session_id_copied_3afb54a6"), error: false })).catch(openError)
   }
   const quoteToMain = (scope: SideChatScope, answer: string) => {
     const store = appStore.getState()
@@ -599,7 +605,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     void appStore.getState().ensureProject(id).then(() => {
       if (projectWork() !== scope || appStore.getState().projects[id]) return
       setProjectWork(null)
-      setNotice({ text: text("the_project_does_not_exist_or_has_been_deleted_e99cf9dc"), error: true })
+      reportNotice({ text: text("the_project_does_not_exist_or_has_been_deleted_e99cf9dc"), error: true })
     }).catch((error: unknown) => {
       if (projectWork() === scope) setProjectWorkError(getErrorMessage(error))
     })
@@ -669,7 +675,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       const download = format === "pdf" ? downloadPdf : downloadMarkdown
       await download([...earlier, ...displayed], session.title || "chat")
     } catch {
-      if (current()) setNotice({ text: text("conversation_export_failed"), error: true })
+      if (current()) reportNotice({ text: text("conversation_export_failed"), error: true })
     }
   }
   const beginNewDraft = () => {
@@ -701,7 +707,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       void assignSessionToSection(
         appStore.getState, intent.projectId, sessionId, intent.sectionId, projects()[intent.projectId]?.section,
       ).then((ok) => {
-        if (!ok) setNotice({ text: text("sidebar_sections_save_failed"), error: true })
+        if (!ok) reportNotice({ text: text("sidebar_sections_save_failed"), error: true })
       }).catch(openError)
     }
   }
@@ -753,7 +759,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             void sections.update(projectId, (previous) =>
               setSessionSection(previous, projectId, sessionId, sectionId, projects()[projectId]?.section),
             ).then((ok) => {
-              if (!ok) setNotice({ text: text("sidebar_sections_save_failed"), error: true })
+              if (!ok) reportNotice({ text: text("sidebar_sections_save_failed"), error: true })
             }).catch(openError)
           }}
           onRename={(id, title) => appStore.getState().persistSessionTitle(id, title)}
@@ -953,7 +959,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             <ChatViewport chat={chat} theme={theme().themeMode}
               pageVisible={!settingsOpen()} onOpenActor={selectWorkbenchActor}
               onOpenLink={openLink} onPreviewImage={setImage}
-              rootAuthority={rootAuthority} onMessageNotice={setNotice}
+              rootAuthority={rootAuthority} onMessageNotice={reportNotice}
+              onForking={(active) => setForking((previous) => active ? session : previous === session ? null : previous)}
               attachments={[...runTimeline(), ...(workEnabled() ? supervisorApprovals.entries().map((entry) => ({
                 key: entry.key, afterMessageId: entry.afterMessageId,
                 render: () => {
@@ -964,7 +971,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               })) : [])]}
               onAskSideChat={sideChatScope() ? (quote) => openSideChat({ quote }) : undefined}
               revealMessage={sideChatReveal()?.scope === sideChatScope() ? sideChatReveal() ?? undefined : undefined}
-              onMissingRevealedMessage={() => setNotice({ text: text("side_chat_source_unavailable"), error: false })}
+              onMissingRevealedMessage={() => reportNotice({ text: text("side_chat_source_unavailable"), error: false })}
               initialReadingAnchor={session.id ? readingAnchors.get(session.id) : undefined}
               onReadingAnchor={(anchor) => {
                 if (!session.id) return
@@ -1107,14 +1114,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             getReturnFocusTarget={() => !settingsOpen() && paletteNavigationVersion === navigationVersion ? paletteReturnFocus() : null} />
         </Loading>
       </Show>
-      <Show when={notice()}>
-        {(value) => (
-          <div role={value().error ? "alert" : "status"} class="fixed inset-x-0 bottom-28 z-[150] flex justify-center px-4">
-            <button type="button" onClick={() => setNotice(null)}
-              class="rounded-full border bg-card px-4 py-2 text-sm font-medium text-foreground shadow-xl">{value().text}</button>
-          </div>
-        )}
-      </Show>
+      <Toasts toast={notice()} forking={forking() === sessionView()} onDismiss={() => setNotice(null)}
+        onRestoreFocus={() => { if (!settingsOpen()) focusComposer() }} />
     </div>
   )
 }

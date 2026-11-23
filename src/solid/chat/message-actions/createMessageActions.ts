@@ -26,6 +26,7 @@ export function createMessageActions(options: {
   viewport: () => HTMLElement | null
   rootAuthority: () => ReturnType<typeof createRootModeAuthority> | undefined
   onNotice: () => ((notice: MessageNotice) => void) | undefined
+  onForking: () => ((active: boolean) => void) | undefined
 }) {
   const text = createUiText()
   const { chat } = options
@@ -110,6 +111,7 @@ export function createMessageActions(options: {
     setNotice(null)
     try {
       if (action === "fork") {
+        options.onForking()?.(true)
         const id = await chat.fork(target.message.id, { isOriginCurrent: () => owns(origin) })
         if (id && appStore.getState().currentSessionId === id) {
           publish({ text: text("forked_into_a_new_session_from_here_b0abc6b8"), error: false })
@@ -130,6 +132,7 @@ export function createMessageActions(options: {
       if (owns(origin)) publish({ text: text("operation_failed_0c3b4cf7"), error: true })
     } finally {
       active = null
+      if (action === "fork") options.onForking()?.(false)
       if (mounted) setActivity(null)
     }
   }

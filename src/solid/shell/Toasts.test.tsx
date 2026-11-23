@@ -1,28 +1,32 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render as mount } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { Toasts, type ToastNotice } from "./Toasts"
 
-let root: Root
+vi.mock("@lucide/solid", () => ({ Info: () => null, Loader2: () => null, X: () => null }))
+
+let dispose: () => void
+let setCurrent: (props: Parameters<typeof Toasts>[0]) => void
 let host: HTMLDivElement
 const dismiss = vi.fn()
 const info: ToastNotice = { id: 1, kind: "info", message: "Saved" }
-function render(toast: ToastNotice | null = info, forking = false) {
-  act(() => root.render(<Toasts toast={toast} forking={forking} onDismiss={dismiss} />))
+function dispatch(action: () => void) { action(); flush() }
+function render(toast: ToastNotice | null = info, forking = false, onRestoreFocus?: () => void) {
+  dispatch(() => setCurrent({ toast, forking, onDismiss: dismiss, onRestoreFocus }))
 }
-function tick(ms: number) { act(() => vi.advanceTimersByTime(ms)) }
+function tick(ms: number) { dispatch(() => vi.advanceTimersByTime(ms)) }
 beforeEach(() => {
   vi.useFakeTimers()
   dismiss.mockClear()
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   host = document.body.appendChild(document.createElement("div"))
-  root = createRoot(host)
+  const [props, setProps] = createSignal<Parameters<typeof Toasts>[0]>({ toast: null, forking: false, onDismiss: dismiss })
+  setCurrent = setProps
+  dispose = mount(() => <Toasts {...props()} />, host)
 })
 afterEach(() => {
-  act(() => root.unmount())
+  dispose()
   host.remove()
   vi.useRealTimers()
-  Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 })
 describe("notification lifecycle", () => {
   it("announces progress without dismissing the pending result", () => {
@@ -39,13 +43,13 @@ describe("notification lifecycle", () => {
     render()
     tick(2000)
     const card = host.querySelector('.pointer-events-auto')!
-    act(() => card.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+    dispatch(() => card.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
     tick(10000)
-    act(() => host.querySelector('button')!.focus())
-    act(() => card.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })))
+    dispatch(() => host.querySelector('button')!.focus())
+    dispatch(() => card.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true })))
     tick(10000)
     expect(dismiss).not.toHaveBeenCalled()
-    act(() => host.querySelector('button')!.blur())
+    dispatch(() => host.querySelector('button')!.blur())
     tick(2999)
     expect(dismiss).not.toHaveBeenCalled()
     tick(1)
@@ -60,7 +64,7 @@ describe("notification lifecycle", () => {
     expect(host.querySelector('summary')?.textContent).toBe('显示详情')
     tick(60000)
     expect(dismiss).not.toHaveBeenCalled()
-    act(() => host.querySelector('button')!.click())
+    dispatch(() => host.querySelector('button')!.click())
     expect(dismiss).toHaveBeenCalledOnce()
   })
   it("uses explicit error type instead of guessing from words, and cancels replaced timers", () => {
@@ -81,10 +85,10 @@ describe("notification lifecycle", () => {
   it("pauses while details are expanded even after pointer and focus leave", () => {
     render({ ...info, details: 'Full diagnostic text' })
     const details = host.querySelector('details')!
-    act(() => { details.open = true; details.dispatchEvent(new Event('toggle', { bubbles: true })) })
+    dispatch(() => { details.open = true; details.dispatchEvent(new Event('toggle', { bubbles: true })) })
     tick(10000)
     expect(dismiss).not.toHaveBeenCalled()
-    act(() => { details.open = false; details.dispatchEvent(new Event('toggle', { bubbles: true })) })
+    dispatch(() => { details.open = false; details.dispatchEvent(new Event('toggle', { bubbles: true })) })
     tick(5000)
     expect(dismiss).toHaveBeenCalledOnce()
   })
@@ -113,13 +117,13 @@ it.each([false, true])("restores manual dismissal focus to the prior control or 
   const origin = document.createElement('button')
   const composer = document.createElement('textarea')
   const fallback = vi.fn(() => composer.focus())
-  act(() => root.render(<Toasts toast={{ ...info, kind: 'error' }} forking={false} onDismiss={dismiss} onRestoreFocus={fallback} />))
+  render({ ...info, kind: "error" }, false, fallback)
   document.body.append(origin, composer)
-  act(() => origin.focus())
+  dispatch(() => origin.focus())
   const close = host.querySelector('button')!
-  act(() => close.focus())
+  dispatch(() => close.focus())
   if (removeOrigin) origin.remove()
-  act(() => close.click())
+  dispatch(() => close.click())
   expect(document.activeElement).toBe(removeOrigin ? composer : origin)
   expect(fallback).toHaveBeenCalledTimes(removeOrigin ? 1 : 0)
   origin.remove(); composer.remove()
@@ -128,7 +132,7 @@ it.each([false, true])("restores manual dismissal focus to the prior control or 
 it("does not move focus when a notification expires or is removed asynchronously", () => {
   const outside = document.body.appendChild(document.createElement('button'))
   const fallback = vi.fn()
-  act(() => root.render(<Toasts toast={info} forking={false} onDismiss={dismiss} onRestoreFocus={fallback} />))
+  render(info, false, fallback)
   outside.focus()
   tick(5000)
   expect(document.activeElement).toBe(outside)
@@ -142,9 +146,9 @@ it("does not move focus when a notification expires or is removed asynchronously
 it("does not restore focus for a dismissal while focus is outside the notification", () => {
   const outside = document.body.appendChild(document.createElement('button'))
   const fallback = vi.fn()
-  act(() => root.render(<Toasts toast={info} forking={false} onDismiss={dismiss} onRestoreFocus={fallback} />))
+  render(info, false, fallback)
   outside.focus()
-  act(() => host.querySelector('button')!.click())
+  dispatch(() => host.querySelector('button')!.click())
   expect(document.activeElement).toBe(outside)
   expect(fallback).not.toHaveBeenCalled()
   outside.remove()
@@ -155,11 +159,11 @@ it.each(['hidden', 'inert', 'aria-hidden'])("skips a return control inside a %s 
   const pane = document.body.appendChild(document.createElement('div'))
   const origin = pane.appendChild(document.createElement('button'))
   const fallback = vi.fn()
-  act(() => root.render(<Toasts toast={info} forking={false} onDismiss={dismiss} onRestoreFocus={fallback} />))
+  render(info, false, fallback)
   origin.focus()
-  act(() => host.querySelector('button')!.focus())
+  dispatch(() => host.querySelector('button')!.focus())
   pane.setAttribute(attribute, 'true')
-  act(() => host.querySelector('button')!.click())
+  dispatch(() => host.querySelector('button')!.click())
   expect(fallback).toHaveBeenCalledOnce()
   pane.remove()
 })

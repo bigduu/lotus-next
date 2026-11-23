@@ -36,6 +36,7 @@ export function ChatViewport(props: {
   onMissingRevealedMessage?: () => void
   rootAuthority?: ReturnType<typeof createRootModeAuthority>
   onMessageNotice?: (notice: MessageNotice) => void
+  onForking?: (active: boolean) => void
   attachments?: readonly TimelineAttachment[]
   pageVisible?: boolean
   onOpenActor?: (id: string) => void
@@ -87,7 +88,7 @@ export function ChatViewport(props: {
   const sideChat = createSideChatSources(() => viewport, sourceKeys, () => props.onAskSideChat)
   const messageActions = createMessageActions({
     chat: props.chat, entries, viewport: () => viewport,
-    rootAuthority: () => props.rootAuthority, onNotice: () => props.onMessageNotice,
+    rootAuthority: () => props.rootAuthority, onNotice: () => props.onMessageNotice, onForking: () => props.onForking,
   })
   const pending = createMemo(() => props.chat.pendingUserMessages.map((entry) => ({
     operationId: entry.operationId,
