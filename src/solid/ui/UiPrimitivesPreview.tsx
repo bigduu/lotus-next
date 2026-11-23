@@ -4,6 +4,7 @@ import { Badge } from "./badge"
 import { Button } from "./button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "./dialog"
 import { Input } from "./input"
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "./popover"
 import { Select, type SelectOption } from "./select"
 
 const privacyOptions: SelectOption[] = [
@@ -32,6 +33,16 @@ export function UiPrimitivesPreview() {
               {privacyOptions.find((option) => option.value === visibility())?.label}
             </Badge>
           </div>
+          <Popover>
+            <PopoverTrigger as={Button} variant="outline">Sharing details</PopoverTrigger>
+            <PopoverContent class="grid gap-3" aria-label="Workspace sharing">
+              <label class="grid gap-2 text-sm">
+                Sharing note
+                <Input />
+              </label>
+              <PopoverClose as={Button} variant="secondary" aria-label="Done">Done</PopoverClose>
+            </PopoverContent>
+          </Popover>
         </div>
       </DialogContent>
     </Dialog>
