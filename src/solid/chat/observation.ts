@@ -32,6 +32,9 @@ export function createSessionExecutionCompatibility(sessionId: Accessor<string |
   })
   return {
     get report() { return snapshot().report },
+    get observed() { return snapshot().observed },
+    get legacy() { return snapshot().legacy },
+    get readError() { return snapshot().readError },
     get loading() { return snapshot().loading },
     get blocked() { return snapshot().report?.status === "conflict" },
     refresh,
