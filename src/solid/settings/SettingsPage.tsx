@@ -1,11 +1,9 @@
-import { ArrowLeft, Bell, Blocks, BookOpen, CalendarClock, ChartNoAxesCombined, Cpu, Database, FileText, Gauge, Globe, Monitor, Network, Plug, RotateCw, Settings2, Share2, ShieldCheck } from "@lucide/solid"
-import { createMemo, createUniqueId, For, lazy, Loading, onSettled, Show } from "solid-js"
+import { Bell, Blocks, BookOpen, CalendarClock, ChartNoAxesCombined, Cpu, Database, FileText, Gauge, Globe, Monitor, Network, Plug, RotateCw, Settings2, Share2, ShieldCheck } from "@lucide/solid"
+import { createMemo, createUniqueId, For, lazy, Loading, Show } from "solid-js"
 import { Dynamic, type JSX } from "@solidjs/web"
 import { ADVANCED_ONLY_SETTINGS_TABS, experienceModeStore } from "@shared/store/experienceModeState"
-import { isCommandComposing } from "@/lib/commandComposition"
 import { createStoreSelector } from "../state/createStoreSelector"
 import { createUiText } from "../shell/uiText"
-import { Button } from "../ui/button"
 import { SettingsGeneral } from "./SettingsGeneral"
 import "@/shared/theme/settings.css"
 
@@ -84,14 +82,10 @@ export function SettingsPage(props: {
   ownerAccess: boolean
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
-  onClose: () => void
 }) {
   const text = createUiText()
   const categoryId = "settings-category"
-  const titleId = createUniqueId()
   const headingId = createUniqueId()
-  let heading: HTMLHeadingElement | undefined
-  onSettled(() => { heading?.focus({ preventScroll: true }) })
   const advanced = createStoreSelector(experienceModeStore, (state) => state.isAdvanced)
   const label = (tab: Tab) => tab.label === "MCP" ? tab.label : text(tab.label)
   const visible = createMemo(() => groups.map((group) => ({
@@ -108,50 +102,38 @@ export function SettingsPage(props: {
   }
 
   return (
-    <main class="motion-page-enter flex h-full min-h-0 w-full flex-1 flex-col bg-background" data-slot="settings-page" aria-labelledby={titleId}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.defaultPrevented || isCommandComposing(event)) return
-        if (event.target.closest('[role="dialog"], [role="alertdialog"], [role="combobox"], [role="listbox"], [role="menu"], select')) return
-        event.preventDefault()
-        props.onClose()
-      }}>
-      <header class="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b px-4">
-        <h1 id={titleId} ref={(element) => { heading = element }} tabindex={-1} class="text-sm font-semibold outline-none">{text("system_settings_68ea5dd4")}</h1>
-        <Button size="sm" variant="ghost" onClick={props.onClose}><ArrowLeft class="size-4" />{text("back_to_chat_5b8ac6b1")}</Button>
-      </header>
-      <div class="settings-layout">
-        <div class="settings-mobile-nav">
-          <label for={categoryId} class="sr-only">{text("system_settings_68ea5dd4")}</label>
-          <select id={categoryId} value={current().id} onChange={(event) => choose(event.currentTarget.value)} class="settings-select">
-            <For each={visible()}>{(group) => <optgroup label={text(group.label)}>
-              <For each={group.tabs}>{(tab) => <option value={tab.id}>{label(tab)}</option>}</For>
-            </optgroup>}</For>
-          </select>
-        </div>
-        <nav aria-label={text("system_settings_68ea5dd4")} class="settings-nav">
-          <For each={visible()}>{(group) => <div class="settings-nav-group">
-            <h3 class="settings-nav-heading">{text(group.label)}</h3>
-            <div class="settings-nav-links">
-              <For each={group.tabs}>{(tab) => (
-                <button type="button" aria-current={current().id === tab.id ? "page" : undefined} class="settings-nav-item" onClick={() => choose(tab.id)}>
-                  <Dynamic component={tab.icon} class="size-4 shrink-0" aria-hidden="true" />{label(tab)}
-                </button>
-              )}</For>
-            </div>
-          </div>}</For>
-        </nav>
-        <div class="settings-scroll">
-          <Show when={current()} keyed>{(tab) => <div role="region" aria-labelledby={headingId} class={`settings-panel motion-content-enter${tab.id === "model-limits" || tab.id === "metrics" ? " settings-panel-wide" : ""}`}>
-            <div class="settings-panel-heading">
-              <h2 id={headingId} class="settings-title">{label(tab)}</h2>
-              <p class="settings-panel-hint">{text(`settings_hint_${tab.id}`)}</p>
-            </div>
-            <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
-              {renderTab[tab.id](props.ownerAccess)}
-            </Loading>
-          </div>}</Show>
-        </div>
+    <div class="settings-layout">
+      <div class="settings-mobile-nav">
+        <label for={categoryId} class="sr-only">{text("system_settings_68ea5dd4")}</label>
+        <select id={categoryId} value={current().id} onChange={(event) => choose(event.currentTarget.value)} class="settings-select">
+          <For each={visible()}>{(group) => <optgroup label={text(group.label)}>
+            <For each={group.tabs}>{(tab) => <option value={tab.id}>{label(tab)}</option>}</For>
+          </optgroup>}</For>
+        </select>
       </div>
-    </main>
+      <nav aria-label={text("system_settings_68ea5dd4")} class="settings-nav">
+        <For each={visible()}>{(group) => <div class="settings-nav-group">
+          <h3 class="settings-nav-heading">{text(group.label)}</h3>
+          <div class="settings-nav-links">
+            <For each={group.tabs}>{(tab) => (
+              <button type="button" aria-current={current().id === tab.id ? "page" : undefined} class="settings-nav-item" onClick={() => choose(tab.id)}>
+                <Dynamic component={tab.icon} class="size-4 shrink-0" aria-hidden="true" />{label(tab)}
+              </button>
+            )}</For>
+          </div>
+        </div>}</For>
+      </nav>
+      <div class="settings-scroll">
+        <Show when={current()} keyed>{(tab) => <div role="region" aria-labelledby={headingId} class={`settings-panel motion-content-enter${tab.id === "model-limits" || tab.id === "metrics" ? " settings-panel-wide" : ""}`}>
+          <div class="settings-panel-heading">
+            <h2 id={headingId} class="settings-title">{label(tab)}</h2>
+            <p class="settings-panel-hint">{text(`settings_hint_${tab.id}`)}</p>
+          </div>
+          <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
+            {renderTab[tab.id](props.ownerAccess)}
+          </Loading>
+        </div>}</Show>
+      </div>
+    </div>
   )
 }

@@ -44,6 +44,7 @@ import { createRunInteractionTimeline, RunInteractions } from "../chat/RunIntera
 import { SessionVersionMigrationGate } from "../chat/status/version-migration/SessionVersionMigrationAction"
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { SettingsTab } from "../settings/SettingsPage"
+import { SettingsFrame } from "../settings/SettingsFrame"
 import { Sidebar } from "./Sidebar"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"
 import { createProjectSections } from "./createProjectSections"
@@ -1001,17 +1002,18 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         </ResizableLayout>
       </div>
       <Show when={settingsOpen()}>
-        <Errored fallback={(_failure) => (
-          <div role="alert" class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-            <h1>{text("could_not_load_settings_05a4babd")}</h1>
-            <p class="text-sm text-muted-foreground">{text("settings_code_could_not_be_loaded_chat_is_still_availab_05bc021f")}</p>
-            <Button onClick={closeSettings}>{text("back_to_chat_5b8ac6b1")}</Button>
-          </div>
-        )}>
-          <Loading fallback={<p role="status">{text("loading_settings_69ede7ee")}</p>}>
-            <SettingsPage ownerAccess={props.ownerAccess} tab={settingsTab()} onTabChange={setSettingsTab} onClose={closeSettings} />
-          </Loading>
-        </Errored>
+        <SettingsFrame onClose={closeSettings}>
+          <Errored fallback={() => (
+            <div role="alert" class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <h2>{text("could_not_load_settings_05a4babd")}</h2>
+              <p class="text-sm text-muted-foreground">{text("settings_code_could_not_be_loaded_chat_is_still_availab_05bc021f")}</p>
+            </div>
+          )}>
+            <Loading fallback={<p role="status" class="px-4 py-3">{text("loading_settings_69ede7ee")}</p>}>
+              <SettingsPage ownerAccess={props.ownerAccess} tab={settingsTab()} onTabChange={setSettingsTab} />
+            </Loading>
+          </Errored>
+        </SettingsFrame>
       </Show>
       <Show when={!settingsOpen() && workflowSession() === currentSession() && workflowSession()} keyed>
         {(id) => <Loading fallback={null}>

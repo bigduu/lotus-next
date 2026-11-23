@@ -1,6 +1,67 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js";
 import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.ts";
+
+for (const outcome of ["slow", "failed"] as const) {
+  test(`the Settings page keeps a usable frame during a ${outcome} feature import`, async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("bodhi_onboarded_v1", "1");
+      localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+    });
+    const observation = await installArtifactRuntime(page, standaloneScenario);
+    const assets = JSON.parse(readFileSync("dist/asset-manifest.json", "utf8")) as Record<string, { file: string; isDynamicEntry?: boolean }>;
+    const settingsAsset = assets["src/solid/settings/SettingsPage.tsx"];
+    expect(settingsAsset?.isDynamicEntry).toBe(true);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve });
+    let requested = 0;
+    let navigations = 0;
+    page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations += 1 });
+    await page.route(`**/${settingsAsset.file}`, async (route) => {
+      requested += 1;
+      await held;
+      if (outcome === "failed") await route.abort("failed");
+      else await route.fallback();
+    });
+    const open = async () => {
+      if ((page.viewportSize()?.width ?? 0) < 768) {
+        await page.getByRole("button", { name: "菜单", exact: true }).click();
+      }
+      await page.getByRole("button", { name: "系统设置", exact: true }).click();
+    };
+    const settings = settingsSurface(page);
+    try {
+      await page.goto(standaloneScenario.entryUrl);
+      await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+      expect(requested).toBe(0);
+      await open();
+      const title = settings.getByRole("heading", { name: "系统设置", exact: true });
+      await expect(title).toBeFocused();
+      await expect(settings.getByRole("status")).toContainText("正在加载设置");
+      await expect.poll(() => requested).toBe(1);
+      const originalTitle = await title.elementHandle();
+      release();
+      if (outcome === "failed") {
+        await expect(settings.getByRole("alert")).toContainText("设置加载失败");
+        await closeSettings(settings);
+        await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+      } else {
+        await expect(settings.getByRole("heading", { name: "通用", exact: true })).toBeVisible();
+        expect(await title.evaluate((current, original) => current === original, originalTitle)).toBe(true);
+        await selectSettingsCategory(settings, "providers", "提供方");
+        await closeSettings(settings);
+        await open();
+        await expect(settings.getByRole("heading", { name: "提供方", exact: true })).toBeVisible();
+      }
+      expect(requested).toBe(1);
+      expect(navigations).toBe(1);
+      expect(observation.pageErrors).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+}
 
 test("real-lane Settings helpers navigate the built page and responsive categories", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
@@ -23,7 +84,12 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   const settings = settingsSurface(page);
   await expect(settings).toBeVisible();
   await expect(settingsSurface(page, "dialog")).toHaveCount(0);
-  await expect(settings.locator('#settings-category option[value="workflows"]')).toHaveCount(0);
+  const categoryOptions = await settings.locator("#settings-category option").evaluateAll((options) =>
+    options.map((option) => option.getAttribute("value")));
+  expect(new Set(categoryOptions).size).toBe(categoryOptions.length);
+  expect(categoryOptions).toEqual(expect.arrayContaining(["retry", "model-limits", "providers"]));
+  expect(categoryOptions).not.toContain("workflows");
+  await expect(settings.locator("nav.settings-nav").getByRole("button", { name: "网络重试", includeHidden: true })).toHaveCount(1);
   await expect(settings.getByRole("button", { name: /^(Workflow|Workflow[s]|工作流)$/ })).toHaveCount(0);
   await expect(composer).toBeHidden();
   await expect(settings.locator("#settings-category")).toBeVisible({

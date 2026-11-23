@@ -5,6 +5,7 @@ import { isLocalFeaturePreloadError } from "./preloadErrorPolicy"
 describe("local feature preload error policy", () => {
   it.each([
     "Failed to fetch dynamically imported module: https://app.example/assets/Settings-AbC_123.js",
+    "Failed to fetch dynamically imported module: https://app.example/assets/SettingsPage-AbC_123.js",
     "Unable to preload CSS for /base/assets/Settings-z9-Y.js?revision=next",
     "Unable to preload CSS for /base/assets/Settings-z9-Y.css?revision=next",
     new Error("Unable to preload CSS for /assets/Settings-z9-Y.css"),
