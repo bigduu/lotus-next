@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
     restoreSession: vi.fn(),
     loadChatHistory: vi.fn(),
     refreshChatsNow: vi.fn(),
+    reconcileOpenSession: vi.fn(),
     markCancel: vi.fn(),
     updateSession: vi.fn(),
     updateTokenUsage: vi.fn(),
@@ -137,7 +138,7 @@ import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRe
 import { getUsedModels } from "@shared/utils/usedModels"
 type HookValue = ReturnType<typeof useChat>
 type HookProps =
-  | { mode: "main" }
+  | { mode: "main"; pageVisible?: boolean }
   | {
       mode: "bound"
       sessionId: string | null
@@ -146,6 +147,7 @@ type HookProps =
 type SubscriptionHandlers = {
   onExecutionStarted(runId: string, startedAt?: string): void
   onToken(content: string): void
+  onReasoningToken(content: string): void
   onToolStart(toolCallId: string, toolName: string, args: Record<string, unknown>): void
   onToolToken(toolCallId: string, content: string): void
   onToolComplete(toolCallId: string, result: AgentEvent["result"]): void
@@ -204,8 +206,8 @@ async function mountUseChat(initialProps: HookProps, onRender?: (value: HookValu
   const root = createRoot(container)
   mountedRoots.push(root)
   let current: HookValue | null = null
-  function MainHarness() {
-    current = useChat()
+  function MainHarness({ pageVisible }: Extract<HookProps, { mode: "main" }>) {
+    current = useChat(undefined, undefined, { pageVisible })
     onRender?.(current)
     return null
   }
@@ -221,7 +223,7 @@ async function mountUseChat(initialProps: HookProps, onRender?: (value: HookValu
     await act(async () => {
       root.render(
         props.mode === "main" ? (
-          <MainHarness />
+          <MainHarness {...props} />
         ) : (
           <BoundHarness {...props} />
         ),
@@ -309,6 +311,7 @@ beforeEach(() => {
     mocks.appState.restoreSession,
     mocks.appState.loadChatHistory,
     mocks.appState.refreshChatsNow,
+    mocks.appState.reconcileOpenSession,
     mocks.appState.markCancel,
     mocks.appState.updateSession,
     mocks.appState.updateTokenUsage,
@@ -2433,6 +2436,70 @@ describe("useChat assistant text publication", () => {
     })
     await nextFrame()
     expect(hook.current.streaming).toBe("After the tool")
+  })
+
+  it("pauses pending preview updates while covered and restores the ordered timeline in one frame", async () => {
+    const { hook, handlers } = await start()
+    act(() => handlers.onToken("Before"))
+    await nextFrame()
+    act(() => handlers.onToken(" the tool"))
+    await hook.rerender({ mode: "main", pageVisible: false })
+    act(() => {
+      handlers.onReasoningToken("Planning the read")
+      handlers.onToolStart("hidden-tool", "Read", {})
+      handlers.onToolComplete("hidden-tool", { success: true, result: "Read completed" })
+      handlers.onReasoningToken("Preparing the answer")
+      handlers.onToken("First paragraph\n\nSecond paragraph")
+    })
+    await advance(200)
+    expect(hook.current.streaming).toBe("Before")
+    expect(hook.current.streamingReasoning).toBeNull()
+    expect(hook.current.liveSegments).toEqual([])
+
+    await hook.rerender({ mode: "main" })
+    act(() => handlers.onToken("\n\nThird paragraph"))
+    expect(hook.current.streaming).toBe("Before")
+    await nextFrame()
+    expect(hook.current.liveSegments).toMatchObject([
+      { kind: "text", text: "Before the tool", reasoning: "Planning the read" },
+      { kind: "tools", calls: [{ toolCallId: "hidden-tool", status: "completed", output: "Read completed" }] },
+    ])
+    expect(hook.current.streamingReasoning).toBe("Preparing the answer")
+    expect(hook.current.streaming).toBe("First paragraph\n\nSecond paragraph\n\nThird paragraph")
+  })
+
+  it("waits for both the document and the pane to show and keeps the terminal tail across that frame", async () => {
+    let visibility: DocumentVisibilityState = "visible"
+    const hidden = vi.spyOn(document, "hidden", "get").mockImplementation(() => visibility === "hidden")
+    const visibilityState = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility)
+    const { hook, handlers } = await start()
+    act(() => handlers.onToken("Beginning"))
+    await nextFrame()
+    await hook.rerender({ mode: "main", pageVisible: false })
+    act(() => {
+      visibility = "hidden"
+      document.dispatchEvent(new Event("visibilitychange"))
+      handlers.onToken(" and the buffered ending")
+    })
+    await hook.rerender({ mode: "main" })
+    await advance(200)
+    expect(hook.current.streaming).toBe("Beginning")
+
+    const history = deferred<void>()
+    mocks.appState.loadChatHistory.mockReturnValueOnce(history.promise)
+    await act(async () => {
+      visibility = "visible"
+      document.dispatchEvent(new Event("visibilitychange"))
+      handlers.onComplete()
+    })
+    expect(hook.current.streamPhase).toBe("finalizing")
+    expect(hook.current.streaming).toBe("Beginning and the buffered ending")
+    await nextFrame()
+    expect(hook.current.streaming).toBe("Beginning and the buffered ending")
+    await act(async () => { history.resolve(); await history.promise })
+    expect(mocks.appState.reconcileOpenSession).toHaveBeenCalledExactlyOnceWith(sessionId, "visibility_regain")
+    hidden.mockRestore()
+    visibilityState.mockRestore()
   })
 
   it("publishes a buffered terminal tail while persisted history is still pending", async () => {

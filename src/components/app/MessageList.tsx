@@ -211,15 +211,19 @@ function observeHistoryRect(instance: HistoryVirtualizer, callback: (rect: Rect)
   }))
 }
 
+function cachedHistoryRowSize(index: number, instance: HistoryVirtualizer): number {
+  // Settings hides the mounted transcript, so its rows can report a size of
+  // zero. Keep the previous measure to avoid shifting the reader on return.
+  return instance.itemSizeCache.get(instance.options.getItemKey(index)) ?? instance.options.estimateSize(index)
+}
+
 function measureHistoryElement(
   element: HTMLDivElement,
   entry: ResizeObserverEntry | undefined,
   instance: HistoryVirtualizer,
 ): number {
   const measured = measureVirtualElement(element, entry, instance)
-  return measured > 0
-    ? measured
-    : instance.options.estimateSize(instance.indexFromElement(element))
+  return measured > 0 ? measured : cachedHistoryRowSize(instance.indexFromElement(element), instance)
 }
 
 const MESSAGE_SURFACE_LAYOUT =
@@ -851,7 +855,7 @@ export const MessageList = memo(function MessageList({
     for (const row of rows ?? []) {
       const index = virtualizer.indexFromElement(row)
       if (index < 0) continue
-      virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
+      virtualizer.resizeItem(index, row.offsetHeight || cachedHistoryRowSize(index, virtualizer))
     }
   }, [estimateSize, historyEntries, virtualizer])
   useLayoutEffect(() => {
@@ -875,7 +879,7 @@ export const MessageList = memo(function MessageList({
           .some((element) => changedKeys.has(element.dataset.expansionKey ?? ""))
       if (!ownsChange) continue
       const index = virtualizer.indexFromElement(row)
-      virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
+      virtualizer.resizeItem(index, row.offsetHeight || cachedHistoryRowSize(index, virtualizer))
     }
   }, [estimateSize, openProcessKeys, openToolKeys, openSubAgentIds, openTurnKeys, virtualizer])
 

@@ -16,7 +16,7 @@ import { markdownTheme } from "./markdownTheme"
 import { cn } from "@/lib/utils"
 import { InlineImage } from "./InlineImage"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"
-import { StreamingReveal, StreamingRevealBlock, StreamingRevealSpan } from "./StreamingReveal"
+import { StreamingRevealBlock, StreamingRevealSpan } from "./StreamingReveal"
 import {
   lazyCodePlugin,
   remarkLocalRasterImages,
@@ -154,40 +154,55 @@ export function StreamdownMarkdown({
     ),
   }), [onPreviewImage])
   useCompactCodeBlocks(hostRef)
+  useLayoutEffect(() => {
+    if (!isStreaming) return
+    const host = hostRef.current!
+    const finishReveal = (event: AnimationEvent) => {
+      if (event.animationName === "assistant-prose-reveal" && event.target instanceof HTMLElement) {
+        // CSS animations restart when a hidden Settings shell is shown again.
+        // A chunk should only reveal during the update that introduced it.
+        event.target.style.animationName = "none"
+      }
+    }
+    host.addEventListener("animationend", finishReveal)
+    host.addEventListener("animationcancel", finishReveal)
+    return () => {
+      host.removeEventListener("animationend", finishReveal)
+      host.removeEventListener("animationcancel", finishReveal)
+    }
+  }, [isStreaming])
 
   return (
     <div ref={hostRef} style={{ display: "contents" }}>
-      <StreamingReveal isStreaming={isStreaming}>
-        <Streamdown
-          animated={false}
-          BlockComponent={StreamingRevealBlock}
-          className={cn(
-            "assistant-streamdown prose max-w-none min-w-0 space-y-0 font-normal text-foreground",
-            "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
-            "prose-a:text-primary prose-li:my-0.5",
-            isStreaming && "assistant-streamdown-streaming",
-            className,
-          )}
-          codeBlockMaxHeight={Number.POSITIVE_INFINITY}
-          controls={false}
-          components={components}
-          dir="auto"
-          isAnimating={isStreaming}
-          lineNumbers={false}
-          linkSafety={LINK_SAFETY}
-          mode={isStreaming ? "streaming" : "static"}
-          parseIncompleteMarkdown={isStreaming}
-          plugins={STREAMDOWN_PLUGINS}
-          rehypePlugins={SAFE_REHYPE_PLUGINS}
-          remarkPlugins={SAFE_REMARK_PLUGINS}
-          remend={REMEND_OPTIONS}
-          shikiTheme={STREAMDOWN_THEMES}
-          tableMaxHeight={Number.POSITIVE_INFINITY}
-          urlTransform={safeAssistantUrlTransform}
-        >
-          {children}
-        </Streamdown>
-      </StreamingReveal>
+      <Streamdown
+        animated={false}
+        BlockComponent={StreamingRevealBlock}
+        className={cn(
+          "assistant-streamdown prose max-w-none min-w-0 space-y-0 font-normal text-foreground",
+          "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
+          "prose-a:text-primary prose-li:my-0.5",
+          isStreaming && "assistant-streamdown-streaming",
+          className,
+        )}
+        codeBlockMaxHeight={Number.POSITIVE_INFINITY}
+        controls={false}
+        components={components}
+        dir="auto"
+        isAnimating={isStreaming}
+        lineNumbers={false}
+        linkSafety={LINK_SAFETY}
+        mode={isStreaming ? "streaming" : "static"}
+        parseIncompleteMarkdown={isStreaming}
+        plugins={STREAMDOWN_PLUGINS}
+        rehypePlugins={SAFE_REHYPE_PLUGINS}
+        remarkPlugins={SAFE_REMARK_PLUGINS}
+        remend={REMEND_OPTIONS}
+        shikiTheme={STREAMDOWN_THEMES}
+        tableMaxHeight={Number.POSITIVE_INFINITY}
+        urlTransform={safeAssistantUrlTransform}
+      >
+        {children}
+      </Streamdown>
     </div>
   )
 }

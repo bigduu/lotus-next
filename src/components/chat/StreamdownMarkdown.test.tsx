@@ -108,6 +108,22 @@ async function mountMarkdown(source = "", isStreaming = false, strict = false): 
 }
 
 describe("StreamdownMarkdown streaming behavior", () => {
+  const animatedBlocks = vi.fn(function (this: Element) {
+    return { cancel: () => undefined }
+  })
+  let originalAnimate: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    animatedBlocks.mockClear()
+    originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, "animate")
+    Object.defineProperty(Element.prototype, "animate", { configurable: true, value: animatedBlocks })
+  })
+
+  afterEach(() => {
+    if (originalAnimate) Object.defineProperty(Element.prototype, "animate", originalAnimate)
+    else Reflect.deleteProperty(Element.prototype, "animate")
+  })
+
   it("does not invoke the code plugin for prose or inline code", async () => {
     highlightCode.mockClear()
     const view = await mountMarkdown("ordinary prose with `inline code`", true)
@@ -300,14 +316,14 @@ describe("StreamdownMarkdown streaming behavior", () => {
     await second.render("中".repeat(32) + "追加", true)
     expect(second.container.querySelector('[data-assistant-reveal]')?.textContent).toBe("追加")
     await first.render("A title\n-------\n\nFresh paragraph", true)
-    expect(first.container.querySelector('[data-assistant-reveal]')?.textContent).toBe("Fresh paragraph")
+    expect(animatedBlocks.mock.contexts).toEqual([first.container.querySelector("p")])
   })
 
   it("keeps links, code, tables and Mermaid out of prose effects", async () => {
     const view = await mountMarkdown("", true)
     const source = "Safe **正文** [link](https://example.com) `inline`\n\n```text\nfenced\n```\n\n| A | B |\n| --- | --- |\n| x | y |"
     await view.render(source, true)
-    expect(view.container.querySelector('[data-assistant-reveal]')).not.toBeNull()
+    expect(animatedBlocks.mock.contexts).toEqual([view.container.querySelector("[data-assistant-reveal-chunk]")])
     for (const selector of ['[data-streamdown=link]', 'code', 'pre', 'table']) {
       expect(view.container.querySelector(`${selector} [data-assistant-reveal-chunk]`)).toBeNull()
     }

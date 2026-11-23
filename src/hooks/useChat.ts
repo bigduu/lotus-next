@@ -4,7 +4,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
 import { useSessionExecutionCompatibility } from "./useSessionExecutionCompatibility"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
   useAppStore,
@@ -351,6 +351,7 @@ export function useChat(
   // pane). Instead it reports the new id here so the caller can re-bind its own
   // pane to it (e.g. App's setSecondSid).
   onSessionCreated?: (sessionId: string) => void,
+  { pageVisible = true }: { pageVisible?: boolean } = {},
 ) {
   useUiLocale()
   const isBound = boundSessionId !== undefined
@@ -555,6 +556,8 @@ export function useChat(
   const streamBufRef = useRef("")
   const cancelTextPublishRef = useRef<(() => void) | null>(null)
   const lastTextPublishAtRef = useRef<number | null>(null)
+  const livePreviewVisibleRef = useRef(pageVisible && !document.hidden)
+  const resumePreviewRafRef = useRef<number | null>(null)
   // Coalesce live reasoning ("思考过程") updates once per animation frame.
   const [streamingReasoningText, setStreamingReasoningText] = useState<string | null>(null)
   const reasonBufRef = useRef("")
@@ -732,29 +735,83 @@ export function useChat(
     setCompressionState(value)
   }, [])
 
+  const canPublishPreview = useCallback(() =>
+    livePreviewVisibleRef.current && resumePreviewRafRef.current === null, [])
+
+  const publishSegments = useCallback(() => {
+    segRafRef.current = null
+    // Clone tools and their calls so React sees new references for mutated rows.
+    setLiveSegmentsState(liveSegRef.current.map((segment) =>
+      segment.kind === "tools" ? { ...segment, calls: segment.calls.map((call) => ({ ...call })) } : segment,
+    ))
+  }, [])
+
   const flushSegments = useCallback((immediate = false) => {
+    if (!canPublishPreview()) return
     if (segRafRef.current != null) {
       if (!immediate) return
       cancelAnimationFrame(segRafRef.current)
     }
-    const publish = () => {
-      segRafRef.current = null
-      // Clone (segments + calls) so React sees new references for mutated rows.
-      setLiveSegmentsState(
-        liveSegRef.current.map((s) =>
-          s.kind === "tools" ? { ...s, calls: s.calls.map((c) => ({ ...c })) } : s,
-        ),
-      )
-    }
-    if (immediate) publish()
-    else segRafRef.current = requestAnimationFrame(publish)
-  }, [])
+    if (immediate) publishSegments()
+    else segRafRef.current = requestAnimationFrame(publishSegments)
+  }, [canPublishPreview, publishSegments])
 
   const resetTextPublish = useCallback(() => {
     cancelTextPublishRef.current?.()
     cancelTextPublishRef.current = null
     lastTextPublishAtRef.current = null
   }, [])
+
+  const cancelReasoningPublish = useCallback(() => {
+    if (reasonRafRef.current === null) return
+    cancelAnimationFrame(reasonRafRef.current)
+    reasonRafRef.current = null
+  }, [])
+
+  const resetLivePublish = useCallback(() => {
+    resetTextPublish()
+    cancelReasoningPublish()
+    if (segRafRef.current !== null) cancelAnimationFrame(segRafRef.current)
+    segRafRef.current = null
+    if (resumePreviewRafRef.current !== null) cancelAnimationFrame(resumePreviewRafRef.current)
+    resumePreviewRafRef.current = null
+  }, [cancelReasoningPublish, resetTextPublish])
+
+  const publishTextPreview = useCallback(() => {
+    cancelTextPublishRef.current = null
+    const text = streamBufRef.current
+    // Leading whitespace should leave the first visible text on the frame path.
+    if (lastTextPublishAtRef.current !== null || text.trim()) lastTextPublishAtRef.current = performance.now()
+    setStreamingText(text)
+  }, [])
+
+  const publishReasoningPreview = useCallback(() => {
+    reasonRafRef.current = null
+    setStreamingReasoningText(reasonBufRef.current || null)
+  }, [])
+
+  useLayoutEffect(() => {
+    const updateVisibility = () => {
+      const visible = pageVisible && !document.hidden
+      if (visible === livePreviewVisibleRef.current) return
+      livePreviewVisibleRef.current = visible
+      if (!visible) {
+        resetLivePublish()
+      } else if (streamOperationRef.current !== null) {
+        // Publish the whole current timeline in one frame. Events between
+        // showing the page and this frame still accumulate in the same buffers.
+        resumePreviewRafRef.current = requestAnimationFrame(() => {
+          resumePreviewRafRef.current = null
+          publishTextPreview()
+          publishReasoningPreview()
+          publishSegments()
+        })
+      }
+    }
+    document.addEventListener("visibilitychange", updateVisibility)
+    updateVisibility()
+    return () => document.removeEventListener("visibilitychange", updateVisibility)
+  }, [pageVisible, publishReasoningPreview, publishSegments, publishTextPreview, resetLivePublish])
 
   const flushBufferedText = useCallback(() => {
     resetTextPublish()
@@ -775,13 +832,12 @@ export function useChat(
     streamBufRef.current = ""
     reasonBufRef.current = ""
     resetTextPublish()
-    if (reasonRafRef.current != null) {
-      cancelAnimationFrame(reasonRafRef.current)
-      reasonRafRef.current = null
+    cancelReasoningPublish()
+    if (canPublishPreview()) {
+      setStreamingText("")
+      setStreamingReasoningText(null)
     }
-    setStreamingText("")
-    setStreamingReasoningText(null)
-  }, [resetTextPublish])
+  }, [cancelReasoningPublish, canPublishPreview, resetTextPublish])
 
   const pushToken = useCallback(
     (c: string) => {
@@ -789,39 +845,29 @@ export function useChat(
       setStreamStatus(null)
       recordOutput(c)
       streamBufRef.current += c
-      if (cancelTextPublishRef.current) return
+      if (!canPublishPreview() || cancelTextPublishRef.current) return
 
       const lastPublishAt = lastTextPublishAtRef.current
       const delay = lastPublishAt === null
         ? 0 : STREAM_TEXT_PUBLISH_INTERVAL_MS - (performance.now() - lastPublishAt)
-      const publish = () => {
-        cancelTextPublishRef.current = null
-        const text = streamBufRef.current
-        // Leading whitespace should leave the first visible text on the frame path.
-        if (lastPublishAt !== null || text.trim()) lastTextPublishAtRef.current = performance.now()
-        setStreamingText(text)
-      }
       if (delay > 0) {
-        const timer = setTimeout(publish, Math.ceil(delay))
+        const timer = setTimeout(publishTextPreview, Math.ceil(delay))
         cancelTextPublishRef.current = () => clearTimeout(timer)
       } else {
-        const frame = requestAnimationFrame(publish)
+        const frame = requestAnimationFrame(publishTextPreview)
         cancelTextPublishRef.current = () => cancelAnimationFrame(frame)
       }
     },
-    [setStreamStatus, recordOutput],
+    [canPublishPreview, publishTextPreview, setStreamStatus, recordOutput],
   )
 
   const pushReasoning = useCallback((c: string) => {
     recordOutput(c)
     reasonBufRef.current += c
-    if (reasonRafRef.current == null) {
-      reasonRafRef.current = requestAnimationFrame(() => {
-        reasonRafRef.current = null
-        setStreamingReasoningText(reasonBufRef.current)
-      })
+    if (canPublishPreview() && reasonRafRef.current === null) {
+      reasonRafRef.current = requestAnimationFrame(publishReasoningPreview)
     }
-  }, [recordOutput])
+  }, [canPublishPreview, publishReasoningPreview, recordOutput])
 
   const stopStream = useCallback(
     (final: string | null, operationId?: number, retain?: "tool-results" | "partial-answer") => {
@@ -839,15 +885,7 @@ export function useChat(
         const value = compressionRunEnded(compression.value)
         if (value !== compression.value) publishCompression({ ...compression, value: value! })
       }
-      resetTextPublish()
-      if (reasonRafRef.current != null) {
-        cancelAnimationFrame(reasonRafRef.current)
-        reasonRafRef.current = null
-      }
-      if (segRafRef.current != null) {
-        cancelAnimationFrame(segRafRef.current)
-        segRafRef.current = null
-      }
+      resetLivePublish()
       streamBufRef.current = ""
       reasonBufRef.current = ""
       liveSegRef.current = retainedSegments
@@ -870,7 +908,7 @@ export function useChat(
         setStreamPhaseState("finalizing")
       }
     },
-    [setStreamStatus, publishCompression, resetTextPublish],
+    [setStreamStatus, publishCompression, resetLivePublish],
   )
 
   // Account-feed WebSocket reconciliation updates `messages`. Retire a locally
@@ -1174,7 +1212,7 @@ export function useChat(
       setStreamSid(runSid)
       setStreamPhaseState("streaming")
       resetOutputRate()
-      resetTextPublish()
+      resetLivePublish()
       streamBufRef.current = ""
       reasonBufRef.current = ""
       childBufRef.current = {}
@@ -1868,7 +1906,7 @@ export function useChat(
       freezeTextSegment,
       pushToken,
       resetOutputRate,
-      resetTextPublish,
+      resetLivePublish,
       flushBufferedText,
       pushReasoning,
       setStreamStatus,
@@ -1893,7 +1931,7 @@ export function useChat(
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      resetTextPublish()
+      resetLivePublish()
       retainTerminalAcrossUnmount()
       if (answerLeaseRef.current) releaseCompletedAnswerLease(answerLeaseRef.current)
       answerLeaseRef.current = null
@@ -1902,7 +1940,7 @@ export function useChat(
       subscribedSidRef.current = null
       abortRef.current?.abort()
     }
-  }, [resetTextPublish, retainTerminalAcrossUnmount])
+  }, [resetLivePublish, retainTerminalAcrossUnmount])
 
   // ── Passive observation: engage runs driven ELSEWHERE ────────────────
   // A run started on another device, by a schedule, or before a reload flips
