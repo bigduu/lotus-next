@@ -40,3 +40,31 @@ test("submits Markdown using the Solid Tiptap editor", async ({ page }) => {
   await expect(page.locator("li", { hasText: "使用全角中文" })).toBeVisible();
   await expect(composer).not.toContainText("从输入框渲染");
 });
+
+test("keeps nested select options accessible and restores focus through both layers", async ({ page }) => {
+  await page.goto(preview);
+  const trigger = page.getByRole("button", { name: "Open preferences dialog" });
+  const dialog = page.getByRole("dialog", { name: "Workspace preferences" });
+  await trigger.click();
+  const select = dialog.locator("[data-slot=select-trigger]");
+  const list = dialog.getByRole("listbox");
+  await select.click();
+  await expect(list).toBeVisible();
+  await expect(list.getByRole("option", { name: "Public" })).toHaveAttribute("aria-disabled", "true");
+
+  await page.keyboard.press("Escape");
+  await expect(list).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await expect(select).toBeFocused();
+
+  await select.click();
+  await expect(list).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(dialog.getByRole("status")).toHaveText("Shared");
+  await expect(select).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});

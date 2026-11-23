@@ -2,6 +2,7 @@ import { ArrowUp } from "@lucide/solid"
 import { createSignal } from "solid-js"
 import { uiText } from "@shared/i18n/text"
 import { ComposerEditor } from "./composer/ComposerEditor"
+import { Button } from "./ui/button"
 import { AssistantMarkdown } from "./markdown/AssistantMarkdown"
 
 export function ConversationPreview(props: { theme: "light" | "dark" }) {
@@ -34,13 +35,14 @@ export function ConversationPreview(props: { theme: "light" | "dark" }) {
           onSuggestionChange={() => {}}
         />
         <div class="flex justify-end">
-          <button
+          <Button
             type="button"
-            class="button-interaction inline-flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-50"
+            size="icon"
+            class="rounded-full"
             aria-label={uiText("send_message_00881483")}
             disabled={!draft().trim()}
             onClick={submit}
-          ><ArrowUp aria-hidden="true" class="size-4" /></button>
+          ><ArrowUp aria-hidden="true" class="size-4" /></Button>
         </div>
       </div>
     </section>

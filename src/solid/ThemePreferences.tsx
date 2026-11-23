@@ -3,6 +3,7 @@ import { createSignal, onSettled } from "solid-js"
 import i18n from "@shared/i18n/runtime"
 import { uiText } from "@shared/i18n/text"
 import { themeStore, type ThemeState } from "@shared/store/themeState"
+import { Button } from "./ui/button"
 import "../components/chat/Settings.css"
 
 const choices = [
@@ -29,16 +30,17 @@ export function ThemePreferences(props: { preference: ThemeState["themePreferenc
           <h2 id="solid-appearance" class="text-sm font-medium">{text("appearance_86a63f23")}</h2>
           <div role="group" aria-labelledby="solid-appearance" class="settings-choice-group">
             {choices.map(({ mode, label, Icon }) => (
-              <button
+              <Button
                 type="button"
-                data-slot="button"
+                variant="ghost"
+                size="sm"
                 aria-pressed={props.preference === mode ? "true" : "false"}
-                class="settings-choice button-interaction inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-sm font-medium outline-none hover:bg-accent hover:text-accent-foreground has-[>svg]:px-2.5"
+                class="settings-choice"
                 onClick={() => themeStore.getState().setThemePreference(mode)}
               >
                 <Icon aria-hidden="true" class="size-4" />
                 {text(label)}
-              </button>
+              </Button>
             ))}
           </div>
         </section>
