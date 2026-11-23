@@ -158,22 +158,24 @@ export function createActorSnapshot(
     requiredTreeCursor = undefined
   }
 
-  createEffect(() => [rootId(), active()] as const, ([id, isActive]) => {
-    if (isActive && id) void refresh()
+  const openRoot = createMemo(() => active() ? rootId() : null)
+  const descendantCount = createMemo(descendantCountHint)
+  createEffect(openRoot, (id) => {
+    if (id) void refresh()
     return cancel
   })
-  createEffect(() => [rootId(), active(), descendantCountHint()] as const, ([rootId, active, descendantCountHint]) => {
+  createEffect(() => [openRoot(), descendantCount()] as const, ([rootId, count]) => {
     const previous = lastCountHint
-    lastCountHint = { rootId, count: descendantCountHint }
-    if (active && rootId && previous.rootId === rootId && previous.count !== null &&
-      descendantCountHint !== null && previous.count !== descendantCountHint) void refresh()
+    lastCountHint = { rootId, count }
+    if (rootId && previous.rootId === rootId && previous.count !== null &&
+      count !== null && previous.count !== count) void refresh()
   })
 
   const activeSnapshot = createMemo(() => {
     const current = state()
     return active() && current.rootId === rootId() ? current.snapshot : null
   })
-  createEffect(() => [rootId(), activeSnapshot()] as const, ([rootId, snapshot]) => {
+  createEffect(() => [openRoot(), activeSnapshot()] as const, ([rootId, snapshot]) => {
     if (expiryTimer !== null) { clearTimeout(expiryTimer); expiryTimer = null }
     if (!rootId || snapshot?.schema_version !== 2) return
     const hint = snapshot.refresh_after_ms
