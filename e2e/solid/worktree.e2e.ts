@@ -57,12 +57,7 @@ test("Solid Lotus prepares a project worktree before sending the first message",
 
   await page.goto(entryUrl)
   if (isMobile) await page.getByRole("button", { name: "菜单", exact: true }).click()
-  const sidebar = page.locator("aside")
-  const projectButton = sidebar.getByRole("button", { name: new RegExp(project.name) })
-    .and(sidebar.locator("button:not([aria-haspopup])"))
-  await expect(projectButton).toBeVisible()
-  if (await projectButton.getAttribute("aria-expanded") === "false") await projectButton.click()
-  await sidebar.getByRole("button", { name: "新建会话", exact: true }).last().click()
+  await page.getByRole("button", { name: `在 ${project.name} 中新建会话`, exact: true }).click()
   const workspace = page.getByRole("button", { name: "会话工作区", exact: true })
   const more = page.locator("[data-composer-surface]").getByRole("button", { name: "更多", exact: true })
   const openedMore = !await workspace.isVisible()

@@ -28,6 +28,7 @@ import { ComposerCommandMenus } from "./commands/ComposerCommandMenus"
 import { NewSessionPermissionControl, PermissionModeControl } from "./permissions/PermissionModeControl"
 import { createNewChatWorktree } from "../workspace/createNewChatWorktree"
 import { NewChatWorktreeControl } from "../workspace/NewChatWorktreeControl"
+import { WorktreePreparationNotice } from "../workspace/WorktreePreparationNotice"
 import { ContextCompressionNotice } from "./compact/ContextCompressionNotice"
 import { ContextUsageRing } from "./compact/ContextUsageRing"
 import { ChatRunStatus } from "./status/ChatRunStatus"
@@ -120,6 +121,7 @@ export function ComposerPanel(props: {
     draftEpoch: () => props.draftEpoch,
     navigationVersion: props.navigationVersion,
   })
+  const [worktreeNotice, setWorktreeNotice] = createSignal<{ message: string; isCurrent: () => boolean } | null>(null)
   const queue = createGuidanceQueue(() => props.chat.currentSessionId, running)
   const queuedSend = () => !props.semantic && Boolean(props.chat.currentSessionId && (running() || queue.hasUnconfirmed))
   const interactionBlocked = () => Boolean(props.chat.pendingQuestion || props.chat.pendingApproval ||
@@ -230,7 +232,13 @@ export function ComposerPanel(props: {
       }
       if (origin.prepare) {
         try { submission.workspacePath = await origin.prepare() }
-        catch { return }
+        catch {
+          if (origin.isCurrent()) setWorktreeNotice({
+            message: worktree.error ?? text("chat_worktree_prepare_failed"),
+            isCurrent: origin.isCurrent,
+          })
+          return
+        }
         if (!origin.isCurrent()) return
       }
       let liveBootstrapResume = false
@@ -308,6 +316,10 @@ export function ComposerPanel(props: {
         sessionId={props.pageVisible !== false && props.chat.currentChat?.kind === "root" ? props.chat.currentSessionId : null}
         manualPending={commands.compactPending} runActive={running()} />
       <Show when={props.pageVisible !== false}>
+        <Show when={worktreeNotice()?.isCurrent() && worktreeNotice()} keyed>
+          {(notice) => <WorktreePreparationNotice message={notice.message}
+            onDismiss={() => setWorktreeNotice(null)} onRestoreFocus={focusEditor} />}
+        </Show>
         <ChatRunStatus chat={props.chat} rootUnsafe={props.rootAuthority.unsafe}
           retryDisabled={models.busy || submitting() || queue.busy || commands.busy || props.ingress.busy}
           onContinueEditing={() => document.getElementById(inputId)?.focus()} />
