@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import { render } from "@solidjs/web"
 import "../../src/solid/styles.css"
 import { ProjectWorkOwnerControls, ProjectWorkPlanningControls } from "../../src/solid/project-work/ProjectWorkControls"
-import type { WorkCommandContext, WorkControlCopy, WorkPlanningDraft, WorkPlanningQuery, WorkPlanningValue, WorkRequestStatus } from "../../src/components/app/project-work/projectWorkControls"
+import type { WorkCommandContext, WorkControlCopy, WorkPlanningDraft, WorkPlanningQuery, WorkPlanningValue, WorkRequestStatus } from "../../src/lib/project-work/projectWorkControls"
 
 const parameters = new URLSearchParams(location.search)
 document.documentElement.classList.toggle("dark", parameters.get("theme") === "dark")

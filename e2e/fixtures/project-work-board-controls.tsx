@@ -4,7 +4,7 @@ import "../../src/solid/styles.css"
 import { changeLocale } from "../../src/shared/i18n/runtime"
 import { createRuntimeConfig, installRuntimeConfig } from "../../src/runtime/runtimeConfig"
 import type { ProjectManifest } from "../../src/services/project"
-import type { WorkCommandContext, WorkPlanningDraft, WorkRequestStatus } from "../../src/components/app/project-work/projectWorkControls"
+import type { WorkCommandContext, WorkPlanningDraft, WorkRequestStatus } from "../../src/lib/project-work/projectWorkControls"
 
 const parameters = new URLSearchParams(location.search)
 document.documentElement.classList.toggle("dark", parameters.get("theme") === "dark")
