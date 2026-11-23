@@ -66,6 +66,7 @@ export function SubagentTranscriptPane(props: SubagentTranscriptPaneProps) {
             <VirtualHistory
               entries={entries()}
               estimateSize={() => 96}
+              followingLatest={sticky.following()}
               initialReadingAnchor={transcript.loading ? null : anchor}
               onReadingAnchor={props.onReadingAnchor}
               onMissingReadingAnchor={sticky.resume}

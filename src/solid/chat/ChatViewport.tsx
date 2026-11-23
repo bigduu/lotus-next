@@ -162,6 +162,7 @@ export function ChatViewport(props: {
           return item.m.role === "user" ? 112 : 160
         }}
         preserveOnPrepend
+        followingLatest={sticky.following()}
         initialReadingAnchor={props.initialReadingAnchor}
         onReadingAnchor={props.onReadingAnchor}
         onMissingReadingAnchor={sticky.resume}

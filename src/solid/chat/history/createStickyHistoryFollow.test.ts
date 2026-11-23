@@ -173,6 +173,46 @@ it("does not rewrite the scroll offset when resize deliveries leave the bottom u
   expect(chat.el.scrollTop).toBe(900)
 })
 
+it.each(["wheel", "keyboard", "touch", "scrollbar"])("waits for a deliberate %s return after a measurement reaches the bottom", (input) => {
+  const chat = mountScrollableChat()
+  act(() => {
+    chat.el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }))
+    chat.el.scrollTop = 600
+    chat.state.onScroll()
+  })
+  act(() => {
+    // A virtualizer adjustment can be clamped to the bottom without any
+    // downward input, including when part of a transcript is not virtualized.
+    chat.el.scrollTop = 700
+    chat.state.onScroll()
+  })
+  expect(chat.state.following()).toBe(false)
+  act(() => chat.growContent())
+  expect(chat.el.scrollTop).toBe(700)
+
+  act(() => {
+    if (input === "wheel") chat.el.dispatchEvent(new WheelEvent("wheel", { deltaY: 200 }))
+    if (input === "keyboard") chat.el.dispatchEvent(new KeyboardEvent("keydown", { key: "End" }))
+    if (input === "touch") {
+      for (const [type, clientY] of [["touchstart", 120], ["touchmove", 50]] as const) {
+        const event = new Event(type)
+        Object.defineProperty(event, "touches", { value: [{ clientY }] })
+        chat.el.dispatchEvent(event)
+      }
+    }
+    if (input === "scrollbar") {
+      vi.spyOn(chat.el, "getBoundingClientRect").mockReturnValue({ right: 100 } as DOMRect)
+      chat.el.dispatchEvent(new MouseEvent("pointerdown", { clientX: 95 }))
+      window.dispatchEvent(new Event("pointerup"))
+    }
+    chat.el.scrollTop = 900
+    chat.state.onScroll()
+  })
+  expect(chat.state.following()).toBe(true)
+  act(() => chat.growContent())
+  expect(chat.el.scrollTop).toBe(1100)
+})
+
 it("keeps following for downward wheel input and editing keys inside the transcript", () => {
   const chat = mountScrollableChat()
   act(() => {

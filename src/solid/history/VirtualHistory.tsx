@@ -24,6 +24,7 @@ export interface VirtualHistoryProps<T extends HistoryEntry> {
   before?: JSX.Element
   after?: JSX.Element
   preserveOnPrepend?: boolean
+  followingLatest?: boolean
   initialReadingAnchor?: HistoryReadingAnchor | null
   onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
   onMissingReadingAnchor?: () => void
@@ -37,11 +38,15 @@ export interface VirtualHistoryProps<T extends HistoryEntry> {
 export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProps<T>) {
   const [viewport, setViewport] = createSignal<HTMLDivElement | null>(null)
   const [scrollMargin, setScrollMargin] = createSignal(0)
+  const [outsideHistory, setOutsideHistory] = createSignal(0)
   const [prepend, setPrepend] = createSignal<{ entries: readonly T[]; anchor: HistoryReadingAnchor } | null>(null)
   let scroller!: HTMLDivElement
   let prefix!: HTMLDivElement
   let history!: HTMLDivElement
+  let suffix!: HTMLDivElement
   let restored = false
+  const preserveReading = () => props.preserveOnPrepend && !props.followingLatest
+  const endPadding = () => preserveReading() ? outsideHistory() : 0
 
   const virtualizer = createElementVirtualizer<HTMLDivElement, HTMLDivElement>(() => {
     // A snapshot lets TanStack resolve the previous key through a prepend.
@@ -54,7 +59,8 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
       getItemKey: (index) => entries[index]?.key ?? index,
       estimateSize: (index) => entries[index] ? estimate(entries[index]) : 0,
       scrollMargin: scrollMargin(),
-      anchorTo: props.preserveOnPrepend ? "end" : "start",
+      paddingEnd: endPadding(),
+      anchorTo: preserveReading() ? "end" : "start",
       gap: HISTORY_ROW_GAP,
       overscan: 6,
       initialRect: INITIAL_RECT,
@@ -70,6 +76,12 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
       },
       useAnimationFrameWithResizeObserver: true,
     }
+  })
+
+  createEffect(() => props.followingLatest, (following) => {
+    // The sticky viewport owns end alignment while following. Deferring a
+    // second correction here can replay it after the reader scrolls away.
+    virtualizer.instance.shouldAdjustScrollPositionOnItemSizeChange = following ? () => false : undefined
   })
 
   onSettled(() => {
@@ -98,15 +110,20 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
         }
       }
     })
-    const measureOrigin = () => {
-      const offset = history.getBoundingClientRect().top - scroller.getBoundingClientRect().top +
-        scroller.scrollTop - scroller.clientTop
-      setScrollMargin(Math.max(0, Math.round(offset)))
+    const measureLayout = () => {
+      const offset = Math.max(0, Math.round(history.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top + scroller.scrollTop - scroller.clientTop))
+      setScrollMargin(offset)
+      // Pending messages and live output are below the measured rows. Include
+      // their space in end-anchor calculations without enlarging the DOM spacer.
+      const trailing = suffix.parentElement!.getBoundingClientRect().bottom - suffix.getBoundingClientRect().top
+      setOutsideHistory(offset + Math.max(0, Math.round(trailing)))
     }
-    measureOrigin()
+    measureLayout()
     const Observer = scroller.ownerDocument.defaultView?.ResizeObserver
-    const observer = Observer ? new Observer(measureOrigin) : undefined
+    const observer = Observer ? new Observer(measureLayout) : undefined
     observer?.observe(prefix)
+    observer?.observe(suffix)
     return () => {
       observer?.disconnect()
       registerScroll?.(null)
@@ -207,7 +224,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
           ref={(element) => { history = element }}
           class="relative w-full"
           data-virtual-history=""
-          style={{ height: `${virtualizer.totalSize()}px` }}
+          style={{ height: `${Math.max(0, virtualizer.totalSize() - endPadding())}px` }}
         >
           <For each={virtualizer.items()} keyed={(row) => row.key}>{(row) => (
             <HistoryRow row={row} scrollMargin={scrollMargin} measure={virtualizer.measureRow}>
@@ -215,7 +232,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
             </HistoryRow>
           )}</For>
         </div>
-        {props.after}
+        <div ref={(element) => { suffix = element }}>{props.after}</div>
       </div>
     </div>
   )

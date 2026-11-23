@@ -1,5 +1,8 @@
 import { createSignal, onCleanup } from "solid-js"
 
+const SCROLL_INTENT_MS = 500
+const isAtBottom = (element: Element) => element.scrollHeight - element.clientHeight - element.scrollTop <= 2
+
 /** Keep the main transcript pinned through measuring, until the reader scrolls upward. */
 export function createStickyHistoryFollow(startAtBottom: boolean) {
   const [following, setFollowing] = createSignal(startAtBottom)
@@ -9,6 +12,7 @@ export function createStickyHistoryFollow(startAtBottom: boolean) {
   let frame: number | undefined
   let previousTop = 0
   let readingUntil = 0
+  let returningUntil = 0
   let draggingScrollbar = false
 
   const follow = () => {
@@ -21,9 +25,13 @@ export function createStickyHistoryFollow(startAtBottom: boolean) {
       previousTop = viewport.scrollTop
     })
   }
-  const pause = () => setFollowing(false)
+  const pause = () => {
+    returningUntil = 0
+    setFollowing(false)
+  }
   const resume = () => {
     readingUntil = 0
+    returningUntil = 0
     draggingScrollbar = false
     setFollowing(true)
     follow()
@@ -31,9 +39,11 @@ export function createStickyHistoryFollow(startAtBottom: boolean) {
   const onScroll = () => {
     if (!viewport) return
     const top = viewport.scrollTop
-    const near = viewport.scrollHeight - viewport.clientHeight - top <= 2
-    if (near) setFollowing(true)
-    else if (top < previousTop - 1 && (draggingScrollbar || Date.now() < readingUntil)) pause()
+    if (isAtBottom(viewport)) {
+      // A virtualizer or browser clamp can reach the bottom while the reader
+      // is detached. Only downward reader input can restore the bottom pin.
+      if (!following() && top > previousTop && (draggingScrollbar || Date.now() < returningUntil)) resume()
+    } else if (top < previousTop - 1 && (draggingScrollbar || Date.now() < readingUntil)) pause()
     else if (following()) follow()
     previousTop = top
   }
@@ -50,27 +60,44 @@ export function createStickyHistoryFollow(startAtBottom: boolean) {
     viewport = element
     if (!element) return
     previousTop = element.scrollTop
+    readingUntil = 0
+    returningUntil = 0
+    draggingScrollbar = false
     observer = new ResizeObserver(follow)
     observer.observe(element)
     if (element.firstElementChild) observer.observe(element.firstElementChild)
     listeners = new AbortController()
     const signal = listeners.signal
-    const read = (event: Event) => {
+    const read = (event: Event, towardBottom: boolean) => {
       if (event.defaultPrevented) return
       for (let target = event.target instanceof Element ? event.target : null;
         target && target !== element; target = target.parentElement) {
-        if (target.scrollTop > 0 && /^(auto|scroll)$/.test(getComputedStyle(target).overflowY)) return
+        const canScroll = towardBottom ? !isAtBottom(target) : target.scrollTop > 0
+        if (canScroll && /^(auto|scroll)$/.test(getComputedStyle(target).overflowY)) return
       }
-      readingUntil = Date.now() + 500
-      if (element.scrollTop > 0) pause()
+      if (towardBottom) {
+        readingUntil = 0
+        if (!following()) {
+          if (isAtBottom(element)) resume()
+          else returningUntil = Date.now() + SCROLL_INTENT_MS
+        }
+      } else {
+        readingUntil = Date.now() + SCROLL_INTENT_MS
+        if (element.scrollTop > 0) pause()
+      }
     }
-    element.addEventListener("wheel", (event) => { if (event.deltaY < 0) read(event) }, { passive: true, signal })
+    element.addEventListener("wheel", (event) => {
+      if (event.deltaY !== 0) read(event, event.deltaY > 0)
+    }, { passive: true, signal })
     element.addEventListener("pointerdown", (event) => {
       const right = element.getBoundingClientRect().right
       if (event.button === 0 && event.target === element && event.clientX >= right - 16 && event.clientX <= right) draggingScrollbar = true
     }, { passive: true, signal })
     const endDrag = () => {
-      if (draggingScrollbar) readingUntil = Date.now() + 500
+      if (draggingScrollbar) {
+        readingUntil = Date.now() + SCROLL_INTENT_MS
+        returningUntil = readingUntil
+      }
       draggingScrollbar = false
     }
     const owner = element.ownerDocument.defaultView
@@ -80,12 +107,16 @@ export function createStickyHistoryFollow(startAtBottom: boolean) {
     element.addEventListener("touchstart", (event) => { touchY = event.touches[0]?.clientY }, { passive: true, signal })
     element.addEventListener("touchmove", (event) => {
       const next = event.touches[0]?.clientY
-      if (next !== undefined && touchY !== undefined && next > touchY) read(event)
+      if (next !== undefined && touchY !== undefined && next !== touchY) read(event, next < touchY)
       touchY = next
     }, { passive: true, signal })
     element.addEventListener("keydown", (event) => {
       if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]")) return
-      if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) read(event)
+      if (event.key === " ") {
+        if (event.target instanceof Element && event.target.closest("button, [role=button]")) return
+        read(event, !event.shiftKey)
+      } else if (["ArrowUp", "PageUp", "Home"].includes(event.key)) read(event, false)
+      else if (["ArrowDown", "PageDown", "End"].includes(event.key)) read(event, true)
     }, { signal })
     follow()
   }
