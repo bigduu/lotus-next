@@ -1,6 +1,7 @@
 import { createEffect, createRoot, createSignal } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient } from "@services/api"
+import { NetworkRequestError } from "@services/api/errors"
 import { agentClient, type AgentEventHandlers, type ChatResponse } from "@services/chat/AgentService"
 import { clearSessionCompatibilityObservations } from "@services/chat/sessionExecutionCompatibility"
 import { appStore } from "@shared/store/appStore/state"
@@ -27,8 +28,9 @@ const scopes: Array<() => void> = []
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => { resolve = done })
-  return { promise, resolve }
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 
 function acknowledge(sessionId: string, messageId?: string): ChatResponse {
@@ -343,5 +345,203 @@ describe("createChat pending user reconciliation", () => {
     await settleChat(() => initialHistory.resolve())
     expect(chat.pendingUserText).toBeNull()
     expect(chat.pendingUserImages).toHaveLength(0)
+  })
+})
+
+const historyReads = () => vi.mocked(appStore.getState().loadChatHistory)
+const uploadFixture = (name: string) => ({ ...image, name })
+
+function hydrateUserImageTurn(sessionId: string, content: string, id: string) {
+  const chat = appStore.getState().chats.find((item) => item.id === sessionId)!
+  publishMessages(sessionId, [...chat.messages, user(id, content)])
+}
+
+describe("Solid image attachment visibility", () => {
+  it.each([
+    { known: "neither", lateSecondAck: false }, { known: "first", lateSecondAck: false }, { known: "second", lateSecondAck: false },
+    { known: "neither", lateSecondAck: true }, { known: "first", lateSecondAck: true }, { known: "second", lateSecondAck: true },
+  ])("uses distinct canonical messages for consecutive legacy image-only ACKs (%j)", async ({ known, lateSecondAck }) => {
+    const sid = "legacy-image-queue", history = deferred<void>()
+    const secondAck = deferred<ChatResponse>()
+    const image = uploadFixture("first.gif")
+    appStore.setState({ chats: [session(sid)] })
+    vi.mocked(agentClient.sendMessage).mockResolvedValueOnce(acknowledge(sid, known === "first" ? "first-legacy-user" : undefined))
+      .mockReturnValueOnce(secondAck.promise)
+    historyReads().mockImplementation((_id: string, options?: { mode?: string; waitForAssistant?: boolean }) =>
+      options?.mode === "monotonic" && !options.waitForAssistant ? history.promise : Promise.resolve())
+    vi.mocked(agentClient.subscribeToEvents).mockImplementation(async (_sid, handlers) => { handlers.onComplete?.(undefined) })
+    const pane = await mount(sid)
+    await settleChat(async () => { await pane.chat.send("", { images: [image] }) })
+    const sending = pane.chat.send("", { images: [{ ...image, name: "second.gif" }] })
+    const acknowledgeSecond = () => settleChat(async () => {
+      secondAck.resolve(acknowledge(sid, known === "second" ? "second-legacy-user" : undefined))
+      expect((await sending).kind).toBe("accepted")
+    })
+    if (!lateSecondAck) await acknowledgeSecond()
+    expect(pane.chat.pendingUserMessages).toHaveLength(lateSecondAck ? 1 : 2)
+    // Reserve a known ID before fallback matching. A pre-ACK canonical snapshot
+    // uses chronological order because old replies cannot identify message IDs.
+    const firstCanonical = !lateSecondAck && known === "second" ? "second" : "first"
+    hydrateUserImageTurn(sid, "", `${firstCanonical}-legacy-user`)
+    await settleChat()
+    if (lateSecondAck) await acknowledgeSecond()
+    const remaining = firstCanonical === "first" ? "second" : "first"
+    expect(pane.chat.pendingUserMessages).toHaveLength(1)
+    expect(pane.chat.pendingUserMessages[0].images[0].name).toBe(`${remaining}.gif`)
+    await settleChat(() => history.resolve())
+    expect(pane.chat.pendingUserMessages).toHaveLength(1)
+    hydrateUserImageTurn(sid, "", `${remaining}-legacy-user`)
+    await settleChat()
+    expect(pane.chat.pendingUserMessages).toHaveLength(0)
+    expect(vi.mocked(agentClient.sendMessage)).toHaveBeenCalledTimes(2); expect(agentClient.execute).toHaveBeenCalledTimes(2)
+  })
+  it("does not replay an unconfirmed image POST after an older legacy ACK becomes canonical", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const sid = "unconfirmed-legacy-image", secondAck = deferred<ChatResponse>()
+    const image = uploadFixture("first.gif")
+    appStore.setState({ chats: [session(sid)] })
+    vi.mocked(agentClient.sendMessage).mockResolvedValueOnce(acknowledge(sid)).mockReturnValueOnce(secondAck.promise)
+      .mockResolvedValueOnce(acknowledge(sid))
+    vi.mocked(agentClient.subscribeToEvents).mockImplementation(async (_sid, handlers) => { handlers.onComplete?.(undefined) })
+    const pane = await mount(sid)
+    await settleChat(async () => { await pane.chat.send("", { images: [image] }) })
+    const sending = pane.chat.send("", { images: [{ ...image, name: "second.gif" }] })
+    hydrateUserImageTurn(sid, "", "first-user")
+    await settleChat()
+    await settleChat(async () => { secondAck.reject(new NetworkRequestError()); expect((await sending).kind).toBe("unconfirmed") })
+    expect(pane.chat.pendingUserMessages).toHaveLength(0)
+    expect(vi.mocked(agentClient.sendMessage)).toHaveBeenCalledTimes(2); expect(agentClient.execute).toHaveBeenCalledTimes(1)
+    await settleChat(async () => { await pane.chat.send("", { images: [{ ...image, name: "second.gif" }] }) })
+    expect(pane.chat.pendingUserMessages).toHaveLength(1)
+    expect(pane.chat.pendingUserImages[0]?.name).toBe("second.gif")
+    hydrateUserImageTurn(sid, "", "explicit-retry-user")
+    await settleChat()
+    expect(pane.chat.pendingUserMessages).toHaveLength(0)
+    expect(vi.mocked(agentClient.sendMessage)).toHaveBeenCalledTimes(3); expect(agentClient.execute).toHaveBeenCalledTimes(2)
+  })
+  it.each([
+    { newSession: false, caption: "" }, { newSession: false, caption: "late caption" },
+    { newSession: true, caption: "" }, { newSession: true, caption: "late caption" },
+  ])("retains a late image ACK after navigating away before POST resolves (%j)", async ({ newSession, caption }) => {
+    const a = "late-image-ack", b = "viewed-while-posting", acknowledgement = deferred<ChatResponse>()
+    const image = uploadFixture("late.gif")
+    appStore.setState({ chats: [session(a), session(b)] })
+    vi.mocked(agentClient.sendMessage).mockReturnValueOnce(acknowledgement.promise)
+    const created = vi.fn()
+    const select = vi.spyOn(appStore.getState(), "selectSession")
+    const pane = await mount(newSession ? null : a, { onSessionCreated: created })
+    const sending = pane.chat.send(caption, { images: [image] })
+    await settleChat(() => pane.rebind(b))
+    await settleChat(async () => { expect(await pane.chat.send("B waits for A's ACK", { images: [image] })).toEqual({ kind: "busy" }) })
+    expect(vi.mocked(agentClient.sendMessage)).toHaveBeenCalledTimes(1)
+    await settleChat(async () => {
+      acknowledgement.resolve(acknowledge(a, "late-exact-ack"))
+      expect(await sending).toMatchObject({ kind: "accepted", sessionId: a, navigated: false })
+    })
+    expect(pane.chat.currentSessionId).toBe(b)
+    expect(pane.chat.pendingUserMessages).toHaveLength(0)
+    expect(created).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled()
+    expect(vi.mocked(agentClient.subscribeToEvents)).not.toHaveBeenCalled()
+    expect(agentClient.execute).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(agentClient.execute).mock.calls[0][0]).toBe(a)
+    await settleChat(() => pane.rebind(a))
+    expect(pane.chat.pendingUserMessages).toHaveLength(1)
+    expect(pane.chat.pendingUserMessages[0]).toMatchObject({ text: caption, images: [{ name: "late.gif" }] })
+    hydrateUserImageTurn(a, caption, "late-exact-ack")
+    await settleChat(() => pane.rebind(a))
+    expect(pane.chat.pendingUserMessages).toHaveLength(0)
+    expect(vi.mocked(agentClient.sendMessage)).toHaveBeenCalledTimes(1); expect(agentClient.execute).toHaveBeenCalledTimes(1)
+  })
+  it.each([
+    { nextImage: false, firstHydrated: 1 }, { nextImage: true, firstHydrated: 1 },
+    { nextImage: false, firstHydrated: 2 }, { nextImage: true, firstHydrated: 2 },
+  ])("retains consecutive image ACKs in one session until each is canonical (%j)", async ({ nextImage, firstHydrated }) => {
+    const sid = "consecutive-image-session", history = deferred<void>()
+    const image = uploadFixture("first.gif")
+    appStore.setState({ chats: [session(sid)] })
+    vi.mocked(agentClient.sendMessage).mockResolvedValueOnce(acknowledge(sid, "ack-1"))
+      .mockResolvedValueOnce(acknowledge(sid, "ack-2"))
+    historyReads().mockImplementation((_id: string, options?: { mode?: string; waitForAssistant?: boolean }) =>
+      options?.mode === "monotonic" && !options.waitForAssistant ? history.promise : Promise.resolve())
+    vi.mocked(agentClient.subscribeToEvents).mockImplementation(async (_sid, handlers) => { handlers.onComplete?.(undefined) })
+    const pane = await mount(sid)
+    await settleChat(async () => { await pane.chat.send("first caption", { images: [image] }) })
+    expect(pane.chat.sending).toBe(false)
+    await settleChat(async () => { await pane.chat.send("second caption", { images: nextImage ? [{ ...image, name: "second.gif" }] : [] }) })
+    expect(pane.chat.pendingUserMessages.flatMap((item) => item.images.map((entry) => entry.name))).toEqual(nextImage ? ["first.gif", "second.gif"] : ["first.gif"])
+    expect(pane.chat.pendingUserMessages.map((item) => item.text)).toEqual(["first caption", "second caption"])
+    await settleChat(async () => {
+      hydrateUserImageTurn(sid, firstHydrated === 1 ? "first caption" : "second caption", `ack-${firstHydrated}`)
+      history.resolve()
+    })
+    await settleChat()
+    expect(pane.chat.pendingUserMessages.map((item) => item.text)).toEqual([firstHydrated === 1 ? "second caption" : "first caption"])
+    hydrateUserImageTurn(sid, firstHydrated === 1 ? "second caption" : "first caption", `ack-${firstHydrated === 1 ? 2 : 1}`)
+    await settleChat()
+    expect(pane.chat.pendingUserMessages).toHaveLength(0)
+    expect(vi.mocked(agentClient.sendMessage)).toHaveBeenCalledTimes(2); expect(agentClient.execute).toHaveBeenCalledTimes(2)
+  })
+  it.each([false, true])("keeps A's delayed image after B sends (B image=%s), retiring each exact acknowledgement independently", async (bHasImage) => {
+    const a = "image-a", b = "image-b", firstRead = deferred<void>()
+    const image = uploadFixture("A.gif")
+    appStore.setState({ chats: [session(a), session(b)] })
+    vi.mocked(agentClient.sendMessage).mockResolvedValueOnce(acknowledge(a, "ack-a"))
+      .mockResolvedValueOnce(acknowledge(b, "ack-b"))
+    // Delay only ACK hydration; the completed run's separate canonical read
+    // resolves with old history so another session can submit normally.
+    historyReads().mockImplementation((id: string, options?: { mode?: string; waitForAssistant?: boolean }) =>
+      id === a && options?.mode === "monotonic" && !options.waitForAssistant ? firstRead.promise : Promise.resolve())
+    vi.mocked(agentClient.subscribeToEvents).mockImplementation(async (_sid, handlers) => { handlers.onComplete?.(undefined) })
+    const pane = await mount(a)
+    await settleChat(async () => { await pane.chat.send("A caption", { images: [image] }) })
+    expect(pane.chat.sending).toBe(false)
+    expect(pane.chat.pendingUserImages[0]?.name).toBe("A.gif")
+
+    await settleChat(() => pane.rebind(b))
+    expect(pane.chat.pendingUserImages).toHaveLength(0)
+    await settleChat(async () => { await pane.chat.send("B caption", { images: bHasImage ? [{ ...image, name: "B.gif" }] : [] }) })
+    expect(pane.chat.pendingUserText).toBe("B caption")
+    expect(pane.chat.pendingUserImages).toHaveLength(bHasImage ? 1 : 0)
+
+    await settleChat(() => pane.rebind(a))
+    expect(pane.chat.pendingUserText).toBe("A caption")
+    expect(pane.chat.pendingUserImages[0]?.name).toBe("A.gif")
+    await settleChat(async () => {
+      hydrateUserImageTurn(a, "A caption", "ack-a")
+      firstRead.resolve()
+    })
+    expect(pane.chat.pendingUserImages).toHaveLength(0)
+    await settleChat(() => pane.rebind(b))
+    expect(pane.chat.pendingUserText).toBe("B caption")
+    expect(pane.chat.pendingUserImages[0]?.name).toBe(bHasImage ? "B.gif" : undefined)
+    await settleChat(() => hydrateUserImageTurn(b, "B caption", "ack-b"))
+    expect(pane.chat.pendingUserText).toBeNull()
+    expect(pane.chat.pendingUserImages).toHaveLength(0)
+    expect(vi.mocked(agentClient.sendMessage)).toHaveBeenCalledTimes(2)
+    expect(agentClient.execute).toHaveBeenCalledTimes(2)
+  })
+  it.each(["", "caption with image"])("retains acknowledged pending image metadata until exact history hydration (%s)", async (text) => {
+    const sid = "image-pending-session", history = deferred<void>()
+    const image = uploadFixture("fixture.gif")
+    appStore.setState({ chats: [session(sid)] })
+    vi.mocked(agentClient.sendMessage).mockResolvedValueOnce(acknowledge(sid, "accepted-image"))
+    historyReads().mockReturnValueOnce(history.promise)
+    const pane = await mount(sid)
+    await settleChat(async () => { await pane.chat.send(text, { images: [image] }) })
+    expect(vi.mocked(agentClient.sendMessage).mock.calls[0][0].images).toEqual([image])
+    expect(pane.chat.pendingUserText).toBe(text)
+    expect(pane.chat.pendingUserImages).toHaveLength(1)
+    expect(pane.chat.pendingUserImages[0]).toMatchObject({ name: "fixture.gif", size: 42, type: "image/gif", url: `data:image/gif;base64,${image.base64}` })
+    await settleChat(() => pane.rebind("other-session"))
+    expect(pane.chat.pendingUserImages).toHaveLength(0)
+    await settleChat(() => pane.rebind(sid))
+    expect(pane.chat.pendingUserImages).toHaveLength(1)
+    await settleChat(async () => {
+      publishMessages(sid, [{ id: "accepted-image", role: "user", content: text,
+        images: [{ id: "persisted-image", url: "http://localhost:9563/api/v1/sessions/image-pending-session/attachments/image-1", name: "fixture.gif", type: "image/gif", size: 42 }], createdAt: "2026-10-19T00:00:00Z" }])
+      history.resolve()
+    })
+    expect(pane.chat.pendingUserText).toBeNull()
+    expect(pane.chat.pendingUserImages).toHaveLength(0)
   })
 })
