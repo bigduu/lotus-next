@@ -1,5 +1,5 @@
 import { Brain, ChevronRight, Terminal } from "@lucide/solid"
-import type { ComponentProps } from "@solidjs/web"
+import type { ComponentProps, JSX } from "@solidjs/web"
 import { createEffect, createMemo, createSignal, createUniqueId, For, Match, omit, onSettled, Show, Switch } from "solid-js"
 
 import "@/components/chat/ProcessActivity.css"
@@ -26,6 +26,7 @@ type RowActions = {
   onPreviewImage: (url: string) => void
   sideChat?: SideChatSources
   messageActions?: ReturnType<typeof createMessageActions>
+  afterProcess?: (key: string) => JSX.Element
 }
 
 type ReasoningPart = Extract<ProcessPart, { kind: "reasoning" }>
@@ -323,7 +324,10 @@ export function RenderHistoryRow(props: RowActions & { item: DisplayItem; live?:
         <FoldedTurn {...props} item={turn()} />
       )}</Match>
       <Match when={props.item.kind === "process" ? props.item : undefined}>{(process) => (
-        <Process {...props} item={process()} />
+        <>
+          <Process {...props} item={process()} />
+          {props.afterProcess?.(process().key)}
+        </>
       )}</Match>
       <Match when={props.item.kind === "msg" ? props.item : undefined}>{(message) => (
         <MessageRow {...props} item={message()} />

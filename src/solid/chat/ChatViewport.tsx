@@ -7,9 +7,12 @@ import { Button } from "../ui/button"
 import { VirtualHistory, type HistoryReadingAnchor, type ScrollToHistoryEntry } from "../history/VirtualHistory"
 import { createUiText } from "../shell/uiText"
 import { MessageBody } from "./MessageBody"
+import { InlineActorGroup, InlineActorPrefix } from "./actor-status/InlineActorStatus"
+import { createInlineActorStatus } from "./actor-status/createInlineActorStatus"
 import { RenderHistoryRow } from "./history/HistoryRow"
 import { createSideChatSources } from "./history/SideChatSourceActions"
 import { createHistoryReveal, type HistoryRevealRequest } from "./history/createHistoryReveal"
+import { createStickyHistoryFollow } from "./history/createStickyHistoryFollow"
 import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, collectSideChatSourceKeys, renderItemKey } from "./history/historyProjection"
 import type { createChat } from "./createChat"
 import { createMessageActions, type MessageNotice } from "./message-actions/createMessageActions"
@@ -31,11 +34,13 @@ export function ChatViewport(props: {
   rootAuthority?: ReturnType<typeof createRootModeAuthority>
   onMessageNotice?: (notice: MessageNotice) => void
   attachments?: readonly TimelineAttachment[]
+  pageVisible?: boolean
+  onOpenActor?: (id: string) => void
 }) {
   const text = createUiText()
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
   const [earlierError, setEarlierError] = createSignal(false)
-  const [following, setFollowing] = createSignal(untrack(() => !props.initialReadingAnchor))
+  const sticky = createStickyHistoryFollow(untrack(() => !props.initialReadingAnchor))
   const [aligningSource, setAligningSource] = createSignal(false)
   const [openKeys, setOpenKeys] = createSignal<ReadonlySet<string>>(new Set())
   const disclosure = {
@@ -49,14 +54,18 @@ export function ChatViewport(props: {
   let viewport: HTMLDivElement | null = null
   let scrollToEntry: ScrollToHistoryEntry | undefined
   let loadRequest: { controller: AbortController; sessionId: string; done: Promise<void> } | undefined
-  let pendingScroll: number | undefined
-  let contentResize: ResizeObserver | undefined
 
   const rendering = createMemo(() => buildRenderItems(props.chat.messages))
   const live = createMemo(() => buildLiveItems(
     props.chat.liveSegments, props.chat.streaming, props.chat.streamingReasoning,
     props.chat.sending || props.chat.streamPhase === "streaming", props.chat.streamStatus, text,
   ))
+  const actorStatus = createInlineActorStatus({
+    session: () => props.chat.currentChat, chats: () => props.chat.chats, active: () => props.pageVisible !== false,
+    history: rendering, live, messages: () => props.chat.messages,
+  })
+  const afterProcess = (key: string) => <InlineActorGroup agents={actorStatus.groups().byOrigin.get(key)}
+    status={actorStatus} onOpen={props.onOpenActor} />
   const tailCanFold = createMemo(() => !props.chat.sending && live().length === 0)
   const entries = createMemo(() => buildHistoryEntries(buildDisplayItems(rendering(), tailCanFold())))
   const timeline = createMemo(() => placeTimelineAttachments(entries(), props.attachments))
@@ -77,27 +86,8 @@ export function ChatViewport(props: {
     return window && !window.invalidated ? window.beforeMessageId : null
   }
 
-  const followTail = () => {
-    if (!viewport || pendingScroll !== undefined) return
-    pendingScroll = requestAnimationFrame(() => {
-      pendingScroll = undefined
-      if (following() && viewport) viewport.scrollTop = viewport.scrollHeight
-    })
-  }
-  const restoreFollowing = () => { setFollowing(true); followTail() }
-  const onScroll = () => {
-    if (viewport && !aligningSource()) setFollowing(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 24)
-  }
-
-  onSettled(() => {
-    followTail()
-    return () => {
-      loadRequest?.controller.abort()
-      contentResize?.disconnect()
-      if (pendingScroll !== undefined) cancelAnimationFrame(pendingScroll)
-    }
-  })
-  createEffect(() => [entries(), pending(), live(), timeline()] as const, followTail)
+  onSettled(() => () => loadRequest?.controller.abort())
+  createEffect(() => [entries(), pending(), live(), timeline()] as const, sticky.follow)
 
   const loadEarlierPage = (sessionId: string): Promise<void> => {
     if (props.chat.currentSessionId !== sessionId || !before()) return Promise.resolve()
@@ -106,7 +96,7 @@ export function ChatViewport(props: {
     const controller = new AbortController()
     setLoadingEarlier(true)
     setEarlierError(false)
-    const done = appStore.getState().loadEarlierChatHistory(sessionId, controller.signal, () => setFollowing(false))
+    const done = appStore.getState().loadEarlierChatHistory(sessionId, controller.signal, sticky.pause)
       .finally(() => {
         if (loadRequest?.controller !== controller) return
         loadRequest = undefined
@@ -134,7 +124,7 @@ export function ChatViewport(props: {
     openTurn: (key) => setOpenKeys((previous) => previous.has(key) ? previous : new Set([...previous, key])),
     onAlign: (active) => {
       setAligningSource(active)
-      if (active) setFollowing(false)
+      if (active) sticky.pause()
     },
     onMissing: () => props.onMissingRevealedMessage?.(),
   })
@@ -154,26 +144,25 @@ export function ChatViewport(props: {
         preserveOnPrepend
         initialReadingAnchor={props.initialReadingAnchor}
         onReadingAnchor={props.onReadingAnchor}
-        onMissingReadingAnchor={restoreFollowing}
+        onMissingReadingAnchor={sticky.resume}
         registerScrollToEntry={(scroll) => { scrollToEntry = scroll ?? undefined }}
         onScrollElement={(element) => {
-          contentResize?.disconnect()
           viewport = element
-          if (element?.firstElementChild) {
-            contentResize = new ResizeObserver(followTail)
-            contentResize.observe(element.firstElementChild)
-          }
+          sticky.bind(element)
         }}
-        onScroll={onScroll}
-        before={<Show when={before()}>
-          <div class="mx-auto flex w-full max-w-4xl flex-col items-center pb-3">
-            <Button variant="ghost" size="sm" disabled={loadingEarlier()} onClick={() => { void loadEarlier() }}>
-              <Show when={loadingEarlier()}><LoaderCircle class="size-4 animate-spin" /></Show>
-              {text("load_earlier_messages")}
-            </Button>
-            <Show when={earlierError()}><p role="alert" class="text-xs text-destructive">{text("load_earlier_messages_failed")}</p></Show>
-          </div>
-        </Show>}
+        onScroll={() => { if (!aligningSource()) sticky.onScroll() }}
+        before={<>
+          <Show when={before()}>
+            <div class="mx-auto flex w-full max-w-4xl flex-col items-center pb-3">
+              <Button variant="ghost" size="sm" disabled={loadingEarlier()} onClick={() => { void loadEarlier() }}>
+                <Show when={loadingEarlier()}><LoaderCircle class="size-4 animate-spin" /></Show>
+                {text("load_earlier_messages")}
+              </Button>
+              <Show when={earlierError()}><p role="alert" class="text-xs text-destructive">{text("load_earlier_messages_failed")}</p></Show>
+            </div>
+          </Show>
+          <InlineActorPrefix status={actorStatus} onOpen={props.onOpenActor} />
+        </>}
         renderEntry={(entry) => {
           const attachment = () => {
             const row = entry()
@@ -187,7 +176,7 @@ export function ChatViewport(props: {
             <Show when={item()}>{(message) => (
               <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
                 <RenderHistoryRow item={message()} disclosure={disclosure} theme={props.theme}
-                  onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} messageActions={messageActions} />
+                  onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} messageActions={messageActions} afterProcess={afterProcess} />
               </div>
             )}</Show>
           }>{(card) => card().render()}</Show>
@@ -201,7 +190,7 @@ export function ChatViewport(props: {
               </div>
             )}</For>
             <For each={live()} keyed={renderItemKey}>{(item) => (
-              <RenderHistoryRow item={item()} disclosure={disclosure} theme={props.theme} live
+              <RenderHistoryRow item={item()} disclosure={disclosure} theme={props.theme} live afterProcess={afterProcess}
                 onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
             )}</For>
             <Show when={timeline().tail.length}>
@@ -220,10 +209,10 @@ export function ChatViewport(props: {
           {notice().text}
         </p>}
       </Show>
-      <Show when={!following()}>
+      <Show when={!sticky.following()}>
         <div class="absolute bottom-3 right-4" data-scroll-to-bottom-anchor="">
           <Button size="icon" variant="outline" class="rounded-full"
-            aria-label={text("scroll_to_bottom_2b05ff67")} onClick={restoreFollowing}>
+            aria-label={text("scroll_to_bottom_2b05ff67")} onClick={sticky.resume}>
             <ArrowDown />
           </Button>
         </div>
