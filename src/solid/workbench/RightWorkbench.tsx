@@ -423,10 +423,17 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
     element?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')?.scrollIntoView({ block: "nearest", inline: "nearest" })
     if (!closingTab || ids.includes(closingTab)) return
     closingTab = null
-    if (document.activeElement !== document.body) return
-    const next = element?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]:not([aria-hidden="true"])')
-      ?? element?.querySelector<HTMLElement>('[role="tab"]:not([aria-hidden="true"])') ?? addTabTrigger
-    next?.focus()
+    const frame = requestAnimationFrame(() => {
+      // The last tab and its list may still be in the DOM when the update begins.
+      if (!visible() || props.pageVisible === false || document.activeElement !== document.body) return
+      const list = tabList()
+      const next = (list?.isConnected
+        ? list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]:not([aria-hidden="true"])')
+          ?? list.querySelector<HTMLElement>('[role="tab"]:not([aria-hidden="true"])')
+        : null) ?? addTabTrigger
+      next?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
   })
   createEffect(hasTabs, (available) => {
     if (!available) setTabMenuOpen(false)
@@ -516,6 +523,7 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
                 return (
                   <DropdownMenuRadioItem
                     value={tab().value}
+                    closeOnSelect
                     aria-label={tab().isBrowser ? text("browser_tab_bc1120de", { v0: tab().browserIndex, v1: tab().title }) : undefined}
                     style={{ "white-space": "normal", "overflow-wrap": "anywhere" }}
                   ><span class="min-w-0">{tab().title}</span></DropdownMenuRadioItem>
