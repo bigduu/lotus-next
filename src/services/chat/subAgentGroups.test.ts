@@ -129,3 +129,22 @@ it("reuses the historical index for live results, preserving the original call a
   expect(collectSubAgentOrigins([], history)).toBe(first)
   expect(renderProbe.read()["subagent.origins.history"]).toBe(1)
 })
+
+it("folds only retained children older than the first visible message or without a confirmed birth", () => {
+  const firstMessageAt = "2026-11-02T00:00:01.000900Z"
+  const retained = { status: "completed", createdAt: "2026-11-02T00:00:01.000100Z" }
+  const current = { status: "running", createdAt: firstMessageAt }
+  const unconfirmed = { status: "unknown" }
+  const agents = { retained, current, unconfirmed }
+
+  const cleared = placeSubAgents([], agents, null)
+  expect(cleared.folded).toEqual(agents)
+  expect(cleared.unplaced).toEqual({})
+  expect(cleared.hasUnconfirmedAge).toBe(false)
+  expect(placeSubAgents([], {}, null).folded).toEqual({})
+
+  const reopened = placeSubAgents([], agents, firstMessageAt)
+  expect(reopened.folded).toEqual({ retained, unconfirmed })
+  expect(reopened.unplaced).toEqual({ current })
+  expect(reopened.hasUnconfirmedAge).toBe(true)
+})

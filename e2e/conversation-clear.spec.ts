@@ -208,6 +208,7 @@ test("Supervisor keeps retained children folded after sending and reloading", as
   await expect(history).toHaveCount(0)
   await expect(startPrompt).toBeVisible()
   await expect(fold).toHaveAttribute("aria-expanded", "false")
+  await expect(fold.locator("[data-cleared-subagents-brief]")).toHaveText("1 个历史子会话")
   await expect(child).toHaveCount(0)
 
   const input = page.getByRole("textbox", { name: "消息", exact: true })
@@ -233,6 +234,9 @@ test("Supervisor keeps retained children folded after sending and reloading", as
   await expect(child).toHaveCount(0)
   await fold.click()
   await expect(child).toHaveText(/Retained child/)
+  await fold.click()
+  await expect(fold).toHaveAttribute("aria-expanded", "false")
+  await expect(child).toHaveCount(0)
   expect(f.writes.filter(({ method }) => method === "DELETE")).toEqual([])
   expect(f.runtime.pageErrors).toEqual([])
 })
