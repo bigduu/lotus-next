@@ -1,12 +1,12 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createRoot, flush } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { appStore } from "@shared/store/appStore/state"
 import { ApiError, RequestTimeoutError } from "@services/api/errors"
 import { agentClient, type RootModeOperationInput, type RootModeOperationResponse } from "@services/chat/AgentService"
-import { beginRootModeOperation, finishRootModeOperation, getRootModeFenceState, readRootModeFence } from "@/lib/rootModeTransitionFence"
-import { useRootOrchestrationMode } from "./useRootOrchestrationMode"
+import { beginRootModeOperation, finishRootModeOperation, getRootModeFenceState, readRootModeFence } from "@/lib/rootModeTransitionState"
+import { createRootModeAuthority } from "./createRootModeAuthority"
 
-vi.mock("@shared/store/appStore", () => ({ useAppStore: { setState: vi.fn() } }))
+vi.mock("@shared/store/appStore/state", () => ({ appStore: { setState: vi.fn() } }))
 vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
   getSession: vi.fn(), selectRootMode: vi.fn(), recoverRootMode: vi.fn(),
 } }))
@@ -15,13 +15,8 @@ const sessionId = "root/session"
 const birthToken = "a".repeat(64)
 let enabled = false
 let epoch = 0
-let root: Root
-let host: HTMLDivElement
-let value: ReturnType<typeof useRootOrchestrationMode>
-function Harness({ kind }: { kind?: "root" | "child" }) {
-  value = useRootOrchestrationMode(sessionId, kind)
-  return null
-}
+let dispose: (() => void) | undefined
+let value: ReturnType<typeof createRootModeAuthority>
 const receipt = (operation: RootModeOperationInput, status: "committed" | "fenced" | "rejected_incompatible" = "committed"): RootModeOperationResponse => ({
   status, operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
   resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: enabled,
@@ -29,12 +24,26 @@ const receipt = (operation: RootModeOperationInput, status: "committed" | "fence
   root_tool_authority_revision: 1,
 })
 const apiError = (status: number, code: string) => new ApiError(code, status, "Error", JSON.stringify({ error: { code, message: code } }))
-const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve() }) }
-const mount = async (kind?: "root" | "child") => { await act(async () => root.render(<Harness kind={kind} />)) }
+async function settle(change?: () => unknown) {
+  const result = change?.()
+  flush()
+  await result
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  flush()
+}
+const mount = async (kind?: "root" | "child") => {
+  createRoot((cleanup) => {
+    dispose = cleanup
+    value = createRootModeAuthority(() => sessionId, () => kind)
+  })
+  await settle()
+}
 
 beforeEach(() => {
-  localStorage.clear(); enabled = false; epoch = 0
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  localStorage.clear()
+  enabled = false
+  epoch = 0
+  vi.mocked(appStore.setState).mockClear()
   vi.mocked(agentClient.getSession).mockReset().mockImplementation(async () => ({ session: {
     id: sessionId, kind: "root", root_orchestration_only: enabled,
     thinking_mode: enabled ? "ultra" : "standard",
@@ -48,9 +57,12 @@ beforeEach(() => {
     epoch = operation.expectedEpoch + 1
     return receipt(operation, "fenced")
   })
-  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host)
 })
-afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks() })
+afterEach(() => {
+  dispose?.()
+  dispose = undefined
+  vi.restoreAllMocks()
+})
 
 describe("recoverable Root mode operations", () => {
   it.each([undefined, "standard", "max"])("fails closed for missing or contradictory canonical mode %s", async (mode) => {
@@ -59,7 +71,7 @@ describe("recoverable Root mode operations", () => {
     await mount("root")
     expect(value.confirmed).toBeNull()
     expect(value.error).toContain("独立 Ultra")
-    await act(async () => { await value.change(false) })
+    await settle(() => value.change(false))
     expect(agentClient.selectRootMode).not.toHaveBeenCalled()
   })
 
@@ -69,7 +81,7 @@ describe("recoverable Root mode operations", () => {
       return { ...response, thinking_mode_at_completion: undefined } as unknown as RootModeOperationResponse
     })
     vi.mocked(agentClient.recoverRootMode).mockRejectedValueOnce(new Error("old backend"))
-    await mount("root"); await act(async () => { await value.change(true) })
+    await mount("root"); await settle(() => value.change(true))
     expect(value.selected).toBeNull()
     expect(getRootModeFenceState(sessionId)).toBe("uncertain")
   })
@@ -81,11 +93,11 @@ describe("recoverable Root mode operations", () => {
     })
     await mount("root")
     let result!: Awaited<ReturnType<typeof value.change>>
-    await act(async () => { result = await value.change(true) })
+    await settle(async () => { result = await value.change(true) })
     expect(result.status).toBe("committed"); expect(result.authority).toBeNull()
     expect(value.confirmed).toBeNull(); expect(value.error).toContain("早于已确认")
     expect(getRootModeFenceState(sessionId)).toBe("clear") // The operation itself is terminal.
-    epoch = 1; await act(async () => { await value.retry() })
+    epoch = 1; await settle(() => value.retry())
     expect(value.confirmed).toBe(true)
   })
   it("persists identity before a mode-only select and reads the committed authority", async () => {
@@ -95,7 +107,7 @@ describe("recoverable Root mode operations", () => {
       return receipt(operation)
     })
     await mount("root")
-    await act(async () => { await value.change(true) })
+    await settle(() => value.change(true))
     expect(agentClient.selectRootMode).toHaveBeenCalledOnce()
     expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
     expect(getRootModeFenceState(sessionId)).toBe("clear")
@@ -105,7 +117,7 @@ describe("recoverable Root mode operations", () => {
   it("recovers a lost select response with the same identity without resending selection", async () => {
     vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new RequestTimeoutError())
     await mount("root")
-    await act(async () => { await value.change(true) })
+    await settle(() => value.change(true))
     const operation = vi.mocked(agentClient.selectRootMode).mock.calls[0][1]
     expect(agentClient.recoverRootMode).toHaveBeenCalledWith(sessionId, operation)
     expect(agentClient.selectRootMode).toHaveBeenCalledOnce()
@@ -122,7 +134,7 @@ describe("recoverable Root mode operations", () => {
     vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(apiError(status, code))
     vi.mocked(agentClient.recoverRootMode).mockRejectedValue(apiError(status, code))
     await mount("root")
-    await act(async () => { await value.change(true) })
+    await settle(() => value.change(true))
     expect(getRootModeFenceState(sessionId)).toBe("uncertain")
     expect(value.selected).toBeNull()
     expect(value.recoverable).toBe(true)
@@ -130,7 +142,7 @@ describe("recoverable Root mode operations", () => {
       enabled = true; epoch = 1
       return receipt(operation)
     })
-    await act(async () => { await value.retry() })
+    await settle(() => value.retry())
     expect(getRootModeFenceState(sessionId)).toBe("clear")
     expect(value.selected).toBe(true)
   })
@@ -138,7 +150,7 @@ describe("recoverable Root mode operations", () => {
   it("clears only an explicit birth mismatch and reloads the new lifetime", async () => {
     vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(apiError(412, "root_mode_birth_mismatch"))
     await mount("root")
-    await act(async () => { await value.change(true) })
+    await settle(() => value.change(true))
     expect(getRootModeFenceState(sessionId)).toBe("clear")
     expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
     expect(value.error).toContain("会话身份已改变")
@@ -151,14 +163,14 @@ describe("recoverable Root mode operations", () => {
       expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, current_thinking_mode: "ultra", root_tool_authority_revision: 2,
     }))
     await mount("root")
-    await act(async () => { await value.change(true) })
+    await settle(() => value.change(true))
     expect(getRootModeFenceState(sessionId)).toBe("uncertain")
     vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => {
       enabled = true; epoch = 2
       return { status: "fenced_by_successor", operation_id: operation.operationId,
         expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, current_thinking_mode: "ultra", root_tool_authority_revision: 2 }
     })
-    await act(async () => { await value.retry() })
+    await settle(() => value.retry())
     expect(getRootModeFenceState(sessionId)).toBe("clear")
     expect(value.selected).toBe(true)
   })
@@ -166,12 +178,12 @@ describe("recoverable Root mode operations", () => {
   it("refreshes this tab after another tab clears its operation marker", async () => {
     await mount("root")
     const operation = beginRootModeOperation(sessionId, 0, birthToken, true)!
-    await flush()
+    await settle()
     expect(value.selected).toBeNull()
     enabled = true; epoch = 1
     expect(finishRootModeOperation(sessionId, operation)).toBe(true)
     window.dispatchEvent(new StorageEvent("storage", { key: `lotus-next.root-mode-operation.v2.${encodeURIComponent(sessionId)}.${operation.operationId}` }))
-    await flush()
+    await settle()
     expect(value.selected).toBe(true)
     expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
   })
@@ -183,7 +195,7 @@ describe("recoverable Root mode operations", () => {
       key: `lotus-next.root-mode-operation.v2.${encodeURIComponent(sessionId)}.0:550e8400-e29b-41d4-a716-446655440000`,
       oldValue: "completed elsewhere", newValue: null,
     }))
-    await flush()
+    await settle()
     expect(value.selected).toBe(true)
     expect(agentClient.getSession).toHaveBeenCalledTimes(2)
     expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
@@ -196,7 +208,7 @@ describe("recoverable Root mode operations", () => {
     await mount("root")
     enabled = true; epoch = 1
     expect(finishRootModeOperation(sessionId, operation)).toBe(true)
-    await act(async () => { complete(receipt(operation)); await Promise.resolve() })
+    await settle(() => complete(receipt(operation)))
     expect(getRootModeFenceState(sessionId)).toBe("clear")
     expect(value.selected).toBe(true)
   })
@@ -213,14 +225,33 @@ describe("recoverable Root mode operations", () => {
   it("does not send a mode operation when storage cannot persist its marker", async () => {
     await mount("root")
     vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("quota denied") })
-    await act(async () => { await value.change(true) })
+    await settle(() => value.change(true))
     expect(agentClient.selectRootMode).not.toHaveBeenCalled()
     expect(value.error).toContain("切换未发送")
   })
 
+  it("discards a canonical read that finishes after the Solid owner is disposed", async () => {
+    type SessionResponse = Awaited<ReturnType<typeof agentClient.getSession>>
+    let respond!: (response: SessionResponse) => void
+    vi.mocked(agentClient.getSession).mockReturnValueOnce(new Promise<SessionResponse>((resolve) => { respond = resolve }))
+    await mount("root")
+    expect(value.loading).toBe(true)
+    expect(agentClient.getSession).toHaveBeenCalledOnce()
+
+    dispose?.()
+    dispose = undefined
+    await settle(() => respond({ session: {
+      id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra",
+      root_mode_transition_epoch: 1, root_mode_birth_token: birthToken,
+    } } as SessionResponse))
+
+    expect(value.authority).toBeNull()
+    expect(appStore.setState).not.toHaveBeenCalled()
+  })
+
   it("keeps Child read-only without loading Root authority", async () => {
     await mount("child")
-    await act(async () => { await value.change(true) })
+    await settle(() => value.change(true))
     expect(value.child).toBe(true)
     expect(agentClient.getSession).not.toHaveBeenCalled()
     expect(agentClient.selectRootMode).not.toHaveBeenCalled()
