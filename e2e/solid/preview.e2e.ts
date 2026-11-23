@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const preview = "/solid-preview.html";
+const preview = "/";
 
 test("reads the existing theme preference and follows system appearance on demand", async ({ page }) => {
   await page.addInitScript(() => {
@@ -67,5 +67,20 @@ test("keeps nested select options accessible and restores focus through both lay
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+test("dismisses a nested popover without closing the dialog", async ({ page }) => {
+  await page.goto(preview);
+  await page.getByRole("button", { name: "Open preferences dialog" }).click();
+  const dialog = page.getByRole("dialog", { name: "Workspace preferences", exact: true });
+  const trigger = dialog.getByRole("button", { name: "Sharing details" });
+  await trigger.click();
+
+  const popover = dialog.getByRole("dialog", { name: "Workspace sharing", exact: true });
+  await expect(popover.getByRole("textbox", { name: "Sharing note" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(popover).toBeHidden();
+  await expect(dialog).toBeVisible();
   await expect(trigger).toBeFocused();
 });

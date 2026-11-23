@@ -1,7 +1,24 @@
 import tailwindcss from "@tailwindcss/vite"
 import solid from "@solidjs/vite-plugin"
-import { defineConfig, loadEnv, type Plugin } from "vite"
+import { defineConfig, loadEnv, type Plugin, type PreviewServer, type ViteDevServer } from "vite"
 import { assertSafePublicBuildEnvironment, portableArtifactBase, sourceAliases } from "./vite.config.ts"
+
+const previewEntry = "solid-preview.html"
+
+function servePreviewIndex(): Plugin {
+  const configure = (server: ViteDevServer | PreviewServer) => {
+    server.middlewares.use((request, _response, next) => {
+      // Both preview servers use the Solid entry at the URL printed by Vite.
+      request.url = request.url?.replace(/^\/(?:index\.html)?(?=\?|$)/, `/${previewEntry}`)
+      next()
+    })
+  }
+  return {
+    name: "lotus-solid-preview-index",
+    configureServer: configure,
+    configurePreviewServer: configure,
+  }
+}
 
 function assertSolidRuntime(): Plugin {
   const reactRuntime = /[/\\]node_modules[/\\](react|react-dom|react-i18next)(?:[/\\]|$)/
@@ -24,13 +41,13 @@ export default defineConfig(({ mode }) => {
     appType: "mpa",
     base: portableArtifactBase,
     cacheDir: "node_modules/.vite-solid-preview",
-    optimizeDeps: { entries: ["solid-preview.html"] },
-    plugins: [solid(), tailwindcss(), assertSolidRuntime()],
+    optimizeDeps: { entries: [previewEntry] },
+    plugins: [solid(), tailwindcss(), servePreviewIndex(), assertSolidRuntime()],
     resolve: { alias: sourceAliases },
     server: { host: "127.0.0.1", port: 9573, strictPort: true },
     build: {
       outDir: "dist-solid-preview",
-      rollupOptions: { input: "solid-preview.html" },
+      rollupOptions: { input: previewEntry },
     },
   }
 })

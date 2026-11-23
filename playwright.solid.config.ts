@@ -9,7 +9,7 @@ export default defineConfig({
   use: { baseURL, locale: "zh-CN", colorScheme: "dark" },
   webServer: {
     command: `vite preview --config vite.solid.config.ts --host 127.0.0.1 --port ${port} --strictPort`,
-    url: `${baseURL}/solid-preview.html`,
+    url: baseURL,
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },
