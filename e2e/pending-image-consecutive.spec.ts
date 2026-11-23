@@ -52,9 +52,13 @@ test(`#383 consecutive ${legacy ? "legacy image-only ACKs" : "image ACKs"} remai
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
-  const textbox = page.getByRole("textbox", { name: "Messages", exact: true }).first()
+  await expect(page.getByRole("heading", { name: session.title, exact: true })).toBeVisible()
+  const composer = page.locator("[data-composer-region]")
+  const textbox = composer.getByRole("textbox", { name: "Messages", exact: true }).first()
   for (const n of [1, 2]) {
-    await page.locator('input[type="file"]').setInputFiles({ name: `image-${n}.png`, mimeType: "image/png", buffer: Buffer.from(pixel, "base64") })
+    const name = `image-${n}.png`
+    await composer.locator('input[type="file"]').setInputFiles({ name, mimeType: "image/png", buffer: Buffer.from(pixel, "base64") })
+    await expect(composer.getByAltText(name, { exact: true })).toBeVisible()
     await textbox.fill(caption(n))
     await page.getByRole("button", { name: "Send message", exact: true }).click()
     await expect.poll(() => executions).toBe(n)
