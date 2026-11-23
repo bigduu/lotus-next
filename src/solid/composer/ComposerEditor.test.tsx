@@ -1,46 +1,75 @@
-import { act, createRef, type ComponentProps } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createSignal, createStore, flush, markRaw, Show } from "solid-js"
+import { render, type ComponentProps } from "@solidjs/web"
 import { closeHistory } from "@tiptap/pm/history"
 import type { Editor } from "@tiptap/core"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import { composerText } from "@/components/chat/composerDocument"
 import { ComposerEditor, type ComposerInputHandle, type ComposerFocusSnapshot, type FileSuggestion } from "./ComposerEditor"
-import { composerText } from "./composerDocument"
 
-const roots: Root[] = []
+type EditorProps = ComponentProps<typeof ComposerEditor>
+type EditorElement = HTMLDivElement & { editor: Editor }
+
+const mounts: Array<() => void> = []
+
 beforeAll(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   HTMLElement.prototype.scrollIntoView = vi.fn()
   Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList)
   Range.prototype.getBoundingClientRect = vi.fn(() => new DOMRect())
 })
+
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
+  for (const dispose of mounts.splice(0)) dispose()
   document.body.replaceChildren()
 })
-function mount(overrides: Partial<ComponentProps<typeof ComposerEditor>> = {}) {
+
+function mount(overrides: Partial<EditorProps> = {}) {
   const host = document.body.appendChild(document.createElement("div"))
-  const root = createRoot(host)
-  roots.push(root)
-  const ref = createRef<ComposerInputHandle>()
-  const props: ComponentProps<typeof ComposerEditor> = {
-    id: "composer-test", value: "", inputRef: ref, label: "Messages", title: "Enter", placeholder: "Message",
+  let handle: ComposerInputHandle | null = null
+  const props: EditorProps = {
+    id: "composer-test", value: "", label: "Messages", title: "Enter", placeholder: "Message",
     busy: false, mentionsEnabled: true, mentionScope: "/workspace", onChange: vi.fn(), onSubmit: vi.fn(),
     onAddFiles: vi.fn(), onSuggestionChange: vi.fn(), ...overrides,
+    inputRef: (next) => { handle = next },
   }
-  act(() => root.render(<ComposerEditor {...props} />))
-  const input = host.querySelector<HTMLDivElement>("[data-composer-editor]")!
+  const scopedProps = (updates: Partial<EditorProps>) => {
+    const combined = { ...props, ...updates }
+    if (combined.focusSnapshot) markRaw(combined.focusSnapshot)
+    return combined
+  }
+  const [scope, setScope] = createSignal(createStore(scopedProps({})))
+  mounts.push(render(() =>
+    <Show when={scope()} keyed>{([current]) => <ComposerEditor {...current} />}</Show>, host))
+  flush()
+
+  const input = () => host.querySelector<EditorElement>("[data-composer-editor]")!
   const range = document.createRange()
-  range.selectNodeContents(input)
+  range.selectNodeContents(input())
   window.getSelection()?.removeAllRanges()
   window.getSelection()?.addRange(range)
-  const editor = (input as HTMLDivElement & { editor: Editor }).editor
-  const render = (change: Partial<typeof props>) => act(() => root.render(<ComposerEditor {...props} {...change} />))
-  return { host, root, input, editor, props, ref, render }
+  return {
+    host, props,
+    get input() { return input() },
+    get editor() { return input().editor },
+    focus: () => handle!.focus(),
+    render: (updates: Partial<EditorProps>) => {
+      const [, setCurrent] = scope()
+      setCurrent((draft) => { Object.assign(draft, scopedProps(updates)) })
+      flush()
+    },
+    remount: (updates: Partial<EditorProps>) => {
+      setScope(createStore(scopedProps(updates)))
+      flush()
+    },
+  }
 }
+
 function paste(input: HTMLElement, text: string, files: File[] = []) {
   const event = new Event("paste", { bubbles: true, cancelable: true })
-  Object.defineProperty(event, "clipboardData", { value: { files, getData: (type: string) => type === "text/plain" ? text : '<span data-type="mention" data-id="forged">bad</span>' } })
-  act(() => input.dispatchEvent(event))
+  Object.defineProperty(event, "clipboardData", { value: {
+    files,
+    getData: (type: string) => type === "text/plain" ? text : '<span data-type="mention" data-id="forged">bad</span>',
+  } })
+  input.dispatchEvent(event)
   return event
 }
 
@@ -50,29 +79,28 @@ describe("Tiptap composer integration", () => {
     try {
       let resolveOld: (suffix: string) => void = () => {}
       const oldResponse = new Promise<string>((resolve) => { resolveOld = resolve })
-      const request = vi.fn<NonNullable<ComponentProps<typeof ComposerEditor>["requestDraftCompletion"]>>()
+      const request = vi.fn<NonNullable<EditorProps["requestDraftCompletion"]>>()
         .mockReturnValueOnce(oldResponse)
         .mockResolvedValueOnce(" the results.")
       const view = mount({ value: "Check", requestDraftCompletion: request })
-      await act(async () => {
-        view.ref.current!.focus()
-        view.editor.commands.setTextSelection(view.editor.state.doc.content.size - 1)
-        await vi.advanceTimersByTimeAsync(700)
-      })
+      view.focus()
+      view.editor.commands.setTextSelection(view.editor.state.doc.content.size - 1)
+      await vi.advanceTimersByTimeAsync(700)
       expect(request.mock.calls[0][0]).toBe("Check")
 
-      act(() => { view.editor.commands.insertContent(" and compare") })
+      view.editor.commands.insertContent(" and compare")
       expect(request.mock.calls[0][1].aborted).toBe(true)
-      await act(async () => { resolveOld(" the old data."); await oldResponse })
+      resolveOld(" the old data.")
+      await oldResponse
       expect(view.input.querySelector("[data-draft-completion]")).toBeNull()
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+      await vi.advanceTimersByTimeAsync(700)
       expect(view.input.querySelector("[data-draft-completion]")?.textContent).toBe(" the results.")
       expect(composerText(view.editor.state.doc)).toBe("Check and compare")
       const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
-      act(() => { view.input.dispatchEvent(escape) })
+      view.input.dispatchEvent(escape)
       expect(view.input.querySelector("[data-draft-completion]")).toBeNull()
-      await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+      await vi.advanceTimersByTimeAsync(700)
       expect(request).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
@@ -82,8 +110,8 @@ describe("Tiptap composer integration", () => {
   it("tolerates a destroyed editor during a restored pane remount", () => {
     const focusSnapshot = { current: null as ComposerFocusSnapshot }
     const view = mount({ value: "retained draft", focusSnapshot })
-    act(() => view.editor.destroy())
-    expect(() => view.ref.current!.focus()).not.toThrow()
+    view.editor.destroy()
+    expect(() => view.focus()).not.toThrow()
     expect(() => view.render({ busy: true, mentionScope: "/restored", label: "Restored messages" })).not.toThrow()
     expect(view.host.querySelector('[data-composer-editor]')?.textContent).toBe("retained draft")
     expect(view.props.onChange).not.toHaveBeenCalled()
@@ -91,9 +119,11 @@ describe("Tiptap composer integration", () => {
   it("inserts a selected atomic reference at the caret and leaves the suffix intact", async () => {
     let suggestion: FileSuggestion | null = null
     const view = mount({ value: "before @do suffix", onSuggestionChange: (next) => { suggestion = next } })
-    await act(async () => { view.editor.commands.setTextSelection(11); await Promise.resolve() })
+    view.editor.commands.setTextSelection(11)
+    await Promise.resolve()
     expect((suggestion as FileSuggestion | null)?.query).toBe("do")
-    await act(async () => { suggestion!.pick("docs/设计 @ file (2).md"); await Promise.resolve() })
+    suggestion!.pick("docs/设计 @ file (2).md")
+    await Promise.resolve()
     expect(view.input.querySelector('[data-type="mention"]')?.textContent).toBe("@docs/设计 @ file (2).md")
     expect(composerText(view.editor.state.doc)).toBe("before @docs/设计 @ file (2).md suffix")
     expect(view.props.onChange).toHaveBeenLastCalledWith("before @docs/设计 @ file (2).md suffix")
@@ -101,10 +131,10 @@ describe("Tiptap composer integration", () => {
   })
   it("does not publish formatting-only link transactions as new plaintext drafts", () => {
     const view = mount({ value: "https://example.com/guide" })
-    act(() => view.editor.commands.selectAll())
+    view.editor.commands.selectAll()
     for (let index = 0; index < 3; index += 1) {
-      act(() => view.editor.commands.unsetLink())
-      act(() => view.editor.commands.setLink({ href: "https://example.com/guide" }))
+      view.editor.commands.unsetLink()
+      view.editor.commands.setLink({ href: "https://example.com/guide" })
     }
     expect(composerText(view.editor.state.doc)).toBe("https://example.com/guide")
     expect(view.props.onChange).not.toHaveBeenCalled()
@@ -113,9 +143,11 @@ describe("Tiptap composer integration", () => {
     let suggestion: FileSuggestion | null = null
     const text = "@README.md "
     const view = mount({ value: text, onSuggestionChange: (next) => { suggestion = next } })
-    await act(async () => { view.editor.commands.setTextSelection(11); await Promise.resolve() })
+    view.editor.commands.setTextSelection(11)
+    await Promise.resolve()
     expect((suggestion as FileSuggestion | null)?.query).toBe("README.md")
-    await act(async () => { suggestion!.pick("README.md"); await Promise.resolve() })
+    suggestion!.pick("README.md")
+    await Promise.resolve()
     expect(view.input.querySelector('[data-type="mention"]')?.textContent).toBe("@README.md")
     expect(composerText(view.editor.state.doc)).toBe(text)
     expect(view.props.onChange).toHaveBeenCalledExactlyOnceWith(text)
@@ -123,8 +155,8 @@ describe("Tiptap composer integration", () => {
   it("keeps editor options stable during controlled draft acknowledgements and busy updates", () => {
     const view = mount({ value: "one" })
     const configure = vi.spyOn(view.editor, "setOptions")
-    act(() => view.editor.commands.setTextSelection(4))
-    act(() => view.editor.commands.insertContent(" two"))
+    view.editor.commands.setTextSelection(4)
+    view.editor.commands.insertContent(" two")
     const selection = view.editor.state.selection.from
     view.render({ value: "one two", busy: true })
     expect(configure).not.toHaveBeenCalled()
@@ -135,10 +167,8 @@ describe("Tiptap composer integration", () => {
     const first = "https://example.com/a"
     const second = "https://example.com/b"
     const view = mount({ value: first })
-    act(() => {
-      view.editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: second }] }] })
-      view.editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: first }] }] })
-    })
+    view.editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: second }] }] })
+    view.editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: first }] }] })
     expect(view.props.onChange).toHaveBeenNthCalledWith(1, second)
     expect(view.props.onChange).toHaveBeenNthCalledWith(2, first)
     expect(composerText(view.editor.state.doc)).toBe(first)
@@ -146,22 +176,26 @@ describe("Tiptap composer integration", () => {
   it("acknowledges an external draft without later echoing its link formatting", () => {
     const view = mount({ value: "old draft" })
     view.render({ value: "https://example.com/restored" })
-    act(() => view.editor.commands.selectAll())
-    act(() => view.editor.commands.unsetLink())
+    view.editor.commands.selectAll()
+    view.editor.commands.unsetLink()
     expect(composerText(view.editor.state.doc)).toBe("https://example.com/restored")
     expect(view.props.onChange).not.toHaveBeenCalled()
   })
   it("reopens a dismissed file query only after another document edit", async () => {
     let suggestion: FileSuggestion | null = null
     const view = mount({ value: "@re", onSuggestionChange: (value) => { suggestion = value } })
-    await act(async () => { view.editor.commands.setTextSelection(4); await Promise.resolve() })
+    view.editor.commands.setTextSelection(4)
+    await Promise.resolve()
     const first = suggestion as FileSuggestion | null
     expect(first?.query).toBe("re")
-    await act(async () => { first!.dismiss(); await Promise.resolve() })
+    first!.dismiss()
+    await Promise.resolve()
     expect(suggestion).toBeNull()
-    await act(async () => { view.editor.view.dispatch(view.editor.state.tr); await Promise.resolve() })
+    view.editor.view.dispatch(view.editor.state.tr)
+    await Promise.resolve()
     expect(suggestion).toBeNull()
-    await act(async () => { view.editor.commands.insertContent("a"); await Promise.resolve() })
+    view.editor.commands.insertContent("a")
+    await Promise.resolve()
     expect((suggestion as FileSuggestion | null)?.query).toBe("rea")
     expect(composerText(view.editor.state.doc)).toBe("@rea")
   })
@@ -169,22 +203,22 @@ describe("Tiptap composer integration", () => {
     const view = mount({ value: "/workflow" })
     const callbacks: FrameRequestCallback[] = []
     vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => { callbacks.push(callback); return callbacks.length })
-    act(() => view.ref.current!.focus())
+    view.focus()
     const parameters = document.body.appendChild(document.createElement("input"))
     parameters.focus()
-    act(() => { for (const callback of callbacks) callback(0) })
+    for (const callback of callbacks) callback(0)
     expect(document.activeElement).toBe(parameters)
   })
   it("handles physical Shift+Enter before the Android keydown bypass with one hard break", () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Linux; Android 14) Chrome/151.0.0.0 Mobile Safari/537.36")
     const view = mount({ value: "one" })
-    act(() => view.editor.commands.setTextSelection(4))
+    view.editor.commands.setTextSelection(4)
     const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, shiftKey: true, cancelable: true })
     let handled: boolean | void = false
-    act(() => { handled = view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event) })
+    handled = view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event)
     expect(handled).toBe(true)
     expect(event.defaultPrevented).toBe(true)
-    act(() => view.editor.commands.insertContent("two"))
+    view.editor.commands.insertContent("two")
     expect(composerText(view.editor.state.doc)).toBe("one\ntwo")
     expect(view.props.onSubmit).not.toHaveBeenCalled()
   })
@@ -198,7 +232,7 @@ describe("Tiptap composer integration", () => {
     const view = mount({ value: "keep" })
     const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, shiftKey: true, cancelable: true })
     let handled: boolean | void = false
-    act(() => { handled = view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event) })
+    handled = view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event)
     expect(handled).toBe(false)
     expect(event.defaultPrevented).toBe(false)
     expect(composerText(view.editor.state.doc)).toBe("keep")
@@ -207,40 +241,40 @@ describe("Tiptap composer integration", () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Linux; Android 14) Chrome/151.0.0.0 Mobile Safari/537.36")
     const view = mount({ value: "中文" })
     const event = new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, cancelable: true, ...ime })
-    act(() => view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event))
+    view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event)
     expect(event.defaultPrevented).toBe(false)
     expect(composerText(view.editor.state.doc)).toBe("中文")
     expect(view.props.onSubmit).not.toHaveBeenCalled()
   })
   it("deletes a whole selected reference with Backspace and supports undo", async () => {
     const view = mount()
-    act(() => view.editor.commands.insertContent([{ type: "mention", attrs: { id: "a b@中文.ts" } }]))
-    act(() => view.editor.view.dispatch(closeHistory(view.editor.state.tr)))
-    act(() => view.editor.commands.keyboardShortcut("Backspace"))
+    view.editor.commands.insertContent([{ type: "mention", attrs: { id: "a b@中文.ts" } }])
+    view.editor.view.dispatch(closeHistory(view.editor.state.tr))
+    view.editor.commands.keyboardShortcut("Backspace")
     expect(composerText(view.editor.state.doc)).toBe("")
-    act(() => view.editor.commands.undo())
+    view.editor.commands.undo()
     expect(composerText(view.editor.state.doc)).toBe("@a b@中文.ts")
     expect(view.input.querySelector('[data-type="mention"]')).not.toBeNull()
-    act(() => view.editor.commands.redo())
+    view.editor.commands.redo()
     expect(composerText(view.editor.state.doc)).toBe("")
   })
   it("copies references as their exact plain text, not object replacement characters", () => {
     const view = mount()
-    act(() => view.editor.commands.insertContent([{ type: "text", text: "read " }, { type: "mention", attrs: { id: "a b@中文.ts" } }]))
+    view.editor.commands.insertContent([{ type: "text", text: "read " }, { type: "mention", attrs: { id: "a b@中文.ts" } }])
     const slice = view.editor.state.doc.slice(1, view.editor.state.doc.content.size - 1)
     const serialize = view.editor.view.props.clipboardTextSerializer!
     expect(serialize(slice, view.editor.view)).toBe("read @a b@中文.ts")
   })
   it("replaces selections with plain multiline paste, linking only literal HTTP(S) URLs", () => {
     const view = mount({ value: "old" })
-    act(() => view.editor.commands.selectAll())
+    view.editor.commands.selectAll()
     expect(paste(view.input, "<tag> @typed\nhttps://example.com\n\njavascript:alert(1)").defaultPrevented).toBe(true)
     expect(composerText(view.editor.state.doc)).toBe("<tag> @typed\nhttps://example.com\n\njavascript:alert(1)")
     expect(view.input.querySelector('[data-type="mention"]')).toBeNull()
     expect(view.input.querySelectorAll("a")).toHaveLength(1)
     const link = view.input.querySelector("a")!
     const click = new MouseEvent("click", { bubbles: true, cancelable: true })
-    act(() => link.dispatchEvent(click))
+    link.dispatchEvent(click)
     expect(click.defaultPrevented).toBe(true)
   })
   it.each([
@@ -251,7 +285,7 @@ describe("Tiptap composer integration", () => {
     [8, 8, "one\ntwo\n", "Before one\ntwo\n after"],
   ])("preserves paste boundaries at %i..%i", (from, to, text, expected) => {
     const view = mount({ value: "Before  after" })
-    act(() => view.editor.commands.setTextSelection({ from, to }))
+    view.editor.commands.setTextSelection({ from, to })
     paste(view.input, text)
     expect(composerText(view.editor.state.doc)).toBe(expected)
   })
@@ -263,14 +297,14 @@ describe("Tiptap composer integration", () => {
       clientX: { value: 10 }, clientY: { value: 10 },
       dataTransfer: { value: { files: [], getData: (type: string) => type === "text/plain" ? "@fake " : '<span data-type="mention" data-id="forged">fake</span>' } },
     })
-    act(() => view.input.dispatchEvent(drop))
+    view.input.dispatchEvent(drop)
     expect(drop.defaultPrevented).toBe(true)
     expect(composerText(view.editor.state.doc)).toBe("before @fake after")
     expect(view.input.querySelector('[data-type="mention"]')).toBeNull()
   })
   it("leaves the selection intact on an empty/plain-text-unavailable paste", () => {
     const view = mount({ value: "keep selected" })
-    act(() => view.editor.commands.selectAll())
+    view.editor.commands.selectAll()
     paste(view.input, "")
     expect(composerText(view.editor.state.doc)).toBe("keep selected")
   })
@@ -284,7 +318,7 @@ describe("Tiptap composer integration", () => {
   it("preserves literal external drafts and caret on ordinary controlled updates", () => {
     const view = mount({ value: "@ordinary a\n\n" })
     expect(composerText(view.editor.state.doc)).toBe("@ordinary a\n\n")
-    act(() => view.editor.commands.setTextSelection(4))
+    view.editor.commands.setTextSelection(4)
     view.render({ value: "@ordinary a\n\n", busy: true })
     expect(view.editor.state.selection.from).toBe(4)
     expect(view.input.getAttribute("aria-busy")).toBe("true")
@@ -297,15 +331,13 @@ describe("Tiptap composer integration", () => {
   it("restores focused migrated drafts by text offsets across serialized atoms", () => {
     const focusSnapshot = { current: null as ComposerFocusSnapshot }
     const view = mount({ focusSnapshot })
-    act(() => {
-      view.editor.commands.insertContent([{ type: "mention", attrs: { id: "long @ path.ts" } }, { type: "text", text: " newer" }])
-      view.editor.commands.setTextSelection({ from: 3, to: 5 })
-      view.editor.view.focus()
-    })
+    view.editor.commands.insertContent([{ type: "mention", attrs: { id: "long @ path.ts" } }, { type: "text", text: " newer" }])
+    view.editor.commands.setTextSelection({ from: 3, to: 5 })
+    view.editor.view.focus()
     const plain = composerText(view.editor.state.doc)
-    act(() => view.root.render(<ComposerEditor key="new-session" {...view.props} value={plain} />))
-    const input = view.host.querySelector<HTMLDivElement>("[data-composer-editor]")!
-    const editor = (input as HTMLDivElement & { editor: Editor }).editor
+    view.remount({ value: plain })
+    const input = view.input
+    const editor = view.editor
     expect(document.activeElement).toBe(input)
     expect(editor.state.selection.from).toBe(17)
     expect(editor.state.selection.to).toBe(19)
@@ -318,13 +350,14 @@ describe("Tiptap composer integration", () => {
     const view = mount({ value: "old", focusSnapshot })
     const button = document.body.appendChild(document.createElement("button"))
     button.focus()
-    act(() => view.root.render(<ComposerEditor key="other-session" {...view.props} value="other" />))
+    view.remount({ value: "other" })
     expect(document.activeElement).toBe(button)
   })
   it("changing workspace closes stale suggestions without changing a chosen reference", async () => {
     const onSuggestionChange = vi.fn()
     const view = mount({ value: "@do", onSuggestionChange })
-    await act(async () => { view.editor.commands.setTextSelection(4); await Promise.resolve() })
+    view.editor.commands.setTextSelection(4)
+    await Promise.resolve()
     expect(onSuggestionChange.mock.calls.at(-1)?.[0]?.query).toBe("do")
     view.render({ mentionScope: "/different" })
     expect(onSuggestionChange).toHaveBeenLastCalledWith(null)
