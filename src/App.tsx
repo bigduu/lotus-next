@@ -58,8 +58,9 @@ const WorktreeManager = lazy(() => import("@/components/app/WorktreeManager").th
 
 function App() {
   useUiLocale()
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // The main pane follows the global current session.
-  const chat = useChat()
+  const chat = useChat(undefined, undefined, { pageVisible: !settingsOpen })
   const { booted, chats, currentSessionId, currentChat, select: selectSession, newChat: createChat } = chat
   const mainNavigationVersion = useRef(0)
   const [newChatEpoch, setNewChatEpoch] = useState(0)
@@ -277,7 +278,6 @@ function App() {
     min: 220,
     max: 420,
   })
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [chatShellRef, chatShellWidth] = useContainerWidth<HTMLDivElement>(!settingsOpen)
   const desktopSidebar = useMediaQuery("(min-width: 768px)") && !sidebarCollapsed
   const saveWorkbenchWidth = useCallback((width: number) => setWorkbenchField("dockWidth", width), [setWorkbenchField])

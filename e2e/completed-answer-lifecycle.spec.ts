@@ -1,6 +1,8 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { installResizeDiagnostics } from "./support/resizeDiagnostics.js"
+import { closeSettings, settingsSurface } from "./support/settingsNavigation.js"
 
 const primary = "all-surface-session"
 const other = "synthetic-other-session"
@@ -182,6 +184,129 @@ async function expectAnswers(page: Page, expected: readonly string[]) {
     await expect(transcript.getByText(answer, { exact: true })).toHaveCount(0)
   }
 }
+
+async function recordParagraphReveals(page: Page) {
+  await page.locator("[data-message-list-content]").evaluate((list) => {
+    const batches: string[][] = []
+    Object.assign(globalThis, { testParagraphReveals: batches })
+    const browser = list.ownerDocument.defaultView!
+    new browser.MutationObserver(() => {
+      const batch = [...list.querySelectorAll(".assistant-streamdown-streaming p")]
+        .filter((paragraph) => paragraph.getAnimations().length > 0)
+        .map((paragraph) => paragraph.textContent ?? "")
+      if (batch.length) batches.push(batch)
+    }).observe(list, { childList: true, subtree: true, characterData: true })
+  })
+  return () => page.evaluate(() =>
+    (globalThis as typeof globalThis & { testParagraphReveals: string[][] }).testParagraphReveals,
+  )
+}
+
+test("settings pauses live prose and accumulated paragraphs reveal together without moving the reader", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" })
+  const f = await prepare(page)
+  const input = page.getByRole("textbox", { name: "消息", exact: true })
+  await input.fill(prompts[0])
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => f.channels.has(`agent.${primary}`)).toBe(true)
+  f.notifyCanonical("user-1")
+  await expect(page.locator('[data-message-row="user-1"]')).toBeVisible()
+  const settings = settingsSurface(page)
+  const openSettings = async () => {
+    await revealSidebar(page)
+    await page.getByRole("button", { name: "系统设置", exact: true }).click()
+    await expect(settings).toBeVisible()
+  }
+  const paragraphs = page.locator(".assistant-streamdown-streaming p")
+  const scroll = page.locator("[data-message-list-content]").locator("..")
+  const revealBatches = await recordParagraphReveals(page)
+  const initial = Array.from({ length: 36 }, (_, index) =>
+    `第 ${index + 1} 段。A complete paragraph from the first live batch.`)
+
+  await openSettings()
+  f.emit({ type: "token", content: initial.join("\n\n") })
+  // Cover an entire steady-state text publication interval.
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  await expect(paragraphs).toHaveCount(0)
+  await closeSettings(settings)
+  await expect(paragraphs).toHaveText(initial)
+  await expect.poll(revealBatches).toContainEqual(initial.slice(-12))
+  await expect.poll(() => scroll.evaluate((element) =>
+    element.scrollHeight - element.clientHeight - element.scrollTop,
+  )).toBeLessThanOrEqual(2)
+
+  await scroll.evaluate((element) => {
+    const browser = element.ownerDocument.defaultView!
+    element.dispatchEvent(new browser.WheelEvent("wheel", { deltaY: -300 }))
+    element.scrollTop -= 300
+  })
+  const jump = page.getByRole("button", { name: "滚动到底部", exact: true })
+  await expect(jump).toBeVisible()
+  const readingAnchor = () => scroll.evaluate((element) => {
+    const top = element.getBoundingClientRect().top
+    const paragraph = [...element.querySelectorAll(".assistant-streamdown-streaming p")]
+      .find((candidate) => candidate.getBoundingClientRect().bottom > top)
+    return paragraph && { text: paragraph.textContent, offset: Math.round(paragraph.getBoundingClientRect().top - top) }
+  })
+  const readingPosition = await readingAnchor()
+  expect(readingPosition?.text).toBeTruthy()
+
+  await openSettings()
+  const tail = ["后来第一段。", "后来第二段。", "后来第三段。"]
+  for (const paragraph of tail) f.emit({ type: "token", content: `\n\n${paragraph}` })
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  await expect(paragraphs).toHaveText(initial)
+  expect(f.channels.has(`agent.${primary}`)).toBe(true)
+  await closeSettings(settings)
+  await expect(paragraphs).toHaveText([...initial, ...tail])
+  await expect.poll(revealBatches).toContainEqual(tail)
+  await expect(jump).toBeVisible()
+  await expect.poll(readingAnchor).toEqual(readingPosition)
+  expect(f.observation.pageErrors).toEqual([])
+})
+
+test("a completion alongside settings close settles the accumulated answer once", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await installResizeDiagnostics(page)
+  const f = await prepare(page)
+  const input = page.getByRole("textbox", { name: "消息", exact: true })
+  await input.fill(prompts[0])
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => f.channels.has(`agent.${primary}`)).toBe(true)
+  const prefix = Array.from({ length: 24 }, (_, index) => `可见段落 ${index + 1}。`)
+  const revealBatches = await recordParagraphReveals(page)
+  f.emit({ type: "token", content: prefix.join("\n\n") })
+  await expect(page.locator(".assistant-streamdown-streaming p")).toHaveText(prefix)
+  expect(await revealBatches()).toEqual([])
+  // WebKit can report a resize loop when the initial send changes the
+  // composer and history layout. Check for errors from this transition.
+  const errorsBeforeSettings = [...f.observation.pageErrors]
+
+  await revealSidebar(page)
+  await page.getByRole("button", { name: "系统设置", exact: true }).click()
+  const settings = settingsSurface(page)
+  await expect(settings).toBeVisible()
+  const ending = "恢复时收到的最后一段。"
+  const suffix = `\n\n${ending}`
+  f.emit({ type: "token", content: suffix })
+  f.persistResponse(item("settings-final-answer", "assistant", prefix.join("\n\n") + suffix))
+  await settings.getByRole("button", { name: "返回聊天", exact: true }).evaluate((button) => button.click())
+  f.complete()
+
+  const settled = page.locator(".assistant-streamdown").filter({ hasText: ending })
+  await expect(settled).toHaveCount(1)
+  await expect(settled.locator("p")).toHaveText([...prefix, ending])
+  await expect(settled).toBeVisible()
+  await expect(page.locator(".assistant-streamdown-streaming")).toHaveCount(0)
+  await expect.poll(() => f.channels.has(`agent.${primary}`)).toBe(false)
+  if (f.observation.pageErrors.length > errorsBeforeSettings.length) {
+    const diagnostics = await page.evaluate(() =>
+      (globalThis as typeof globalThis & { __resizeDiagnostics: { errors: unknown[] } }).__resizeDiagnostics.errors,
+    )
+    await test.info().attach("resize-deliveries", { body: JSON.stringify(diagnostics, null, 2), contentType: "application/json" })
+  }
+  expect(f.observation.pageErrors).toEqual(errorsBeforeSettings)
+})
 
 async function captureShellNotifications(page: Page) {
   await page.addInitScript(() => {

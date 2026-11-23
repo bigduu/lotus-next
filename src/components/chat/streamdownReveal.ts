@@ -14,8 +14,8 @@ const SKIP_TAGS = new Set([
   "input", "textarea", "select", "kbd", "samp", "sup",
 ])
 /** Only the existing sanitized HAST is decorated; Markdown parsing stays upstream. */
-export function createRevealPlugin(name: string, revealFirstPass: boolean) {
-  let committedText: string | null = revealFirstPass ? "" : null
+export function createRevealPlugin(name: string) {
+  let committedText: string | null = null
   let pendingText = ""
   const segmenter = typeof Intl.Segmenter === "function"
     ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null

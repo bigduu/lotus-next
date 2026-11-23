@@ -9,7 +9,7 @@ describe("bounded prose reveal", () => {
   it("bounds a long CJK paragraph while preserving the exact Unicode source", () => {
     const source = "中".repeat(REVEAL_CHUNK_SIZE * (MAX_REVEAL_CHUNKS + 10))
     const tree = prose(source)
-    createRevealPlugin("budget", true).plugin()(tree)
+    createRevealPlugin("budget").plugin()(tree)
     const chunks = tree.children[0].children as unknown as { children: { value: string }[] }[]
     expect(chunks).toHaveLength(MAX_REVEAL_CHUNKS + 1)
     expect(chunks.map((chunk) => chunk.children[0].value).join("")).toBe(source)
@@ -18,7 +18,7 @@ describe("bounded prose reveal", () => {
   it("never splits grapheme clusters at a chunk boundary", () => {
     const source = "文".repeat(31) + "👩🏽‍💻" + "e\u0301" + "🇨🇳"
     const tree = prose(source)
-    createRevealPlugin("unicode", true).plugin()(tree)
+    createRevealPlugin("unicode").plugin()(tree)
     const chunks = tree.children[0].children as unknown as { children: { value: string }[] }[]
     expect(chunks.map((chunk) => chunk.children[0].value)).toEqual([
       "文".repeat(31) + "👩🏽‍💻", "e\u0301🇨🇳",
@@ -26,7 +26,7 @@ describe("bounded prose reveal", () => {
   })
 
   it("keeps the commit boundary stable across repeated render passes", () => {
-    const reveal = createRevealPlugin("commit", false)
+    const reveal = createRevealPlugin("commit")
     const initial = prose("中".repeat(32))
     reveal.plugin()(initial)
     reveal.commit()
@@ -39,14 +39,14 @@ describe("bounded prose reveal", () => {
     const revised = prose("A replacement of the old text")
     reveal.plugin()(revised)
     expect(JSON.stringify(revised)).not.toContain('data-assistant-reveal":"true')
-    expect(createRevealPlugin("other", true).plugin.name).not.toBe(reveal.plugin.name)
+    expect(createRevealPlugin("other").plugin.name).not.toBe(reveal.plugin.name)
   })
 
   it("renders plain text when native grapheme segmentation is unavailable", () => {
     vi.stubGlobal("Intl", { ...Intl, Segmenter: undefined })
     const tree = prose("正文👩🏽‍💻")
     const before = structuredClone(tree)
-    createRevealPlugin("fallback", true).plugin()(tree)
+    createRevealPlugin("fallback").plugin()(tree)
     expect(tree).toEqual(before)
   })
 })
