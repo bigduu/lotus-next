@@ -225,7 +225,8 @@ export function ActorTree(props: ActorTreeProps) {
     }
   })
 
-  createEffect(() => props.topology.rootActorId, (rootId) => {
+  const rootActorId = createMemo(() => props.topology.rootActorId)
+  createEffect(rootActorId, (rootId) => {
     previousSelection = null
     setLocalExpansion(new Set([rootId]))
     setActiveActorId(props.selectedActorId ?? rootId)
