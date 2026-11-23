@@ -3,6 +3,7 @@ import type { JSX } from "@solidjs/web"
 
 import { uiText } from "@shared/i18n/text"
 
+import { clampPanelWidth, type WidthBounds } from "./createPanelWidth"
 import { ResizeHandle } from "./resize-handle"
 
 export const MIN_WORKBENCH_WIDTH = 360
@@ -15,7 +16,6 @@ export function getWorkbenchMaxWidth(containerWidth: number, sidebarWidth: numbe
 
 type Side = "sidebar" | "workbench"
 type WidthPreference = { width: number; setWidth: (width: number) => void }
-type WidthBounds = { min: number; max: number }
 
 interface ResizeGesture {
   side: Side
@@ -40,7 +40,6 @@ interface ResizableLayoutProps {
   scopeKey: string | null
 }
 
-const clampWidth = (width: number, { min, max }: WidthBounds) => Math.min(max, Math.max(min, width))
 const roundedWidth = (width: number) => Math.round(width * 1000) / 1000
 
 export function ResizableLayout(props: ResizableLayoutProps) {
@@ -51,12 +50,12 @@ export function ResizableLayout(props: ResizableLayoutProps) {
     const separators = Number(props.desktopSidebar) + Number(props.workbenchDocked)
     const space = props.containerWidth > 0 ? Math.max(0, props.containerWidth - minimumChat - separators) : Infinity
     const sidebar = props.desktopSidebar
-      ? Math.min(space, clampWidth(props.sidebarWidth.width, { min: 220, max: 420 }))
+      ? Math.min(space, clampPanelWidth(props.sidebarWidth.width, { min: 220, max: 420 }))
       : 0
     const workbench = props.workbenchDocked
       ? Math.max(0, Math.min(
         space - sidebar,
-        clampWidth(props.workbenchWidth.width, { min: MIN_WORKBENCH_WIDTH, max: props.workbenchMaxWidth }),
+        clampPanelWidth(props.workbenchWidth.width, { min: MIN_WORKBENCH_WIDTH, max: props.workbenchMaxWidth }),
       ))
       : 0
 
@@ -84,11 +83,11 @@ export function ResizableLayout(props: ResizableLayoutProps) {
     if (active.handle.hasPointerCapture(active.pointerId)) active.handle.releasePointerCapture(active.pointerId)
   }
 
-  createEffect(
-    () => [props.scopeKey, props.suspended, props.desktopSidebar, props.workbenchDocked, props.containerWidth,
-      props.sidebarWidth.width, props.workbenchWidth.width, props.workbenchMaxWidth],
-    cancelGesture,
-  )
+  const gestureOwner = createMemo(() => [
+    props.scopeKey, props.suspended, props.desktopSidebar, props.workbenchDocked, props.containerWidth,
+    props.sidebarWidth.width, props.workbenchWidth.width, props.workbenchMaxWidth,
+  ] as const, { equals: (previous, next) => Boolean(previous && previous.every((value, index) => value === next[index])) })
+  createEffect(gestureOwner, cancelGesture)
 
   onSettled(() => {
     const escape = (event: KeyboardEvent) => {
@@ -115,7 +114,7 @@ export function ResizableLayout(props: ResizableLayoutProps) {
   }
 
   const widthAt = (active: ResizeGesture, x: number) =>
-    clampWidth(active.width + (x - active.from) * (active.side === "sidebar" ? 1 : -1), active.bounds)
+    clampPanelWidth(active.width + (x - active.from) * (active.side === "sidebar" ? 1 : -1), active.bounds)
 
   const handle = (side: Side) => {
     const id = `${side}-resize`
@@ -164,14 +163,14 @@ export function ResizableLayout(props: ResizableLayoutProps) {
           const step = props.containerWidth * 0.05 || 10
           let next: number
           switch (event.key) {
-            case "Home": next = bounds.min; break
-            case "End": next = bounds.max; break
+            case "Home": next = side === "sidebar" ? bounds.min : bounds.max; break
+            case "End": next = side === "sidebar" ? bounds.max : bounds.min; break
             case "ArrowLeft": next = visibleWidth(side) - direction * step; break
             case "ArrowRight": next = visibleWidth(side) + direction * step; break
             default: return
           }
           event.preventDefault()
-          changeWidth(side, clampWidth(next, bounds))
+          changeWidth(side, clampPanelWidth(next, bounds))
         }}
       />
     )
