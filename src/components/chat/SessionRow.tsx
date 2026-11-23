@@ -7,7 +7,7 @@ import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/pro
 import { useSidebarContextMenu } from "@/hooks/useSidebarContextMenu"
 import { agentClient } from "@services/chat/AgentService"
 import { WorktreeStateBadge } from "./WorktreeStateBadge"
-import type { CheckoutMergeState } from "@/hooks/useWorktreeMergeStates"
+import type { CheckoutMergeState } from "@/lib/worktreeMergeState"
 import {
   DropdownMenu,
   DropdownMenuContent,

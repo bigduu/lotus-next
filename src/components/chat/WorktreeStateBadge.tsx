@@ -1,6 +1,6 @@
 import { GitBranch, GitMerge } from "lucide-react"
 import { uiText } from "@shared/i18n/ui"
-import type { CheckoutMergeState } from "@/hooks/useWorktreeMergeStates"
+import type { CheckoutMergeState } from "@/lib/worktreeMergeState"
 
 /**
  * The sidebar badge for the Git state of a session's checkout.
