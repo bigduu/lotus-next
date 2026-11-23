@@ -337,6 +337,17 @@ export const developmentDependencyOptimization = {
   ],
 } as const
 
+export const sourceAliases = {
+  "@": path.resolve(__dirname, "./src"),
+  // Mirror lotus's aliases so ported backend/service/store modules resolve
+  // verbatim without import rewrites.
+  "@services": path.resolve(__dirname, "./src/services"),
+  "@shared": path.resolve(__dirname, "./src/shared"),
+  "@pages": path.resolve(__dirname, "./src/pages"),
+  "@components": path.resolve(__dirname, "./src/components"),
+  "@app": path.resolve(__dirname, "./src/app"),
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const publicEnvironment = loadEnv(mode, process.cwd(), "VITE_")
@@ -374,16 +385,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     resolve: {
-      alias: {
-        "@": path.resolve(__dirname, "./src"),
-        // Mirror lotus's aliases so ported backend/service/store modules resolve
-        // verbatim without import rewrites.
-        "@services": path.resolve(__dirname, "./src/services"),
-        "@shared": path.resolve(__dirname, "./src/shared"),
-        "@pages": path.resolve(__dirname, "./src/pages"),
-        "@components": path.resolve(__dirname, "./src/components"),
-        "@app": path.resolve(__dirname, "./src/app"),
-      },
+      alias: sourceAliases,
     },
     server: {
       port: 9563,

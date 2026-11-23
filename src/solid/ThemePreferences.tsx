@@ -1,0 +1,67 @@
+import { Monitor, Moon, Sun } from "@lucide/solid"
+import { createSignal, onSettled } from "solid-js"
+import i18n from "@shared/i18n/runtime"
+import { uiText } from "@shared/i18n/text"
+import { themeStore, type ThemeState } from "@shared/store/themeState"
+import { getUserMessageColors } from "@shared/theme/userMessageColors"
+import "../components/chat/Settings.css"
+
+const choices = [
+  { mode: "light", label: "light_aa0819df", Icon: Sun },
+  { mode: "dark", label: "dark_a6b75d06", Icon: Moon },
+  { mode: "system", label: "system_217cfe7d", Icon: Monitor },
+] as const
+
+export function applyTheme(state: ThemeState) {
+  const root = document.documentElement
+  root.classList.toggle("dark", state.themeMode === "dark")
+  const colors = getUserMessageColors(state.themeMode, state.userMessageColorPreset, state.customUserMessageColor)
+  root.style.setProperty("--user-message-background", colors.background)
+  root.style.setProperty("--user-message-foreground", colors.foreground)
+}
+
+export function ThemePreferences() {
+  const [preference, setPreference] = createSignal(themeStore.getState().themePreference)
+  const [locale, setLocale] = createSignal(i18n.language)
+  const text = (key: Parameters<typeof uiText>[0]) => uiText(key, { lng: locale() })
+
+  onSettled(() => {
+    const updateTheme = (state: ThemeState) => {
+      setPreference(state.themePreference)
+      applyTheme(state)
+    }
+    const updateLocale = (language: string) => { setLocale(language) }
+    const unsubscribe = themeStore.subscribe(updateTheme)
+    i18n.on("languageChanged", updateLocale)
+    updateTheme(themeStore.getState())
+    updateLocale(i18n.language)
+    return () => {
+      unsubscribe()
+      i18n.off("languageChanged", updateLocale)
+    }
+  })
+
+  return (
+    <div class="settings-general">
+      <div class="settings-preferences">
+        <section class="settings-row settings-row-responsive">
+          <h2 id="solid-appearance" class="text-sm font-medium">{text("appearance_86a63f23")}</h2>
+          <div role="group" aria-labelledby="solid-appearance" class="settings-choice-group">
+            {choices.map(({ mode, label, Icon }) => (
+              <button
+                type="button"
+                data-slot="button"
+                aria-pressed={preference() === mode ? "true" : "false"}
+                class="settings-choice button-interaction inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-sm font-medium outline-none hover:bg-accent hover:text-accent-foreground has-[>svg]:px-2.5"
+                onClick={() => themeStore.getState().setThemePreference(mode)}
+              >
+                <Icon aria-hidden="true" class="size-4" />
+                {text(label)}
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
