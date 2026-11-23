@@ -160,6 +160,9 @@ test("ordinary clear waits for exact receipt and readback, preserving the indepe
   expect(f.writes).toEqual([{ method: "POST", path: `/api/v1/sessions/${ordinary}/clear` }])
   await dialog.getByRole("button", { name: "关闭", exact: true }).last().click()
   await expect(page.getByText(`Synthetic history ${ordinary}`, { exact: true })).toBeHidden()
+  const transcript = page.locator("[data-message-list-content]")
+  await expect(transcript.getByText("开始一段新对话", { exact: true })).toBeVisible()
+  await expect(transcript.locator("[data-cleared-subagents]")).toHaveCount(0)
   expect(f.runtime.pageErrors).toEqual([])
 })
 test("Supervisor keeps retained children folded after sending and reloading", async ({ page }, info) => {
@@ -171,7 +174,9 @@ test("Supervisor keeps retained children folded after sending and reloading", as
   const history = page.getByText(`Synthetic history ${supervisor}`, { exact: true })
   const child = page.locator('[data-subagent-id="actor-0"]')
   const fold = page.locator("[data-cleared-subagents-toggle]")
+  const startPrompt = page.locator("[data-message-list-content]").getByText("开始一段新对话", { exact: true })
   await expect(history).toBeVisible()
+  await expect(startPrompt).toHaveCount(0)
   await expect(child).toBeVisible()
   await expect(child).toHaveAttribute("data-subagent-status", "unknown")
 
@@ -180,6 +185,7 @@ test("Supervisor keeps retained children folded after sending and reloading", as
   await expect(dialog.getByRole("status")).toContainText("服务已确认清理，并已读回核对")
   await dialog.getByRole("button", { name: "关闭", exact: true }).last().click()
   await expect(history).toHaveCount(0)
+  await expect(startPrompt).toBeVisible()
   await expect(fold).toHaveAttribute("aria-expanded", "false")
   await expect(child).toHaveCount(0)
 
@@ -189,6 +195,7 @@ test("Supervisor keeps retained children folded after sending and reloading", as
   await expect.poll(() => f.writes.filter(({ path }) => path === "/api/v1/chat").length).toBe(1)
   const newMessage = page.locator("[data-message-list-content]").getByText("New Supervisor conversation", { exact: true })
   await expect(newMessage).toBeVisible()
+  await expect(startPrompt).toHaveCount(0)
   await expect(fold).toHaveAttribute("aria-expanded", "false")
   await expect(child).toHaveCount(0)
   await page.screenshot({ path: info.outputPath("supervisor-history-fold.png"), animations: "disabled" })
@@ -200,6 +207,7 @@ test("Supervisor keeps retained children folded after sending and reloading", as
     (route) => route.fulfill({ status: 503, json: { error: "Synthetic child index unavailable" } }))
   await page.reload()
   await expect(newMessage).toBeVisible()
+  await expect(startPrompt).toHaveCount(0)
   await expect(fold).toHaveAttribute("aria-expanded", "false")
   await expect(child).toHaveCount(0)
   await fold.click()

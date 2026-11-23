@@ -4,6 +4,7 @@ import type { SideChatQuote } from "@services/chat/sideChat"
 import { appStore } from "@shared/store/appStore/state"
 import type { UserMessage } from "@shared/types/chatMessages"
 import { renderProbe } from "@/lib/renderProbe"
+import { BrandMark } from "../ui/brand-mark"
 import { Button } from "../ui/button"
 import { VirtualHistory, type HistoryReadingAnchor, type ScrollToHistoryEntry } from "../history/VirtualHistory"
 import { createUiText } from "../shell/uiText"
@@ -94,6 +95,9 @@ export function ChatViewport(props: {
       id: `pending-${entry.operationId}`, role: "user", content: entry.text, createdAt: "", images: [...entry.images],
     } satisfies UserMessage,
   })))
+  const emptyTranscript = () => Boolean(props.chat.currentChat?.config.syncCursor)
+    && !props.chat.messages.some((message) => message.role !== "system")
+    && !pending().length && !props.chat.streaming && !live().length && !wait().yielded
   const before = () => {
     const window = props.chat.currentChat?.historyWindow
     return window && !window.invalidated ? window.beforeMessageId : null
@@ -179,6 +183,12 @@ export function ChatViewport(props: {
             </div>
           </Show>
           <InlineActorPrefix status={actorStatus} onOpen={props.onOpenActor} />
+          <Show when={emptyTranscript()}>
+            <div class="flex flex-col items-center gap-2 py-20 text-center">
+              <BrandMark class="size-10" />
+              <p class="text-sm text-muted-foreground">{text("start_a_new_conversation_bab6ab18")}</p>
+            </div>
+          </Show>
         </>}
         renderEntry={(entry) => {
           const attachment = () => {
