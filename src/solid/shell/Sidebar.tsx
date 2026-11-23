@@ -1,4 +1,4 @@
-import { CalendarDays, ChevronRight, CircleDot, Cog, FolderClosed, GitBranch, PanelLeftClose, Plus, Search, X } from "@lucide/solid"
+import { CalendarDays, ChevronRight, CircleDot, Cog, FolderClosed, GitBranch, List, MoreHorizontal, PanelLeftClose, Plus, Search, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, createUniqueId, For, onSettled, Show } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import type { ProjectManifest } from "@services/project"
@@ -14,6 +14,7 @@ import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/superv
 import { cn } from "@/lib/utils"
 import { BrandMark } from "../ui/brand-mark"
 import { Button } from "../ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { Input } from "../ui/input"
 import { SessionRow } from "./SessionRow"
 import { createUiLocale, createUiText } from "./uiText"
@@ -44,6 +45,7 @@ type Props = {
   onClear: (chat: ChatItem) => void
   onDelete: (chat: ChatItem) => void
   onOpenProjectManager: () => void
+  onOpenProjectWork: (projectId: string) => void
   onOpenSettings: () => void
   onOpenWorktrees?: () => void
   onError: (error: unknown) => void
@@ -60,18 +62,22 @@ function Disclosure(props: {
   label: string
   detail?: string
   disabled?: boolean
+  actions?: JSX.Element
   children: JSX.Element
 }) {
   const id = createUniqueId()
   return (
     <div class="rounded-md">
-      <button type="button" aria-expanded={props.expanded ? "true" : "false"} aria-controls={id}
-        disabled={props.disabled} onClick={props.onToggle}
-        class="flex select-none w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default">
-        <ChevronRight aria-hidden="true" class={cn("size-3 shrink-0 feedback-motion transition-transform", props.expanded && "rotate-90")} />
-        <span>{props.label}</span>
-        <Show when={props.detail}><span class="ml-auto whitespace-nowrap pl-2 font-normal">{props.detail}</span></Show>
-      </button>
+      <div class="flex items-center pt-3 pb-1">
+        <button type="button" aria-expanded={props.expanded ? "true" : "false"} aria-controls={id}
+          disabled={props.disabled} onClick={props.onToggle}
+          class="flex select-none min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default">
+          <ChevronRight aria-hidden="true" class={cn("size-3 shrink-0 feedback-motion transition-transform", props.expanded && "rotate-90")} />
+          <span class="truncate">{props.label}</span>
+          <Show when={props.detail}><span class="ml-auto whitespace-nowrap pl-2 font-normal">{props.detail}</span></Show>
+        </button>
+        {props.actions}
+      </div>
       <div id={id} hidden={!props.expanded}><Show when={props.expanded}>{props.children}</Show></div>
     </div>
   )
@@ -252,7 +258,23 @@ export function Sidebar(props: Props) {
     }
     return (
       <Disclosure label={group().label} expanded={expanded()} disabled={!!query()} onToggle={toggle}
-        detail={text("project_sessions", { count: group().chats.length })}>
+        detail={text("project_sessions", { count: group().chats.length })}
+        actions={<Show when={project()}>{(current) => (
+          <DropdownMenu>
+            <DropdownMenuTrigger aria-label={text("project_actions_4bc7fa27", { v0: current().name })}
+              class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+              <MoreHorizontal class="size-3.5" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent class="min-w-40 rounded-xl">
+              <DropdownMenuItem disabled={current().status === "archived"} onSelect={() => openNew(current().id)}>
+                <Plus />{text("new_session_58e21b87")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => props.onOpenProjectWork(current().id)}>
+                <List />{text("project_work_title")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}</Show>}>
         <Show when={project()} fallback={renderSessions(() => group().chats, group().key)}>
           {(current) => {
             const sections = createMemo(() => getProjectSections(props.sectionPreferences, current().id, current().section))

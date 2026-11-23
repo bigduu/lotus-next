@@ -10,6 +10,7 @@ import { copyText } from "@shared/utils/clipboard"
 import { openExternalLink } from "@shared/utils/openExternalLink"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
 import { markSessionRead } from "@/lib/sessionReadMarkers"
+import { navigateRecordedSession } from "@/lib/recordedSessionNavigation"
 import { setSessionSection } from "@/lib/projectSidebarPreferences"
 import { assignSessionToSection } from "@/lib/projectSidebarWrites"
 import { sessionHasLiveWork } from "@/lib/sessionBackgroundTasks"
@@ -51,6 +52,7 @@ import { WorkspacePicker } from "./WorkspacePicker"
 import { Onboarding } from "./Onboarding"
 import { CommandPalette } from "./CommandPalette"
 import { GoalSection } from "../workbench/inspector/GoalSection"
+import { ProjectWorkDialog } from "../project-work/ProjectWorkDialog"
 
 const WorkflowRunsDialog = lazy(() => import("../workbench/workflows/WorkflowRunsDialog"), { export: "WorkflowRunsDialog" })
 const TicketWorkPanel = lazy(() => import("../workbench/work/TicketWorkPanel"), { export: "TicketWorkPanel" })
@@ -80,6 +82,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general")
   const [projectsOpen, setProjectsOpen] = createSignal(false)
+  const [projectWork, setProjectWork] = createSignal<{ id: string } | null>(null)
+  const [projectWorkError, setProjectWorkError] = createSignal<string | null>(null)
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false)
   const [worktreeManager, setWorktreeManager] = createSignal<"unopened" | "open" | "closed">("unopened")
   const [pickedWorkspace, setPickedWorkspace] = createSignal<string | null>(null)
@@ -355,6 +359,36 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     setNewSession(null)
     chat.select(id)
   }
+  const openProjectWork = (id: string) => {
+    const scope = { id }
+    setProjectWorkError(null)
+    setProjectWork(scope)
+    void appStore.getState().ensureProject(id).then(() => {
+      if (projectWork() !== scope || appStore.getState().projects[id]) return
+      setProjectWork(null)
+      setNotice({ text: text("the_project_does_not_exist_or_has_been_deleted_e99cf9dc"), error: true })
+    }).catch((error: unknown) => {
+      if (projectWork() === scope) setProjectWorkError(getErrorMessage(error))
+    })
+  }
+  const openProjectWorkSession = async (id: string, verifyAccess: () => Promise<boolean>) => {
+    const scope = projectWork()
+    const previousSession = appStore.getState().currentSessionId
+    const version = ++navigationVersion
+    const isCurrent = () => scope !== null && projectWork() === scope && version === navigationVersion
+      && appStore.getState().currentSessionId === previousSession && !!appStore.getState().projects[scope.id]
+    return navigateRecordedSession(id, verifyAccess, {
+      isCurrent,
+      restore: (target) => appStore.getState().restoreSession(target),
+      select: (target) => {
+        setProjectWork(null)
+        setSidebarOpen(false)
+        setNewSession(null)
+        chat.select(target)
+      },
+      notFound: () => new Error(text("workflow_run_not_found")),
+    })
+  }
   const newChat = (projectId?: string | null, sectionId?: string | null) => {
     navigationVersion += 1
     setDraftEpoch((epoch) => epoch + 1)
@@ -414,6 +448,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           onClose={() => setSidebarOpen(false)} onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
           onSelect={select} onNewChat={newChat}
           onOpenProjectManager={() => setProjectsOpen(true)}
+          onOpenProjectWork={openProjectWork}
           onOpenWorktrees={() => setWorktreeManager("open")}
           onOpenSettings={() => setSettingsOpen(true)}
           onMoveToSection={(projectId, sessionId, sectionId) => {
@@ -587,6 +622,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           <Show when={sessionView()} keyed>{(session) => (
             <ChatViewport chat={chat} theme={theme().themeMode}
               onOpenLink={setLink} onPreviewImage={setImage}
+              rootAuthority={rootAuthority} onMessageNotice={setNotice}
               onAskSideChat={sideChatScope() ? (quote) => openSideChat({ quote }) : undefined}
               revealMessage={sideChatReveal()?.scope === sideChatScope() ? sideChatReveal() ?? undefined : undefined}
               onMissingRevealedMessage={() => setNotice({ text: text("side_chat_source_unavailable"), error: false })}
@@ -654,6 +690,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       <Show when={projectsOpen()}>
         <ProjectManagerModal onClose={() => setProjectsOpen(false)} />
       </Show>
+      <Show when={projectWork()} keyed>{(scope) => (
+        <ProjectWorkDialog project={projects()[scope.id] ?? null} metadataError={projectWorkError()}
+          ownerAccess={props.ownerAccess} onClose={() => setProjectWork(null)} onOpenSession={openProjectWorkSession} />
+      )}</Show>
       <ResponsiveDialog open={confirm() !== null} onOpenChange={(open) => {
         if (!open && !confirmationBusy()) setConfirm(null)
       }}>
