@@ -19,7 +19,7 @@ export interface WorkbenchState {
   browserActiveId: string | null
   browserPresent: boolean
 }
-const tools: WorkbenchToolTab[] = ["work", "inspector", "review", "subagents"]
+const tools: WorkbenchToolTab[] = ["work", "inspector", "review", "subagents", "task-dag"]
 export const emptyWorkbenchState = (): WorkbenchState => ({
   open: false, dockWidth: null, tab: null, tools: [], order: [], subagents: { childId: null, view: "tree" },
   reviewTarget: null, browserActiveId: null, browserPresent: false,

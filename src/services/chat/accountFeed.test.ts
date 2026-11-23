@@ -16,7 +16,8 @@ const mockState = vi.hoisted(() => ({
   notify: vi.fn(),
 }));
 
-vi.mock("./AgentService", () => ({
+vi.mock("./AgentService", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./AgentService")>(),
   AgentClient: {
     getInstance: () => ({
       subscribeToAccountStream: mockState.subscribeToAccountStream,
@@ -59,6 +60,7 @@ const createStore = () => ({
   applyServerTitle: vi.fn(),
   applyServerPinned: vi.fn(),
   setTaskList: vi.fn(),
+  updateTaskListDelta: vi.fn(),
   loadTaskList: vi.fn(async () => null),
 });
 
@@ -278,6 +280,25 @@ describe("accountFeed cursor and reset lifecycle", () => {
       expect(store.setTaskList).toHaveBeenCalledTimes(1);
     } finally {
       closeSecond();
+    }
+  });
+
+  it("forwards live Task progress only for the matching observed Session", () => {
+    const close = observeSessionTaskList("session-1");
+    try {
+      startAccountFeed();
+      const delta = { session_id: "session-1", item_id: "review", status: "in_progress", tool_calls_count: 2, version: 6 };
+      const progress = { ...delta, type: "task_list_item_progress" } as const;
+      capturedHandlers().onChange(change(1, progress));
+      capturedHandlers().onChange(change(2, { ...progress, session_id: "other-session" }));
+      capturedHandlers().onChange(change(3, { ...progress, status: "unknown" }));
+      expect(store.updateTaskListDelta).toHaveBeenCalledExactlyOnceWith("session-1", delta);
+
+      close();
+      capturedHandlers().onChange(change(4, { ...progress, version: 7 }));
+      expect(store.updateTaskListDelta).toHaveBeenCalledTimes(1);
+    } finally {
+      close();
     }
   });
 
