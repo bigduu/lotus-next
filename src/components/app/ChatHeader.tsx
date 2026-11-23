@@ -1,6 +1,6 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { type ReactNode } from "react"
-import { Bot, Menu } from "lucide-react"
+import { Bot, Menu, Workflow } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -20,6 +20,7 @@ export function ChatHeader({
   sidePaneOpen,
   onToggleSidePane,
   onOpenSubagents,
+  onOpenTaskDag,
   sidebarCollapsed,
   supervisorControl,
 }: {
@@ -31,6 +32,7 @@ export function ChatHeader({
   sidePaneOpen: boolean
   onToggleSidePane: () => void
   onOpenSubagents?: () => void
+  onOpenTaskDag?: () => void
   /** Desktop: sidebar is collapsed, so show the menu button to bring it back. */
   sidebarCollapsed: boolean
   supervisorControl?: ReactNode
@@ -66,6 +68,12 @@ export function ChatHeader({
       {hasSession ? (
         <>
           {environment}
+          {onOpenTaskDag ? (
+            <Button size="icon" variant="ghost" aria-label={uiText("session_task_dag_open")}
+              title={uiText("session_task_dag_open")} onClick={onOpenTaskDag}>
+              <Workflow />
+            </Button>
+          ) : null}
           {onOpenSubagents ? (
             <Button size="icon" variant="ghost" aria-label={uiText("open_subagent_tree")}
               title={uiText("open_subagent_tree")} onClick={onOpenSubagents}>

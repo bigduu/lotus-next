@@ -2,7 +2,8 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react"
 import { DragDropProvider, useDragDropManager } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
-import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks, ChevronDown } from "lucide-react"
+import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks, ChevronDown, Workflow } from "lucide-react"
+import { SessionTaskDag } from "@/components/chat/SessionTaskDag"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -22,7 +23,7 @@ import { workbenchSensors } from "./workbenchSensors"
 import { type WorkbenchTabDrag, useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
 
-export type RightWorkbenchTab = "inspector" | "review" | "browser" | "subagents" | "work"
+export type RightWorkbenchTab = "inspector" | "review" | "browser" | "subagents" | "work" | "task-dag"
 export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
 
 const toolEntries = [
@@ -31,6 +32,7 @@ const toolEntries = [
   { id: "review", label: "Review", get description() { return uiText("view_file_changes_93cce2ed") }, icon: FileDiff },
   { id: "browser", get label() { return uiText("browser_e19c3b9e") }, get description() { return uiText("enter_a_url_to_open_0d932314") }, icon: Globe2 },
   { id: "subagents", get label() { return uiText("subagent_workbench_tab") }, get description() { return uiText("subagent_workbench_description") }, icon: Bot },
+  { id: "task-dag", get label() { return uiText("session_task_dag_title") }, get description() { return uiText("session_task_dag_description") }, icon: Workflow },
 ] as const
 
 type VisibleTab =
@@ -126,6 +128,7 @@ export function RightWorkbenchContent({
   review,
   browser,
   subagents,
+  taskDag,
   work,
   workEnabled = false,
   visible = true,
@@ -151,6 +154,7 @@ export function RightWorkbenchContent({
   review: ReactNode
   browser: ReactNode
   subagents: ReactNode
+  taskDag?: ComponentProps<typeof SessionTaskDag>
   work?: ReactNode
   workEnabled?: boolean
   docked?: boolean
@@ -215,7 +219,8 @@ export function RightWorkbenchContent({
     if (entry === "browser" && (!browserEnabled || !browserSessionAvailable || browserBusy)) return
     onTabChange(entry)
   }
-  const enabledEntries = toolEntries.filter((entry) => (browserEnabled || entry.id !== "browser") && (workEnabled || entry.id !== "work"))
+  const enabledEntries = toolEntries.filter((entry) =>
+    (browserEnabled || entry.id !== "browser") && (workEnabled || entry.id !== "work") && (taskDag || entry.id !== "task-dag"))
   const selectValue = (value: string) => {
     if (value.startsWith("browser:")) onBrowserActivate?.(value.slice("browser:".length))
     else if (value !== "launcher" && value !== "browser-entry") onTabChange(value as WorkbenchToolTab)
@@ -361,6 +366,11 @@ export function RightWorkbenchContent({
       {visible && openToolTabs.includes("subagents") ? (
         <TabsContent value="subagents" forceMount className={cn("min-h-0 min-w-0 overflow-hidden", activeTab === "subagents" ? "flex" : "hidden")}>
           {subagents}
+        </TabsContent>
+      ) : null}
+      {visible && taskDag && openToolTabs.includes("task-dag") ? (
+        <TabsContent value="task-dag" className="flex min-h-0 min-w-0 overflow-hidden">
+          <SessionTaskDag key={taskDag.sessionId} {...taskDag} />
         </TabsContent>
       ) : null}
       <TabsContent value="launcher" className="flex min-h-0 flex-col items-center justify-center overflow-auto p-6">

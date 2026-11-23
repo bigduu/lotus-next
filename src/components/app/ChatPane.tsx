@@ -33,6 +33,7 @@ import { useRootThinkingMode } from "@/hooks/useRootThinkingMode"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
+import { observeSessionTaskList } from "@services/chat/accountFeed"
 import { isGoalResumeCommand } from "@services/chat/goalCommand"
 import { isSessionLoopCommand, parseSessionLoopCommand, type SessionLoopCommand, type SessionLoopMode, type SessionLoopState, type SessionLoopStatus } from "@services/chat/sessionLoop"
 import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
@@ -74,7 +75,6 @@ import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
 import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
-import { SessionTaskDag } from "@/components/chat/SessionTaskDag"
 import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 import type { SessionPermissionMode } from "@services/chat/AgentService"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
@@ -215,6 +215,7 @@ export function ChatPane({
   sidePaneOpen,
   onToggleSidePane,
   onOpenSubagents,
+  onOpenTaskDag,
   onSelectSubAgent,
   onOpenSidebar,
   sidebarCollapsed,
@@ -248,6 +249,7 @@ export function ChatPane({
   sidePaneOpen?: boolean
   onToggleSidePane?: () => void
   onOpenSubagents?: () => void
+  onOpenTaskDag?: () => void
   /** Opens a child without replacing this pane's current session. */
   onSelectSubAgent?: (childId: string) => void
   onOpenSidebar: () => void
@@ -345,6 +347,24 @@ export function ChatPane({
   // A projected wait keeps the transcript live, but does not itself supply a
   // runner that Stop can cancel. Retain the existing monitored command path.
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || monitoredCommandWaiting
+  // Observe the current Session even with the workbench closed so the shortcut can
+  // appear as soon as a plan is created.
+  const taskDagSessionId = pageVisible && currentSessionId && currentChat?.id === currentSessionId
+    && currentChat.kind !== "child" && !currentChat.parentSessionId ? currentSessionId : null
+  const hasSessionTasks = useAppStore((state) =>
+    Boolean(taskDagSessionId && state.taskLists[taskDagSessionId]?.items.length))
+  const loadTaskList = useAppStore((state) => state.loadTaskList)
+  const previousTaskRun = useRef<{ sessionId: string | null; running: boolean } | null>(null)
+  useEffect(() => {
+    if (taskDagSessionId) return observeSessionTaskList(taskDagSessionId)
+  }, [taskDagSessionId])
+  useEffect(() => {
+    const previous = previousTaskRun.current
+    previousTaskRun.current = { sessionId: taskDagSessionId, running: currentlyRunning }
+    if (taskDagSessionId && (previous?.sessionId !== taskDagSessionId || (previous.running && !currentlyRunning))) {
+      void loadTaskList(taskDagSessionId).catch(() => {})
+    }
+  }, [taskDagSessionId, currentlyRunning, loadTaskList])
   const managedHistoryStatus = useAppStore((state) => currentSessionId
     ? state.managedHistoryBindings?.[currentSessionId]?.status : undefined)
   const managedHistoryStale = managedHistoryStatus === "stale"
@@ -1292,6 +1312,7 @@ export function ChatPane({
             />
           }
           onOpenSubagents={onOpenSubagents}
+          onOpenTaskDag={hasSessionTasks ? onOpenTaskDag : undefined}
           sidePaneOpen={sidePaneOpen ?? false}
           onToggleSidePane={() => launchWorkbench(onToggleSidePane ?? onOpenInspector)}
           sidebarCollapsed={sidebarCollapsed}
@@ -1309,10 +1330,6 @@ export function ChatPane({
         {...sessionDrop.handlers}
           >
         <SessionCompatibilityNotice state={chat.executionCompatibility} sessionId={currentSessionId} />
-        {currentSessionId && currentChat?.id === currentSessionId && currentChat.kind !== "child"
-          && !currentChat.parentSessionId && pageVisible !== false ? (
-          <SessionTaskDag key={`task-dag:${currentSessionId}`} sessionId={currentSessionId} running={currentlyRunning} />
-        ) : null}
         {pendingApproval && chat.approvalCompatibility?.blocked ? (
           <section aria-label={uiText("subagent_approval_request_4321e83b")}>
             <p className="px-3 pt-2 text-sm font-medium">{uiText("subagent_approval_request_4321e83b")}</p>
