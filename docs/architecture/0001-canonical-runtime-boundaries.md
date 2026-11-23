@@ -38,7 +38,7 @@ browser location, endpoint-override storage, Vite public input, Tauri bootstrap
 signals, `fetch`, and `WebSocket`. Concrete browser, embedded, desktop,
 storage, endpoint, and environment APIs do not enter domain behavior.
 
-`src/main.tsx` resolves and installs one recursively frozen `RuntimeConfig`
+`src/solid/entry.tsx` resolves and installs one recursively frozen `RuntimeConfig`
 before it dynamically imports `Root` or any service singleton. Installing an
 identical config twice is idempotent; installing a different config fails
 closed and requires a complete page/artifact reload. This prevents a running
@@ -118,7 +118,7 @@ Bamboo/Bodhi/standalone consumer has passed the migration artifact's rollback wi
 
 | Concern | Authoritative owner | Current production consumer/entry |
 | --- | --- | --- |
-| Application bootstrap | `src/main.tsx` | installs runtime, then imports `Root` |
+| Application bootstrap | `src/solid/entry.tsx` | installs runtime, then imports `SolidRoot` and `SolidApp` |
 | Endpoint and host resolution | `src/runtime/browserRuntime.ts` | browser globals and safe public input |
 | Immutable contract and endpoint derivation | `src/runtime/runtimeConfig.ts` | schema, freeze/install invariants |
 | HTTP composition | `src/services/api/index.ts` | creates the only native `ApiClient` from `runtime.endpoints.nativeApi` |
@@ -209,10 +209,10 @@ checks import aliases, freezes concrete runtime composition APIs to their named
 owners, blocks application dependencies from the two pre-install runtime
 modules, and verifies the bootstrap control structure. The only accepted
 bootstrap is a single unconditional three-statement install, static dynamic
-module load, and React render sequence; application imports, re-exports, and
+module load, and Solid render sequence; application imports, re-exports, and
 `import.meta.glob` cannot instantiate before installation.
 The repository walk separately parses `.env*` public keys and rejects inline
-application scripts or a non-module `/src/main.tsx` entry in `index.html`, so
+application scripts or a non-module `/src/solid/entry.tsx` entry in `index.html`, so
 compile-time credentials and alternate entrypoints cannot evade the TypeScript
 boundary. Exact file and occurrence budgets freeze raw endpoints,
 `import.meta.env`, storage, Tauri, `fetch`, `WebSocket`, client construction, and

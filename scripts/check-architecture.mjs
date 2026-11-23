@@ -10,11 +10,10 @@ const defaultRoot = path.resolve(scriptDirectory, "..");
 const runtimeResolver = "src/runtime/browserRuntime.ts";
 const runtimeContract = "src/runtime/runtimeConfig.ts";
 const preloadErrorPolicy = "src/runtime/preloadErrorPolicy.ts";
-const compositionRoot = "src/main.tsx";
-const solidCompositionRoot = "src/solid/entry.tsx";
+const compositionRoot = "src/solid/entry.tsx";
 const browserEntrySupport = "src/runtime/browserEntrySupport.ts";
 const applicationDocuments = new Map([
-  ["index.html", `/${solidCompositionRoot}`],
+  ["index.html", `/${compositionRoot}`],
 ]);
 const httpOwner = "src/services/api/transport.ts";
 const apiCompositionOwner = "src/services/api/index.ts";
@@ -37,11 +36,11 @@ const runtimeLocalImportAllowlist = new Map([
   [browserEntrySupport, new Set(["./preloadErrorPolicy"])],
 ]);
 const runtimeCompositionApiOwners = new Map([
-  ["installRuntimeConfig", new Set([compositionRoot, solidCompositionRoot, runtimeContract])],
+  ["installRuntimeConfig", new Set([compositionRoot, runtimeContract])],
   ["createRuntimeConfig", new Set([runtimeResolver, runtimeContract])],
   ["createRuntimeEndpointSet", new Set([runtimeResolver, runtimeContract])],
   ["resolveBrowserRuntimeConfig", new Set([runtimeResolver])],
-  ["resolveDefaultBrowserRuntimeConfig", new Set([runtimeResolver, compositionRoot, solidCompositionRoot])],
+  ["resolveDefaultBrowserRuntimeConfig", new Set([runtimeResolver, compositionRoot])],
   ["__resetRuntimeConfigForTests", new Set([runtimeContract])],
 ]);
 
@@ -188,7 +187,6 @@ const expectedInventory = {
   },
   "runtime-composition-api": {
     [compositionRoot]: 4,
-    [solidCompositionRoot]: 4,
     "src/runtime/browserRuntime.ts": 7,
     "src/runtime/runtimeConfig.ts": 5,
   },
@@ -2129,14 +2127,13 @@ export const findArchitectureViolations = (sources) => {
 };
 
 export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
-  const solid = file === solidCompositionRoot;
-  const runtimeDirectory = solid ? "../runtime" : "./runtime";
-  const applicationImport = solid ? "./bootstrap/Root" : "./Root.tsx";
-  const companionImport = solid ? "./shell/SolidApp" : "./components/app/ErrorBoundary.tsx";
+  const runtimeDirectory = "../runtime";
+  const applicationImport = "./bootstrap/Root";
+  const companionImport = "./shell/SolidApp";
   const sourceFile = parseSource(file, mainSource);
   const failures = [];
   const safeStaticModules = new Set([
-    ...(solid ? ["solid-js", "@solidjs/web", "./styles.css"] : ["react", "react-dom/client", "./index.css"]),
+    "solid-js", "@solidjs/web", "./styles.css",
     ...["browserRuntime", "preloadErrorPolicy", "runtimeConfig", "browserEntrySupport"].flatMap((name) => [
       `${runtimeDirectory}/${name}`,
       `${runtimeDirectory}/${name}.ts`,
@@ -2215,8 +2212,8 @@ export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
     if (
       !ts.isArrayBindingPattern(declaration.name) ||
       declaration.name.elements.length !== 2 ||
-      resolveBindingName(declaration.name.elements[0], solid ? "SolidRoot" : "default") !== (solid ? "SolidRoot" : "Root") ||
-      resolveBindingName(declaration.name.elements[1], solid ? "SolidApp" : "default") !== (solid ? "SolidApp" : "ErrorBoundary")
+      resolveBindingName(declaration.name.elements[0], "SolidRoot") !== "SolidRoot" ||
+      resolveBindingName(declaration.name.elements[1], "SolidApp") !== "SolidApp"
     ) {
       return false;
     }
@@ -2249,14 +2246,7 @@ export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
   };
 
   const isCanonicalRenderCall = (node) =>
-    ts.isCallExpression(node) &&
-    (solid
-      ? ts.isIdentifier(node.expression) && node.expression.text === "render"
-      : ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "render" &&
-        ts.isCallExpression(node.expression.expression) &&
-        ts.isIdentifier(node.expression.expression.expression) &&
-        node.expression.expression.expression.text === "createRoot");
+    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "render";
 
   const nonWhitespaceJsxChildren = (node) =>
     node.children.filter((child) => !ts.isJsxText(child) || child.text.trim());
@@ -2285,56 +2275,9 @@ export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
     return forwarded && ts.isIdentifier(forwarded) && forwarded.text === authority.name.text;
   };
 
-  const isCanonicalRenderStatement = (statement) => {
-    if (!statement || !ts.isExpressionStatement(statement)) return false;
-    const renderCall = statement.expression;
-    if (solid) return isCanonicalRenderCall(renderCall) && renderSolidApplication(renderCall);
-    if (
-      !isCanonicalRenderCall(renderCall) ||
-      renderCall.expression.expression.arguments.length !== 1 ||
-      !ts.isIdentifier(renderCall.expression.expression.arguments[0]) ||
-      renderCall.expression.expression.arguments[0].text !== "rootElement" ||
-      renderCall.arguments.length !== 1 ||
-      !ts.isJsxElement(renderCall.arguments[0])
-    ) {
-      return false;
-    }
-
-    const strictMode = renderCall.arguments[0];
-    const strictChildren = nonWhitespaceJsxChildren(strictMode);
-    if (
-      !ts.isIdentifier(strictMode.openingElement.tagName) ||
-      strictMode.openingElement.tagName.text !== "StrictMode" ||
-      !ts.isIdentifier(strictMode.closingElement.tagName) ||
-      strictMode.closingElement.tagName.text !== "StrictMode" ||
-      strictMode.openingElement.attributes.properties.length !== 0 ||
-      strictChildren.length !== 1 ||
-      !ts.isJsxElement(strictChildren[0])
-    ) {
-      return false;
-    }
-
-    const boundary = strictChildren[0];
-    const boundaryChildren = nonWhitespaceJsxChildren(boundary);
-    const [nameAttribute] = boundary.openingElement.attributes.properties;
-    return (
-      ts.isIdentifier(boundary.openingElement.tagName) &&
-      boundary.openingElement.tagName.text === "ErrorBoundary" &&
-      ts.isIdentifier(boundary.closingElement.tagName) &&
-      boundary.closingElement.tagName.text === "ErrorBoundary" &&
-      boundary.openingElement.attributes.properties.length === 1 &&
-      ts.isJsxAttribute(nameAttribute) &&
-      nameAttribute.name.text === "name" &&
-      Boolean(nameAttribute.initializer) &&
-      ts.isStringLiteral(nameAttribute.initializer) &&
-      nameAttribute.initializer.text === "Root" &&
-      boundaryChildren.length === 1 &&
-      ts.isJsxSelfClosingElement(boundaryChildren[0]) &&
-      ts.isIdentifier(boundaryChildren[0].tagName) &&
-      boundaryChildren[0].tagName.text === "Root" &&
-      boundaryChildren[0].attributes.properties.length === 0
-    );
-  };
+  const isCanonicalRenderStatement = (statement) =>
+    Boolean(statement) && ts.isExpressionStatement(statement) &&
+    isCanonicalRenderCall(statement.expression) && renderSolidApplication(statement.expression);
 
   const hasOnlyExactNamedImport = (moduleName, importedName) => {
     const matchingImports = sourceFile.statements.filter(
@@ -2443,7 +2386,7 @@ export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
   }
 
   const rootImports = localDynamicImports.filter(({ moduleName }) =>
-    solid ? moduleName === applicationImport : /^\.\/Root(?:\.tsx)?$/.test(moduleName),
+    moduleName === applicationImport,
   );
   if (rootImports.length !== 1) {
     failures.push(`${file}: Root must be loaded through the post-install dynamic boundary`);
@@ -2501,13 +2444,17 @@ export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
     const canonicalShape =
       bootstrapHasNoParameters &&
       [
-        ...(solid ? [["solid-js", "Errored"], ["@solidjs/web", "render"]] : [["react", "StrictMode"], ["react-dom/client", "createRoot"]]),
+        ["solid-js", "Errored"],
+        ["@solidjs/web", "render"],
         [`${runtimeDirectory}/browserRuntime.ts`, "resolveDefaultBrowserRuntimeConfig"],
         [`${runtimeDirectory}/runtimeConfig.ts`, "installRuntimeConfig"],
       ].every(([moduleName, importedName]) => hasOnlyExactNamedImport(moduleName, importedName)) &&
       Object.entries({
         Promise: 1,
-        ...(solid ? { render: 2, Errored: 3, SolidRoot: 2, SolidApp: 2 } : { createRoot: 2, ErrorBoundary: 3, Root: 2, StrictMode: 3 }),
+        render: 2,
+        Errored: 3,
+        SolidRoot: 2,
+        SolidApp: 2,
         installRuntimeConfig: 2,
         resolveDefaultBrowserRuntimeConfig: 2,
       }).every(
@@ -2532,7 +2479,7 @@ export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
       isCanonicalRenderStatement(statements[2]);
     if (!canonicalShape) {
       failures.push(
-        `${file}: bootstrap must install runtime, load application modules, and render ${solid ? "Solid" : "React"} as three reachable statements`,
+        `${file}: bootstrap must install runtime, load application modules, and render Solid as three reachable statements`,
       );
     }
   }
@@ -2586,7 +2533,6 @@ export const verifyRepositoryArchitecture = async (root = defaultRoot) => {
     ...findArchitectureViolations(sources),
     ...compareInventory(buildInventory(sources), expectedInventory),
     ...verifyBootstrapOrder(sources.get(compositionRoot) ?? ""),
-    ...verifyBootstrapOrder(sources.get(solidCompositionRoot) ?? "", solidCompositionRoot),
   ];
 };
 
