@@ -7,14 +7,14 @@ export function createStoreSelector<State extends object, Selected>(
   select: (state: State) => Selected,
   equals: (previous: Selected, next: Selected) => boolean = Object.is,
 ): Accessor<Selected> {
-  const [snapshot, setSnapshot] = createSignal<State>(store.getState())
+  const [snapshot, setSnapshot] = createSignal({ state: store.getState() })
 
   onSettled(() => {
-    const unsubscribe = store.subscribe((next) => setSnapshot(() => next))
+    const unsubscribe = store.subscribe((next) => setSnapshot({ state: next }))
     // Catch writes between component setup and subscription installation.
-    setSnapshot(() => store.getState())
+    setSnapshot({ state: store.getState() })
     return unsubscribe
   })
 
-  return createMemo(() => select(snapshot()), { equals })
+  return createMemo(() => select(snapshot().state), { equals })
 }
