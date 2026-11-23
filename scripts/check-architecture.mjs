@@ -140,7 +140,7 @@ const expectedInventory = {
   },
   "import-meta-env": {
     "src/runtime/browserRuntime.ts": 5,
-    "src/shared/store/appStore/index.ts": 1,
+    "src/shared/store/appStore/state.ts": 1,
     "src/shared/store/appStore/slices/executionStateSlice/reducer.ts": 1,
     "src/shared/utils/debugFlags.ts": 2,
   },

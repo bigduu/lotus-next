@@ -1,4 +1,4 @@
-import { uiText, uiLanguage } from "@shared/i18n/ui"
+import { uiText, uiLanguage } from "@shared/i18n/text"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { NO_PROJECT_GROUP_KEY } from "@services/project"
 import {
@@ -6,7 +6,7 @@ import {
   emptySessionOrder,
   sessionSortTime,
   type SessionOrder,
-} from "./sidebarSessionOrder"
+} from "./sidebarSessionOrderState"
 
 export type ChatGroup = { key: string; label: string; chats: ChatItem[] }
 
