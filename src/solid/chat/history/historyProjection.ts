@@ -1,4 +1,5 @@
 import { runtimeNoticeFromMetadata } from "@/components/chat/runtimeNotices"
+import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import { messageOccurrenceKey, type Message } from "@shared/types/chatMessages"
 
 import type { createUiText } from "../../shell/uiText"
@@ -283,3 +284,39 @@ export interface MessageHistoryEntry {
 
 export const buildHistoryEntries = (items: DisplayItem[]): MessageHistoryEntry[] =>
   items.map((item) => ({ key: renderItemKey(item), item }))
+
+export function sideChatSourceText(message: Message): string {
+  if (message.role === "system" || isToolMessage(message) || isCompletedAnswerHandoff(message) || messageRuntimeNotice(message)) return ""
+  return messageText(message).trim()
+}
+
+/** Match the main transcript's actionable standalone replies and user rows. */
+export function collectSideChatSourceKeys(entries: readonly MessageHistoryEntry[], includeTrailing: boolean): Set<string> {
+  const keys = new Set<string>()
+  let candidate: MessageHistoryEntry | undefined
+  const add = (entry: MessageHistoryEntry | undefined) => {
+    if (entry?.item.kind === "msg" && sideChatSourceText(entry.item.m)) keys.add(entry.key)
+  }
+  for (const entry of entries) {
+    const { item } = entry
+    if (item.kind !== "msg") continue
+    if (item.m.role === "user") {
+      add(candidate)
+      add(entry)
+      candidate = undefined
+    } else if (isRecordedFinal(item)) {
+      add(entry)
+      candidate = undefined
+    } else if (isFinalAssistantResponse(item)) {
+      candidate = entry
+    }
+  }
+  if (includeTrailing) add(candidate)
+  return keys
+}
+
+/** Quotes can address stored rows folded into another virtual entry. */
+export function findSideChatSourceEntry(entries: readonly MessageHistoryEntry[], id: string): MessageHistoryEntry | undefined {
+  const matches = (item: RenderItem) => item.kind === "msg" && item.m.id === id && Boolean(sideChatSourceText(item.m))
+  return entries.find(({ item }) => item.kind === "collapsedTurn" ? item.items.some(matches) : matches(item))
+}

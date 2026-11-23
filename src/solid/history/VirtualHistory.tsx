@@ -13,6 +13,7 @@ export interface HistoryReadingAnchor {
 }
 
 type HistoryEntry = { key: string }
+export type ScrollToHistoryEntry = (key: string, align?: "start" | "center" | "end") => boolean
 
 export interface VirtualHistoryProps<T extends HistoryEntry> {
   /** Ordered history entries with distinct keys stable across page loads. */
@@ -27,6 +28,7 @@ export interface VirtualHistoryProps<T extends HistoryEntry> {
   onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
   onMissingReadingAnchor?: () => void
   onScrollElement?: (element: HTMLDivElement | null) => void
+  registerScrollToEntry?: (scrollToEntry: ScrollToHistoryEntry | null) => void
   onScroll?: () => void
 }
 
@@ -70,8 +72,15 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
 
   onSettled(() => {
     const reportElement = props.onScrollElement
+    const registerScroll = props.registerScrollToEntry
     setViewport(scroller)
     reportElement?.(scroller)
+    registerScroll?.((key, align = "center") => {
+      const index = props.entries.findIndex((entry) => entry.key === key)
+      if (index < 0) return false
+      virtualizer.instance.scrollToIndex(index, { align })
+      return true
+    })
     const measureOrigin = () => {
       const offset = history.getBoundingClientRect().top - scroller.getBoundingClientRect().top +
         scroller.scrollTop - scroller.clientTop
@@ -83,6 +92,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
     observer?.observe(prefix)
     return () => {
       observer?.disconnect()
+      registerScroll?.(null)
       reportElement?.(null)
     }
   })

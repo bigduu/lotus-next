@@ -9,8 +9,9 @@ import { readLocalImage } from "@shared/services/FileOperationsService"
 import { AssistantMarkdown } from "../../markdown/AssistantMarkdown"
 import { createUiText } from "../../shell/uiText"
 import { MessageBody } from "../MessageBody"
+import { SideChatSourceActions, type SideChatSources } from "./SideChatSourceActions"
 import {
-  formatElapsedDuration, itemTimestamp, messageRuntimeNotice, renderItemKey, toolCallCount,
+  formatElapsedDuration, itemTimestamp, messageRuntimeNotice, renderItemKey, sideChatSourceText, toolCallCount,
   type DisplayItem, type ProcessItem, type ProcessPart, type RenderItem, type TurnCollapseItem,
 } from "./historyProjection"
 import { extractProcessBrief } from "./processBrief"
@@ -21,6 +22,7 @@ type RowActions = {
   theme: "light" | "dark"
   onOpenLink: (url: string) => void
   onPreviewImage: (url: string) => void
+  sideChat?: SideChatSources
 }
 
 type ReasoningPart = Extract<ProcessPart, { kind: "reasoning" }>
@@ -253,38 +255,47 @@ function FoldedTurn(props: RowActions & { item: TurnCollapseItem }) {
 
 function MessageRow(props: RowActions & { item: Extract<RenderItem, { kind: "msg" }> }) {
   const text = createUiText()
+  const key = () => renderItemKey(props.item)
+  const source = () => props.sideChat?.allows(key()) ? props.sideChat : undefined
   const runtimeNotice = createMemo(() => messageRuntimeNotice(props.item.m))
   const streamed = () => props.item.streaming && props.item.m.role === "assistant" && props.item.m.type === "text"
     ? props.item.m.content : undefined
   return (
-    <div data-message-row={props.item.m.id}>
-      <Switch fallback={
-        <MessageBody message={props.item.m} theme={props.theme} onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
-      }>
-        <Match when={runtimeNotice()}>{(notice) => (
-          <div data-runtime-notice={notice().runtimeKind}
-            class="flex items-start gap-2.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
-            <Terminal class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <div class="min-w-0 flex-1">
-              <div class="font-medium text-foreground">{text("runtime_notice_background_exec_title_1b8a7ef0")}</div>
-              <div class="mt-0.5">{text("runtime_notice_background_exec_body_c90c9f52")}</div>
-              <Show when={notice().execSessionId}>{(handle) => (
-                <div class="mt-1 break-all font-mono text-xs opacity-70">
-                  {text("runtime_notice_background_exec_handle_0f9a6d34", { v0: handle() })}
-                </div>
-              )}</Show>
+    <div data-message-row={props.item.m.id} tabindex={-1} class={cn("group min-w-0 rounded-lg", source() && "flex items-end gap-1")}>
+      <div class="min-w-0 flex-1" data-side-chat-source={source() ? props.item.m.id : undefined}
+        data-side-chat-occurrence={source() ? key() : undefined}>
+        <Switch fallback={
+          <MessageBody message={props.item.m} theme={props.theme} onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
+        }>
+          <Match when={runtimeNotice()}>{(notice) => (
+            <div data-runtime-notice={notice().runtimeKind}
+              class="flex items-start gap-2.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+              <Terminal class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <div class="min-w-0 flex-1">
+                <div class="font-medium text-foreground">{text("runtime_notice_background_exec_title_1b8a7ef0")}</div>
+                <div class="mt-0.5">{text("runtime_notice_background_exec_body_c90c9f52")}</div>
+                <Show when={notice().execSessionId}>{(handle) => (
+                  <div class="mt-1 break-all font-mono text-xs opacity-70">
+                    {text("runtime_notice_background_exec_handle_0f9a6d34", { v0: handle() })}
+                  </div>
+                )}</Show>
+              </div>
             </div>
-          </div>
-        )}</Match>
-        <Match when={streamed()}>{(content) => (
-          <div data-message-role="assistant" class="min-w-0 py-2">
-            <AssistantMarkdown theme={props.theme} text={text} isStreaming
-              onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} readImage={readLocalImage}>
-              {content()}
-            </AssistantMarkdown>
-          </div>
-        )}</Match>
-      </Switch>
+          )}</Match>
+          <Match when={streamed()}>{(content) => (
+            <div data-message-role="assistant" class="min-w-0 py-2">
+              <AssistantMarkdown theme={props.theme} text={text} isStreaming
+                onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} readImage={readLocalImage}>
+                {content()}
+              </AssistantMarkdown>
+            </div>
+          )}</Match>
+        </Switch>
+      </div>
+      <Show when={source()}>{(sources) => (
+        <SideChatSourceActions sources={sources()} sourceKey={key()} messageId={props.item.m.id}
+          messageText={sideChatSourceText(props.item.m)} user={props.item.m.role === "user"} />
+      )}</Show>
     </div>
   )
 }

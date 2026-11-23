@@ -1,13 +1,16 @@
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js"
 import { ArrowDown, LoaderCircle } from "@lucide/solid"
+import type { SideChatQuote } from "@services/chat/sideChat"
 import { appStore } from "@shared/store/appStore/state"
 import type { UserMessage } from "@shared/types/chatMessages"
 import { Button } from "../ui/button"
-import { VirtualHistory, type HistoryReadingAnchor } from "../history/VirtualHistory"
+import { VirtualHistory, type HistoryReadingAnchor, type ScrollToHistoryEntry } from "../history/VirtualHistory"
 import { createUiText } from "../shell/uiText"
 import { MessageBody } from "./MessageBody"
 import { RenderHistoryRow } from "./history/HistoryRow"
-import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, renderItemKey } from "./history/historyProjection"
+import { createSideChatSources } from "./history/SideChatSourceActions"
+import { createHistoryReveal, type HistoryRevealRequest } from "./history/createHistoryReveal"
+import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, collectSideChatSourceKeys, renderItemKey } from "./history/historyProjection"
 import type { createChat } from "./createChat"
 
 type Chat = ReturnType<typeof createChat>
@@ -19,11 +22,15 @@ export function ChatViewport(props: {
   onPreviewImage: (url: string) => void
   initialReadingAnchor?: HistoryReadingAnchor | null
   onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
+  onAskSideChat?: (quote: SideChatQuote) => void
+  revealMessage?: HistoryRevealRequest
+  onMissingRevealedMessage?: () => void
 }) {
   const text = createUiText()
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
   const [earlierError, setEarlierError] = createSignal(false)
   const [following, setFollowing] = createSignal(untrack(() => !props.initialReadingAnchor))
+  const [aligningSource, setAligningSource] = createSignal(false)
   const [openKeys, setOpenKeys] = createSignal<ReadonlySet<string>>(new Set())
   const disclosure = {
     isOpen: (key: string) => openKeys().has(key),
@@ -34,7 +41,8 @@ export function ChatViewport(props: {
     }),
   }
   let viewport: HTMLDivElement | null = null
-  let loadRequest: AbortController | undefined
+  let scrollToEntry: ScrollToHistoryEntry | undefined
+  let loadRequest: { controller: AbortController; sessionId: string; done: Promise<void> } | undefined
   let pendingScroll: number | undefined
   let contentResize: ResizeObserver | undefined
 
@@ -45,6 +53,8 @@ export function ChatViewport(props: {
   ))
   const tailCanFold = createMemo(() => !props.chat.sending && live().length === 0)
   const entries = createMemo(() => buildHistoryEntries(buildDisplayItems(rendering(), tailCanFold())))
+  const sourceKeys = createMemo(() => props.onAskSideChat ? collectSideChatSourceKeys(entries(), !props.chat.sending) : new Set<string>())
+  const sideChat = createSideChatSources(() => viewport, sourceKeys, () => props.onAskSideChat)
   const pending = createMemo(() => props.chat.pendingUserMessages.map((entry) => ({
     operationId: entry.operationId,
     message: {
@@ -65,35 +75,58 @@ export function ChatViewport(props: {
   }
   const restoreFollowing = () => { setFollowing(true); followTail() }
   const onScroll = () => {
-    if (viewport) setFollowing(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 24)
+    if (viewport && !aligningSource()) setFollowing(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 24)
   }
 
   onSettled(() => {
     followTail()
     return () => {
-      loadRequest?.abort()
+      loadRequest?.controller.abort()
       contentResize?.disconnect()
       if (pendingScroll !== undefined) cancelAnimationFrame(pendingScroll)
     }
   })
   createEffect(() => [entries(), pending(), live()] as const, followTail)
 
-  const loadEarlier = async () => {
-    const sessionId = props.chat.currentSessionId
-    if (!sessionId || !before() || loadRequest) return
-    const request = new AbortController()
-    loadRequest = request
+  const loadEarlierPage = (sessionId: string): Promise<void> => {
+    if (props.chat.currentSessionId !== sessionId || !before()) return Promise.resolve()
+    if (loadRequest?.sessionId === sessionId) return loadRequest.done
+    loadRequest?.controller.abort()
+    const controller = new AbortController()
     setLoadingEarlier(true)
     setEarlierError(false)
+    const done = appStore.getState().loadEarlierChatHistory(sessionId, controller.signal, () => setFollowing(false))
+      .finally(() => {
+        if (loadRequest?.controller !== controller) return
+        loadRequest = undefined
+        if (!controller.signal.aborted) setLoadingEarlier(false)
+      })
+    loadRequest = { controller, sessionId, done }
+    return done
+  }
+  const loadEarlier = async () => {
+    const sessionId = props.chat.currentSessionId
+    if (!sessionId) return
     try {
-      await appStore.getState().loadEarlierChatHistory(sessionId, request.signal, () => setFollowing(false))
+      await loadEarlierPage(sessionId)
     } catch {
-      if (!request.signal.aborted) setEarlierError(true)
-    } finally {
-      if (loadRequest === request) loadRequest = undefined
-      if (!request.signal.aborted) setLoadingEarlier(false)
+      if (props.chat.currentSessionId === sessionId) setEarlierError(true)
     }
   }
+  createHistoryReveal({
+    request: () => props.revealMessage,
+    sessionId: () => props.chat.currentSessionId,
+    entries, before,
+    viewport: () => viewport,
+    scrollTo: () => scrollToEntry,
+    loadEarlier: loadEarlierPage,
+    openTurn: (key) => setOpenKeys((previous) => previous.has(key) ? previous : new Set([...previous, key])),
+    onAlign: (active) => {
+      setAligningSource(active)
+      if (active) setFollowing(false)
+    },
+    onMissing: () => props.onMissingRevealedMessage?.(),
+  })
 
   return (
     <div data-chat-body="" class="relative flex min-h-0 min-w-0 flex-1">
@@ -109,6 +142,7 @@ export function ChatViewport(props: {
         initialReadingAnchor={props.initialReadingAnchor}
         onReadingAnchor={props.onReadingAnchor}
         onMissingReadingAnchor={restoreFollowing}
+        registerScrollToEntry={(scroll) => { scrollToEntry = scroll ?? undefined }}
         onScrollElement={(element) => {
           contentResize?.disconnect()
           viewport = element
@@ -130,7 +164,7 @@ export function ChatViewport(props: {
         renderEntry={(entry) => (
           <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
             <RenderHistoryRow item={entry().item} disclosure={disclosure} theme={props.theme}
-              onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
+              onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} />
           </div>
         )}
         after={
@@ -152,10 +186,12 @@ export function ChatViewport(props: {
         }
       />
       <Show when={!following()}>
-        <Button size="icon" variant="outline" class="absolute bottom-3 right-4 rounded-full"
-          aria-label={text("scroll_to_bottom_2b05ff67")} onClick={restoreFollowing}>
-          <ArrowDown />
-        </Button>
+        <div class="absolute bottom-3 right-4" data-scroll-to-bottom-anchor="">
+          <Button size="icon" variant="outline" class="rounded-full"
+            aria-label={text("scroll_to_bottom_2b05ff67")} onClick={restoreFollowing}>
+            <ArrowDown />
+          </Button>
+        </div>
       </Show>
     </div>
   )
