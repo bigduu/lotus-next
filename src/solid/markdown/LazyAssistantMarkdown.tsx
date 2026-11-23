@@ -5,7 +5,7 @@ const Markdown = lazy(() => import("./AssistantMarkdown"), { export: "AssistantM
 
 export function LazyAssistantMarkdown(props: AssistantMarkdownProps) {
   return (
-    <Loading fallback={<div class="whitespace-pre-wrap break-words">{props.children}</div>}>
+    <Loading fallback={<div class="whitespace-pre-wrap break-words" data-assistant-markdown-fallback="true">{props.children}</div>}>
       <Markdown {...props} />
     </Loading>
   )

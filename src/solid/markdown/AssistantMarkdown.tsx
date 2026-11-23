@@ -188,7 +188,8 @@ function CodeElement(props: ElementProps) {
     const matched = classNames.find((name) => String(name).startsWith("language-"))
     return String(matched ?? "").slice("language-".length)
   }
-  const code = () => contentText(source() ?? props.node()).replace(/\n$/, "")
+  const sourceText = () => contentText(source() ?? props.node())
+  const code = () => sourceText().replace(/\n$/, "")
   const incomplete = () => props.node().properties["data-incomplete"] === true
   return (
     <Show when={tag().toLowerCase() === "mermaid"}
@@ -202,7 +203,7 @@ function CodeElement(props: ElementProps) {
           </pre>
         </div>
       }>
-        <For each={[code()]}>{(source) => (
+        <For each={[sourceText()]}>{(source) => (
           <MermaidBlock original={source} text={props.actions.text} theme={props.actions.theme} />
         )}</For>
       </Show>
