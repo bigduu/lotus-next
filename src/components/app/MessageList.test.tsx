@@ -80,9 +80,6 @@ afterEach(() => {
 function renderMessageList(
   messages: Message[],
   latestRunFinished: boolean,
-  contentShiftX = 0,
-  readOnly = false,
-  liveSegments: LiveSegment[] = [],
   pending?: { text: string; images: MessageImage[]; messages?: Parameters<typeof MessageList>[0]["pendingUserMessages"]; preview?: (src: string) => void },
 ) {
   const container = document.createElement("div")
@@ -97,18 +94,16 @@ function renderMessageList(
         onScroll={vi.fn()}
         messages={messages}
         mergedSubAgents={{}}
-        sending={liveSegments.length > 0}
+        sending={false}
         latestRunFinished={latestRunFinished}
         streaming={null}
         streamingActive={false}
         streamingReasoning={null}
-        liveSegments={liveSegments}
+        liveSegments={[]}
         streamStatus={null}
         pendingUserText={pending?.text ?? null}
         pendingUserImages={pending?.images}
         pendingUserMessages={pending?.messages}
-        contentShiftX={contentShiftX}
-        readOnly={readOnly}
         forking={false}
         onSelectSubAgent={vi.fn()}
         onPreviewImage={pending?.preview ?? vi.fn()}
@@ -121,39 +116,6 @@ function renderMessageList(
   })
   return container
 }
-
-it.each([-166, -124, 0])("shifts only the transcript content by %ipx with token-timed transforms", (shift) => {
-  const container = renderMessageList([], false, shift)
-  const scrollViewport = container.firstElementChild as HTMLElement | null
-  const content = container.querySelector<HTMLElement>("[data-message-list-content]")
-
-  expect(scrollViewport?.style.transform).toBe("")
-  expect(content?.style.transform).toBe(`translateX(${shift}px)`)
-  expect(content?.style.left).toBe("")
-  expect(content?.style.transition).toBe("transform var(--motion-normal) var(--motion-ease)")
-})
-
-it("renders message-only previews without transcript actions", () => {
-  const container = renderMessageList([
-    {
-      id: "user-1",
-      role: "user",
-      content: "question",
-      createdAt: "2026-09-22T00:00:00Z",
-    },
-    {
-      id: "assistant-1",
-      role: "assistant",
-      type: "text",
-      content: "answer",
-      createdAt: "2026-09-22T00:00:01Z",
-    },
-  ], true, 0, true)
-
-  expect(container.textContent).toContain("question")
-  expect(container.textContent).toContain("answer")
-  expect(container.querySelector("[data-message-actions]")).toBeNull()
-})
 
 describe("MessageList assistant streaming ownership", () => {
   it("shows a yielded parent's child wait without thinking and restores real model activity on resume", () => {
@@ -781,7 +743,7 @@ describe("image attachment visibility", () => {
   it("renders each retained acknowledgement as its own image bubble and preview", () => {
     const image = (name: string) => ({ id: name, url: `data:image/png;base64,${name}`, name, size: 1, type: "image/png" })
     const first = image("first"), second = image("second"), preview = vi.fn()
-    const host = renderMessageList([], false, 0, false, [], { text: "second caption", images: [second], preview, messages: [
+    const host = renderMessageList([], false, { text: "second caption", images: [second], preview, messages: [
       { operationId: 1, text: "first caption", images: [first] },
       { operationId: 2, text: "second caption", images: [second] },
     ] })
@@ -793,12 +755,12 @@ describe("image attachment visibility", () => {
     expect(preview.mock.calls).toEqual([[first.url], [second.url]])
   })
   it("an authoritative empty pending list cannot fall back to a retired legacy bubble", () => {
-    const host = renderMessageList([], false, 0, false, [], { text: "retired ACK", images: [], messages: [] })
+    const host = renderMessageList([], false, { text: "retired ACK", images: [], messages: [] })
     expect(host.querySelector("[data-pending-user-message]")).toBeNull()
   })
   it.each(["", "caption with image"])("renders and previews a pending image without hiding an image-only bubble (%s)", (text) => {
     const url = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", preview = vi.fn()
-    const host = renderMessageList([], false, 0, false, [], { text, preview,
+    const host = renderMessageList([], false, { text, preview,
       images: [{ id: "pending-image", url, name: "fixture.gif", type: "image/gif", size: 42 }] })
     const bubble = host.querySelector("[data-pending-user-message]")
     const image = bubble?.querySelector("img")
