@@ -81,11 +81,6 @@ if (bundleViolations.length > 0) {
   process.exit(1)
 }
 
-if (bundleReport.framework !== "solid") {
-  process.stderr.write("The production artifact must load the Solid composition root.\n")
-  process.exit(1)
-}
-
 for (const { file } of bundleReport.optionalFeatures) {
   if (!paths.includes(`dist/${file}`)) missing.push(`dist/${file}`)
 }

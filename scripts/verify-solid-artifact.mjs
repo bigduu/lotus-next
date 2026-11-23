@@ -5,7 +5,6 @@ import { analyzeBundleBudget, findBundleBudgetViolations, formatBundleBudgetRepo
 const dist = fileURLToPath(new URL("../dist-solid-artifact/", import.meta.url))
 const manifest = verifyArtifactManifest({ distDirectory: dist })
 const budget = analyzeBundleBudget(dist)
-if (budget.framework !== "solid") throw new Error("The candidate must load the Solid composition root.")
 const violations = findBundleBudgetViolations(budget)
 if (violations.length) throw new Error(violations.join("\n"))
 

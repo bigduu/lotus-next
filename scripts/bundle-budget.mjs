@@ -121,27 +121,7 @@ export const BUNDLE_BUDGET = Object.freeze({
   cssGzipBytes: 18_500,
 })
 
-const immediateBootstrapNames = new Set(["ErrorBoundary", "Root"])
-
 const optionalFeatureEntries = Object.freeze([
-  { label: "ProjectWorkBoard", source: "src/components/app/ProjectWorkBoard.tsx" },
-  { label: "BrowserPane", source: "src/components/app/BrowserPane.tsx" },
-  { label: "ComposerEditor", source: "src/components/chat/ComposerEditor.tsx" },
-  { label: "Settings", source: "src/components/chat/Settings.tsx" },
-  { label: "StreamdownMarkdown", source: "src/components/chat/StreamdownMarkdown.tsx" },
-  { label: "StreamdownMermaid", source: "src/components/chat/StreamdownMermaid.tsx" },
-  { label: "Markdown", source: "src/components/chat/Markdown.tsx" },
-  { label: "CodeBlock", source: "src/components/chat/CodeBlock.tsx" },
-  { label: "MermaidChart", source: "src/components/chat/MermaidChart.tsx" },
-  { label: "renderPdf", source: "src/lib/export/renderPdf.tsx" },
-  { label: "vendor-streamdown", name: "vendor-streamdown" },
-  { label: "vendor-streamdown-code", name: "vendor-streamdown-code" },
-  { label: "vendor-markdown", name: "vendor-markdown" },
-  { label: "vendor-mermaid", name: "vendor-mermaid" },
-  { label: "vendor-highlighter", name: "vendor-highlighter" },
-])
-
-const solidOptionalFeatureEntries = Object.freeze([
   { label: "ProjectWorkBoard", source: "src/solid/project-work/ProjectWorkBoard.tsx" },
   { label: "BrowserPane", source: "src/solid/workbench/browser/BrowserPane.tsx" },
   { label: "ComposerEditor", source: "src/solid/composer/ComposerEditor.tsx" },
@@ -153,7 +133,7 @@ const solidOptionalFeatureEntries = Object.freeze([
   { label: "HomeDashboard", source: "src/solid/chat/home/HomeDashboard.tsx" },
   { label: "SidebarProjectDrag", source: "src/solid/shell/project-drag/SidebarProjectDrag.tsx" },
 ])
-const solidBootstrapNames = new Set(["Root", "SolidApp"])
+const immediateBootstrapNames = new Set(["Root", "SolidApp"])
 const reactPackagePattern = /^(?:(?:@[^/]+\/)?(?:react(?:-.*)?|.+-react)|streamdown|@streamdown\/[^/]+)$/
 const solidMarkdownCore = ["unified", "remark-parse", "rehype-sanitize"]
 const deferredMarkdownPackages = /^(?:@shikijs\/[^/]+|shiki|mermaid|jspdf|html2canvas)$/
@@ -203,17 +183,14 @@ const forbiddenStartupPackages = Object.freeze([
 ])
 
 const requiredSettingsOwnedModules = Object.freeze([
-  "src/components/chat/Settings.tsx",
-  "src/components/chat/settings/SettingsMetrics.tsx",
-  "src/components/chat/settings/SettingsPlugins.tsx",
+  "src/solid/settings/SettingsPage.tsx",
+  "src/solid/settings/metrics/SettingsMetrics.tsx",
+  "src/solid/settings/plugins/SettingsPlugins.tsx",
   "src/services/metrics/MetricsService.ts",
   "src/services/plugin/PluginService.ts",
 ])
 
-const requiredSettingsOwnedPackages = Object.freeze([
-  "@radix-ui/react-label",
-  "@radix-ui/react-switch",
-])
+const requiredSettingsOwnedPackages = ["@kobalte/core"]
 
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
 
@@ -335,8 +312,9 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   if (entry.src !== "index.html") {
     throw new Error(`Expected index.html entry; received ${String(entry.src)}.`)
   }
-  const solid = readChunkOwnership(entry.file).modules.includes("src/solid/entry.tsx")
-  const optionalEntries = solid ? solidOptionalFeatureEntries : optionalFeatureEntries
+  if (!readChunkOwnership(entry.file).modules.includes("src/solid/entry.tsx")) {
+    throw new Error("The production artifact must load the Solid composition root.")
+  }
 
   const htmlJavaScriptKeys = htmlAssetsWithExtension(html, "js").map((asset) =>
     findManifestKeyByAsset(manifest, asset),
@@ -374,7 +352,7 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   )
 
   const immediateDynamicNames = immediateDynamicKeys.map((key) => manifest[key]?.name)
-  const optionalFeatures = optionalEntries.map((descriptor) => {
+  const optionalFeatures = optionalFeatureEntries.map((descriptor) => {
     const key = findFeatureKey(manifest, descriptor)
     return {
       ...descriptor,
@@ -389,7 +367,7 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   const startupOwnership = closureFiles.map(readChunkOwnership)
   const startupModules = [...new Set(startupOwnership.flatMap(({ modules }) => modules))].sort()
   const startupPackages = [...new Set(startupOwnership.flatMap(({ packages }) => packages))].sort()
-  const settingsRoots = [settings.key, ...(solid ? manifest[settings.key].dynamicImports ?? [] : [])]
+  const settingsRoots = [settings.key, ...(manifest[settings.key].dynamicImports ?? [])]
   const settingsClosure = collectStaticClosure(manifest, settingsRoots)
   const settingsOwnership = [...settingsClosure]
     .map((key) => manifest[key].file)
@@ -404,23 +382,16 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
     (module) =>
       forbiddenStartupModulePaths.includes(module) ||
       forbiddenStartupModulePrefixes.some((prefix) => module.startsWith(prefix)) ||
-      (solid && (solidOptionalFeatureEntries.some((entry) => entry.source === module)
-        || ["src/solid/settings/", "src/solid/chat/export/"].some((prefix) => module.startsWith(prefix)))),
+      optionalFeatureEntries.some((entry) => entry.source === module) ||
+      ["src/solid/settings/", "src/solid/chat/export/"].some((prefix) => module.startsWith(prefix)),
   )
   const leakedStartupPackages = startupPackages.filter((packageName) =>
     forbiddenStartupPackages.includes(packageName),
   )
-  const requiredSettingsModules = solid ? [
-    "src/solid/settings/SettingsPage.tsx",
-    "src/solid/settings/metrics/SettingsMetrics.tsx",
-    "src/solid/settings/plugins/SettingsPlugins.tsx",
-    "src/services/metrics/MetricsService.ts",
-    "src/services/plugin/PluginService.ts",
-  ] : requiredSettingsOwnedModules
-  const missingSettingsOwnedModules = requiredSettingsModules.filter(
+  const missingSettingsOwnedModules = requiredSettingsOwnedModules.filter(
     (module) => !settingsOwnedModules.includes(module),
   )
-  const missingSettingsOwnedPackages = (solid ? ["@kobalte/core"] : requiredSettingsOwnedPackages).filter(
+  const missingSettingsOwnedPackages = requiredSettingsOwnedPackages.filter(
     (packageName) => !settingsOwnedPackages.includes(packageName),
   )
   const assistantMarkdown = optionalFeatures.find((feature) => feature.label === "AssistantMarkdown")
@@ -429,7 +400,7 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
       .flatMap((key) => readChunkOwnership(manifest[key].file).packages))].sort()
     : []
   const rootKey = Object.entries(manifest).find(([, manifestEntry]) =>
-    manifestEntry.src === (solid ? "src/solid/shell/SolidApp.tsx" : "src/Root.tsx")
+    manifestEntry.src === "src/solid/shell/SolidApp.tsx"
   )?.[0]
 
   return {
@@ -440,9 +411,8 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
     closureFiles: [...closureFiles].sort(),
     cssFiles: [...cssFiles].sort(),
     immediateDynamicNames,
-    framework: solid ? "solid" : "react",
-    reactPackages: solid ? [...new Set(Object.keys(ownership.chunks).flatMap((file) =>
-      readChunkOwnership(file).packages.filter((pkg) => reactPackagePattern.test(pkg))))].sort() : [],
+    reactPackages: [...new Set(Object.keys(ownership.chunks).flatMap((file) =>
+      readChunkOwnership(file).packages.filter((pkg) => reactPackagePattern.test(pkg))))].sort(),
     rootKey,
     settingsIsOwnedByRoot:
       Boolean(rootKey && settings) && (manifest[rootKey].dynamicImports ?? []).includes(settings.key),
@@ -451,7 +421,7 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
     settingsOwnedModules: [...settingsOwnedModules].sort(),
     settingsOwnedPackages,
     forbiddenStartupModules,
-    missingMarkdownCore: solid ? solidMarkdownCore.filter((pkg) => !assistantMarkdownPackages.includes(pkg)) : [],
+    missingMarkdownCore: solidMarkdownCore.filter((pkg) => !assistantMarkdownPackages.includes(pkg)),
     leakedMarkdownPackages: assistantMarkdownPackages.filter((pkg) => deferredMarkdownPackages.test(pkg)),
     leakedStartupPackages,
     missingSettingsOwnedModules,
@@ -467,13 +437,12 @@ const percent = (value) => `${(value * 100).toFixed(2)}%`
 export function findBundleBudgetViolations(report) {
   const violations = []
   const immediateNames = new Set(report.immediateDynamicNames)
-  const expectedNames = report.framework === "solid" ? solidBootstrapNames : immediateBootstrapNames
   if (
-    immediateNames.size !== expectedNames.size ||
-    [...expectedNames].some((name) => !immediateNames.has(name))
+    immediateNames.size !== immediateBootstrapNames.size ||
+    [...immediateBootstrapNames].some((name) => !immediateNames.has(name))
   ) {
     violations.push(
-      `HTML entry immediate dynamic owners must be exactly ${[...expectedNames].join(" and ")}; received ${[
+      `HTML entry immediate dynamic owners must be exactly ${[...immediateBootstrapNames].join(" and ")}; received ${[
         ...immediateNames,
       ].sort().join(", ")}.`,
     )
