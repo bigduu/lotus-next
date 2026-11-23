@@ -3,6 +3,7 @@ import { ArrowDown, LoaderCircle } from "@lucide/solid"
 import type { SideChatQuote } from "@services/chat/sideChat"
 import { appStore } from "@shared/store/appStore/state"
 import type { UserMessage } from "@shared/types/chatMessages"
+import { renderProbe } from "@/lib/renderProbe"
 import { Button } from "../ui/button"
 import { VirtualHistory, type HistoryReadingAnchor, type ScrollToHistoryEntry } from "../history/VirtualHistory"
 import { createUiText } from "../shell/uiText"
@@ -57,14 +58,20 @@ export function ChatViewport(props: {
   let captureBeforePrepend: (() => void) | undefined
   let loadRequest: { controller: AbortController; sessionId: string; done: Promise<void> } | undefined
 
-  const rendering = createMemo(() => buildRenderItems(props.chat.messages))
+  const rendering = createMemo(() => {
+    renderProbe.count("app.MessageList")
+    return buildRenderItems(props.chat.messages)
+  })
   const wait = createMemo(() => transcriptWorkWait(props.chat))
   const showCommandWait = () => !props.chat.streaming && wait().command
-  const live = createMemo(() => buildLiveItems(
-    props.chat.liveSegments, props.chat.streaming, props.chat.streamingReasoning,
-    !showCommandWait() && (props.chat.sending || props.chat.streamPhase === "streaming" || wait().yielded),
-    wait().delegationHint ? text("process_waiting_for_subagents") : props.chat.streamStatus, text,
-  ))
+  const live = createMemo(() => {
+    renderProbe.count("app.MessageList")
+    return buildLiveItems(
+      props.chat.liveSegments, props.chat.streaming, props.chat.streamingReasoning,
+      !showCommandWait() && (props.chat.sending || props.chat.streamPhase === "streaming" || wait().yielded),
+      wait().delegationHint ? text("process_waiting_for_subagents") : props.chat.streamStatus, text,
+    )
+  })
   const actorStatus = createInlineActorStatus({
     session: () => props.chat.currentChat, chats: () => props.chat.chats, active: () => props.pageVisible !== false,
     history: rendering, live, messages: () => props.chat.messages,
