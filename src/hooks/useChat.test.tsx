@@ -7,7 +7,6 @@ import type { TokenUsage } from "@shared/types/tokenBudget"
 import type { ChatHistoryWindow } from "@shared/types/chatMessages"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
 import { ApiError, NetworkRequestError } from "@services/api/errors"
-import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import {
   afterAll,
   afterEach,
@@ -64,7 +63,6 @@ const mocks = vi.hoisted(() => {
     deleteSessionMessage: vi.fn(),
     patchSessionMessage: vi.fn(),
     restoreSessionState: vi.fn(),
-    respondToChildApproval: vi.fn(),
     getPendingQuestion: vi.fn(),
     getSession: vi.fn(),
     shouldObserve: false,
@@ -114,7 +112,6 @@ vi.mock("@services/chat/AgentService", () => ({
     deleteSessionMessage: mocks.deleteSessionMessage,
     patchSessionMessage: mocks.patchSessionMessage,
     restoreSessionState: mocks.restoreSessionState,
-    respondToChildApproval: mocks.respondToChildApproval,
     getPendingQuestion: mocks.getPendingQuestion,
     getSession: mocks.getSession,
   },
@@ -327,7 +324,6 @@ beforeEach(() => {
     mocks.deleteSessionMessage,
     mocks.patchSessionMessage,
     mocks.restoreSessionState,
-    mocks.respondToChildApproval,
     mocks.getPendingQuestion,
     mocks.getSession,
     mocks.apiGet,
@@ -2023,199 +2019,6 @@ describe("image attachment visibility", () => {
   })
 })
 
-
-describe("session execution compatibility v1", () => {
-  const report = (status: "compatible" | "legacy_compatible" | "conflict") => ({
-    session_version: status === "legacy_compatible" ? null : status === "conflict" ? 99 : 1,
-    current_session_version: 1, status, history_readable: true, execution_allowed: status !== "conflict",
-    conflicts: status === "conflict" ? [{ code: "unsupported_session_version", message: "Declared execution version is unsupported." }] : [],
-  })
-  it("blocks sending and destructive rerun only after explicit detail conflict", async () => {
-    const sid = "compatibility-conflict-session"
-    mocks.appState.chats = [{ id: sid, messages: [{ id: "original-user", role: "user", content: "old history" }] }]
-    mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("conflict") } })
-    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
-    await flushMicrotasks()
-    await act(async () => { expect((await hook.current.send("preserve this draft")).kind).toBe("blocked") })
-    await act(async () => { await hook.current.regenerate(); await hook.current.editMessage("original-user", "edited draft") })
-    expect(mocks.sendMessage).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled()
-    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled(); expect(mocks.restoreSessionState).not.toHaveBeenCalled()
-    expect(mocks.appState.chats[0].messages).toHaveLength(1)
-  })
-  it.each([undefined, "compatible", "legacy_compatible"] as const)("keeps normal send available when report is %s", async (status) => {
-    const sid = `compatibility-open-${status ?? "missing"}`
-    mocks.appState.chats = [{ id: sid, messages: [] }]
-    mocks.getSession.mockResolvedValue({ session: { id: sid, ...(status ? { execution_compatibility: report(status) } : {}) } })
-    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-compatibility" })
-    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
-    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
-    await flushMicrotasks()
-    await act(async () => { expect((await hook.current.send("continue normally")).kind).toBe("accepted") })
-    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
-  })
-  it("records a typed submit refusal once and recovers only after a fresh compatible detail", async () => {
-    const sid = "compatibility-submit-refusal"
-    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
-    mocks.appState.chats = [{ id: sid, messages: [] }]
-    mocks.getSession.mockResolvedValue({ session: { id: sid } })
-    mocks.sendMessage.mockRejectedValueOnce(new ApiError("incompatible", 409, "", JSON.stringify({
-      session_id: sid, error: { type: "conflict", code: "session_execution_incompatible", message: "incompatible" }, compatibility: report("conflict"),
-    })))
-    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
-    await act(async () => { expect((await hook.current.send("keep my content", { images: [image] })).kind).toBe("blocked") })
-    expect(hook.current.executionCompatibility.blocked).toBe(true)
-    expect(hook.current.sendFailure).toBeNull()
-    expect(hook.current.pendingUserMessages).toHaveLength(0)
-    await act(async () => { expect((await hook.current.send("keep my content", { images: [image] })).kind).toBe("blocked") })
-    expect(mocks.sendMessage).toHaveBeenCalledTimes(1); expect(mocks.execute).not.toHaveBeenCalled()
-    mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("legacy_compatible") } })
-    await act(async () => { await hook.current.executionCompatibility.refresh() })
-    expect(hook.current.executionCompatibility.blocked).toBe(false)
-    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-after-review" })
-    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
-    await act(async () => { expect((await hook.current.send("keep my content", { images: [image] })).kind).toBe("accepted") })
-    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
-    expect(hook.current.pendingUserImages[0]?.name).toBe(image.name)
-  })
-  it("keeps an acknowledged message when execute returns typed conflict and prevents retry", async () => {
-    const sid = "compatibility-execute-refusal"
-    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
-    mocks.appState.chats = [{ id: sid, messages: [] }]
-    mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("compatible") } })
-    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-before-conflict" })
-    mocks.execute.mockRejectedValueOnce(new ApiError("incompatible", 409, "", JSON.stringify({
-      session_id: sid, error: { type: "conflict", code: "session_execution_incompatible", message: "incompatible" }, compatibility: report("conflict"),
-    })))
-    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
-    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
-    await act(async () => { expect((await hook.current.send("already saved", { images: [image] })).kind).toBe("accepted") })
-    await flushMicrotasks()
-    expect(hook.current.executionCompatibility.blocked).toBe(true)
-    expect(hook.current.pendingUserText).toBe("already saved")
-    expect(hook.current.pendingUserImages[0]?.name).toBe(image.name)
-    expect(hook.current.sendFailure?.kind).toBe("generation-failed")
-    await act(async () => { await hook.current.retry() })
-    expect(mocks.execute).toHaveBeenCalledTimes(1); expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
-    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
-  })
-
-})
-
-
-describe("child approval compatibility", () => {
-  beforeEach(() => clearSessionCompatibilityObservations())
-  afterEach(() => clearSessionCompatibilityObservations())
-  const parent = "approval-target-parent", child = "approval-target-child"
-  const report = (blocked: boolean) => ({ session_version: blocked ? 99 : 1, current_session_version: 1,
-    status: blocked ? "conflict" : "compatible", history_readable: true, execution_allowed: !blocked,
-    conflicts: blocked ? [{ code: "unsupported_session_version", message: "Future child" }] : [] })
-  const conflict = (id: string) => new ApiError("incompatible", 409, "", JSON.stringify({ session_id: id,
-    error: { code: "session_execution_incompatible" }, compatibility: report(true) }))
-  async function pending(childBlocked = false, childRead?: Promise<unknown>) {
-    mocks.appState.chats = [{ id: parent, messages: [], isRunning: true }]
-    mocks.shouldObserve = true
-    mocks.getSession.mockImplementation(async (id: string) => id === child && childRead ? childRead
-      : { session: { id, execution_compatibility: report(id === child && childBlocked) } })
-    mocks.subscribeToEvents.mockReturnValue(pendingForever())
-    mocks.respondToChildApproval.mockResolvedValue({ delivered: true })
-    const hook = await mountUseChat({ mode: "bound", sessionId: parent })
-    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as { onChildApprovalRequested(id: string, request: string, detail: { toolName: string; permission: string }): void }
-    await act(async () => handlers.onChildApprovalRequested(child, "request-7", { toolName: "Write", permission: "write" }))
-    await flushMicrotasks()
-    return hook
-  }
-  it.each([true, false])("submits the Human's %s decision to the compatible Child despite a parent conflict", async (approved) => {
-    const hook = await pending()
-    await act(async () => { observeSessionExecutionConflict(parent, conflict(parent)) })
-    expect(hook.current.pendingApproval?.childSessionId).toBe(child)
-    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
-    await act(async () => { await hook.current.respondApproval(approved) })
-    expect(mocks.respondToChildApproval).toHaveBeenCalledExactlyOnceWith(child, "request-7", approved)
-    expect(mocks.sendMessage).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled()
-  })
-  it("reads the Child's own report and retains its pending request through conflict and explicit recovery", async () => {
-    const hook = await pending(true)
-    expect(mocks.getSession).toHaveBeenCalledWith(child)
-    expect(hook.current.approvalCompatibility.blocked).toBe(true)
-    await act(async () => { await hook.current.respondApproval(true); await hook.current.respondApproval(false) })
-    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
-    expect(hook.current.pendingApproval?.requestId).toBe("request-7")
-    mocks.getSession.mockImplementation(async (id: string) => ({ session: { id, execution_compatibility: report(false) } }))
-    await act(async () => { await hook.current.approvalCompatibility.refresh() })
-    expect(hook.current.approvalCompatibility.blocked).toBe(false)
-    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
-    await act(async () => { await hook.current.respondApproval(false) })
-    expect(mocks.respondToChildApproval).toHaveBeenCalledExactlyOnceWith(child, "request-7", false)
-  })
-  it.each([false, true])("retains a rejected Child approval and observes its typed conflict while detail is pending=%s", async (readPending) => {
-    const staleRead = deferred<unknown>()
-    const hook = await pending(false, readPending ? staleRead.promise : undefined)
-    const original = hook.current.pendingApproval
-    mocks.respondToChildApproval.mockRejectedValueOnce(conflict(child))
-    await act(async () => { await hook.current.respondApproval(true) })
-    expect(hook.current.pendingApproval).toBe(original)
-    expect(hook.current.approvalCompatibility.blocked).toBe(true)
-    expect(hook.current.executionCompatibility.blocked).toBe(false)
-    await act(async () => { await hook.current.respondApproval(false) })
-    expect(mocks.respondToChildApproval).toHaveBeenCalledExactlyOnceWith(child, "request-7", true)
-    if (readPending) {
-      await act(async () => { staleRead.resolve({ session: { id: child, execution_compatibility: report(false) } }); await Promise.resolve() })
-      expect(hook.current.approvalCompatibility.blocked).toBe(true)
-    }
-    mocks.getSession.mockImplementation(async (id: string) => ({ session: { id, execution_compatibility: report(false) } }))
-    await act(async () => { await hook.current.approvalCompatibility.refresh() })
-    expect(hook.current.approvalCompatibility.blocked).toBe(false)
-    expect(mocks.respondToChildApproval).toHaveBeenCalledTimes(1)
-    await act(async () => { await hook.current.respondApproval(false) })
-    expect(mocks.respondToChildApproval).toHaveBeenLastCalledWith(child, "request-7", false)
-    expect(hook.current.pendingApproval).toBeNull()
-    expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.sendMessage).not.toHaveBeenCalled()
-  })
-  it.each(["network", "undelivered"])("retains an unconfirmed approval with an error and prevents concurrent submissions (%s)", async (failure) => {
-    const hook = await pending(), response = deferred<{ delivered: boolean }>()
-    mocks.respondToChildApproval.mockReturnValueOnce(response.promise)
-    const original = hook.current.pendingApproval
-    let submitting!: Promise<void>
-    await act(async () => { submitting = hook.current.respondApproval(true); await hook.current.respondApproval(false) })
-    expect(hook.current.pendingApproval).toBe(original)
-    expect(hook.current.approvalSubmitting).toBe(true)
-    expect(mocks.respondToChildApproval).toHaveBeenCalledTimes(1)
-    await act(async () => {
-      if (failure === "network") response.reject(new Error("network lost"))
-      else response.resolve({ delivered: false })
-      await submitting
-    })
-    expect(hook.current.pendingApproval).toBe(original)
-    expect(hook.current.approvalSubmitting).toBe(false)
-    expect(hook.current.approvalError).toBeTruthy()
-    expect(hook.current.approvalCompatibility.blocked).toBe(false)
-    expect(mocks.respondToChildApproval).toHaveBeenCalledTimes(1)
-  })
-  it.each(["success", "refusal"])("does not replace a newer approval when the previous submission settles (%s)", async (outcome) => {
-    const hook = await pending(), response = deferred<{ delivered: boolean }>()
-    mocks.respondToChildApproval.mockReturnValueOnce(response.promise)
-    let submitting!: Promise<void>
-    await act(async () => { submitting = hook.current.respondApproval(true) })
-    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as { onChildApprovalRequested(id: string, request: string, detail: { toolName: string; permission: string }): void }
-    await act(async () => handlers.onChildApprovalRequested("new-child", "request-8", { toolName: "Write", permission: "write" }))
-    await act(async () => {
-      if (outcome === "success") response.resolve({ delivered: true })
-      else response.reject(conflict(child))
-      await submitting
-    })
-    expect(hook.current.pendingApproval?.requestId).toBe("request-8")
-    expect(hook.current.approvalCompatibility.blocked).toBe(false)
-    expect(hook.current.approvalError).toBeNull()
-    expect(mocks.respondToChildApproval).toHaveBeenCalledTimes(1)
-  })
-  it("a cached approval callback still respects a later conflict for that exact Child", async () => {
-    const hook = await pending(), cached = hook.current.respondApproval
-    await act(async () => { observeSessionExecutionConflict(child, conflict(child)) })
-    await act(async () => { await cached(true) })
-    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
-    expect(hook.current.pendingApproval?.requestId).toBe("request-7")
-  })
-})
 
 describe("useChat context compression feedback", () => {
   const summary: ContextSummaryInfo = {
