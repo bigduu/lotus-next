@@ -41,6 +41,10 @@ function ProjectEditModal(props: ProjectEditDialogProps) {
   return (
     <ResponsiveDialog open onOpenChange={(open) => { if (!open) form.close() }}>
       <ResponsiveDialogContent ref={captureOpener} class={`gap-0 p-0 ${form.confirmRemove() ? "sm:max-w-sm" : "sm:max-w-xl"}`}
+        onOpenAutoFocus={(event: Event) => {
+          const active = document.activeElement
+          if (panel?.contains(active) && active !== panel) event.preventDefault()
+        }}
         dismissable={!blocked()}>
         <Show when={form.confirmRemove()} fallback={
           <>
