@@ -1,7 +1,5 @@
-import i18next from "i18next"
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
-import { I18nextProvider, initReactI18next } from "react-i18next"
+import { render } from "@solidjs/web"
+import { flush } from "solid-js"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import {
@@ -12,14 +10,32 @@ import {
   type JianduMemoryPage,
   type JianduProjectContext,
 } from "@/services/memory/jianduMemoryApi"
-import { zhCnTranslation } from "@/shared/i18n/resources/zh-CN"
-import { useAppStore } from "@/shared/store/appStore"
+import { changeLocale } from "@shared/i18n/runtime"
+import { appStore } from "@shared/store/appStore/state"
 import { JianduProjectMemories } from "./JianduProjectMemories"
 
-const roots: Root[] = []
-const initialStore = useAppStore.getState()
-const locale = i18next.createInstance()
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+// Use the compiled entries of the same Kobalte primitives as the app.
+const compiledPrimitive = vi.hoisted(() => async (name: string) => {
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (specifier: string) => string }
+  }>("node:module")
+  return vi.importActual(createRequire(import.meta.url).resolve(name).replace(/\.jsx$/, ".js"))
+})
+vi.mock("@kobalte/core/dialog", () => compiledPrimitive("@kobalte/core/dialog"))
+vi.mock("@kobalte/core/select", () => compiledPrimitive("@kobalte/core/select"))
+vi.mock("@lucide/solid", () => ({
+  X: () => null, Check: () => null, ChevronDown: () => null,
+}))
+
+const cleanups: Array<() => void> = []
+const initialStore = appStore.getState()
+async function settleUpdate(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 5; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
 const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView")
 const context = (id = "alpha"): JianduProjectContext => ({
   activeSessionId: id, activeSessionTitle: `Session ${id}`,
@@ -53,53 +69,49 @@ const button = (name: string, scope: ParentNode = document): HTMLButtonElement =
   return found!
 }
 const click = async (name: string, scope?: ParentNode) => {
-  await act(async () => { button(name, scope).click() })
+  await settleUpdate(async () => { button(name, scope).click() })
 }
 const settle = async <T,>(pending: ReturnType<typeof deferred<T>>, value: T) => {
-  await act(async () => { pending.resolve(value) })
+  await settleUpdate(async () => { pending.resolve(value) })
 }
 const change = async (selector: string, value: string) => {
   const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)
   expect(input).not.toBeNull()
   const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
-  await act(async () => {
+  await settleUpdate(async () => {
     Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(input, value)
     input!.dispatchEvent(new Event("input", { bubbles: true }))
   })
 }
 const switchSession = async (id: string) => {
-  await act(async () => { useAppStore.setState({ currentSessionId: id }) })
+  await settleUpdate(async () => { appStore.setState({ currentSessionId: id }) })
 }
 const mount = async (api: JianduMemoryApiClient, sessionId: string | null = "alpha") => {
-  useAppStore.setState({ currentSessionId: sessionId })
-  const container = document.createElement("div")
-  document.body.append(container)
-  const root = createRoot(container)
-  roots.push(root)
-  await act(async () => { root.render(<I18nextProvider i18n={locale}><JianduProjectMemories api={api} /></I18nextProvider>) })
+  appStore.setState({ currentSessionId: sessionId })
+  const container = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <JianduProjectMemories api={api} />, container)
+  cleanups.push(() => { dispose(); container.remove() })
+  await settleUpdate(() => {})
 }
 const draft = async () => {
   await click("新建记忆")
   await change("#jiandu-title", "Unique marker")
   await change("#jiandu-body", "Confirmed project behavior")
 }
-const archiveDialog = () => [...document.querySelectorAll('[role="dialog"]')]
+const archiveDialog = () => [...document.querySelectorAll('[role="dialog"][data-state="open"]')]
   .find((element) => element.querySelector("h2")?.textContent === "归档“Memory alpha”？")!
 
 beforeAll(async () => {
-  environment.IS_REACT_ACT_ENVIRONMENT = true
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() })
-  await locale.use(initReactI18next).init({ lng: "zh-CN", resources: { "zh-CN": zhCnTranslation }, interpolation: { escapeValue: false } })
+  await changeLocale("zh-CN", { persist: false })
 })
 afterAll(() => {
-  Reflect.deleteProperty(environment, "IS_REACT_ACT_ENVIRONMENT")
   if (originalScroll) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScroll)
   else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView")
 })
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
-  useAppStore.setState(initialStore, true)
+  for (const cleanup of cleanups.splice(0)) cleanup()
+  appStore.setState(initialStore, true)
   vi.restoreAllMocks()
 })
 
@@ -137,7 +149,7 @@ describe("Jiandu Project Settings", () => {
     await click("Memory alpha")
     await click("关闭详情")
     await settle(pending, detail())
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"][data-state="open"]')).toBeNull()
     await click("Memory alpha")
     expect(document.querySelector("pre")?.textContent).toBe(detail().body)
     expect(document.querySelector("script")).toBeNull()
@@ -179,11 +191,12 @@ describe("Jiandu Project Settings", () => {
     const api = client()
     await mount(api)
     expect(api.queryProjectMemories).toHaveBeenLastCalledWith(context(), { query: "", filters: { status: ["active"] } })
-    const trigger = document.querySelector('[role="combobox"][aria-label="记忆状态"]')!
-    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })) })
+    const trigger = document.querySelector('[role="combobox"][aria-label="记忆状态"]')
+    expect(trigger).not.toBeNull()
+    await settleUpdate(async () => { trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })) })
     const option = [...document.querySelectorAll('[role="option"]')].find((element) => element.textContent === "已归档")!
     expect(option).toBeDefined()
-    await act(async () => { option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
+    await settleUpdate(async () => { option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
     expect(api.queryProjectMemories).toHaveBeenCalledTimes(1)
     const archived = { ...item(), status: "archived" as const }
     api.queryProjectMemories.mockResolvedValue(page([archived]))
@@ -192,7 +205,7 @@ describe("Jiandu Project Settings", () => {
     api.getProjectMemory.mockResolvedValue({ ...detail(), status: "archived" })
     await click("Memory alpha")
     expect(document.querySelector("pre")?.textContent).toBe(detail().body)
-    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("归档记忆")
+    expect(document.querySelector('[role="dialog"][data-state="open"]')?.textContent).not.toContain("归档记忆")
     expect(api.archiveProjectMemory).not.toHaveBeenCalled()
   })
 
@@ -231,7 +244,7 @@ describe("Jiandu Project Settings", () => {
     api.resolveProjectContext.mockResolvedValueOnce(context("unexpected"))
     await click("明确创建")
     expect(api.createProjectMemory).not.toHaveBeenCalled()
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"][data-state="open"]')).toBeNull()
     expect(document.body.textContent).toContain("未绑定可用项目")
     expect(button("新建记忆").disabled).toBe(true)
   })
@@ -266,7 +279,7 @@ describe("Jiandu Project Settings", () => {
     api.queryProjectMemories.mockRejectedValueOnce(new JianduMemoryApiError("request_failed"))
     await settle(pending, item("created"))
     expect(document.body.textContent).toContain("已创建“Memory created”，但列表刷新失败")
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"][data-state="open"]')).toBeNull()
   })
 
   it("cannot clear another Project draft when an old write finishes and never stores memory bodies locally", async () => {
@@ -320,6 +333,6 @@ describe("Jiandu Project Settings", () => {
     await settle(pending, undefined)
     expect(api.archiveProjectMemory).toHaveBeenCalledExactlyOnceWith(context(), "alpha")
     expect(document.body.textContent).toContain("已归档“Memory alpha”，但列表刷新失败")
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"][data-state="open"]')).toBeNull()
   })
 })

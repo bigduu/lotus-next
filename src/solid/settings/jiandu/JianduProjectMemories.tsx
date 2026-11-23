@@ -104,7 +104,7 @@ function CreateDialog(props: { state: Controller; t: Text }) {
         </div>
         <div class="space-y-1.5">
           <Label>{t("create.typeLabel")}</Label>
-          <Select label={t("create.typeLabel")} class="w-full" options={types()} value={state.draft().type} disabled={busy()}
+          <Select selectOnly label={t("create.typeLabel")} class="w-full" options={types()} value={state.draft().type} disabled={busy()}
             onValueChange={(value) => state.updateDraft("type", value as JianduMemoryType)} />
         </div>
         <div class="space-y-1.5">
@@ -122,7 +122,7 @@ function CreateDialog(props: { state: Controller; t: Text }) {
           }</For>
           <div class="space-y-1.5">
             <Label>{t("create.granularityLabel")}</Label>
-            <Select label={t("create.granularityLabel")} class="w-full" options={granularities()} disabled={busy()}
+            <Select selectOnly label={t("create.granularityLabel")} class="w-full" options={granularities()} disabled={busy()}
               value={state.draft().granularity || "none"} onValueChange={(value) => state.updateDraft("granularity", value === "none" ? "" : value)} />
           </div>
         </div>
@@ -186,7 +186,7 @@ function ProjectMemories(props: { sessionId: string; api: JianduMemoryApiClient 
       <form class="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); view.search() }}>
         <Input aria-label={t("search.label")} value={view.query()} maxlength={JIANDU_MEMORY_LIMITS.queryChars}
           onInput={(event) => view.setQuery(event.currentTarget.value)} placeholder={t("search.placeholder")} />
-        <Select label={t("search.statusLabel")} class="w-full sm:w-36" value={view.filter()} disabled={listBusy()} options={statuses()}
+        <Select selectOnly label={t("search.statusLabel")} class="w-full sm:w-36" value={view.filter()} disabled={listBusy()} options={statuses()}
           onValueChange={(value) => view.setFilter(value as "active" | "archived")} />
         <Button type="submit" disabled={listBusy()}>{t("search.action")}</Button>
         <Button type="button" variant="outline" disabled={listBusy()} onClick={() => view.refresh()}>{t("search.refresh")}</Button>
