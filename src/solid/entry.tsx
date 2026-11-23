@@ -1,16 +1,17 @@
 import { Errored } from "solid-js"
 import { render } from "@solidjs/web"
 import { installAssetRecovery, renderBootstrapFailure } from "../runtime/browserEntrySupport"
-import { resolveDefaultBrowserRuntimeConfig } from "../runtime/browserRuntime"
-import { installRuntimeConfig } from "../runtime/runtimeConfig"
+import { resolveDefaultBrowserRuntimeConfig } from "../runtime/browserRuntime.ts"
+import { installRuntimeConfig } from "../runtime/runtimeConfig.ts"
 import "./styles.css"
 
-const root = document.getElementById("root")
-if (!root) throw new Error("Lotus Next root element is missing.")
+const rootElement = document.getElementById("root")
+if (!rootElement) throw new Error("Lotus Next root element is missing.")
+const root = rootElement
 
 installAssetRecovery()
 
-async function start(root: HTMLElement) {
+async function start() {
   // Services read this immutable contract on import.
   installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())
   const [{ SolidRoot }, { SolidApp }] = await Promise.all([
@@ -28,4 +29,4 @@ async function start(root: HTMLElement) {
   ), root)
 }
 
-void start(root).catch((error) => renderBootstrapFailure(root, error))
+void start().catch((error) => renderBootstrapFailure(root, error))

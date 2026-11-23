@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -1397,6 +1398,25 @@ describe("architecture boundary fixtures", () => {
     expect(compareInventory(buildInventory(baseline), expected)).toEqual([]);
     expect(failures).toMatch(/http-transport-constructor.*has 2 occurrence.*expected 1/);
     expect(failures).toMatch(/browser-http-transport-composition.*has 2 occurrence.*expected 1/);
+  });
+
+  it("enforces the runtime boundary on the Solid source entry", async () => {
+    const entry = "src/solid/entry.tsx";
+    const source = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", entry), "utf8");
+
+    expect(verifyBootstrapOrder(source, entry)).toEqual([]);
+    expect(verifyBootstrapOrder(`import "./shell/SolidApp";\n${source}`, entry).join("\n")).toMatch(/unsafe static application import/);
+    const tooEarly = source.replace("  installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())", "")
+      .replace("  render(() =>", "  installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())\n  render(() =>");
+    expect(verifyBootstrapOrder(tooEarly, entry).join("\n")).toMatch(/dynamic application import precedes runtime installation/);
+    const wrongAuthority = source.replace("ownerAccess={ownerAccess}", "ownerAccess={true}");
+    expect(verifyBootstrapOrder(wrongAuthority, entry).join("\n")).toMatch(/render Solid as three reachable statements/);
+  });
+
+  it("checks the Solid document for a single executable source entry", () => {
+    expect(fixtureMessages("solid-candidate.html", '<script type="module" src="/src/solid/entry.tsx"></script>')).toBe("");
+    expect(fixtureMessages("solid-candidate.html", '<script type="module" src="/src/main.tsx"></script>')).toMatch(/bypasses the canonical/);
+    expect(fixtureMessages("solid-candidate.html", '<script>start()</script>')).toMatch(/inline application scripts/);
   });
 
   it("allows runtime installation before a dynamic Root import", () => {
