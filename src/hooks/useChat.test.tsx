@@ -95,6 +95,9 @@ vi.mock("@shared/store/appStore", () => {
     selectShouldObserve: () => () => mocks.shouldObserve,
   }
 })
+vi.mock("@shared/store/appStore/state", () => ({
+  appStore: { getState: () => mocks.appState },
+}))
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({
   useProviderStore: Object.assign(
     (selector: (state: unknown) => unknown) => selector(mocks.providerState),

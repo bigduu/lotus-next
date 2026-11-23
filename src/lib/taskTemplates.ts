@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 /**
  * Quick-start task templates for the home dashboard (ported from lotus's
  * EmptyTaskLauncher catalog). Picking one prefills the composer and stashes
