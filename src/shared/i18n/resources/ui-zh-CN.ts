@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "chat_draft_completion": "聊天输入预测",
+  "chat_draft_completion_hint": "将草稿、当前会话保留的对话文字和压缩摘要发送给已配置的 Fast 模型。按 → 或 Tab 填入建议。",
+  "chat_draft_completion_announcement": "建议内容为「{{suffix}}」。按右箭头或 Tab 填入。",
   "tailscale_title": "Tailscale 远程访问",
   "tailscale_not_installed": "请在运行 Bamboo 的电脑上安装 Tailscale 和它的命令行工具。",
   "tailscale_unavailable": "Bamboo 无法使用本机的 Tailscale 客户端。请检查客户端是否运行，以及 Bamboo 的系统用户是否有命令行操作权限。",

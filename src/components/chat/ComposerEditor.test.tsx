@@ -45,6 +45,40 @@ function paste(input: HTMLElement, text: string, files: File[] = []) {
 }
 
 describe("Tiptap composer integration", () => {
+  it("aborts an outdated prediction and discards its result even if the request finishes", async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveOld: (suffix: string) => void = () => {}
+      const oldResponse = new Promise<string>((resolve) => { resolveOld = resolve })
+      const request = vi.fn<NonNullable<ComponentProps<typeof ComposerEditor>["requestDraftCompletion"]>>()
+        .mockReturnValueOnce(oldResponse)
+        .mockResolvedValueOnce(" the results.")
+      const view = mount({ value: "Check", requestDraftCompletion: request })
+      await act(async () => {
+        view.ref.current!.focus()
+        view.editor.commands.setTextSelection(view.editor.state.doc.content.size - 1)
+        await vi.advanceTimersByTimeAsync(700)
+      })
+      expect(request.mock.calls[0][0]).toBe("Check")
+
+      act(() => { view.editor.commands.insertContent(" and compare") })
+      expect(request.mock.calls[0][1].aborted).toBe(true)
+      await act(async () => { resolveOld(" the old data."); await oldResponse })
+      expect(view.input.querySelector("[data-draft-completion]")).toBeNull()
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+      expect(view.input.querySelector("[data-draft-completion]")?.textContent).toBe(" the results.")
+      expect(composerText(view.editor.state.doc)).toBe("Check and compare")
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+      act(() => { view.input.dispatchEvent(escape) })
+      expect(view.input.querySelector("[data-draft-completion]")).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+      expect(request).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("tolerates a destroyed editor during a restored pane remount", () => {
     const focusSnapshot = { current: null as ComposerFocusSnapshot }
     const view = mount({ value: "retained draft", focusSnapshot })

@@ -31,6 +31,7 @@ import { FileMenu } from "@/components/chat/FileMenu"
 import { useAppStore } from "@shared/store/appStore"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { GuidanceMode } from "@services/chat/guidance"
+import type { RequestDraftCompletion } from "@services/chat/draftCompletion"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
 
 // The Tiptap editor graph is startup-expensive; keep it behind a dynamic
@@ -168,6 +169,7 @@ export function Composer({
   selectedProjectId,
   onSelectProject,
   onDismissMenus,
+  requestDraftCompletion,
 }: {
   draft: string
   draftKey?: string
@@ -216,6 +218,7 @@ export function Composer({
   selectedProjectId: string | null
   onSelectProject: (projectId: string | null) => void
   onDismissMenus?: () => void
+  requestDraftCompletion?: RequestDraftCompletion
 }) {
   useUiLocale()
   const inputId = useId()
@@ -384,6 +387,7 @@ export function Composer({
               mentionScope={displayWorkspace}
               mentionsEnabled={slashQuery === null && !!displayWorkspace}
               onSuggestionChange={setFileSuggestion}
+              requestDraftCompletion={slashQuery === null && !fileSuggestion ? requestDraftCompletion : undefined}
               title={uiText("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
               placeholder={canQueue ? uiText("type_a_message_to_add_to_the_queue_38c6f67b") : uiText("send_a_message_ae2f86f0")}
             />

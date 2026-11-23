@@ -33,6 +33,8 @@ import {
 import { metricsService } from "@services/metrics"
 import type { MetricsSummary } from "@services/metrics/types"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
+import { setDraftCompletionEnabled, useDraftCompletionEnabled } from "@shared/store/draftCompletionPreference"
 import { cn } from "@/lib/utils"
 import { SettingsProviders } from "@/components/chat/settings/SettingsProviders"
 import { SettingsMcp } from "@/components/chat/settings/SettingsMcp"
@@ -89,6 +91,9 @@ function GeneralTab() {
   const bubbleColorsId = useId()
   const bubbleDescriptionId = useId()
   const customBubbleColorId = useId()
+  const draftCompletionId = useId()
+  const draftCompletionDescriptionId = useId()
+  const draftCompletionEnabled = useDraftCompletionEnabled()
   const bubbleColors = getUserMessageColors(themeMode, userMessageColorPreset, customUserMessageColor)
   const accentColors = getGlobalAccentColors(themeMode, globalAccentPreset, customGlobalAccentColor)
 
@@ -127,6 +132,14 @@ function GeneralTab() {
             </select>
             {languageError && <p role="alert" className="mt-2 text-xs text-destructive">{uiText("language_load_failed")}</p>}
           </div>
+        </section>
+        <section className="settings-row settings-row-responsive">
+          <div>
+            <label htmlFor={draftCompletionId} className="text-sm font-medium">{uiText("chat_draft_completion")}</label>
+            <p id={draftCompletionDescriptionId} className="settings-description">{uiText("chat_draft_completion_hint")}</p>
+          </div>
+          <Switch id={draftCompletionId} aria-describedby={draftCompletionDescriptionId}
+            checked={draftCompletionEnabled} onCheckedChange={setDraftCompletionEnabled} />
         </section>
         <section className="settings-row settings-row-responsive">
           <h3 id={appearanceId} className="text-sm font-medium">{uiText("appearance_86a63f23")}</h3>

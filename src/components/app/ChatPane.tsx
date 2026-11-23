@@ -78,6 +78,8 @@ import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
 import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 import type { SessionPermissionMode } from "@services/chat/AgentService"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
+import { useDraftCompletionEnabled } from "@shared/store/draftCompletionPreference"
+import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
 import {
   collectLiveSessionFileChanges,
   collectSessionFileChanges,
@@ -488,6 +490,12 @@ export function ChatPane({
   // Drafts remain available when switching sessions or returning to a new chat.
   const draftKey = currentSessionId ?? ""
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
+  const draftCompletionAllowed = useDraftCompletionEnabled() && pageVisible
+    && !currentlyRunning && !submissionPending && !executionBlocked && !managedHistoryStale
+  const completionSession = currentSessionId ?? newChatEpoch
+  const requestDraftCompletion = useMemo(() => draftCompletionAllowed
+    ? createDraftCompletionRequest(typeof completionSession === "string" ? completionSession : null, messages) : undefined,
+  [draftCompletionAllowed, completionSession, messages])
   const loopDraft = isSessionLoopCommand(draft)
   const loopRequests = useRef(new Set<string>())
   const latestSubmit = useRef<(confirmation?: LoopCapabilityConfirmation) => void>(() => {})
@@ -1520,6 +1528,7 @@ export function ChatPane({
           <Composer
           draft={draft}
           draftKey={draftKey}
+          requestDraftCompletion={requestDraftCompletion}
           outputRate={outputRate}
           onDraftChange={setDraft}
           executionBlocked={executionBlocked}
