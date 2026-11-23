@@ -1,0 +1,14 @@
+/* Tiptap's placeholder and prediction are decorations on the same textbox. */
+.composer-editor p.is-editor-empty:first-child:not(:has([data-draft-completion]))::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.composer-editor [data-draft-completion] {
+  color: var(--muted-foreground);
+  pointer-events: none;
+  user-select: none;
+}

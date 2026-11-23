@@ -11,7 +11,7 @@ const filePaths = ["README.md", "src/alpha.ts", "docs/设计 文档@v2.md", "pac
 const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 type ChatRequest = { session_id?: string; message: string; images?: Array<{ base64: string; name: string; type: string }> }
 
-async function openComposer(page: Page) {
+async function openComposer(page: Page, history: readonly unknown[] = []) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_ui_locale_v1", "en-US")
@@ -48,7 +48,7 @@ async function openComposer(page: Page) {
     }
     for (const session of sessions) {
       if (path === `/api/v1/sessions/${session.id}`) return route.fulfill({ json: { session }, headers: { ETag: '"1"' } })
-      if (path === `/api/v1/history/${session.id}`) return route.fulfill({ json: { session_id: session.id, messages: [] } })
+      if (path === `/api/v1/history/${session.id}`) return route.fulfill({ json: { session_id: session.id, messages: session.id === mainId ? history : [] } })
       if (path === `/api/v1/task/${session.id}`) return route.fulfill({ json: { session_id: session.id, items: [] } })
       if (path === `/api/v1/respond/${session.id}/pending`) return route.fulfill({ json: { has_pending_question: false } })
       if (path === `/api/v1/execute/${session.id}`) return route.fulfill({ json: { status: "started", session_id: session.id } })
@@ -65,6 +65,64 @@ async function openComposer(page: Page) {
   await expect(editor).toHaveAttribute("data-composer-editor")
   return { editor, chats, observation, workspaceReads }
 }
+
+test("predicts a follow-up or draft continuation and accepts it with Right Arrow or Tab", async ({ page }) => {
+  const userMessage = "Compare these two approaches."
+  const assistantMessage = "Either approach works. The second one takes less time to assemble."
+  const { editor, chats, observation } = await openComposer(page, [
+    { id: "prediction-user", role: "user", content: userMessage, created_at: at },
+    { id: "prediction-assistant", role: "assistant", content: assistantMessage, created_at: at },
+  ])
+  const followUp = "Let's try the second approach first."
+  const prefix = "再帮我"
+  const suffix = "确认一下第二种方案的风险。"
+  const predictions: unknown[] = []
+  await page.route("**/api/v1/chat/draft-completion", async (route) => {
+    const request = route.request().postDataJSON()
+    predictions.push(request)
+    await route.fulfill({ json: { suffix: request.draft === "" ? followUp : suffix } })
+  })
+
+  const settings = page.getByRole("button", { name: "System Settings", exact: true })
+  const box = await settings.boundingBox()
+  if (!box || box.x < 0) await page.getByRole("button", { name: "Menu", exact: true }).click()
+  await settings.click()
+  const preference = page.getByRole("switch", { name: "Predict chat messages" })
+  await expect(preference).not.toBeChecked()
+  await preference.click()
+  await expect(preference).toBeChecked()
+  await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+
+  const ghost = editor.locator("[data-draft-completion]")
+  await editor.focus()
+  await expect(ghost).toHaveText(followUp)
+  await expect(ghost).toHaveAttribute("aria-hidden", "true")
+  await expect.poll(() => editor.locator("p").first().evaluate((p) =>
+    p.ownerDocument.defaultView!.getComputedStyle(p, "::before").content)).toBe("none")
+  await expectComposerText(editor, "")
+  await editor.press("ArrowRight")
+  await expect(ghost).toHaveCount(0)
+  await expectComposerText(editor, followUp)
+  expect(chats).toHaveLength(0)
+
+  await editor.fill(prefix)
+  await expect(ghost).toHaveText(suffix)
+  await expectComposerText(editor, prefix)
+  await editor.dispatchEvent("keydown", { key: "Tab", bubbles: true, cancelable: true, isComposing: true })
+  await expectComposerText(editor, prefix)
+  await editor.press("Tab")
+  await expectComposerText(editor, prefix + suffix)
+  await expect(editor).toBeFocused()
+  expect(chats).toHaveLength(0)
+
+  await editor.press("Enter")
+  await expect.poll(() => chats.map((chat) => chat.message)).toEqual([prefix + suffix])
+  expect(predictions).toEqual([
+    { draft: "", session_id: mainId, expected_assistant_message_id: "prediction-assistant" },
+    { draft: prefix, session_id: mainId },
+  ])
+  expect(observation.pageErrors).toEqual([])
+})
 
 async function pasteText(editor: Locator, plain: string, html?: string) {
   await editor.focus()

@@ -11,7 +11,11 @@ import { Placeholder } from "@tiptap/extensions/placeholder"
 import { UndoRedo } from "@tiptap/extensions/undo-redo"
 import { exitSuggestion, type SuggestionProps } from "@tiptap/suggestion"
 import { PluginKey, TextSelection } from "@tiptap/pm/state"
+import { uiText } from "@shared/i18n/ui"
+import type { RequestDraftCompletion } from "@services/chat/draftCompletion"
+import { ComposerDraftCompletion, refreshDraftCompletion } from "./composerDraftCompletion"
 import { composerDocument, composerSlice, composerText, isComposerLink } from "./composerDocument"
+import "./ComposerEditor.css"
 
 export type ComposerFocusSnapshot = { text: string; from: number; to: number } | null
 export type ComposerInputHandle = { focus: () => void }
@@ -41,6 +45,7 @@ type Props = {
   onSubmit: () => void
   onAddFiles: (files: File[]) => void
   onSuggestionChange: (suggestion: FileSuggestion | null) => void
+  requestDraftCompletion?: RequestDraftCompletion
 }
 
 /** Tiptap owns document/selection/IME; the rest of the app only receives text. */
@@ -50,11 +55,21 @@ export function ComposerEditor(props: Props) {
   const normalizedValue = props.value.replace(/\r\n?/g, "\n")
   const publishedDraft = useRef({ text: normalizedValue, references: "[]" })
   const editorRef = useRef<Editor | null>(null)
+  const announcementRef = useRef<HTMLSpanElement>(null)
   // This component is keyed by draft identity. Configure the editor once;
   // controlled text acknowledgements must not reconfigure its DOM view.
   const [editorOptions] = useState<UseEditorOptions>(() => ({
     extensions: [
       Document, Paragraph, Text, HardBreak, UndoRedo,
+      ComposerDraftCompletion.configure({
+        getRequest: () => latest.current.requestDraftCompletion,
+        announce: (suffix) => {
+          const status = announcementRef.current
+          if (!status) return
+          const message = suffix ? uiText("chat_draft_completion_announcement", { suffix }) : ""
+          if (status.textContent !== message) status.textContent = message
+        },
+      }),
       Placeholder.configure({ placeholder: () => latest.current.placeholder }),
       Link.configure({
         autolink: true,
@@ -193,6 +208,10 @@ export function ComposerEditor(props: Props) {
   }, [editor, props.mentionScope])
 
   useLayoutEffect(() => {
+    if (editor && !editor.isDestroyed) refreshDraftCompletion(editor.view)
+  }, [editor, props.requestDraftCompletion])
+
+  useLayoutEffect(() => {
     const snapshotRef = props.focusSnapshot
     if (!editor || editor.isDestroyed || !snapshotRef) return
     const snapshot = snapshotRef.current
@@ -251,5 +270,8 @@ export function ComposerEditor(props: Props) {
     if (!props.mentionsEnabled) exitSuggestion(editor.view, fileSuggestionKey)
   }, [editor, props.label, props.busy, props.title, props.placeholder, props.mentionsEnabled])
 
-  return <EditorContent editor={editor} className="contents" />
+  return <>
+    <EditorContent editor={editor} className="contents" />
+    <span ref={announcementRef} aria-live="polite" aria-atomic="true" className="sr-only" />
+  </>
 }

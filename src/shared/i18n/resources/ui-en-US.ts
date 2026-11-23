@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "chat_draft_completion": "Predict chat messages",
+  "chat_draft_completion_hint": "Sends your draft, retained chat text, and any conversation summary to the configured Fast model. Press → or Tab to insert a suggestion.",
+  "chat_draft_completion_announcement": "Suggested text is ‘{{suffix}}’. Press Right Arrow or Tab to insert it.",
   "tailscale_title": "Tailscale remote access",
   "tailscale_not_installed": "Install Tailscale and its CLI on the computer running Bamboo.",
   "tailscale_unavailable": "Bamboo could not use the local Tailscale client. Check that it is running and that Bamboo’s OS user has CLI permissions.",
