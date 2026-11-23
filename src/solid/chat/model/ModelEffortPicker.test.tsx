@@ -1,34 +1,32 @@
-import { act, type ComponentProps } from "react"
-import { createRoot, type Root } from "react-dom/client"
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import { render, type ComponentProps, type JSX } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { ModelEffortPicker } from "./ModelEffortPicker"
 
-const roots: Root[] = []
-const actEnvironment = globalThis as typeof globalThis & {
-  IS_REACT_ACT_ENVIRONMENT?: boolean
-}
-
-beforeAll(() => {
-  actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+// The production build compiles Kobalte's Solid JSX export. Vitest's scoped
+// JSX transforms cover our sources, so load the equivalent compiled entry.
+vi.mock("@kobalte/core/popover", async () => {
+  const { createRequire } = await import("node:module")
+  const entry = createRequire(import.meta.url).resolve("@kobalte/core/popover")
+  return vi.importActual(entry.replace(/\.jsx$/, ".js"))
 })
 
-afterAll(() => {
-  Reflect.deleteProperty(actEnvironment, "IS_REACT_ACT_ENVIRONMENT")
+vi.mock("@lucide/solid", () => {
+  const Icon = (props: Pick<JSX.IntrinsicElements["svg"], "class" | "aria-hidden">) =>
+    <svg class={props.class} aria-hidden={props["aria-hidden"]} />
+  return { Check: Icon, ChevronDown: Icon, ChevronLeft: Icon, ChevronRight: Icon, RotateCcw: Icon, Search: Icon, Sparkles: Icon, X: Icon }
 })
 
-afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
-})
+let cleanup: (() => void) | undefined
+
+afterEach(() => { cleanup?.() })
 
 type PickerProps = ComponentProps<typeof ModelEffortPicker>
 
 function renderPicker(overrides: Partial<PickerProps> = {}) {
   const container = document.body.appendChild(document.createElement("div"))
-  const root = createRoot(container)
-  roots.push(root)
-  let props: PickerProps = {
+  const props: PickerProps = {
     modelGroups: [{ provider: "fixture", label: "Fixture", models: ["gpt-6-sol", "glm-5.3", "gpt-5.6-sol"] }],
     model: "gpt-6-sol",
     modelProvider: "fixture",
@@ -37,16 +35,24 @@ function renderPicker(overrides: Partial<PickerProps> = {}) {
     onChange: vi.fn(),
     ...overrides,
   }
-  act(() => root.render(<ModelEffortPicker {...props} />))
+  const [current, setCurrent] = createSignal(props)
+  const dispose = render(() => <ModelEffortPicker {...current()} />, container)
+  cleanup = () => { dispose(); container.remove() }
+  flush()
 
   return {
     props,
     rerender(next: Partial<PickerProps>) {
-      props = { ...props, ...next }
-      act(() => root.render(<ModelEffortPicker {...props} />))
+      setCurrent((previous) => ({ ...previous, ...next }))
+      flush()
     },
     trigger: () => container.querySelector<HTMLButtonElement>('[data-testid="model-effort-picker"]')!,
   }
+}
+
+function interact(action: () => void) {
+  action()
+  flush()
 }
 
 function range() {
@@ -75,28 +81,29 @@ function modelOption(model: string) {
 
 function changeInput(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
-  act(() => {
+  interact(() => {
     setter?.call(input, value)
     input.dispatchEvent(new Event("input", { bubbles: true }))
   })
 }
 
 function pointerEvent(input: HTMLInputElement, type: "pointerdown" | "pointerup") {
-  act(() => input.dispatchEvent(new Event(type, { bubbles: true })))
+  interact(() => input.dispatchEvent(new Event(type, { bubbles: true })))
 }
 
 function keyEvent(element: HTMLElement, type: "keydown" | "keyup", key: string) {
-  act(() => element.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true })))
+  interact(() => element.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true })))
 }
 
 function open(trigger: HTMLButtonElement) {
-  act(() => trigger.click())
+  interact(() => trigger.click())
   expect(range()).not.toBeNull()
 }
 
 async function openModels() {
-  act(() => modelButton().click())
-  await act(async () => { await Promise.resolve() })
+  interact(() => modelButton().click())
+  await Promise.resolve()
+  flush()
   expect(search()).not.toBeNull()
 }
 
@@ -151,7 +158,7 @@ describe("ModelEffortPicker effort", () => {
     expect(picker.props.onChange).toHaveBeenCalledExactlyOnceWith("xhigh")
     expect(trigger.textContent).toContain("高")
     expect(trigger.textContent).not.toContain("极高")
-    act(() => range().dispatchEvent(new FocusEvent("blur", { bubbles: true })))
+    interact(() => range().dispatchEvent(new FocusEvent("blur", { bubbles: true })))
     expect(picker.props.onChange).toHaveBeenCalledTimes(1)
 
     picker.rerender({ value: "xhigh" })
@@ -215,7 +222,7 @@ describe("ModelEffortPicker effort", () => {
     expect(range().value).toBe("1")
 
     const reset = document.querySelector<HTMLButtonElement>('button[aria-label="恢复自动推理"]')!
-    act(() => reset.click())
+    interact(() => reset.click())
     expect(picker.props.onChange).toHaveBeenLastCalledWith("auto")
     expect(picker.props.onChange).toHaveBeenCalledTimes(2)
     expect(picker.trigger().textContent).toContain("关闭")
@@ -280,15 +287,15 @@ describe("ModelEffortPicker models", () => {
     const picker = renderPicker()
     open(picker.trigger())
     await openModels()
-    act(() => search().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })))
+    interact(() => search().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })))
     changeInput(search(), "gpt")
-    act(() => search().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, bubbles: true })))
+    interact(() => search().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, bubbles: true })))
     expect(picker.props.onModelChange).not.toHaveBeenCalled()
     expect(picker.props.onChange).not.toHaveBeenCalled()
     expect(search().value).toBe("gpt")
     expect(visibleModels()).toEqual(["gpt-6-sol", "gpt-5.6-sol"])
-    act(() => search().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })))
-    act(() => modelOption("gpt-5.6-sol").click())
+    interact(() => search().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })))
+    interact(() => modelOption("gpt-5.6-sol").click())
     expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith({ provider: "fixture", model: "gpt-5.6-sol" })
   })
 
@@ -308,7 +315,7 @@ describe("ModelEffortPicker models", () => {
     changeInput(search(), "5.6")
     const option = document.querySelector<HTMLButtonElement>("[data-model-option]")!
     expect(option.getAttribute("aria-pressed")).toBe("false")
-    act(() => option.click())
+    interact(() => option.click())
     expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith({ provider: "fixture", model: "gpt-5.6-sol" })
     expect(search()).toBeNull()
     expect(range()).toBeNull()
@@ -330,14 +337,14 @@ describe("ModelEffortPicker models", () => {
     await openModels()
     changeInput(search(), "glm")
     const back = document.querySelector<HTMLButtonElement>('button[aria-label="后退"]')!
-    act(() => back.click())
+    interact(() => back.click())
     expect(search()).toBeNull()
     expect(range()).not.toBeNull()
     await openModels()
     expect(search().value).toBe("")
 
     changeInput(search(), "5.6")
-    act(() => picker.trigger().click())
+    interact(() => picker.trigger().click())
     expect(search()).toBeNull()
     open(picker.trigger())
     await openModels()
@@ -348,10 +355,10 @@ describe("ModelEffortPicker models", () => {
 
   it("keeps effort available without models and disables the model subpage", () => {
     const picker = renderPicker({ modelGroups: [], model: "" })
-    expect(picker.trigger().disabled).toBe(false)
+    expect(picker.trigger().getAttribute("aria-disabled")).toBeNull()
     open(picker.trigger())
     expect(modelButton().disabled).toBe(true)
-    act(() => modelButton().click())
+    interact(() => modelButton().click())
     expect(search()).toBeNull()
     changeInput(range(), "2")
     pointerEvent(range(), "pointerup")
@@ -363,12 +370,12 @@ describe("ModelEffortPicker models", () => {
 describe("ModelEffortPicker availability", () => {
   it("allows effort while model switching is disabled", () => {
     const picker = renderPicker({ modelDisabled: true })
-    expect(picker.trigger().disabled).toBe(false)
+    expect(picker.trigger().getAttribute("aria-disabled")).toBeNull()
     open(picker.trigger())
     expect(modelButton().disabled).toBe(true)
-    act(() => modelButton().click())
+    interact(() => modelButton().click())
     expect(search()).toBeNull()
-    expect(range().disabled).toBe(false)
+    expect(range().getAttribute("aria-disabled")).toBeNull()
     changeInput(range(), "6")
     pointerEvent(range(), "pointerup")
     expect(picker.props.onChange).toHaveBeenCalledExactlyOnceWith("max")
@@ -377,29 +384,29 @@ describe("ModelEffortPicker availability", () => {
 
   it("allows model switching while effort and its reset action are disabled", async () => {
     const picker = renderPicker({ disabled: true })
-    expect(picker.trigger().disabled).toBe(false)
+    expect(picker.trigger().getAttribute("aria-disabled")).toBeNull()
     open(picker.trigger())
-    expect(range().disabled).toBe(true)
+    expect(range().getAttribute("aria-disabled")).toBe("true")
     const reset = document.querySelector<HTMLButtonElement>('button[aria-label="恢复自动推理"]')!
     expect(reset.disabled).toBe(true)
     changeInput(range(), "6")
     pointerEvent(range(), "pointerup")
     keyEvent(range(), "keyup", "End")
-    act(() => reset.click())
+    interact(() => reset.click())
     expect(picker.props.onChange).not.toHaveBeenCalled()
     expect(modelButton().disabled).toBe(false)
     await openModels()
     const option = modelOption("glm-5.3")
-    act(() => option.click())
+    interact(() => option.click())
     expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith({ provider: "fixture", model: "glm-5.3" })
   })
 
   it("keeps root effort unconfirmed until thinking-mode authority arrives while models remain available", () => {
     const picker = renderPicker({ allowUltra: true, thinkingMode: null, value: "max" })
     expect(picker.trigger().textContent).toContain("未确认")
-    expect(picker.trigger().disabled).toBe(false)
+    expect(picker.trigger().getAttribute("aria-disabled")).toBeNull()
     open(picker.trigger())
-    expect(range().disabled).toBe(true)
+    expect(range().getAttribute("aria-disabled")).toBe("true")
     changeInput(range(), "7")
     pointerEvent(range(), "pointerup")
     expect(picker.props.onChange).not.toHaveBeenCalled()
@@ -407,7 +414,7 @@ describe("ModelEffortPicker availability", () => {
 
     picker.rerender({ thinkingMode: "standard" })
     expect(picker.trigger().textContent).toContain("最大")
-    expect(range().disabled).toBe(false)
+    expect(range().getAttribute("aria-disabled")).toBeNull()
     expect(range().value).toBe("6")
   })
 
@@ -416,8 +423,8 @@ describe("ModelEffortPicker availability", () => {
     { modelDisabled: false, modelGroups: [] },
   ])("keeps the picker closed when both controls are unavailable: %o", (availability) => {
     const picker = renderPicker({ ...availability, disabled: true })
-    expect(picker.trigger().disabled).toBe(true)
-    act(() => picker.trigger().click())
+    expect(picker.trigger().getAttribute("aria-disabled")).toBe("true")
+    interact(() => picker.trigger().click())
     expect(range()).toBeNull()
     expect(search()).toBeNull()
     expect(picker.props.onChange).not.toHaveBeenCalled()
