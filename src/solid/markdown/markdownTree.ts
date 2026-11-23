@@ -1,18 +1,50 @@
-import { cjk } from "@streamdown/cjk"
 import type { Element, Root, RootContent } from "hast"
 import rehypeSanitize from "rehype-sanitize"
 import remend from "remend"
+import remarkCjkFriendly from "remark-cjk-friendly"
+import remarkCjkStrikethrough from "remark-cjk-friendly-gfm-strikethrough"
 import remarkGfm from "remark-gfm"
 import remarkParse from "remark-parse"
 import remarkRehype from "remark-rehype"
 import { unified } from "unified"
-import { remarkLocalRasterImages, safeAssistantUrlTransform } from "../../components/chat/streamdownConfig"
+import { remarkLocalRasterImages, safeAssistantUrlTransform } from "@/lib/assistantMarkdownSafety"
+
+type MarkdownNode = { type: string; url?: string; value?: string; children?: MarkdownNode[] }
+const cjkPunctuation = /[。．，、？！：；（）【】「」『』〈〉《》]/u
+const autolinkScheme = /^(?:https?:\/\/|mailto:|www\.)/i
+
+/** GFM autolinks can absorb adjacent CJK punctuation and prose. */
+function remarkCjkAutolinks() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      const children = node.children
+      if (!children) return
+      for (let index = 0; index < children.length; index += 1) {
+        const child = children[index]
+        const label = child.children?.length === 1 ? child.children[0] : null
+        if (child.type === "link" && child.url && label?.type === "text" && label.value === child.url && autolinkScheme.test(child.url)) {
+          const split = child.url.search(cjkPunctuation)
+          if (split > 0) {
+            const url = child.url.slice(0, split)
+            children.splice(index, 1, { ...child, url, children: [{ type: "text", value: url }] },
+              { type: "text", value: child.url.slice(split) })
+            index += 1
+            continue
+          }
+        }
+        visit(child)
+      }
+    }
+    visit(tree)
+  }
+}
 
 const parser = unified()
   .use(remarkParse)
-  .use(cjk.remarkPluginsBefore)
+  .use(remarkCjkFriendly)
   .use(remarkGfm)
-  .use(cjk.remarkPluginsAfter)
+  .use(remarkCjkAutolinks)
+  .use(remarkCjkStrikethrough)
   .use(remarkLocalRasterImages)
   .use(remarkRehype, { clobberPrefix: "" })
   .use(rehypeSanitize)
@@ -49,7 +81,7 @@ export function parseAssistantMarkdown(source: string, streaming: boolean): Root
     for (const name of ["href", "src"] as const) {
       const value = node.properties[name]
       if (typeof value !== "string") continue
-      const safe = safeAssistantUrlTransform(value, name, node)
+      const safe = safeAssistantUrlTransform(value, name)
       if (safe) node.properties[name] = safe
       else delete node.properties[name]
     }

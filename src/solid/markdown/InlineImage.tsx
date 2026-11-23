@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, Show } from "solid-js"
-import { localImagePath } from "../../components/chat/streamdownConfig"
+import { localImagePath } from "@/lib/assistantMarkdownSafety"
 import type { MarkdownText } from "./text"
 
 export interface InlineImageProps {

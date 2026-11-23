@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm"
 import remarkParse from "remark-parse"
 import remarkRehype from "remark-rehype"
 import { unified } from "unified"
-import { safeAssistantUrlTransform } from "@/components/chat/streamdownConfig"
+import { safeAssistantUrlTransform } from "@/lib/assistantMarkdownSafety"
 import { attribute, contentText } from "../../markdown/markdownTree"
 import { renderExportMermaid } from "../../markdown/renderMermaid"
 import { rasterizeMermaid } from "./rasterizeMermaid"
@@ -56,7 +56,7 @@ function appendNodes(parent: Node, children: readonly RootContent[], diagrams: D
     const target = node.tagName === "img" ? "src" : node.tagName === "a" ? "href" : null
     if (target) {
       const url = attribute(node, target)
-      const safe = url ? safeAssistantUrlTransform(url, target, node) : null
+      const safe = url ? safeAssistantUrlTransform(url, target) : null
       if (safe) element.setAttribute(target, safe)
     }
     appendNodes(element, node.children, diagrams)

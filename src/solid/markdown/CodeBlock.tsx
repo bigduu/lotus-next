@@ -1,25 +1,25 @@
-import type { CodeHighlighterPlugin } from "streamdown"
-import { createEffect, createSignal, For, Show } from "solid-js"
-import { lazyCodePlugin, STREAMDOWN_THEMES } from "../../components/chat/streamdownConfig"
-
-type HighlightedCode = NonNullable<ReturnType<CodeHighlighterPlugin["highlight"]>>
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import type { HighlightedCode } from "./highlight/highlightCode"
 
 export function CodeBlock(props: { code: string; language: string; incomplete: boolean }) {
-  const [highlighted, setHighlighted] = createSignal<HighlightedCode | null>(null)
+  const input = createMemo(() => ({ code: props.code, language: props.language, incomplete: props.incomplete }), {
+    equals: (previous, next) => previous.code === next.code && previous.language === next.language && previous.incomplete === next.incomplete,
+  })
+  const [highlighted, setHighlighted] = createSignal<{ input: ReturnType<typeof input>; lines: HighlightedCode } | null>(null)
+  const lines = () => {
+    const result = highlighted()
+    return result?.input === input() ? result.lines : null
+  }
 
-  createEffect(
-    () => ({ code: props.code, language: props.language, incomplete: props.incomplete }),
-    ({ code, language, incomplete }) => {
-      setHighlighted(null)
-      if (!language || incomplete) return
-      let active = true
-      lazyCodePlugin.highlight(
-        { code, language: language as Parameters<CodeHighlighterPlugin["highlight"]>[0]["language"], themes: STREAMDOWN_THEMES },
-        (result) => { if (active) setHighlighted(result) },
-      )
-      return () => { active = false }
-    },
-  )
+  createEffect(input, (current) => {
+    if (!current.language || current.incomplete) return
+    let active = true
+    void import("./highlight/highlightCode").then(({ highlightCode }) => highlightCode(current.code, current.language)).then(
+      (lines) => { if (active && current === input()) setHighlighted({ input: current, lines }) },
+      () => { /* The fenced source stays visible when highlighting is unavailable. */ },
+    )
+    return () => { active = false }
+  })
 
   return (
     <div class="my-2 grid min-w-0 gap-1 rounded-xl border bg-card p-1.5" data-streamdown="code-block"
@@ -32,11 +32,11 @@ export function CodeBlock(props: { code: string; language: string; incomplete: b
         data-streamdown="code-block-body">
         <pre class="m-0 bg-transparent p-0 text-inherit leading-inherit">
           <code class="font-normal">
-            <Show when={highlighted()} fallback={props.code}>
-              {(result) => <For each={result().tokens}>{(line, index) => (
+            <Show when={lines()} fallback={props.code}>
+              {(result) => <For each={result()}>{(line, index) => (
                 <>{index() ? "\n" : ""}<For each={line}>{(token) => (
                   <span style={{
-                    "--lotus-code-color-light": token.htmlStyle?.["--shiki-light"] ?? token.color,
+                    "--lotus-code-color-light": token.htmlStyle?.color ?? token.color,
                     "--lotus-code-color-dark": token.htmlStyle?.["--shiki-dark"] ?? token.color,
                   }} data-solid-code-token>{token.content}</span>
                 )}</For></>
