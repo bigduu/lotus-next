@@ -84,9 +84,11 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
   const scope = createMemo(() => ({ key: draftKey(), sessionId: chat.currentSessionId }), {
     equals: (previous, next) => previous?.key === next.key && previous?.sessionId === next.sessionId,
   })
+  const draftText = createMemo(() => inputs()[scope().key]?.content ?? "")
+  const menuDraft = createMemo(() => ({ scope: scope(), content: draftText() }))
   const [notice, setNotice] = createSignal<{ scope: ReturnType<typeof scope>; value: Notice } | null>(null)
   const [skill, setSkill] = createSignal<{ scope: ReturnType<typeof scope>; value: SkillDefinition } | null>(null)
-  const [dismissed, setDismissed] = createSignal<{ scope: ReturnType<typeof scope>; revision: number } | null>(null)
+  const [dismissed, setDismissed] = createSignal<ReturnType<typeof menuDraft> | null>(null)
   const [suggestion, setSuggestion] = createSignal<{ scope: ReturnType<typeof scope>; path: string; item: FileSuggestion } | null>(null)
   const [loadedFiles, setLoadedFiles] = createSignal<{ path: string; files: WorkspaceFileEntry[] } | null>(null)
   const [localBusy, setLocalBusy] = createSignal(false)
@@ -99,12 +101,16 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     const choice = skill()
     return choice?.scope === scope() ? choice.value : null
   }
-  const slashQuery = createMemo(() => {
-    const identity = scope()
-    const draft = inputs()[identity.key]
+  const isDismissed = (draft: ReturnType<typeof menuDraft>) => {
     const closed = dismissed()
-    return draft?.content.startsWith("/") && (closed?.scope !== identity || closed.revision !== draft.contentRevision)
-      ? draft.content.slice(1) : null
+    return closed?.scope === draft.scope && closed.content === draft.content
+  }
+  createEffect(menuDraft, (draft) => {
+    if (dismissed() && !isDismissed(draft)) setDismissed(null)
+  })
+  const slashQuery = createMemo(() => {
+    const draft = menuDraft()
+    return draft.content.startsWith("/") && !isDismissed(draft) ? draft.content.slice(1) : null
   })
   const fileSuggestion = createMemo(() => {
     const next = suggestion()
@@ -124,7 +130,10 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
   const report = (message: string, error = false, detail?: string, origin = scope()) => {
     if (mounted && scope() === origin) setNotice({ scope: origin, value: { message, error, detail } })
   }
-  const dismiss = () => setDismissed({ scope: scope(), revision: appStore.getState().getInputState(draftKey()).contentRevision })
+  const dismiss = () => {
+    // A menu action may normalize the draft before Solid publishes the store snapshot.
+    setDismissed({ scope: scope(), content: appStore.getState().getInputState(draftKey()).content })
+  }
   const commandBusy = () => {
     const id = chat.currentSessionId
     version()

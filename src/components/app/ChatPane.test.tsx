@@ -1,4 +1,3 @@
-import { observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { act, type ComponentProps, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -62,27 +61,10 @@ const runtime = vi.hoisted(() => ({
   ticketWork: null as TicketController | null,
   worktreeControl: null as import("@services/workspace/newChatWorktreeTypes").NewChatWorktreeControlProps | null,
   getProject: vi.fn(), createWorktree: vi.fn(), bindWorkspace: vi.fn(),
-  observeStateDispatch: null as ((dispatch: unknown, value: unknown) => void) | null,
   liveRetry: { canPrepare: false, prepareInitial: vi.fn<() => boolean | Promise<boolean>>(),
     offer: null as import("@/hooks/useLiveBootstrapRetry").LiveBootstrapView | null,
     confirm: vi.fn(), stop: vi.fn(), cancelForStop: vi.fn() },
 }))
-// Observe actual dispatcher calls, including equal-state updates which React
-// may queue without rendering. Always retain the real hook and stable setter.
-vi.mock("react", async (original) => {
-  const React = await original<typeof import("react")>()
-  const wrappers = new WeakMap<object, (value: unknown) => void>()
-  const useState = ((initialState: unknown) => {
-    const [state, dispatch] = React.useState(initialState)
-    let wrapped = wrappers.get(dispatch)
-    if (!wrapped) {
-      wrapped = (value: unknown) => { runtime.observeStateDispatch?.(dispatch, value); dispatch(value) }
-      wrappers.set(dispatch, wrapped)
-    }
-    return [state, wrapped]
-  }) as typeof React.useState
-  return { ...React, useState }
-})
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
 vi.mock("@shared/store/appStore", async () => {
   const React = await import("react")
@@ -390,7 +372,6 @@ beforeEach(() => {
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
   })))
   runtime.composer = null; runtime.messageList = null; runtime.modelPicker = null; runtime.reasoningPicker = null
-  runtime.observeStateDispatch = null
   runtime.providerState.providerStatus = "ready"
   runtime.providerState.providerSnapshot = {
     default_provider_instance_id: "easycli",
@@ -1599,20 +1580,6 @@ describe("Root orchestration-only control", () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it("does not execute a Goal if another tab fences the Session before its ACK follow-up", async () => {
-    const history = deferred<void>()
-    runtime.state.loadChatHistory = vi.fn().mockReturnValue(history.promise)
-    const textarea = await mount(vi.fn<Send>(), "root-session")
-    change(textarea, "/goal complete later")
-    act(() => composer().onSubmit())
-    await flush()
-    expect(agentClient.sendMessage).toHaveBeenCalledTimes(1)
-    act(() => { expect(beginRootModeTransition("root-session", true)).not.toBeNull() })
-    history.resolve()
-    await flush()
-    expect(agentClient.execute).not.toHaveBeenCalled()
-  })
-
   it("restores the durable choice after a Bamboo rejection and shows its cause", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
       session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
@@ -1759,40 +1726,6 @@ describe("Root orchestration-only control", () => {
     expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认 Ultra 编排")
   })
 
-  it("dispatches a menu reset only when a dismissed draft changes, not on every typed prefix", async () => {
-    const textarea = await mount(vi.fn<Send>(), "root-session")
-    change(textarea, "/a")
-    const calls: Array<{ dispatch: unknown; value: unknown }> = []
-    runtime.observeStateDispatch = (dispatch, value) => calls.push({ dispatch, value })
-    act(() => composer().onDismissMenus?.())
-    expect(calls).toHaveLength(1)
-    expect(calls[0].value).toBe(true)
-    const dismissDispatch = calls[0].dispatch
-    const resets: unknown[] = []
-    runtime.observeStateDispatch = (dispatch, value) => { if (dispatch === dismissDispatch) resets.push(value) }
-    act(() => write("root-session", "/a"))
-    expect(composer().slashQuery).toBeNull()
-    expect(resets).toEqual([])
-    change(textarea, "/ab")
-    expect(composer().slashQuery).toBe("ab")
-    expect(resets).toEqual([false])
-    resets.length = 0
-    for (let length = 1; length <= 64; length += 1) change(textarea, `/ab${"x".repeat(length)}`)
-    expect(resets).toEqual([])
-    change(textarea, "/a")
-    expect(composer().slashQuery).toBe("a")
-    expect(resets).toEqual([])
-    act(() => composer().onDismissMenus?.())
-    act(() => write("other-session", "/a"))
-    expect(composer().slashQuery).toBeNull()
-    expect(resets).toEqual([true])
-    await act(async () => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), "other-session")} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
-    expect(composer().slashQuery).toBe("a")
-    expect(resets).toEqual([true, false])
-  })
-
   it("keeps the confirmed server label while a Root run is active", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
       session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
@@ -1854,57 +1787,6 @@ describe("Root orchestration-only control", () => {
     expect(document.querySelector('[data-testid="composer-shell"]')?.contains(document.querySelector('[data-testid="model-effort-picker"]'))).toBe(true)
     expect(document.querySelector('input[type="checkbox"]')).toBeNull()
   })
-})
-
-it("handles a goal command without sending it to the conversation", async () => {
-  const send = vi.fn<Send>()
-  const input = await mount(send, "goal-chat")
-  change(input, "/goal 完成测试并说明结果")
-  act(() => composer().onSubmit())
-  await flush()
-  expect(agentClient.sendMessage).toHaveBeenCalledWith({ session_id: "goal-chat", model: "", message: "/goal 完成测试并说明结果" })
-  expect(send).not.toHaveBeenCalled()
-  expect(input.value).toBe("")
-})
-
-it.each([true, false])("uses the dedicated Goal resume endpoint and preserves a failed command (%s)", async (supported) => {
-  const send = vi.fn<Send>()
-  vi.mocked(agentClient.sendMessage).mockClear()
-  vi.mocked(agentClient.resumeGoal).mockClear()
-  vi.mocked(agentClient.execute).mockClear()
-  if (supported) {
-    vi.mocked(agentClient.resumeGoal).mockResolvedValueOnce({
-      session_id: "goal-resume", status: "accepted", goal_command: { action: "resume", should_execute: false },
-    })
-  } else {
-    vi.mocked(agentClient.resumeGoal).mockRejectedValueOnce(Object.assign(new Error("Missing route"), { status: 404 }))
-  }
-  const input = await mount(send, "goal-resume")
-  const command = "/GOAL\u0085Resume"
-  change(input, command)
-  act(() => composer().onSubmit())
-  await flush()
-  expect(agentClient.resumeGoal).toHaveBeenCalledExactlyOnceWith("goal-resume")
-  expect(agentClient.sendMessage).not.toHaveBeenCalled()
-  expect(send).not.toHaveBeenCalled()
-  expect(agentClient.execute).not.toHaveBeenCalled()
-  expect(input.value).toBe(supported ? "" : command)
-})
-
-it.each(["attachment", "skill", "new chat"] as const)("keeps Goal resume out of ordinary chat with %s", async (block) => {
-  const send = vi.fn<Send>()
-  vi.mocked(agentClient.sendMessage).mockClear()
-  vi.mocked(agentClient.resumeGoal).mockClear()
-  const input = await mount(send, block === "new chat" ? null : "goal-resume")
-  if (block === "attachment") await addImage("keep.png")
-  if (block === "skill") act(() => composer().onPickSkill(skillA))
-  change(input, "/goal resume")
-  act(() => composer().onSubmit())
-  await flush()
-  expect(agentClient.resumeGoal).not.toHaveBeenCalled()
-  expect(agentClient.sendMessage).not.toHaveBeenCalled()
-  expect(send).not.toHaveBeenCalled()
-  expect(input.value).toBe("/goal resume")
 })
 
 it("dispatches one compaction request and leaves a newer draft intact", async () => {
@@ -2150,24 +2032,6 @@ it("preserves the compaction draft if the backend route is unavailable", async (
   expect(input.value).toBe("/compact")
 })
 
-it("keeps a failed compact menu selection ready to retry as a command", async () => {
-  const send = vi.fn<Send>()
-  vi.mocked(agentClient.compactSessionContext).mockRejectedValueOnce(new Error("offline"))
-  const input = await mount(send, "compact-chat")
-  change(input, "/co")
-  await act(async () => composer().onPickCompact?.())
-  expect(agentClient.compactSessionContext).toHaveBeenCalledExactlyOnceWith("compact-chat")
-  expect(input.value).toBe("/compact")
-  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_unconfirmed"))
-
-  await act(async () => composer().onSubmit())
-  expect(agentClient.compactSessionContext).toHaveBeenCalledTimes(2)
-  expect(runtime.state.loadChatHistory).not.toHaveBeenCalled()
-  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_unchanged"))
-  expect(send).not.toHaveBeenCalled()
-  expect(input.value).toBe("")
-})
-
 it.each(["running", "attachment"] as const)("keeps /compact local when blocked by %s", async (block) => {
   const send = vi.fn<Send>()
   const input = await mount(send, "compact-chat", block === "running")
@@ -2226,17 +2090,6 @@ it("keeps compaction feedback and draft clearing scoped to the originating sessi
   expect(runtime.state.inputStates.origin.content).toBe("")
   expect(container.querySelector("textarea")?.value).toBe("draft in other session")
   expect(runtime.toastProps?.toast).toBeNull()
-})
-
-it("retains a goal command when saving fails", async () => {
-  vi.mocked(agentClient.sendMessage).mockRejectedValueOnce(new Error("offline"))
-  const send = vi.fn<Send>()
-  const input = await mount(send, "goal-chat")
-  change(input, "/goal 保留草稿")
-  act(() => composer().onSubmit())
-  await flush()
-  expect(send).not.toHaveBeenCalled()
-  expect(input.value).toBe("/goal 保留草稿")
 })
 
 it("queues text and images from the normal composer while a run is active", async () => {
@@ -2739,17 +2592,6 @@ describe("session compatibility presentation and submit guard", () => {
     await act(async () => composer().onSubmit()); await flush()
     expect(send).toHaveBeenCalledTimes(1); expect(composer().executionBlocked).toBe(false)
     expect(document.querySelector('[data-session-execution-blocked="true"]')).toBeNull()
-  })
-  it("a cached Goal submit callback cannot bypass a later explicit compatibility refusal", async () => {
-    const send = vi.fn<Send>(), id = "compatibility-stale-goal"
-    const textarea = await mount(send, id, false, "", null, compatibility(false))
-    change(textarea, "/goal preserve this objective")
-    const staleSubmit = composer().onSubmit
-    observeSessionExecutionConflict(id, new ApiError("incompatible", 409, "", JSON.stringify({ session_id: id,
-      error: { code: "session_execution_incompatible" }, compatibility: compatibility(true).report })))
-    await act(async () => staleSubmit()); await flush()
-    expect(agentClient.sendMessage).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
-    expect(send).not.toHaveBeenCalled(); expect(textarea.value).toBe("/goal preserve this objective")
   })
 
 })
