@@ -12,6 +12,8 @@ import { createSideChatSources } from "./history/SideChatSourceActions"
 import { createHistoryReveal, type HistoryRevealRequest } from "./history/createHistoryReveal"
 import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, collectSideChatSourceKeys, renderItemKey } from "./history/historyProjection"
 import type { createChat } from "./createChat"
+import { createMessageActions, type MessageNotice } from "./message-actions/createMessageActions"
+import type { createRootModeAuthority } from "./model/createRootModeAuthority"
 
 type Chat = ReturnType<typeof createChat>
 
@@ -25,6 +27,8 @@ export function ChatViewport(props: {
   onAskSideChat?: (quote: SideChatQuote) => void
   revealMessage?: HistoryRevealRequest
   onMissingRevealedMessage?: () => void
+  rootAuthority?: ReturnType<typeof createRootModeAuthority>
+  onMessageNotice?: (notice: MessageNotice) => void
 }) {
   const text = createUiText()
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
@@ -55,6 +59,10 @@ export function ChatViewport(props: {
   const entries = createMemo(() => buildHistoryEntries(buildDisplayItems(rendering(), tailCanFold())))
   const sourceKeys = createMemo(() => props.onAskSideChat ? collectSideChatSourceKeys(entries(), !props.chat.sending) : new Set<string>())
   const sideChat = createSideChatSources(() => viewport, sourceKeys, () => props.onAskSideChat)
+  const messageActions = createMessageActions({
+    chat: props.chat, entries, viewport: () => viewport,
+    rootAuthority: () => props.rootAuthority, onNotice: () => props.onMessageNotice,
+  })
   const pending = createMemo(() => props.chat.pendingUserMessages.map((entry) => ({
     operationId: entry.operationId,
     message: {
@@ -164,7 +172,7 @@ export function ChatViewport(props: {
         renderEntry={(entry) => (
           <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
             <RenderHistoryRow item={entry().item} disclosure={disclosure} theme={props.theme}
-              onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} />
+              onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} messageActions={messageActions} />
           </div>
         )}
         after={
@@ -185,6 +193,11 @@ export function ChatViewport(props: {
           </div>
         }
       />
+      <Show when={messageActions.notice}>
+        {(notice) => <p role={notice().error ? "alert" : "status"} class="absolute bottom-3 left-3 z-10 rounded-md border bg-popover px-3 py-2 text-sm">
+          {notice().text}
+        </p>}
+      </Show>
       <Show when={!following()}>
         <div class="absolute bottom-3 right-4" data-scroll-to-bottom-anchor="">
           <Button size="icon" variant="outline" class="rounded-full"

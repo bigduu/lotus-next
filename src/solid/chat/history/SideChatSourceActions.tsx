@@ -1,11 +1,5 @@
-import { Ellipsis, MessageSquarePlus } from "@lucide/solid"
-import { createEffect, createSignal, onSettled, Show } from "solid-js"
-
-import { cn } from "@/lib/utils"
+import { createEffect, createSignal, onSettled } from "solid-js"
 import { sideChatQuote, type SideChatQuote } from "@services/chat/sideChat"
-import { createUiText } from "../../shell/uiText"
-import { Button } from "../../ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../ui/dropdown-menu"
 
 type QuoteSelection = { sourceKey: string; quote: SideChatQuote }
 
@@ -60,42 +54,4 @@ export function createSideChatSources(
       setSelection(null)
     },
   }
-}
-
-export function SideChatSourceActions(props: {
-  sources: SideChatSources
-  sourceKey: string
-  messageId: string
-  messageText: string
-  user: boolean
-}) {
-  const text = createUiText()
-  let menuQuote: SideChatQuote | null = null
-  const selection = () => props.sources.selected(props.sourceKey)
-  const ask = (quote: SideChatQuote) => props.sources.ask(props.sourceKey, quote)
-
-  return (
-    <div data-message-actions={props.messageId}
-      class={cn("flex shrink-0 flex-wrap justify-end gap-0.5 pt-1 opacity-100 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
-        !selection() && "md:opacity-0")}>
-      <Show when={selection()}>{(quote) => (
-        <Button type="button" variant="secondary" size="sm" onMouseDown={(event) => event.preventDefault()}
-          onClick={() => ask(quote())}>
-          <MessageSquarePlus class="size-3.5" aria-hidden="true" />{text("side_chat_ask_selection")}
-        </Button>
-      )}</Show>
-      <DropdownMenu placement={props.user ? "bottom-end" : "bottom-start"}
-        onOpenChange={(open) => { if (open) menuQuote = selection() }}>
-        <DropdownMenuTrigger as={Button} type="button" variant="ghost" size="icon"
-          class="size-8 rounded-lg" aria-label={text("more_message_actions_cecaef80")} onMouseDown={(event: MouseEvent) => event.preventDefault()}>
-          <Ellipsis class="size-3.5" aria-hidden="true" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent class="min-w-40 rounded-xl">
-          <DropdownMenuItem onSelect={() => ask(menuQuote ?? sideChatQuote(props.messageId, props.messageText))}>
-            <MessageSquarePlus aria-hidden="true" />{text("side_chat_ask_selection")}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  )
 }

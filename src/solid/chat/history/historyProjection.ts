@@ -40,7 +40,7 @@ function liveToolMessages(seg: Extract<LiveSegment, { kind: "tools" }>, text: Te
   return out
 }
 
-function messageText(m: Message): string {
+export function messageText(m: Message): string {
   if ("content" in m && typeof (m as { content?: unknown }).content === "string") {
     return (m as { content: string }).content
   }
@@ -290,12 +290,16 @@ export function sideChatSourceText(message: Message): string {
   return messageText(message).trim()
 }
 
-/** Match the main transcript's actionable standalone replies and user rows. */
-export function collectSideChatSourceKeys(entries: readonly MessageHistoryEntry[], includeTrailing: boolean): Set<string> {
-  const keys = new Set<string>()
+/** Actions belong to stored user rows and standalone final assistant replies. */
+export function collectMessageActions(entries: readonly MessageHistoryEntry[], includeTrailing: boolean) {
+  const targets = new Map<string, Message>()
   let candidate: MessageHistoryEntry | undefined
   const add = (entry: MessageHistoryEntry | undefined) => {
-    if (entry?.item.kind === "msg" && sideChatSourceText(entry.item.m)) keys.add(entry.key)
+    if (!entry || entry.item.kind !== "msg") return
+    const { m: message } = entry.item
+    if (message.role === "system" || isToolMessage(message) || isCompletedAnswerHandoff(message) || messageRuntimeNotice(message)) return
+    const images = "images" in message ? message.images : undefined
+    if (messageText(message).trim() || images?.length) targets.set(entry.key, message)
   }
   for (const entry of entries) {
     const { item } = entry
@@ -312,6 +316,27 @@ export function collectSideChatSourceKeys(entries: readonly MessageHistoryEntry[
     }
   }
   if (includeTrailing) add(candidate)
+  return targets
+}
+
+/** A multi-answer turn has no single supported regenerate target. */
+export function findRegenerationKey(entries: readonly MessageHistoryEntry[]): string | null {
+  const tail = entries.at(-1)
+  if (!tail || tail.item.kind !== "msg" || !isFinalAssistantResponse(tail.item) || messageRuntimeNotice(tail.item.m)
+    || isCompletedAnswerHandoff(tail.item.m)) return null
+  for (let index = entries.length - 2; index >= 0; index--) {
+    const item = entries[index].item
+    if (item.kind === "msg" && item.m.role === "user") return tail.key
+    if (isRecordedFinal(item)) return null
+  }
+  return null
+}
+
+export function collectSideChatSourceKeys(entries: readonly MessageHistoryEntry[], includeTrailing: boolean): Set<string> {
+  const keys = new Set<string>()
+  for (const [key, message] of collectMessageActions(entries, includeTrailing)) {
+    if (sideChatSourceText(message)) keys.add(key)
+  }
   return keys
 }
 

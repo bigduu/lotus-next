@@ -2190,16 +2190,16 @@ export function createChat(
       }
     }
 
-  const regenerate = async () => {
+  const regenerate = async (): Promise<boolean> => {
     const sessionId = readSessionId()
-    if (!sessionId) return
-    await rerun(sessionId, {
+    if (!sessionId) return false
+    return rerun(sessionId, {
+      preserveFailureOnPrepareError: true,
       prepare: async () => {
-        const result = await agentClient.truncateSessionMessages(sessionId, { mode: "after_last_user" }).catch(() => null)
-        if (result?.success && result.session_id === sessionId) {
-          const messages = appStore.getState().chats.find((chat) => chat.id === sessionId)?.messages ?? []
-          invalidateCompletedAnswers(sessionId, { messages, targetId: messages.findLast((message) => message.role === "user")?.id ?? null })
-        }
+        const result = await agentClient.truncateSessionMessages(sessionId, { mode: "after_last_user" })
+        if (!result?.success || result.session_id !== sessionId) throw new Error(uiText("operation_failed_0c3b4cf7"))
+        const messages = appStore.getState().chats.find((chat) => chat.id === sessionId)?.messages ?? []
+        invalidateCompletedAnswers(sessionId, { messages, targetId: messages.findLast((message) => message.role === "user")?.id ?? null })
       },
     })
   }
@@ -2240,23 +2240,26 @@ export function createChat(
     }
 
   // Edit a user message in place, drop everything after it, and re-run.
-  const editMessage = async (messageId: string, text: string) => {
+  const editMessage = async (messageId: string, text: string): Promise<boolean> => {
     const sessionId = readSessionId()
-      const body = text.trim()
-      if (!sessionId || !body) return
-      await rerun(sessionId, {
-        prepare: async () => {
-          await agentClient.patchSessionMessage(sessionId, messageId, { content: body }).catch(() => {})
-          const result = await agentClient
-            .restoreSessionState(sessionId, { target_message_id: messageId, restore_files: false })
-            .catch(() => null)
-          if (result?.success && result.session_id === sessionId && result.target_message_id === messageId) {
-            const messages = appStore.getState().chats.find((chat) => chat.id === sessionId)?.messages ?? []
-            invalidateCompletedAnswers(sessionId, { messages, targetId: messageId })
-          }
-        },
-      })
-    }
+    const body = text.trim()
+    if (!sessionId || !body) return false
+    return rerun(sessionId, {
+      preserveFailureOnPrepareError: true,
+      prepare: async () => {
+        await agentClient.patchSessionMessage(sessionId, messageId, { content: body })
+        if (getRootModeFenceState(sessionId) !== "clear" || isSessionExecutionBlocked(sessionId)) {
+          throw new Error(uiText("operation_failed_0c3b4cf7"))
+        }
+        const result = await agentClient.restoreSessionState(sessionId, { target_message_id: messageId, restore_files: false })
+        if (!result?.success || result.session_id !== sessionId || result.target_message_id !== messageId) {
+          throw new Error(uiText("operation_failed_0c3b4cf7"))
+        }
+        const messages = appStore.getState().chats.find((chat) => chat.id === sessionId)?.messages ?? []
+        invalidateCompletedAnswers(sessionId, { messages, targetId: messageId })
+      },
+    })
+  }
 
   const send = async (
       text: string,
@@ -2661,45 +2664,48 @@ export function createChat(
     appStore.getState().selectSession(null)
   }
 
-  const deleteMessage = async (messageId: string) => {
+  const deleteMessage = async (messageId: string): Promise<boolean> => {
     const sessionId = readSessionId()
-      if (!sessionId) return
-      const deleted = await agentClient.deleteSessionMessage(sessionId, messageId).then(() => true, () => false)
-      if (deleted) {
-        invalidateCompletedAnswerForDeletedMessage(sessionId, messageId)
-        const store = appStore.getState()
-        store.invalidateHistoryAfterMessageDelete(sessionId, messageId)
-        await store.loadChatHistory(sessionId, { resetHistoryWindow: true })
-      } else {
-        await appStore.getState().loadChatHistory(sessionId)
-      }
+    if (!sessionId || isSessionExecutionBlocked(sessionId) || getRootModeFenceState(sessionId) !== "clear") return false
+    try {
+      await agentClient.deleteSessionMessage(sessionId, messageId)
+    } catch (failure) {
+      observeSessionExecutionConflict(sessionId, failure)
+      await appStore.getState().loadChatHistory(sessionId).catch(() => {})
+      return false
     }
+    invalidateCompletedAnswerForDeletedMessage(sessionId, messageId)
+    const store = appStore.getState()
+    store.invalidateHistoryAfterMessageDelete(sessionId, messageId)
+    await store.loadChatHistory(sessionId, { resetHistoryWindow: true }).catch(() => {})
+    return true
+  }
 
-  // Fork the conversation from a message: backend clones the session up to that
-  // message into a fresh one; we switch to the new branch.
-  const fork = async (messageId: string): Promise<string | undefined> => {
+  // Clone the exact source history. A late ACK owns the new session but no longer owns a moved pane.
+  const fork = async (messageId: string, options?: { isOriginCurrent?: () => boolean }): Promise<string | undefined> => {
     const sessionId = readSessionId()
-      if (!sessionId) return undefined
-      if (getRootModeFenceState(sessionId) !== "clear") return undefined
-      try {
-        const res = await apiClient.post<{ session?: { id?: string; session_id?: string } }>(
-          `sessions/${encodeURIComponent(sessionId)}/fork`,
-          { up_to_message_id: messageId },
-        )
-        const newId = res?.session?.id ?? res?.session?.session_id
-        if (!newId) return undefined
-        // Await the full switch so the caller's loading spinner spans the whole
-        // operation and clears exactly when we land on the new branch.
-        await appStore.getState().refreshChatsNow()
-        // Bound pane adopts the branch locally; main pane switches global current.
-        if (isBound) onSessionCreated?.(newId)
-        else appStore.getState().selectSession(newId)
-        await appStore.getState().loadChatHistory(newId)
-        return newId
-      } catch {
-        return undefined
-      }
+    if (!sessionId || options?.isOriginCurrent?.() === false || isSessionExecutionBlocked(sessionId)
+      || getRootModeFenceState(sessionId) !== "clear") return undefined
+    const origin = navigationRef.current
+    let newId: string | undefined
+    try {
+      const res = await apiClient.post<{ session?: { id?: string; session_id?: string } }>(
+        `sessions/${encodeURIComponent(sessionId)}/fork`, { up_to_message_id: messageId },
+      )
+      const candidate = res?.session?.id ?? res?.session?.session_id
+      if (typeof candidate !== "string" || !candidate || candidate.trim() !== candidate || candidate === sessionId) return undefined
+      newId = candidate
+      await appStore.getState().refreshChatsNow()
+      if (!mountedRef.current || readSessionId() !== sessionId || navigationRef.current !== origin
+        || options?.isOriginCurrent?.() === false) return newId
+      if (isBound) onSessionCreated?.(newId)
+      else appStore.getState().selectSession(newId)
+      await appStore.getState().loadChatHistory(newId)
+    } catch (failure) {
+      observeSessionExecutionConflict(sessionId, failure)
     }
+    return newId
+  }
 
   const submitQuestion = async (
     text: string,
