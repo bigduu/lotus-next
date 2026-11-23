@@ -1,4 +1,4 @@
-import { BookText, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, WifiOff, Workflow } from "@lucide/solid"
+import { BookText, Bot, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, WifiOff, Workflow } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, onSettled, Show } from "solid-js"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
@@ -7,7 +7,6 @@ import { backendSupports, onBackendFeatures } from "@/lib/backendFeatures"
 import { appStore } from "@shared/store/appStore/state"
 import { themeStore } from "@shared/store/themeState"
 import { copyText } from "@shared/utils/clipboard"
-import { openExternalLink } from "@shared/utils/openExternalLink"
 import { applyGlobalAccentToDocument, getGlobalAccentColors } from "@shared/theme/globalAccentColors"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
@@ -44,22 +43,25 @@ import { SessionVersionMigrationGate } from "../chat/status/version-migration/Se
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { SettingsTab } from "../settings/SettingsPage"
 import { Sidebar } from "./Sidebar"
+import { ExternalLinkDialog } from "./ExternalLinkDialog"
 import { createProjectSections } from "./createProjectSections"
 import { createSessionDrop } from "./createSessionDrop"
 import { createUiText } from "./uiText"
 import { restoreCommandFocus } from "@/lib/commandFocusReturn"
 import { isCommandComposing } from "@/lib/commandComposition"
 import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
-import { getWorkbenchMaxWidth, MIN_WORKBENCH_WIDTH, ResizableLayout } from "../ui/resizable-layout"
+import { ResizableLayout } from "../ui/resizable-layout"
+import { createStoredPanelWidth } from "../ui/createPanelWidth"
 import { activateWorkbenchTab } from "@/lib/workbenchState"
 import type { RightWorkbenchTab, WorkbenchToolTab } from "@/lib/workbenchTabTypes"
 import type { WorkbenchTabDrag } from "../workbench/RightWorkbench"
-import { reorderVisibleWorkbenchTabIds } from "@/lib/workbenchTabs"
+import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { collectLiveSessionFileChanges, collectSessionFileChanges, groupSessionFileChanges, mergeSessionFileChanges, orderPersistedFileChanges, summarizeSessionFileChangeGroups } from "@/lib/sessionFileChanges"
 import { isPhoneDevice } from "@/lib/browserAvailability"
-import type { BrowserState } from "@services/browser/types"
 import { createBrowserSession } from "../workbench/browser/createBrowserSession"
 import { createWorkbenchState } from "../workbench/createWorkbenchState"
+import { createWorkbenchWidth } from "../workbench/createWorkbenchWidth"
+import { createWorkbenchBrowserSelection } from "../workbench/createWorkbenchBrowserSelection"
 import { createSessionTaskDag } from "../workbench/tasks/createSessionTaskDag"
 import { ProjectManagerModal } from "./ProjectManagerModal"
 import { WorkspacePicker } from "./WorkspacePicker"
@@ -87,14 +89,6 @@ const HomeDashboard = lazy(() => import("../chat/home/HomeDashboard"), { export:
 
 type SectionIntent = { projectId: string; sectionId?: string | null }
 
-function sidebarWidth() {
-  try {
-    const stored = localStorage.getItem("lotus_next_sidebar_w")
-    const width = stored === null ? 288 : Number(stored)
-    return Number.isFinite(width) ? Math.max(220, Math.min(420, width)) : 288
-  } catch { return 288 }
-}
-
 export function SolidApp(props: { ownerAccess: boolean }) {
   const text = createUiText()
   const [settingsOpen, setSettingsOpen] = createSignal(false)
@@ -113,7 +107,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [paletteOpen, setPaletteOpen] = createSignal(false)
   const [workflowSession, setWorkflowSession] = createSignal<string | null>(null)
   const [containerWidth, setContainerWidth] = createSignal(window.innerWidth)
-  const [usedSidebarWidth, setSidebarWidth] = createSignal(sidebarWidth())
+  const sidebarWidth = createStoredPanelWidth("lotus_next_sidebar_w", 288, () => ({ min: 220, max: 420 }))
   const tabDrag = { current: null as WorkbenchTabDrag | null }
   let paletteReturnFocus = () => null as HTMLElement | null
   let paletteNavigationVersion = 0
@@ -124,7 +118,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [sessionToDelete, setSessionToDelete] = createSignal<ChatItem | null>(null)
   const [sessionToClear, setSessionToClear] = createSignal<ChatItem | null>(null)
   const [confirmationBusy, setConfirmationBusy] = createSignal(false)
-  const [link, setLink] = createSignal<string | null>(null)
+  const [link, setLink] = createSignal<{ url: string; sessionId: string | null; navigation: number } | null>(null)
   const [image, setImage] = createSignal<string | null>(null)
   const [connectionLost, setConnectionLost] = createSignal(false)
   const chat = createChat(undefined, undefined, { pageVisible: () => !settingsOpen() })
@@ -137,7 +131,11 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const openError = (error: unknown) => setNotice({ text: getErrorMessage(error), error: true })
   let navigationVersion = 0
   const currentSession = () => chat.currentSessionId
-  createEffect(currentSession, (id) => { if (workflowSession() !== id) setWorkflowSession(null) })
+  const openLink = (url: string) => setLink({ url, sessionId: currentSession(), navigation: navigationVersion })
+  createEffect(currentSession, (id) => {
+    if (workflowSession() !== id) setWorkflowSession(null)
+    if (link()?.sessionId !== id) setLink(null)
+  })
   const selectedWorktreePath = () => {
     const worktree = pickedWorktree()
     return !currentSession() && worktree?.projectId === newSession()?.projectId ? worktree?.path ?? null : null
@@ -205,10 +203,12 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   )
   const visibleWorkbenchTab = () => {
     const tab = workbenchState().tab
-    return tab === "browser" || (tab && visibleWorkbenchTools().includes(tab)) ? tab : null
+    if (tab === "browser") return browserEnabled() ? tab : null
+    return tab && visibleWorkbenchTools().includes(tab) ? tab : null
   }
   const desktopSidebar = () => containerWidth() >= 768 && !sidebarCollapsed()
-  const maxWorkbenchWidth = () => getWorkbenchMaxWidth(containerWidth(), desktopSidebar() ? usedSidebarWidth() : 0)
+  const workbenchWidth = createWorkbenchWidth(containerWidth, () => desktopSidebar() ? sidebarWidth.width() : 0,
+    () => workbenchState().dockWidth, (width) => workbench.capture().setField("dockWidth", width))
   const dagSession = () => {
     const session = chat.currentChat
     return !settingsOpen() && session && session.id === currentSession() && session.kind !== "child" && !session.parentSessionId
@@ -221,53 +221,63 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   createEffect(activeDagScope, (scope) => {
     if (scope !== expandedDagScope()) setExpandedDagScope(null)
   })
-  const docked = () => workbenchState().open && !taskExpanded() && maxWorkbenchWidth() >= MIN_WORKBENCH_WIDTH
-  const preferredWorkbenchWidth = () => workbenchState().dockWidth ?? 520
+  const docked = () => workbenchState().open && !taskExpanded() && workbenchWidth.canDock()
   const browserEnabled = () => containerWidth() >= 768 && !isPhoneDevice()
-  const [browserEntry, setBrowserEntry] = createSignal<{ scope: string | null; open: boolean; draft: string }>({
-    scope: null, open: false, draft: "",
-  })
+  const [browserEntry, setBrowserEntry] = createSignal({ scope: null as string | null, open: false, draft: "", resumeUntouched: false })
+  const resetBrowserEntry = (open: boolean, resumeUntouched = false) => {
+    setBrowserEntry({ scope: workbench.key(), open, draft: "", resumeUntouched })
+  }
+  type BrowserLink = { sessionId: string; scope: string | null; navigation: number; url: string }
+  const [browserLink, setBrowserLink] = createSignal<BrowserLink | null>(null)
+  const [browserStarted, setBrowserStarted] = createSignal<string | null>(null)
+  let linkAttempt: BrowserLink | null = null
   const browserEntryOpen = () => browserEntry().scope === workbench.key() && browserEntry().open
   const browser = createBrowserSession(currentSession, () => browserEnabled() && workbenchState().open &&
-    (workbenchState().tab === "browser" || workbenchState().browserPresent || browserEntryOpen()))
+    (workbenchState().tab === "browser" || workbenchState().browserPresent || browserEntryOpen() ||
+      Boolean(currentSession() && browserStarted() === workbench.key())))
+  createEffect(() => browserEnabled() && workbenchState().open && workbenchState().tab === "browser" ? workbench.key() : null,
+    (scope) => { if (scope) setBrowserStarted(scope) })
   const browserState = () => browser.readySessionId === currentSession() ? browser.state : null
-  let browserSelectionVersion = 0
-  let restoration: {
-    scope: string | null; version: number; status: "pending" | "activating" | "complete"; attempted?: BrowserState
-  } | null = null
-
+  const ownsBrowserLink = (intent: BrowserLink) => browserEnabled() && intent.scope === workbench.key()
+    && intent.sessionId === currentSession() && appStore.getState().currentSessionId === intent.sessionId
+    && intent.navigation === navigationVersion && browserLink() === intent
   createEffect(
-    () => ({ scope: workbench.key(), state: browserState(), saved: workbenchState().browserActiveId }),
-    ({ scope, state, saved }) => {
-      if (restoration?.scope !== scope) {
-        restoration = { scope, version: browserSelectionVersion, status: "pending" }
-      }
-      const attempt = restoration!
-      if (!state) return
-      const visit = workbench.capture()
-      visit.setField("browserPresent", Boolean(state.tabs?.length || (state.url && state.url !== "about:blank")))
-      if (attempt.version !== browserSelectionVersion) attempt.status = "complete"
-      if (attempt.status === "activating") return
-      if (attempt.status === "pending" && saved && saved !== state.active_tab_id &&
-        state.tabs?.some((tab) => tab.tab_id === saved)) {
-        if (state.pending_dialog || attempt.attempted === state) return
-        attempt.status = "activating"
-        attempt.attempted = state
-        void browser.activateTab(saved).then((result) => {
-          if (restoration !== attempt || !visit.isCurrent() || attempt.version !== browserSelectionVersion) return
-          attempt.status = result ? "complete" : "pending"
-          if (result) visit.setField("browserActiveId", result.active_tab_id ?? null)
-        })
+    () => ({ intent: browserLink(), state: browserState(), busy: browser.busy || browser.loading || browser.entryOpening,
+      scope: workbench.key(), session: currentSession(), enabled: browserEnabled() }),
+    ({ intent, state, busy }) => {
+      if (!intent) return
+      if (!ownsBrowserLink(intent)) { setBrowserLink(null); return }
+      if (!state || busy || linkAttempt === intent) return
+      if (state.pending_dialog || browser.hasPendingDialog()) {
+        if (browserEntryOpen()) resetBrowserEntry(false)
         return
       }
-      attempt.status = "complete"
-      visit.setField("browserActiveId", state.active_tab_id ?? null)
+      linkAttempt = intent
+      void browser.openUrlInNewTab(intent.url).then((opened) => {
+        if (linkAttempt === intent) linkAttempt = null
+        if (!ownsBrowserLink(intent)) return
+        if (opened) {
+          setBrowserLink(null)
+          resetBrowserEntry(false)
+        } else if (!browser.hasPendingDialog()) setBrowserLink(null)
+      })
     },
   )
-  const setSidebar = (width: number) => {
-    setSidebarWidth(width)
-    try { localStorage.setItem("lotus_next_sidebar_w", String(width)) } catch { /* Keep the in-memory preference. */ }
-  }
+  createEffect(
+    () => ({ entry: browserEntry(), state: browserState(), scope: workbench.key(), intent: browserLink() }),
+    ({ entry, state, scope, intent }) => {
+      if (entry.scope !== scope || !entry.open || !entry.resumeUntouched || !state || intent) return
+      const hasPage = state.tabs ? state.tabs.length > 0 : Boolean(state.url && state.url !== "about:blank")
+      if (hasPage) resetBrowserEntry(false)
+      else setBrowserEntry({ ...entry, resumeUntouched: false })
+    },
+  )
+  const visibleTabOrder = () => visibleWorkbenchTabIds(visibleWorkbenchTools(), browserState()?.tabs, workbenchState().order)
+  let browserSelectionVersion = 0
+  createWorkbenchBrowserSelection({
+    workbench, state: browserState, tools: visibleWorkbenchTools, selectionVersion: () => browserSelectionVersion,
+    activateTab: browser.activateTab, entryOpen: browserEntryOpen, linkPending: () => browserLink() !== null,
+  })
 
   const reviewing = () => workbenchState().open && visibleWorkbenchTab() === "review"
   const inspecting = () => workbenchState().open && visibleWorkbenchTab() === "inspector"
@@ -382,13 +392,23 @@ export function SolidApp(props: { ownerAccess: boolean }) {
 
   const openWorkbenchTab = (tab: RightWorkbenchTab | null) => {
     if (tab === "side-chat" && !sideChatScope()) return
+    browserSelectionVersion += 1
     if (tab === null) { workbench.capture().setField("tab", null); return }
     workbench.capture().update((state) => activateWorkbenchTab(state, tab))
     if (tab === "browser" && browserEnabled()) {
       const sessionId = currentSession()
-      setBrowserEntry({ scope: workbench.key(), open: true, draft: "" })
+      const state = browserState()
+      const legacyPage = state?.tabs === undefined && state?.url && state.url !== "about:blank"
+      resetBrowserEntry(!legacyPage && !browser.hasPendingDialog(), state === null)
       if (sessionId && !browser.hasPendingDialog()) browser.requestEntryOpen(sessionId)
     }
+  }
+  const openLinkInBrowser = (url: string) => {
+    const current = currentSession()
+    const origin = link()
+    if (!current || !browserEnabled() || origin?.url !== url || origin.sessionId !== current || origin.navigation !== navigationVersion) return
+    setBrowserLink({ sessionId: current, scope: workbench.key(), navigation: navigationVersion, url })
+    openWorkbenchTab("browser")
   }
   const openSideChat = (intent?: SideChatIntent) => {
     const scope = sideChatScope()
@@ -397,10 +417,19 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     openWorkbenchTab("side-chat")
   }
   const openReview = (fileId?: string) => {
+    browserSelectionVersion += 1
     workbench.capture().update((state) => ({ ...activateWorkbenchTab(state, "review"), reviewTarget: fileId ?? null }))
   }
   const selectWorkbenchActor = (id: string) => {
+    browserSelectionVersion += 1
     const root = id === rootId()
+    if (root && id !== currentSession()) {
+      const visit = workbench.capture()
+      visit.update((state) => ({ ...state, subagents: { ...state.subagents, childId: null, view: "tree" } }))
+      visit.openToolForSession(id, "inspector")
+      void select(id).catch(openError)
+      return
+    }
     workbench.capture().update((state) => ({
       ...(root ? state : activateWorkbenchTab(state, "subagents")),
       subagents: { ...state.subagents, childId: id, view: root ? "tree" : "messages" },
@@ -422,10 +451,43 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     if (!docked()) workbench.capture().setField("open", false)
     setSideChatReveal({ scope, id, token: ++sideChatToken })
   }
+  const closeSuccessor = (key: string) => {
+    const visible = visibleTabOrder()
+    const index = visible.indexOf(key)
+    if (index === -1) return null
+    const remaining = visible.filter((item) => item !== key)
+    return remaining[index] ?? remaining[index - 1] ?? null
+  }
+  const removeClosedTab = (key: string, next?: string | null, serverTab = browserState()?.active_tab_id) => {
+    const nextBrowser = next?.startsWith("browser:") ? next.slice("browser:".length) : null
+    const nextTool = next?.startsWith("tool:") ? next.slice("tool:".length) as WorkbenchToolTab : null
+    workbench.capture().update((state) => ({
+      ...state,
+      tools: key.startsWith("tool:") ? state.tools.filter((tool) => `tool:${tool}` !== key) : state.tools,
+      order: state.order.filter((id) => id !== key),
+      tab: next === undefined ? state.tab : nextBrowser ? "browser" : nextTool,
+    }))
+    if (nextBrowser) {
+      resetBrowserEntry(false)
+      if (nextBrowser !== serverTab) void browser.activateTab(nextBrowser)
+    }
+  }
   const closeWorkbenchTool = (tab: WorkbenchToolTab) => {
-    workbench.capture().update((state) => {
-      const tools = state.tools.filter((value) => value !== tab)
-      return { ...state, tools, tab: state.tab === tab ? tools.at(-1) ?? null : state.tab }
+    browserSelectionVersion += 1
+    const key = `tool:${tab}`
+    removeClosedTab(key, workbenchState().tab === tab ? closeSuccessor(key) : undefined)
+  }
+  const closeWorkbenchBrowser = (id: string) => {
+    const version = ++browserSelectionVersion
+    const visit = workbench.capture()
+    const key = `browser:${id}`
+    const successor = closeSuccessor(key)
+    const selected = workbenchState().tab === "browser" && browserState()?.active_tab_id === id && !browserEntryOpen()
+    void browser.closeTab(id).then((state) => {
+      if (!state || !visit.isCurrent()) return
+      const selectSuccessor = selected && version === browserSelectionVersion
+      if (selectSuccessor) browserSelectionVersion += 1
+      removeClosedTab(key, selectSuccessor ? successor : undefined, state.active_tab_id)
     })
   }
 
@@ -606,9 +668,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       <div ref={(element) => { shell = element }} data-slot="chat-shell" inert={settingsOpen()} aria-hidden={settingsOpen() ? "true" : undefined}
         class={`relative h-full min-h-0 overflow-hidden ${settingsOpen() ? "hidden" : "flex"}`}>
         <ResizableLayout desktopSidebar={desktopSidebar()} workbenchDocked={docked()}
-          sidebarWidth={{ width: usedSidebarWidth(), setWidth: setSidebar }}
-          workbenchWidth={{ width: preferredWorkbenchWidth(), setWidth: (width) => workbench.capture().setField("dockWidth", width) }}
-          workbenchMaxWidth={maxWorkbenchWidth()} containerWidth={containerWidth()}
+          sidebarWidth={{ width: sidebarWidth.width(), setWidth: sidebarWidth.setWidth }}
+          workbenchWidth={{ width: workbenchWidth.width(), setWidth: workbenchWidth.setWidth }}
+          workbenchMaxWidth={workbenchWidth.maxWidth()} containerWidth={containerWidth()}
           suspended={settingsOpen() || paletteOpen()} scopeKey={workbench.key()}
           sidebar={<Sidebar
           open={sidebarOpen()} collapsed={sidebarCollapsed()} width="100%"
@@ -630,7 +692,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               if (!ok) setNotice({ text: text("sidebar_sections_save_failed"), error: true })
             }).catch(openError)
           }}
-          onRename={(id, title) => { void appStore.getState().persistSessionTitle(id, title).catch(openError) }}
+          onRename={(id, title) => appStore.getState().persistSessionTitle(id, title)}
           onRegenerateTitle={(id) => { void agentClient.regenerateSessionTitle(id).catch(openError) }}
           onTogglePin={(entry) => {
             const state = appStore.getState()
@@ -642,16 +704,16 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           onDelete={setSessionToDelete}
           onError={openError}
         />}
-        workbench={<Show when={workbenchState().open}>
-          <Loading fallback={null}>
-            <RightWorkbench docked={docked()} expanded={taskExpanded()} pageVisible={!settingsOpen()}
+        workbench={<Show when={workbenchState().open} fallback={<aside id="right-workbench" hidden />}>
+          <Loading fallback={<aside id="right-workbench" hidden />}>
+            <RightWorkbench docked={docked()} expanded={taskExpanded()} pageVisible={!settingsOpen()} width="100%"
               activeTab={visibleWorkbenchTab()}
               openToolTabs={visibleWorkbenchTools()}
               workEnabled={workEnabled()}
               sideChatEnabled={sideChatScope() !== null}
               sideChat={<Show when={sideChatScope()} keyed>{(scope) =>
                 <SideChatPane sourceId={scope.sourceId} scope={scope.key}
-                  theme={theme().themeMode} onOpenLink={setLink} onPreviewImage={setImage}
+                  theme={theme().themeMode} onOpenLink={openLink} onPreviewImage={setImage}
                   active={!settingsOpen() && workbenchState().open && visibleWorkbenchTab() === "side-chat"}
                   intent={sideChatIntent()?.scope === scope ? sideChatIntent() ?? undefined : undefined}
                   onConsumeIntent={(token) => setSideChatIntent((pending) => pending?.scope === scope && pending.token === token ? null : pending)}
@@ -693,25 +755,16 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               onBrowserActivate={(id) => {
                 browserSelectionVersion += 1
                 workbench.capture().update((state) => activateWorkbenchTab(state, "browser"))
-                setBrowserEntry({ scope: workbench.key(), open: false, draft: "" })
+                resetBrowserEntry(false)
                 if (browserState()?.active_tab_id !== id) void browser.activateTab(id)
               }}
-              onBrowserClose={(id) => {
-                const version = ++browserSelectionVersion
-                const visit = workbench.capture()
-                void browser.closeTab(id).then((remaining) => {
-                  if (!remaining || !visit.isCurrent() || version !== browserSelectionVersion) return
-                  if (!remaining.tabs?.length && !browserEntryOpen()) visit.update((state) => ({
-                    ...state, tab: state.tab === "browser" ? state.tools.at(-1) ?? null : state.tab,
-                  }))
-                })
-              }}
+              onBrowserClose={closeWorkbenchBrowser}
               browser={<Show when={browserEnabled()}>
                 <BrowserPaneView sessionId={currentSession()} browser={browser}
                   active={!settingsOpen() && workbenchState().open && workbenchState().tab === "browser"}
                   newTabEntry={browserEntryOpen()} entryDraft={browserEntryOpen() ? browserEntry().draft : ""}
-                  onEntryDraftChange={(draft) => setBrowserEntry({ scope: workbench.key(), open: true, draft })}
-                  onNewTabOpened={() => setBrowserEntry({ scope: workbench.key(), open: false, draft: "" })} />
+                  onEntryDraftChange={(draft) => setBrowserEntry({ scope: workbench.key(), open: true, draft, resumeUntouched: false })}
+                  onNewTabOpened={() => resetBrowserEntry(false)} />
               </Show>}
               inspector={<Inspector open={!settingsOpen() && inspecting()} sessionId={currentSession()}
                 workspace={displayWorkspace()} fileChangeGroups={fileChanges()} historyStatus={historyStatus()}
@@ -723,7 +776,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               subagents={<SubagentsPane rootId={rootId()} descendantCount={descendants()}
                 active={!settingsOpen() && workbenchState().open && workbenchState().tab === "subagents"}
                 selection={workbenchState().subagents} readingAnchors={childAnchors()}
-                theme={theme().themeMode} onOpenLink={setLink} onPreviewImage={setImage}
+                theme={theme().themeMode} onOpenLink={openLink} onPreviewImage={setImage}
                 onSelectChild={selectWorkbenchActor}
                 onShowTree={() => workbench.capture().update((state) => ({
                   ...state, subagents: { ...state.subagents, view: "tree" },
@@ -742,7 +795,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   ? () => setExpandedDagScope(taskExpanded() ? null : activeDagScope()) : undefined} /> : undefined} />
           </Loading>
         </Show>}>
-        <main data-session-drop-target="main" ref={sessionDrop.bindTarget} class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <Show when={sessionDrop.active()}>
             <div class="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
               {text("drop_to_open_session")}
@@ -775,10 +828,18 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               </Button>
             </Show>
             <Show when={taskList().length > 0}>
-              <Button size="icon" variant="ghost" aria-label={text("session_task_dag_title")}
+              <Button size="icon" variant="ghost" title={text("session_task_dag_open")} aria-label={text("session_task_dag_open")}
                 onClick={() => openWorkbenchTab("task-dag")}> <Workflow class="size-4" /> </Button>
             </Show>
-            <Show when={currentSession()}><EnvironmentLauncher environment={environment} /></Show>
+            <Show when={currentSession()}>
+              <EnvironmentLauncher environment={environment} />
+              <Button size="icon" variant="ghost" title={text("open_subagent_tree")}
+                aria-label={text("open_subagent_tree")} onClick={() => workbench.capture().update((state) => ({
+                  ...activateWorkbenchTab(state, "subagents"), subagents: { ...state.subagents, view: "tree" },
+                }))}>
+                <Bot class="size-4" />
+              </Button>
+            </Show>
             <Show when={currentSession()} keyed>{(id) => (
               <DropdownMenu>
                 <DropdownMenuTrigger aria-label={text("more_38844b13")} class="rounded-md p-2 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
@@ -810,7 +871,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             </Button>
           </header>
           <div data-chat-layout="" ref={environment.bindLayout} class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <div data-chat-body="true" class="flex min-h-0 min-w-0 flex-1 flex-col"
+          <div data-chat-body="true" data-session-drop-target="main" ref={sessionDrop.bindTarget} class="flex min-h-0 min-w-0 flex-1 flex-col"
             style={{ "padding-inline-end": `${environment.reservedWidth()}px`, transition: "padding-inline-end 200ms ease-out" }}>
           <Show when={!showHome()} fallback={<Loading fallback={null}>
             <HomeDashboard chats={chat.chats} onOpenSession={(id) => { void select(id).catch(openError) }}
@@ -819,7 +880,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           <Show when={sessionView()} keyed>{(session) => (
             <ChatViewport chat={chat} theme={theme().themeMode}
               pageVisible={!settingsOpen()} onOpenActor={selectWorkbenchActor}
-              onOpenLink={setLink} onPreviewImage={setImage}
+              onOpenLink={openLink} onPreviewImage={setImage}
               rootAuthority={rootAuthority} onMessageNotice={setNotice}
               attachments={[...runTimeline(), ...(workEnabled() ? supervisorApprovals.entries().map((entry) => ({
                 key: entry.key, afterMessageId: entry.afterMessageId,
@@ -946,16 +1007,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           </div>
         </ResponsiveDialogContent>
       </ResponsiveDialog>
-      <ResponsiveDialog open={link() !== null} onOpenChange={(open) => { if (!open) setLink(null) }}>
-        <ResponsiveDialogContent class="p-5">
-          <ResponsiveDialogTitle>{text("open_external_link_fd407c70")}</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription class="my-3 break-all">{link()}</ResponsiveDialogDescription>
-          <Button onClick={() => {
-            const url = link()
-            if (url) void openExternalLink(url).then(() => setLink(null)).catch(openError)
-          }}>{text("open_in_default_browser_a489338a")}</Button>
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
+      <Show when={link()} keyed>{(origin) => <ExternalLinkDialog url={origin.url}
+        onClose={() => { if (link() === origin) setLink(null) }}
+        onOpenInApp={browserEnabled() && currentSession() ? openLinkInBrowser : undefined} />}</Show>
       <ResponsiveDialog open={image() !== null} onOpenChange={(open) => { if (!open) setImage(null) }}>
         <ResponsiveDialogContent class="p-5" closeLabel={text("close_preview_1eb05d31")}>
           <ResponsiveDialogTitle class="sr-only">{text("close_preview_1eb05d31")}</ResponsiveDialogTitle>
