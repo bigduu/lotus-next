@@ -54,6 +54,7 @@ export function ChatViewport(props: {
   }
   let viewport: HTMLDivElement | null = null
   let scrollToEntry: ScrollToHistoryEntry | undefined
+  let captureBeforePrepend: (() => void) | undefined
   let loadRequest: { controller: AbortController; sessionId: string; done: Promise<void> } | undefined
 
   const rendering = createMemo(() => buildRenderItems(props.chat.messages))
@@ -94,14 +95,17 @@ export function ChatViewport(props: {
   onSettled(() => () => loadRequest?.controller.abort())
   createEffect(() => [entries(), pending(), live(), timeline()] as const, sticky.follow)
 
-  const loadEarlierPage = (sessionId: string): Promise<void> => {
+  const loadEarlierPage = (sessionId: string, preserveReading = false): Promise<void> => {
     if (props.chat.currentSessionId !== sessionId || !before()) return Promise.resolve()
     if (loadRequest?.sessionId === sessionId) return loadRequest.done
     loadRequest?.controller.abort()
     const controller = new AbortController()
     setLoadingEarlier(true)
     setEarlierError(false)
-    const done = appStore.getState().loadEarlierChatHistory(sessionId, controller.signal, sticky.pause)
+    const done = appStore.getState().loadEarlierChatHistory(sessionId, controller.signal, () => {
+      sticky.pause()
+      if (preserveReading && !aligningSource()) captureBeforePrepend?.()
+    })
       .finally(() => {
         if (loadRequest?.controller !== controller) return
         loadRequest = undefined
@@ -114,7 +118,7 @@ export function ChatViewport(props: {
     const sessionId = props.chat.currentSessionId
     if (!sessionId) return
     try {
-      await loadEarlierPage(sessionId)
+      await loadEarlierPage(sessionId, true)
     } catch {
       if (props.chat.currentSessionId === sessionId) setEarlierError(true)
     }
@@ -151,6 +155,7 @@ export function ChatViewport(props: {
         onReadingAnchor={props.onReadingAnchor}
         onMissingReadingAnchor={sticky.resume}
         registerScrollToEntry={(scroll) => { scrollToEntry = scroll ?? undefined }}
+        registerCaptureBeforePrepend={(capture) => { captureBeforePrepend = capture ?? undefined }}
         onScrollElement={(element) => {
           viewport = element
           sticky.bind(element)

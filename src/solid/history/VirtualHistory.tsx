@@ -29,6 +29,7 @@ export interface VirtualHistoryProps<T extends HistoryEntry> {
   onMissingReadingAnchor?: () => void
   onScrollElement?: (element: HTMLDivElement | null) => void
   registerScrollToEntry?: (scrollToEntry: ScrollToHistoryEntry | null) => void
+  registerCaptureBeforePrepend?: (capture: (() => void) | null) => void
   onScroll?: () => void
 }
 
@@ -36,6 +37,7 @@ export interface VirtualHistoryProps<T extends HistoryEntry> {
 export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProps<T>) {
   const [viewport, setViewport] = createSignal<HTMLDivElement | null>(null)
   const [scrollMargin, setScrollMargin] = createSignal(0)
+  const [prepend, setPrepend] = createSignal<{ entries: readonly T[]; anchor: HistoryReadingAnchor } | null>(null)
   let scroller!: HTMLDivElement
   let prefix!: HTMLDivElement
   let history!: HTMLDivElement
@@ -73,6 +75,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
   onSettled(() => {
     const reportElement = props.onScrollElement
     const registerScroll = props.registerScrollToEntry
+    const registerCapture = props.registerCaptureBeforePrepend
     setViewport(scroller)
     reportElement?.(scroller)
     registerScroll?.((key, align = "center") => {
@@ -80,6 +83,20 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
       if (index < 0) return false
       virtualizer.instance.scrollToIndex(index, { align })
       return true
+    })
+    registerCapture?.(() => {
+      const entries = props.entries
+      if (!entries.length) return
+      const top = scroller.getBoundingClientRect().top + scroller.clientTop
+      const bottom = top + scroller.clientHeight
+      for (const row of history.querySelectorAll<HTMLElement>("[data-history-entry-key]")) {
+        const bounds = row.getBoundingClientRect()
+        const key = row.dataset.historyEntryKey
+        if (key && bounds.bottom > top && bounds.top < bottom) {
+          setPrepend({ entries, anchor: { key, offset: top - bounds.top } })
+          return
+        }
+      }
     })
     const measureOrigin = () => {
       const offset = history.getBoundingClientRect().top - scroller.getBoundingClientRect().top +
@@ -93,32 +110,81 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
     return () => {
       observer?.disconnect()
       registerScroll?.(null)
+      registerCapture?.(null)
       reportElement?.(null)
     }
   })
 
   createEffect(
-    () => ({ anchor: props.initialReadingAnchor, entries: props.entries, viewport: viewport() }),
-    ({ anchor, entries, viewport }) => {
-      if (!anchor || !entries.length || !viewport || restored) return
+    () => {
+      const entries = props.entries
+      const pending = prepend()
+      const rebasing = pending && entries !== pending.entries ? pending : null
+      return { anchor: rebasing?.anchor ?? props.initialReadingAnchor, entries, viewport: viewport(), rebasing }
+    },
+    ({ anchor, entries, viewport, rebasing }) => {
+      if (!anchor || !entries.length || !viewport || (restored && !rebasing)) return
       const view = viewport.ownerDocument.defaultView
       if (!view) return
-      const missing = props.onMissingReadingAnchor
-      const frame = view.requestAnimationFrame(() => {
+      const index = entries.findIndex((entry) => entry.key === anchor.key)
+      const listeners = new AbortController()
+      let frame: number
+      let attempts = 0
+      let stableFrames = 0
+      const finish = () => {
         restored = true
-        const index = entries.findIndex((entry) => entry.key === anchor.key)
+        if (rebasing) setPrepend(null)
+        listeners.abort()
+        view.cancelAnimationFrame(frame)
+      }
+      const correct = () => {
         const position = index < 0 ? undefined : virtualizer.instance.getOffsetForIndex(index, "start")
-        if (position) virtualizer.instance.scrollToOffset(position[0] + anchor.offset, { align: "start" })
-        else missing?.()
-      })
-      return () => view.cancelAnimationFrame(frame)
+        if (!position) {
+          finish()
+          props.onMissingReadingAnchor?.()
+          return
+        }
+        const row = history.querySelector<HTMLElement>(`[data-index="${index}"]`)
+        if (row?.dataset.historyEntryKey === anchor.key) {
+          const top = row.getBoundingClientRect().top - viewport.getBoundingClientRect().top - viewport.clientTop
+          const delta = top + anchor.offset
+          // A fresh virtualizer has estimates for off-screen rows. Reconcile
+          // the measured anchor after they mount instead of retaining the
+          // absolute target calculated from their estimates.
+          const target = Math.max(0, Math.min(viewport.scrollHeight - viewport.clientHeight, viewport.scrollTop + delta))
+          if (Math.abs(target - viewport.scrollTop) > 1) {
+            viewport.scrollTo({ top: target, behavior: "instant" })
+            stableFrames = 0
+          } else stableFrames += 1
+        } else {
+          viewport.scrollTo({ top: position[0] + anchor.offset, behavior: "instant" })
+          stableFrames = 0
+        }
+        attempts += 1
+        if (stableFrames >= 3 || attempts >= 12) {
+          finish()
+          return
+        }
+        frame = view.requestAnimationFrame(correct)
+      }
+      // A new reader gesture (including the adjacent jump-to-latest button)
+      // takes over immediately.
+      const controls = viewport.parentElement ?? viewport
+      for (const event of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+        controls.addEventListener(event, finish, { capture: true, passive: true, signal: listeners.signal })
+      }
+      frame = view.requestAnimationFrame(correct)
+      return () => {
+        listeners.abort()
+        view.cancelAnimationFrame(frame)
+      }
     },
   )
 
   const captureReadingAnchor = () => {
     props.onScroll?.()
     const report = props.onReadingAnchor
-    if (!report || (props.initialReadingAnchor && !restored)) return
+    if (!report || (props.initialReadingAnchor && !restored) || prepend()) return
     if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 2) {
       report(null)
       return
