@@ -3,7 +3,7 @@ import { createUiText } from "../../shell/uiText"
 import type { ForwardRequestMetrics, ForwardStatus } from "@services/metrics"
 import { Badge } from "../../ui/badge"
 import { cn } from "@/lib/utils"
-import { formatDuration } from "@/components/chat/settings/metrics/format"
+import { formatDuration } from "@/lib/settings/metricsFormat"
 import { createMetricFormatters, shortEndpoint } from "./format"
 
 /* Dot colors come from the .lnx-metrics tokens (SettingsMetrics SERIES_CSS),

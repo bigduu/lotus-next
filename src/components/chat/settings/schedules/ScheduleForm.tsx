@@ -23,7 +23,7 @@ import {
   OVERLAP_OPTIONS,
   TRIGGER_TYPE_OPTIONS,
   WEEKDAY_OPTIONS,
-} from "./scheduleModel"
+} from "@/lib/settings/scheduleModel"
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   useUiLocale()

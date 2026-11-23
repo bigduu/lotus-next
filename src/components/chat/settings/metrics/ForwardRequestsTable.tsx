@@ -2,7 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ForwardRequestMetrics, ForwardStatus } from "@services/metrics"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { formatCompact, formatDateTime, formatDuration, formatExact } from "./format"
+import { formatCompact, formatDateTime, formatDuration, formatExact } from "@/lib/settings/metricsFormat"
 
 /* Dot colors come from the .lnx-metrics tokens (SettingsMetrics SERIES_CSS),
    which already flip for dark mode — retuning them there restyles this too. */

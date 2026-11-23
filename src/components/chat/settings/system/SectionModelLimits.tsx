@@ -25,7 +25,7 @@ import {
   nextModelLimitRowId,
   validateLimitRows,
   type LimitRowDraft,
-} from "./modelLimits"
+} from "@/lib/settings/modelLimits"
 import type {
   SectionMessage,
   SystemBambooConfig,

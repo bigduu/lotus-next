@@ -5,7 +5,7 @@ import {
   DEFAULT_FORM_VALUES, buildMisfirePolicy, buildRunConfig, buildTriggerFromValues,
   errorMessage, formatTime, misfireSummary, normalizedString, overlapSummary,
   scheduleToFormValues, triggerSummary, type ScheduleFormValues,
-} from "@/components/chat/settings/schedules/scheduleModel"
+} from "@/lib/settings/scheduleModel"
 import { cn } from "@/lib/utils"
 import { createUiLocale, createUiText } from "../../shell/uiText"
 import { Badge } from "../../ui/badge"

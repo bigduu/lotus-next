@@ -1,5 +1,5 @@
 import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
-import { formatCompact } from "./format"
+import { formatCompact } from "@/lib/settings/metricsFormat"
 
 export interface BarListItem {
   key: string

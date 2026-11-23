@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils"
 import {
   MISFIRE_OPTIONS, OVERLAP_OPTIONS, TRIGGER_TYPE_OPTIONS, WEEKDAY_OPTIONS,
   type IntervalUnit, type ScheduleFormValues, type WeeklyWeekday,
-} from "@/components/chat/settings/schedules/scheduleModel"
+} from "@/lib/settings/scheduleModel"
 import { createUiLocale, createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"

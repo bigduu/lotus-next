@@ -1,6 +1,6 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js"
 import { isReasoningEffort } from "@shared/utils/reasoningEffort"
-import { REASONING_OPTIONS } from "@/components/chat/settings/reasoningOptions"
+import { REASONING_OPTIONS } from "@/lib/settings/reasoningOptions"
 import { createUiLocale, createUiText } from "../../shell/uiText"
 import { Input } from "../../ui/input"
 import { Select } from "../../ui/select"

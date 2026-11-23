@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { REASONING_OPTIONS } from "../reasoningOptions"
+import { REASONING_OPTIONS } from "@/lib/settings/reasoningOptions"
 import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const UNSET = "__unset__"

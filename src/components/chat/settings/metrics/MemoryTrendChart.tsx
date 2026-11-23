@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import type { MemoryTimelinePoint } from "@services/metrics"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { formatCompact, formatExact, shortDateLabel } from "./format"
+import { formatCompact, formatExact, shortDateLabel } from "@/lib/settings/metricsFormat"
 
 const TOTAL_COLOR = "var(--mx-chat)"
 const CREATED_COLOR = "var(--mx-fwd)"

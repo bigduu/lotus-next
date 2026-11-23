@@ -6,7 +6,7 @@ import {
   parseTokenCount,
   validateLimitRows,
   type LimitRowDraft,
-} from "./modelLimits"
+} from "@/lib/settings/modelLimits"
 
 describe("model limit table helpers", () => {
   it("parses and formats compact context-window values", () => {

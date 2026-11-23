@@ -2,7 +2,7 @@ import { useUiText } from "@shared/i18n/ui"
 import { useMemo } from "react"
 import type { MetricsUsageBreakdownResponse } from "@services/metrics"
 import { Badge } from "@/components/ui/badge"
-import { formatCompact, formatExact } from "./format"
+import { formatCompact, formatExact } from "@/lib/settings/metricsFormat"
 
 interface UsageRow {
   key: string

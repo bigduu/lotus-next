@@ -5,7 +5,7 @@ import { apiClient, ApiError } from "@services/api"
 import type { InstalledPluginView, JianduSetupReport, NovaAppSetupReport } from "@services/plugin"
 import { changeLocale } from "@shared/i18n"
 import { SettingsPlugins } from "./SettingsPlugins"
-import { NOVA_PLUGIN } from "./plugins/officialPlugins"
+import { NOVA_PLUGIN } from "@/lib/settings/officialPlugins"
 
 const roots: Root[] = []
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true

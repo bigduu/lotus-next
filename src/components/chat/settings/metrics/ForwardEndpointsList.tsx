@@ -1,6 +1,6 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ForwardEndpointMetrics } from "@services/metrics"
-import { formatCompact, formatDuration, formatExact } from "./format"
+import { formatCompact, formatDuration, formatExact } from "@/lib/settings/metricsFormat"
 
 /* Success-STATUS color (shared with ForwardRequestsTable's success dot), not
    the forward-SERIES color --mx-fwd — these bars encode outcome, not series. */

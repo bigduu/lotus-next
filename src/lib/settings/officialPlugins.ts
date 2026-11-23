@@ -1,4 +1,4 @@
-import type { PluginSourceUrl } from "../../../../services/plugin/types.js"
+import type { PluginSourceUrl } from "@services/plugin/types"
 
 // Catalogue entries are reviewed, immutable releases. The existing Bamboo
 // installer owns signature verification, platform selection and registration.

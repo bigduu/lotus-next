@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { UnifiedTimelinePoint } from "@services/metrics"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { formatCompact, formatExact, shortDateLabel } from "./format"
+import { formatCompact, formatExact, shortDateLabel } from "@/lib/settings/metricsFormat"
 
 const CHAT_COLOR = "var(--mx-chat)"
 const FORWARD_COLOR = "var(--mx-fwd)"

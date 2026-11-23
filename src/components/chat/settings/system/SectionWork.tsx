@@ -7,7 +7,7 @@ import { getErrorMessage } from "@services/api"
 import { serviceFactory } from "@services/common/ServiceFactory"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { isReasoningEffort } from "@shared/utils/reasoningEffort"
-import { REASONING_OPTIONS } from "../reasoningOptions"
+import { REASONING_OPTIONS } from "@/lib/settings/reasoningOptions"
 import { StatusLine } from "./StatusLine"
 import type { SectionMessage, SystemBambooConfig, WorkExecutionSettings, WorkFeatureFlags } from "./useSystemConfig"
 

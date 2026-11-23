@@ -3,7 +3,7 @@ import {
   formatDateTime,
   formatExact,
   formatPercent,
-} from "@/components/chat/settings/metrics/format"
+} from "@/lib/settings/metricsFormat"
 import { createUiLocale } from "../../shell/uiText"
 
 export function createMetricFormatters() {

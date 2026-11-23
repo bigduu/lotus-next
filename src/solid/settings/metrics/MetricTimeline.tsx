@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, onSettled, Show } from "solid-js"
 import type { MemoryTimelinePoint, UnifiedTimelinePoint } from "@services/metrics"
-import { shortDateLabel } from "@/components/chat/settings/metrics/format"
+import { shortDateLabel } from "@/lib/settings/metricsFormat"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
 import { createMetricFormatters } from "./format"

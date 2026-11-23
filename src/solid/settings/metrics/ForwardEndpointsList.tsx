@@ -1,7 +1,7 @@
 import { createMemo, For, Show } from "solid-js"
 import { createUiText } from "../../shell/uiText"
 import type { ForwardEndpointMetrics } from "@services/metrics"
-import { formatDuration } from "@/components/chat/settings/metrics/format"
+import { formatDuration } from "@/lib/settings/metricsFormat"
 import { createMetricFormatters, shortEndpoint } from "./format"
 
 /* Success-STATUS color (shared with ForwardRequestsTable's success dot), not

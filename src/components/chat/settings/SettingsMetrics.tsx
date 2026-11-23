@@ -12,7 +12,7 @@ import {
   formatPercent,
   inclusiveDayCount,
   todayString,
-} from "./metrics/format"
+} from "@/lib/settings/metricsFormat"
 import { useMetricsDashboard } from "./metrics/useMetricsDashboard"
 import { TimelineChart } from "./metrics/TimelineChart"
 import { BarList, type BarListItem } from "./metrics/BarList"

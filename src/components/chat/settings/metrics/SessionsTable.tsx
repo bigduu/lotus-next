@@ -1,7 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { SessionMetrics, SessionStatus } from "@services/metrics"
 import { cn } from "@/lib/utils"
-import { formatCompact, formatDateTime, formatDuration, formatExact } from "./format"
+import { formatCompact, formatDateTime, formatDuration, formatExact } from "@/lib/settings/metricsFormat"
 
 const STATUS_META: Record<SessionStatus, { label: string; dotClass: string }> = {
   running: { get label() { return uiText("active_dc9591e5") }, dotClass: "bg-[#2a78d6] dark:bg-[#3987e5]" },

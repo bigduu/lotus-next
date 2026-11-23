@@ -27,7 +27,7 @@ import { PluginFormDialog, type PluginFormMode } from "./plugins/PluginFormDialo
 import { OfficialPluginCards } from "./plugins/OfficialPluginCards"
 import { NovaSetupPanel, type NovaSetupError } from "./plugins/NovaSetupPanel"
 import { PluginRuntime } from "./plugins/PluginRuntime"
-import { NOVA_PLUGIN } from "./plugins/officialPlugins"
+import { NOVA_PLUGIN } from "@/lib/settings/officialPlugins"
 import { JianduSetupPanel, type JianduSetupError } from "./plugins/JianduSetupPanel"
 import { PublisherTrustPanel } from "./plugins/PublisherTrustPanel"
 import { copyText } from "@shared/utils/clipboard"

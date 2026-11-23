@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 import { agentClient } from "@services/chat/AgentService"
 import type { ScheduleRunRecord } from "@services/chat/AgentService"
 import { Badge } from "@/components/ui/badge"
-import { errorMessage, formatTime } from "./scheduleModel"
+import { errorMessage, formatTime } from "@/lib/settings/scheduleModel"
 
 const STATUS_LABEL: Record<ScheduleRunRecord["status"], string> = {
   get queued() { return uiText("queued_d6f766f2") },

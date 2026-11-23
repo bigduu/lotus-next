@@ -22,7 +22,7 @@ import {
   overlapSummary,
   scheduleToFormValues,
   triggerSummary,
-} from "./schedules/scheduleModel"
+} from "@/lib/settings/scheduleModel"
 
 function statusBadge(s: ScheduleEntry): {
   variant: "default" | "secondary" | "destructive" | "warning" | "success"

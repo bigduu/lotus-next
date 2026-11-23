@@ -3,7 +3,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { InstalledPluginView } from "@services/plugin"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { NOVA_PLUGIN } from "./officialPlugins"
+import { NOVA_PLUGIN } from "@/lib/settings/officialPlugins"
 import type { ReactNode } from "react"
 
 export function OfficialPluginCards({ nova, installing, disabled, onInstallNova, onManageNova, novaSetup, jianduSetup }: {

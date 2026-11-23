@@ -3,7 +3,7 @@ import { createUiText } from "../../shell/uiText"
 import type { InstalledPluginView } from "@services/plugin"
 import { Badge } from "../../ui/badge"
 import { Button } from "../../ui/button"
-import { NOVA_PLUGIN } from "@/components/chat/settings/plugins/officialPlugins"
+import { NOVA_PLUGIN } from "@/lib/settings/officialPlugins"
 import type { JSX } from "@solidjs/web"
 
 export function OfficialPluginCards(props: {

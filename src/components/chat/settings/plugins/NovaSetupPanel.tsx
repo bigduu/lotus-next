@@ -2,7 +2,7 @@ import { Download, ExternalLink, Play, RotateCw } from "lucide-react"
 import type { NovaAppSetupReport } from "@services/plugin"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
-import { NOVA_PLUGIN } from "./officialPlugins"
+import { NOVA_PLUGIN } from "@/lib/settings/officialPlugins"
 
 export type NovaSetupError = "loading" | "legacy" | "unknown" | null
 const reasonKeys: Record<string, Parameters<typeof uiText>[0]> = {

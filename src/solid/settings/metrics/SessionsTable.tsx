@@ -2,7 +2,7 @@ import { For, Show } from "solid-js"
 import { createUiText } from "../../shell/uiText"
 import type { SessionMetrics, SessionStatus } from "@services/metrics"
 import { cn } from "@/lib/utils"
-import { formatDuration } from "@/components/chat/settings/metrics/format"
+import { formatDuration } from "@/lib/settings/metricsFormat"
 import { createMetricFormatters } from "./format"
 
 const STATUS_META: Record<SessionStatus, { label: Parameters<ReturnType<typeof createUiText>>[0]; dotClass: string }> = {

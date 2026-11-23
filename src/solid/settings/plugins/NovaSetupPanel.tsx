@@ -3,7 +3,7 @@ import type { NovaAppSetupReport } from "@services/plugin"
 import { createMemo } from "solid-js"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
-import { NOVA_PLUGIN } from "@/components/chat/settings/plugins/officialPlugins"
+import { NOVA_PLUGIN } from "@/lib/settings/officialPlugins"
 
 export type NovaSetupError = "loading" | "legacy" | "unknown" | null
 const reasonKeys: Record<string, Parameters<ReturnType<typeof createUiText>>[0]> = {

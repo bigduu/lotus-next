@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, Show } from "solid-js"
 import { agentClient, type ScheduleRunRecord } from "@services/chat/AgentService"
-import { errorMessage, formatTime } from "@/components/chat/settings/schedules/scheduleModel"
+import { errorMessage, formatTime } from "@/lib/settings/scheduleModel"
 import { createUiLocale, createUiText } from "../../shell/uiText"
 import { Badge } from "../../ui/badge"
 import { Button } from "../../ui/button"
