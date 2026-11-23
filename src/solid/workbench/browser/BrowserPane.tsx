@@ -65,6 +65,7 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
   const viewportWidth = createMemo(() => currentState()?.viewport.width)
   const viewportHeight = createMemo(() => currentState()?.viewport.height)
   const pendingDialog = createMemo(() => currentState()?.pending_dialog)
+  const focusedDialogId = createMemo(() => props.active ? pendingDialog()?.dialog_id : undefined)
   const dialogBlocked = createMemo(() => Boolean(pendingDialog()))
   const controlsBlocked = () => browser().busy || dialogBlocked()
   const visibleFrame = createMemo(() => {
@@ -92,12 +93,14 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
     },
   )
   createEffect(
-    () => pendingDialog()?.dialog_id,
+    focusedDialogId,
     (id) => {
       const dialog = dialogElement
-      if (!id || !dialog) return
+      if (!id || !dialog?.isConnected || dialog.closest('[hidden], [inert], [aria-hidden="true"]')) return
       const document = dialog.ownerDocument
       const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      const foregroundModal = previous?.closest('[aria-modal="true"]')
+      if (foregroundModal && !foregroundModal.contains(dialog)) return
       const first = dialog.querySelector<HTMLElement>('textarea:not([disabled]),button:not([disabled])')
       ;(first ?? dialog).focus()
       return () => {
