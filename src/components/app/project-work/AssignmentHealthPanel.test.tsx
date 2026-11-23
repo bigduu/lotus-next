@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { AssignmentHealthPanel, type AssignmentHealthPanelProps } from "./AssignmentHealthPanel"
-import { assignmentHealthCopyKeys, type AssignmentAttempt, type AssignmentHealthCopy, type AssignmentObservation, type HealthRead, type PatrolIncident } from "./assignmentHealth"
+import { assignmentHealthCopyKeys, type AssignmentAttempt, type AssignmentHealthCopy, type AssignmentObservation, type HealthRead, type PatrolIncident } from "@/lib/project-work/assignmentHealth"
 
 // Every visible label is injected by the parent's shared i18n adapter.
 const copy = Object.fromEntries(assignmentHealthCopyKeys.map((key) => [key, `copy:${key}`])) as AssignmentHealthCopy

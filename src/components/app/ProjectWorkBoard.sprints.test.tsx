@@ -9,7 +9,7 @@ import { sprintClient, type SprintCommand, type SprintInspection, type SprintPag
 import type { SnapshotRef, TicketScope } from "@services/tickets/types"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
-import { sprintOwnerControlsEnglish as copy } from "./project-work/SprintOwnerControls.copy"
+import { sprintOwnerControlsEnglish as copy } from "@/lib/project-work/SprintOwnerControls.copy"
 import { ProjectWorkBoard } from "./ProjectWorkBoard"
 
 // Keep the real Board, Sprint panel, both hooks, controls and locale adapters.

@@ -3,8 +3,8 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import type { SprintSummary, SprintView, SprintWorkVersion } from "@services/tickets/sprints"
 import { SprintOwnerControls, type SprintOwnerControlsProps } from "./SprintOwnerControls"
-import { formatSprintUtcDateTime, parseSprintUtcDateTime } from "./sprintUtcDateTime"
-import { sprintOwnerControlsEnglish as copy } from "./SprintOwnerControls.copy"
+import { formatSprintUtcDateTime, parseSprintUtcDateTime } from "@/lib/project-work/sprintUtcDateTime"
+import { sprintOwnerControlsEnglish as copy } from "@/lib/project-work/SprintOwnerControls.copy"
 import { sprintOwnerControlsChinese } from "@/test/fixtures/sprintOwnerCopy"
 
 let root: Root

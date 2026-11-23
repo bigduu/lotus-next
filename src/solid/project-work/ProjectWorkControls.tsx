@@ -4,7 +4,7 @@ import {
   commandMatches, deadlineInstant, planningValue, workDeadlineStatus, workPriorities,
   type ControlCapability, type WorkCommandContext, type WorkControlCopy, type WorkPlanningDraft,
   type WorkPlanningQuery, type WorkPlanningValue, type WorkRequestReceipt, type WorkRequestStatus,
-} from "@/components/app/project-work/projectWorkControls"
+} from "@/lib/project-work/projectWorkControls"
 import { Button } from "../ui/button"
 
 type WorkIdentity = { id: string; generation: number; recordRevision: number; state: WorkState }

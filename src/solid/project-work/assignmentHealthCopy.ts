@@ -1,5 +1,5 @@
 import type { createUiText } from "../shell/uiText"
-import type { AssignmentHealthCopy } from "@/components/app/project-work/assignmentHealth"
+import type { AssignmentHealthCopy } from "@/lib/project-work/assignmentHealth"
 
 export const makeAssignmentHealthCopy = (uiText: ReturnType<typeof createUiText>): AssignmentHealthCopy => ({
   title: uiText("assignment_health_title"),

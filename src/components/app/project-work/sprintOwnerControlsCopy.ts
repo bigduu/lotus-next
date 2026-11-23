@@ -1,5 +1,5 @@
 import { uiText } from "@shared/i18n/ui"
-import type { SprintOwnerControlsCopy } from "./SprintOwnerControls.copy"
+import type { SprintOwnerControlsCopy } from "@/lib/project-work/SprintOwnerControls.copy"
 
 export const sprintOwnerControlsCopy = (): SprintOwnerControlsCopy => ({
   title: uiText("project_sprint_owner_title"),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { commandMatches, deadlineInstant, planningValue, workDeadlineStatus } from "./projectWorkControls"
+import { commandMatches, deadlineInstant, planningValue, workDeadlineStatus } from "@/lib/project-work/projectWorkControls"
 import { commandContext } from "./testFixtures"
 
 describe("explicit-offset desired deadline", () => {

@@ -4,7 +4,7 @@ import type { JSX } from "@solidjs/web"
 import {
   currentAssignment, healthReadStatus, sessionAccess, timestampMs,
   type AssignmentAttempt, type AssignmentHealthCopy, type HealthRead, type SessionAccessRef,
-} from "@/components/app/project-work/assignmentHealth"
+} from "@/lib/project-work/assignmentHealth"
 import type { AssignmentSessionTarget } from "@services/tickets/assignmentSessions"
 import type { PatrolStatusRead } from "@services/tickets/patrolStatus"
 import type { RuntimeObservationRead } from "@services/tickets/runtimeObservation"

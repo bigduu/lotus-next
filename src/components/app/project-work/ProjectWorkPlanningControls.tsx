@@ -5,7 +5,7 @@ import { WorkRequestFeedback } from "./WorkRequestFeedback"
 import { useWorkRequestGuard } from "./useWorkRequestGuard"
 import { commandMatches, deadlineInstant, planningValue, workDeadlineStatus, workPriorities,
   type ControlCapability, type WorkCommandContext, type WorkControlCopy, type WorkPlanningDraft,
-  type WorkPlanningQuery, type WorkPlanningValue, type WorkRequestReceipt, type WorkRequestStatus } from "./projectWorkControls"
+  type WorkPlanningQuery, type WorkPlanningValue, type WorkRequestReceipt, type WorkRequestStatus } from "@/lib/project-work/projectWorkControls"
 
 export interface ProjectWorkPlanningControlsProps {
   work: { id: string; generation: number; recordRevision: number; state: WorkState }

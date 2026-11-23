@@ -1,7 +1,7 @@
 import { vi } from "vitest"
 import type { ProjectWorkPlanningControlsProps } from "./ProjectWorkPlanningControls"
 import type { ProjectWorkOwnerControlsProps } from "./ProjectWorkOwnerControls"
-import type { WorkCommandContext, WorkControlCopy } from "./projectWorkControls"
+import type { WorkCommandContext, WorkControlCopy } from "@/lib/project-work/projectWorkControls"
 
 export const controlCopy: WorkControlCopy = {
   planning: "Work planning", priority: "Priority", desiredDeadline: "Desired deadline",

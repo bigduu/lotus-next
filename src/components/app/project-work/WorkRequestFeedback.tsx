@@ -1,4 +1,4 @@
-import type { WorkControlCopy, WorkRequestStatus } from "./projectWorkControls"
+import type { WorkControlCopy, WorkRequestStatus } from "@/lib/project-work/projectWorkControls"
 
 export function WorkRequestFeedback({ status, submitting, uncertain, copy, onReload, onReconcile }: {
   status: WorkRequestStatus; submitting: boolean; uncertain: boolean; copy: WorkControlCopy

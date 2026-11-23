@@ -1,5 +1,5 @@
 import type { createUiText } from "../shell/uiText"
-import type { SprintOwnerControlsCopy } from "@/components/app/project-work/SprintOwnerControls.copy"
+import type { SprintOwnerControlsCopy } from "@/lib/project-work/SprintOwnerControls.copy"
 
 export const sprintOwnerControlsCopy = (uiText: ReturnType<typeof createUiText>): SprintOwnerControlsCopy => ({
   title: uiText("project_sprint_owner_title"),

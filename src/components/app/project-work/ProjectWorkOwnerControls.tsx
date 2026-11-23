@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { WorkRequestFeedback } from "./WorkRequestFeedback"
 import { useWorkRequestGuard } from "./useWorkRequestGuard"
 import { commandMatches, type ControlCapability, type WorkCommandContext, type WorkControlCopy,
-  type WorkRequestReceipt, type WorkRequestStatus } from "./projectWorkControls"
+  type WorkRequestReceipt, type WorkRequestStatus } from "@/lib/project-work/projectWorkControls"
 
 export type WorkOwnerAction = "pause" | "resume" | "cancel" | "accept"
 export interface WorkUserAcceptance {

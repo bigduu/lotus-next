@@ -1,5 +1,5 @@
 import { uiText } from "@shared/i18n/ui"
-import type { AssignmentHealthCopy } from "@/components/app/project-work/assignmentHealth"
+import type { AssignmentHealthCopy } from "@/lib/project-work/assignmentHealth"
 
 // Call in parent render after useUiLocale().
 export const makeAssignmentHealthCopy = (): AssignmentHealthCopy => ({

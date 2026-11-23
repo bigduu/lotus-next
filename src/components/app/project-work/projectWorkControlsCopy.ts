@@ -1,5 +1,5 @@
 import { uiText } from "@shared/i18n/ui"
-import type { WorkControlCopy } from "./projectWorkControls"
+import type { WorkControlCopy } from "@/lib/project-work/projectWorkControls"
 
 export function projectWorkControlsCopy(): WorkControlCopy {
   return {

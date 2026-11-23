@@ -1,8 +1,8 @@
 import { createMemo, createSignal, createUniqueId, For, Show, untrack } from "solid-js"
 import type { SprintAction, SprintCommandResult, SprintDefinition, SprintDestination, SprintSummary, SprintView } from "@services/tickets/sprints"
 import { Button } from "../ui/button"
-import type { SprintOwnerControlsCopy } from "@/components/app/project-work/SprintOwnerControls.copy"
-import { formatSprintUtcDateTime, parseSprintUtcDateTime } from "@/components/app/project-work/sprintUtcDateTime"
+import type { SprintOwnerControlsCopy } from "@/lib/project-work/SprintOwnerControls.copy"
+import { formatSprintUtcDateTime, parseSprintUtcDateTime } from "@/lib/project-work/sprintUtcDateTime"
 
 export interface SprintOwnerControlsProps {
   projectId: string

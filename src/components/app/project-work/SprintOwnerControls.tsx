@@ -1,8 +1,8 @@
 import { useId, useRef, useState } from "react"
 import type { SprintAction, SprintCommandResult, SprintDefinition, SprintDestination, SprintSummary, SprintView } from "@services/tickets/sprints"
 import { Button } from "@/components/ui/button"
-import type { SprintOwnerControlsCopy } from "./SprintOwnerControls.copy"
-import { formatSprintUtcDateTime, parseSprintUtcDateTime } from "./sprintUtcDateTime"
+import type { SprintOwnerControlsCopy } from "@/lib/project-work/SprintOwnerControls.copy"
+import { formatSprintUtcDateTime, parseSprintUtcDateTime } from "@/lib/project-work/sprintUtcDateTime"
 
 export interface SprintOwnerControlsProps {
   projectId: string

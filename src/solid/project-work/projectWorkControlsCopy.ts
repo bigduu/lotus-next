@@ -1,5 +1,5 @@
 import type { createUiText } from "../shell/uiText"
-import type { WorkControlCopy } from "@/components/app/project-work/projectWorkControls"
+import type { WorkControlCopy } from "@/lib/project-work/projectWorkControls"
 
 export function projectWorkControlsCopy(uiText: ReturnType<typeof createUiText>): WorkControlCopy {
   return {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import {
   currentAssignment, healthReadStatus, recoveryState, sameFence, sessionAccess, timestampMs, verifiedObservation,
   type AssignmentAttempt, type AssignmentHealthCopy, type AssignmentObservation, type HealthRead, type PatrolIncident, type SessionAccessRef,
-} from "./assignmentHealth"
+} from "@/lib/project-work/assignmentHealth"
 
 export interface AssignmentHealthPanelProps {
   workId: string

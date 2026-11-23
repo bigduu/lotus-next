@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import type { WorkRequestReceipt } from "./projectWorkControls"
+import type { WorkRequestReceipt } from "@/lib/project-work/projectWorkControls"
 
 /** Only guards event delivery. Authoritative pending/ACK/state always comes from props. */
 export function useWorkRequestGuard(activeOperationIds: readonly string[]) {

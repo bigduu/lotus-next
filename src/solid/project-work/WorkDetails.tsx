@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 
-import { runtimeObservationTarget, savedPatrolTarget, type HealthRead } from "@/components/app/project-work/assignmentHealth"
+import { runtimeObservationTarget, savedPatrolTarget, type HealthRead } from "@/lib/project-work/assignmentHealth"
 import { getErrorMessage } from "@services/api"
 import type { AssignmentSessionTarget } from "@services/tickets/assignmentSessions"
 import { readPatrolStatus, type PatrolStatusRead } from "@services/tickets/patrolStatus"
