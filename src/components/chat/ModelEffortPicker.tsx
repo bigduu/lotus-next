@@ -8,7 +8,7 @@ import type { ThinkingPickerSelection } from "@/hooks/useRootThinkingMode"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { composerControlClassName } from "./composerStyles"
+import { composerControlClassName } from "@/lib/composer/composerStyles"
 
 const METEORS = [
   { top: "22%", animationDuration: "1.6s", animationDelay: "-0.4s", "--meteor-rest": "-25%" },

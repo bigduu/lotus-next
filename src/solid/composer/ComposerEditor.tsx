@@ -11,10 +11,10 @@ import {
   type ComposerEditorProps,
   type ComposerFocusSnapshot,
   type ComposerInputHandle,
-} from "@/components/chat/composerEditorCore"
+} from "@/lib/composer/composerEditorCore"
 import "@/shared/theme/composer-editor.css"
 
-export type { ComposerFocusSnapshot, ComposerInputHandle, FileSuggestion } from "@/components/chat/composerEditorCore"
+export type { ComposerFocusSnapshot, ComposerInputHandle, FileSuggestion } from "@/lib/composer/composerEditorCore"
 
 type Props = ComposerEditorProps & {
   inputRef?: (handle: ComposerInputHandle | null) => void

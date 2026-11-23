@@ -7,7 +7,7 @@ import { createWorktreeSelection, type NewChatWorktreeControlProps } from "@serv
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { composerControlClassName } from "@/components/chat/composerStyles"
+import { composerControlClassName } from "@/lib/composer/composerStyles"
 import { cn } from "@/lib/utils"
 
 const normalizePath = (path: string | null | undefined) => path?.replace(/\/+$/, "") || "/"

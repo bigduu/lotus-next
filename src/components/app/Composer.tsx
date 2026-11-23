@@ -17,7 +17,7 @@ import {
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import type { ComposerInputHandle, ComposerFocusSnapshot, FileSuggestion } from "@/components/chat/ComposerEditor"
-import { composerControlClassName, composerIconButtonClassName } from "@/components/chat/composerStyles"
+import { composerControlClassName, composerIconButtonClassName } from "@/lib/composer/composerStyles"
 import {
   DropdownMenu,
   DropdownMenuContent,

@@ -3,7 +3,7 @@ import { render, type ComponentProps } from "@solidjs/web"
 import { closeHistory } from "@tiptap/pm/history"
 import type { Editor } from "@tiptap/core"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import { composerText } from "@/components/chat/composerDocument"
+import { composerText } from "@/lib/composer/composerDocument"
 import { ComposerEditor, type ComposerInputHandle, type ComposerFocusSnapshot, type FileSuggestion } from "./ComposerEditor"
 
 type EditorProps = ComponentProps<typeof ComposerEditor>

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
-import { composerControlClassName } from "./composerStyles"
+import { composerControlClassName } from "@/lib/composer/composerStyles"
 
 type Props = { sessionId: string; title: string; compact?: boolean }
 
