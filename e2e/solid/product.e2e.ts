@@ -66,7 +66,7 @@ for (const mode of ["idle", "running", "monitoring"] as const) {
     await page.goto(entryUrl);
     await expect(page.getByRole("heading", { name: session.title })).toBeVisible();
     await expect(page.locator("[data-virtual-history]")).toContainText("Existing Solid history");
-    await page.getByRole("button", { name: "会话任务 DAG" }).click();
+    await page.getByRole("button", { name: "打开会话任务图" }).click();
     const tasks = page.locator("#right-workbench");
     await expect(tasks.getByRole("button", { name: /Prepare the workspace/ })).toBeVisible();
     await tasks.getByRole("button", { name: "收起工作面板" }).click();
