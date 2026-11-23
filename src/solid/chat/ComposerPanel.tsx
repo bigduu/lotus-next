@@ -11,6 +11,8 @@ import { ComposerEditor, type ComposerFocusSnapshot } from "../composer/Composer
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
 import { createGuidanceQueue } from "./guidance/createGuidanceQueue"
 import { GuidanceQueueControls, GuidanceTimingControl } from "./guidance/GuidanceQueueControls"
+import type { createRootModeAuthority } from "./model/createRootModeAuthority"
+import type { createTicketIngress } from "./createTicketIngress"
 import { createComposerModelControls } from "./model/createComposerModelControls"
 import { ComposerModelControls } from "./model/ComposerModelControls"
 import { createUiText } from "../shell/uiText"
@@ -31,6 +33,13 @@ export function ComposerPanel(props: {
   draftEpoch: number
   navigationVersion: () => number
   onOpenGoal: (sessionId: string) => void
+  onOpenWorkflowRuns: (sessionId: string) => void
+  rootAuthority: ReturnType<typeof createRootModeAuthority>
+  ingress: ReturnType<typeof createTicketIngress>
+  semantic: boolean
+  reference: { work_id: string; id: string; title: string } | null
+  onClearReference: () => void
+  canSendIngress: boolean
   captureSessionCreated: () => (sessionId: string) => void
   onPreviewImage: (url: string) => void
 }) {
@@ -49,19 +58,23 @@ export function ComposerPanel(props: {
     navigationVersion: props.navigationVersion,
   })
   const queue = createGuidanceQueue(() => props.chat.currentSessionId, running)
-  const queuedSend = () => Boolean(props.chat.currentSessionId && (running() || queue.hasUnconfirmed))
+  const queuedSend = () => !props.semantic && Boolean(props.chat.currentSessionId && (running() || queue.hasUnconfirmed))
   const interactionBlocked = () => Boolean(props.chat.pendingQuestion || props.chat.pendingApproval ||
     isSessionExecutionBlocked(props.chat.currentSessionId))
   const [predict, setPredict] = createSignal(getDraftCompletionEnabled())
   const [submitting, setSubmitting] = createSignal(false)
   const [attachments, setAttachments] = createSignal<ChatImageAttachment[]>([])
+  const [commandNotice, setCommandNotice] = createSignal<{ key: string; message: string } | null>(null)
   let attachmentRevision = 0
   const models = createComposerModelControls({
     chat: props.chat,
     draftKey,
-    disabled: () => interactionBlocked() || running() || submitting() || props.chat.submissionPending || queue.busy || queue.hasUnconfirmed,
+    root: props.rootAuthority,
+    disabled: () => interactionBlocked() || running() || submitting() || props.chat.submissionPending ||
+      queue.busy || queue.hasUnconfirmed || props.ingress.busy || props.ingress.pending || commands.busy,
   })
-  const blocked = () => interactionBlocked() || models.sendBlocked
+  const blocked = () => interactionBlocked() || models.sendBlocked ||
+    (props.semantic && (!props.canSendIngress || props.ingress.busy || props.ingress.activationPending))
   const inputId = "lotus-message-input"
   const mentionWorkspace = () => worktree.preparedPath ?? props.workspacePath
   const commands = createComposerCommands({
@@ -75,8 +88,9 @@ export function ComposerPanel(props: {
     queueBusy: () => queue.busy || queue.hasUnconfirmed,
     queuePending: () => queue.pending.length > 0,
     thinkingMode: () => models.thinkingMode,
-    extraSessionRestricted: () => models.root.child,
+    extraSessionRestricted: () => models.root.child || props.semantic,
     openGoal: props.onOpenGoal,
+    openWorkflowRuns: props.onOpenWorkflowRuns,
   })
   let filePicker!: HTMLInputElement
   let active = false
@@ -112,11 +126,14 @@ export function ComposerPanel(props: {
     const images = attachments()
     const submittedAttachmentRevision = attachmentRevision
     const useQueue = queuedSend()
+    const semantic = props.semantic
     const payload = images.length ? images.map(({ base64, name, size, type }) => ({ base64, name, size, type })) : undefined
-    if ((!draft.content.trim() && !images.length) || (!useQueue && props.chat.sending) ||
+    if ((!draft.content.trim() && !images.length) || (!semantic && !useQueue && props.chat.sending) ||
       props.chat.submissionPending || active || blocked() || queue.busy || commands.busy) return
     active = true
     setSubmitting(true)
+    setCommandNotice(null)
+    const reference = props.reference
     const sessionCreated = props.captureSessionCreated()
     const origin = worktree.capture()
     const submission = {
@@ -134,16 +151,29 @@ export function ComposerPanel(props: {
       const verdict = commands.handleSubmit(draft)
       if (verdict !== "pass") {
         if (await verdict !== "pass" || !origin.isCurrent() || blocked() ||
-          draft.contentRevision !== appStore.getState().getInputState(key).contentRevision ||
+          semantic !== props.semantic || useQueue !== queuedSend() || draft.contentRevision !== appStore.getState().getInputState(key).contentRevision ||
           attachmentRevision !== submittedAttachmentRevision) return
       }
       const selectedSkill = commands.selectedSkill
+      if (semantic && selectedSkill) {
+        setCommandNotice({ key, message: text("ticket_enter_ticket_instructions_directly_in_the_mes_2bddd839") })
+        return
+      }
       if (origin.prepare) {
         try { submission.workspacePath = await origin.prepare() }
         catch { return }
         if (!origin.isCurrent()) return
       }
-      const result = useQueue ? await queue.send(draft.content, payload) : await props.chat.send(draft.content, {
+      const result = semantic && key
+        ? await props.ingress.send({
+            session_id: key,
+            message: draft.content.trim(),
+            model: props.chat.currentChat?.config?.model ?? "",
+            model_ref: props.chat.currentChat?.config?.model_ref ?? undefined,
+            images: payload,
+            ...(reference ? { thread_id: reference.work_id, in_reply_to: reference.id } : {}),
+          }, () => origin.isCurrent() && props.semantic && props.canSendIngress)
+        : useQueue ? await queue.send(draft.content, payload) : await props.chat.send(draft.content, {
         ...submission,
         skillIds: selectedSkill ? [selectedSkill.id] : undefined,
         isOriginCurrent: origin.prepare ? origin.isCurrent : undefined,
@@ -151,6 +181,7 @@ export function ComposerPanel(props: {
       if (result.kind !== "accepted") return
       if (!key && submission.projectId) sessionCreated(result.sessionId)
       if (origin.prepare && (!origin.viewerIsCurrent() || (!result.navigated && !origin.isCurrent()))) return
+      if (reference && origin.isCurrent() && props.reference?.id === reference.id) props.onClearReference()
       if (selectedSkill) commands.clearSkill(selectedSkill)
       if (attachmentRevision === submittedAttachmentRevision) changeAttachments(() => [])
       const latest = appStore.getState()
@@ -177,7 +208,33 @@ export function ComposerPanel(props: {
           {failure().message || text("submission_is_unconfirmed_refresh_or_retry_the_last_sub_f3127c94")}
         </div>}
       </Show>
-      <GuidanceQueueControls sessionId={props.chat.currentSessionId} queue={queue} onPreview={props.onPreviewImage} />
+      <Show when={!props.semantic}>
+        <GuidanceQueueControls sessionId={props.chat.currentSessionId} queue={queue} onPreview={props.onPreviewImage} />
+      </Show>
+      <Show when={props.semantic && props.reference}>
+        {(reference) => <div class="mx-2 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
+          <span>{text("ticket_reference", { title: reference().title })}</span>
+          <button type="button" class="underline" disabled={props.ingress.pending} onClick={props.onClearReference}>
+            {text("ticket_clear_reference_b2e538a2")}
+          </button>
+        </div>}
+      </Show>
+      <Show when={props.semantic && props.ingress.starting}>
+        <p role="status" class="mx-2 mb-2 text-xs text-muted-foreground">{text("ticket_starting")}</p>
+      </Show>
+      <Show when={props.semantic && !props.ingress.starting && (props.ingress.error || props.ingress.pending && !props.ingress.busy)}>
+        <div role="alert" class="mx-2 mb-2 text-xs text-destructive">
+          {props.ingress.error ?? text("ticket_the_previous_message_is_not_confirmed_retry_w_7369504e")}
+          <Show when={props.ingress.canRetryStart}>
+            <button type="button" class="ml-2 underline" onClick={() => void props.ingress.retryExecute()}>
+              {text("ticket_retry_start_47d5cd3e")}
+            </button>
+          </Show>
+        </div>
+      </Show>
+      <Show when={commandNotice()?.key === draftKey()}><p role="alert" class="mx-2 mb-2 text-xs text-destructive">
+        {commandNotice()?.message}
+      </p></Show>
       <div class="min-w-0 rounded-3xl border bg-background p-2"
         onDragOver={(event) => {
           if (event.dataTransfer?.types.includes("Files")) event.preventDefault()
@@ -258,7 +315,7 @@ export function ComposerPanel(props: {
               <Square class="size-3.5" />
             </Button>
           </Show>
-          <Show when={!props.chat.sending || queuedSend()}>
+          <Show when={!props.chat.sending || queuedSend() || props.semantic}>
             <Button size="icon" class="rounded-full" type="button"
               aria-label={text(queuedSend() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
               disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||

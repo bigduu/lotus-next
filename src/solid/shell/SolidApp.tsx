@@ -1,4 +1,4 @@
-import { FileDiff, FolderClosed, PanelLeftOpen, PanelRightOpen, WifiOff, Workflow } from "@lucide/solid"
+import { FileDiff, FolderClosed, ListChecks, PanelLeftOpen, PanelRightOpen, WifiOff, Workflow } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, lazy, Loading, onSettled, Show } from "solid-js"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
@@ -11,7 +11,7 @@ import { markSessionRead } from "@/lib/sessionReadMarkers"
 import { setSessionSection } from "@/lib/projectSidebarPreferences"
 import { assignSessionToSection } from "@/lib/projectSidebarWrites"
 import { sessionHasLiveWork } from "@/lib/sessionBackgroundTasks"
-import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
+import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { Button } from "../ui/button"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "../ui/responsive-dialog"
@@ -19,9 +19,14 @@ import type { HistoryReadingAnchor } from "../history/VirtualHistory"
 import { createChat } from "../chat/createChat"
 import { ChatViewport } from "../chat/ChatViewport"
 import { ComposerPanel } from "../chat/ComposerPanel"
+import { createRootModeAuthority } from "../chat/model/createRootModeAuthority"
+import { createTicketIngress } from "../chat/createTicketIngress"
+import { createTicketWork } from "../workbench/work/createTicketWork"
+import { TicketWorkAvailability } from "../workbench/work/TicketWorkAvailability"
+import type { PendingRequest } from "@services/tickets/types"
 import { RunInteractions } from "../chat/RunInteractions"
 import { createStoreSelector } from "../state/createStoreSelector"
-import { ThemePreferences } from "../ThemePreferences"
+import type { SettingsTab } from "../settings/SettingsPage"
 import { Sidebar } from "./Sidebar"
 import { createProjectSections } from "./createProjectSections"
 import { createUiText } from "./uiText"
@@ -43,15 +48,16 @@ import { Onboarding } from "./Onboarding"
 import { CommandPalette } from "./CommandPalette"
 import { GoalSection } from "../workbench/inspector/GoalSection"
 
+const WorkflowRunsDialog = lazy(() => import("../workbench/workflows/WorkflowRunsDialog"), { export: "WorkflowRunsDialog" })
+const TicketWorkPanel = lazy(() => import("../workbench/work/TicketWorkPanel"), { export: "TicketWorkPanel" })
 const WorktreeManager = lazy(() => import("../workspace/WorktreeManager"), { export: "WorktreeManager" })
-const SettingsPermissions = lazy(() => import("../settings/permissions/SettingsPermissions"), { export: "SettingsPermissions" })
+const SettingsPage = lazy(() => import("../settings/SettingsPage"), { export: "SettingsPage" })
 const SubagentsPane = lazy(() => import("../workbench/subagents/SubagentsPane"), { export: "SubagentsPane" })
 const SessionTaskDag = lazy(() => import("../workbench/tasks/SessionTaskDag"), { export: "SessionTaskDag" })
 const RightWorkbench = lazy(() => import("../workbench/RightWorkbench"), { export: "RightWorkbench" })
 const BrowserPaneView = lazy(() => import("../workbench/browser/BrowserPane"), { export: "BrowserPaneView" })
 const ReviewPane = lazy(() => import("../workbench/ReviewPane"), { export: "ReviewPane" })
 
-const SettingsProviders = lazy(() => import("../settings/SettingsProviders"), { export: "SettingsProviders" })
 
 type SectionIntent = { projectId: string; sectionId?: string | null }
 type ConfirmSession = { chat: ChatItem; action: "delete" | "clear" }
@@ -67,6 +73,7 @@ function sidebarWidth() {
 export function SolidApp(props: { ownerAccess: boolean }) {
   const text = createUiText()
   const [settingsOpen, setSettingsOpen] = createSignal(false)
+  const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general")
   const [projectsOpen, setProjectsOpen] = createSignal(false)
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false)
   const [worktreeManager, setWorktreeManager] = createSignal<"unopened" | "open" | "closed">("unopened")
@@ -76,6 +83,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
+  const [workflowSession, setWorkflowSession] = createSignal<string | null>(null)
   const [containerWidth, setContainerWidth] = createSignal(window.innerWidth)
   const [usedSidebarWidth, setSidebarWidth] = createSignal(sidebarWidth())
   let paletteOpener: HTMLElement | null = null
@@ -97,6 +105,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const openError = (error: unknown) => setNotice({ text: getErrorMessage(error), error: true })
   let navigationVersion = 0
   const currentSession = () => chat.currentSessionId
+  createEffect(currentSession, (id) => { if (workflowSession() !== id) setWorkflowSession(null) })
   const selectedWorktreePath = () => {
     const worktree = pickedWorktree()
     return !currentSession() && worktree?.projectId === newSession()?.projectId ? worktree?.path ?? null : null
@@ -107,6 +116,35 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const sessionView = createMemo(() => ({ id: currentSession() }), {
     equals: (previous, next) => previous?.id === next.id,
   })
+  const rootAuthority = createRootModeAuthority(currentSession, () => chat.currentChat?.kind)
+  const workEnabled = () => Boolean(chat.currentChat && isDefaultSupervisor(chat.currentChat))
+  const workAuthorityKey = () => {
+    const authority = rootAuthority.authority
+    return authority ? JSON.stringify([authority.birthToken, authority.epoch, authority.enabled]) : ""
+  }
+  const tickets = createTicketWork({
+    sessionId: currentSession,
+    ownerAccess: () => props.ownerAccess,
+    authorityKey: workAuthorityKey,
+    authorityBlocked: () => rootAuthority.unsafe,
+    deferRead: () => rootAuthority.loading && !rootAuthority.authority && !rootAuthority.unsafe,
+  })
+  const ingress = createTicketIngress(currentSession, () => rootAuthority.unsafe || chat.executionCompatibility.blocked)
+  const ticketScope = () => tickets.state?.current.scope
+  const semanticComposer = () => !tickets.negotiated || ingress.pending ||
+    (ticketScope()?.capabilities?.semantic_messages_v1 === true && ticketScope()?.mutation_enabled === true &&
+      ticketScope()?.binding.supervisor_session_id === currentSession())
+  const [workReference, setWorkReference] = createSignal<{ scope: ReturnType<typeof sessionView>; request: PendingRequest } | null>(null)
+  const ticketReference = () => {
+    const replay = ingress.pending ? ingress.references : null
+    const accepted = workReference()
+    const reference = replay?.in_reply_to
+      ? { id: replay.in_reply_to, work_id: replay.thread_id ?? replay.in_reply_to }
+      : accepted?.scope === sessionView() ? accepted.request : null
+    if (!reference) return null
+    const title = tickets.state?.works[reference.work_id]?.ticket.contract.title ?? text("supervisor_work_tab")
+    return { id: reference.id, work_id: reference.work_id, title }
+  }
   const workbench = createWorkbenchState(currentSession)
   const workbenchState = workbench.state
   const desktopSidebar = () => containerWidth() >= 768 && !sidebarCollapsed()
@@ -356,7 +394,26 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         workbench={<Show when={workbenchState().open}>
           <Loading fallback={null}>
             <RightWorkbench docked={docked()} expanded={taskExpanded()} visible pageVisible={!settingsOpen()}
-              activeTab={workbenchState().tab} openToolTabs={workbenchState().tools}
+              activeTab={workbenchState().tab === "work" && !workEnabled() ? null : workbenchState().tab}
+              openToolTabs={workbenchState().tools.filter((tab) => tab !== "work" || workEnabled())}
+              workEnabled={workEnabled()}
+              work={<Show when={ticketScope()?.binding.supervisor_session_id === currentSession()} fallback={
+                <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing}
+                  canRefresh={tickets.canRefresh} onRefresh={() => { void tickets.refresh() }}
+                  canInitialize={tickets.canInitialize} initializing={tickets.initializing}
+                  initializationError={tickets.initializationError} onInitialize={() => { void tickets.initialize() }} />
+              }>
+                <TicketWorkPanel controller={tickets}
+                  onReference={tickets.canSendIngress && ticketScope()?.capabilities?.message_references_v1 === true && !ingress.pending
+                    ? (request) => {
+                        const origin = sessionView()
+                        setWorkReference({ scope: origin, request })
+                        if (!docked()) workbench.capture().setField("open", false)
+                        requestAnimationFrame(() => {
+                          if (sessionView() === origin) document.getElementById("lotus-message-input")?.focus()
+                        })
+                      } : undefined} />
+              </Show>}
               onTabChange={openWorkbenchTab} onToolClose={closeWorkbenchTool}
               tabOrder={workbenchState().order}
               onTabReorder={(order) => workbench.capture().update((state) => ({
@@ -448,6 +505,12 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
               <FolderClosed class="size-4" />
             </Button>
+            <Show when={workEnabled()}>
+              <Button size="icon" variant="ghost" aria-label={text("supervisor_work_tab")}
+                data-testid="ticket-work-status" onClick={() => openWorkbenchTab("work")}>
+                <ListChecks class="size-4" />
+              </Button>
+            </Show>
             <Show when={taskList().length > 0}>
               <Button size="icon" variant="ghost" aria-label={text("session_task_dag_title")}
                 onClick={() => openWorkbenchTab("task-dag")}> <Workflow class="size-4" /> </Button>
@@ -472,7 +535,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           <RunInteractions chat={chat} workspace={displayWorkspace()} />
           <ComposerPanel chat={chat} workspacePath={displayWorkspace()} projectId={newSession()?.projectId ?? null}
             selectedWorktreePath={selectedWorktreePath()} draftEpoch={draftEpoch()} navigationVersion={() => navigationVersion}
+            rootAuthority={rootAuthority} ingress={ingress} semantic={semanticComposer()}
+            reference={ticketReference()} onClearReference={() => setWorkReference(null)} canSendIngress={tickets.canSendIngress}
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
+            onOpenWorkflowRuns={(id) => { if (id === currentSession()) setWorkflowSession(id) }}
             onPreviewImage={setImage} captureSessionCreated={() => {
               const intent = newSession()
               return (id) => sessionCreated(id, intent)
@@ -481,21 +547,18 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         </ResizableLayout>
       </div>
       <Show when={settingsOpen()}>
-        <div class="min-h-0 flex-1 overflow-y-auto" data-slot="settings-page">
-          <div class="mx-auto grid w-full max-w-4xl gap-4 px-4 py-6">
-            <div class="flex items-center gap-2">
-              <Button variant="ghost" onClick={() => setSettingsOpen(false)}>{text("close_settings_77b17fc4")}</Button>
-              <h1 class="text-lg font-semibold">{text("system_settings_68ea5dd4")}</h1>
-            </div>
-            <ThemePreferences preference={theme().themePreference} />
-            <Show when={props.ownerAccess}>
-              <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
-                <SettingsProviders />
-                <SettingsPermissions ownerAccess={props.ownerAccess} />
-              </Loading>
-            </Show>
-          </div>
-        </div>
+        <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
+          <SettingsPage ownerAccess={props.ownerAccess} tab={settingsTab()} onTabChange={setSettingsTab}
+            onClose={() => setSettingsOpen(false)} />
+        </Loading>
+      </Show>
+      <Show when={!settingsOpen() && workflowSession() === currentSession() && workflowSession()} keyed>
+        {(id) => <Loading fallback={null}>
+          <WorkflowRunsDialog sessionId={id} sessionTitle={chat.currentChat?.title ?? id}
+            projectId={chat.currentChat?.config?.projectId}
+            projectName={projects()[chat.currentChat?.config?.projectId ?? ""]?.name}
+            onClose={() => setWorkflowSession(null)} />
+        </Loading>}
       </Show>
       <Onboarding />
       <Show when={workspaceOpen()}>

@@ -56,6 +56,10 @@ export function MessageBody(props: {
           const message = entry()
           return "paths" in message ? message.displayText : message.content
         }
+        const reference = () => {
+          const message = entry()
+          return "inReplyTo" in message ? message.inReplyTo : null
+        }
         const images = () => {
           const message = entry()
           return "images" in message ? message.images : undefined
@@ -63,6 +67,9 @@ export function MessageBody(props: {
         return (
           <div class="ml-auto w-fit max-w-[min(100%,48rem)] rounded-2xl px-4 py-2.5"
             style={{ background: "var(--user-message-background)", color: "var(--user-message-foreground)" }}>
+            <Show when={reference()}>
+              <div class="mb-1 text-xs" data-testid="message-request-reference">{text("ticket_referenced_request__7209ca36")}{reference()}</div>
+            </Show>
             <div class="whitespace-pre-wrap break-words" data-user-file-reference={fileReference() ? "" : undefined}>
               {content()}
             </div>

@@ -9,17 +9,17 @@ import { getSessionCompatibilitySnapshot, isSessionExecutionBlocked, subscribeSe
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { createStoreSelector } from "../../state/createStoreSelector"
 import type { createChat } from "../createChat"
-import { createRootModeAuthority } from "./createRootModeAuthority"
+import type { createRootModeAuthority } from "./createRootModeAuthority"
 import { createThinkingMode } from "./createThinkingMode"
 
 export function createComposerModelControls(input: {
   chat: ReturnType<typeof createChat>
   draftKey: Accessor<string>
   disabled: Accessor<boolean>
+  root: ReturnType<typeof createRootModeAuthority>
 }) {
   const sessionId = () => input.chat.currentSessionId
-  const sessionKind = () => input.chat.currentChat?.kind
-  const root = createRootModeAuthority(sessionId, sessionKind)
+  const root = input.root
   createEffect(
     () => [sessionId(), input.chat.currentChat?.isRunning === true] as const,
     ([id, running], previous) => {
