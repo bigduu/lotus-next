@@ -53,7 +53,7 @@ import { SettingsJiandu } from "@/components/chat/settings/SettingsJiandu"
 import { SettingsModelLimits } from "@/components/chat/settings/SettingsModelLimits"
 import { SettingsRetry } from "@/components/chat/settings/SettingsRetry"
 import { SettingsConfigShare } from "@/components/chat/settings/SettingsConfigShare"
-import "./Settings.css"
+import "@/shared/theme/settings.css"
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   useUiLocale()

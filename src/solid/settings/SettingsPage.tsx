@@ -7,7 +7,7 @@ import { createStoreSelector } from "../state/createStoreSelector"
 import { createUiText } from "../shell/uiText"
 import { Button } from "../ui/button"
 import { SettingsGeneral } from "./SettingsGeneral"
-import "../../components/chat/Settings.css"
+import "@/shared/theme/settings.css"
 
 const SettingsProviders = lazy(() => import("./SettingsProviders"), { export: "SettingsProviders" })
 const SettingsRetry = lazy(() => import("./retry/SettingsRetry"), { export: "SettingsRetry" })

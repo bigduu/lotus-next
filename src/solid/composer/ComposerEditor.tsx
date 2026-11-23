@@ -12,7 +12,7 @@ import {
   type ComposerFocusSnapshot,
   type ComposerInputHandle,
 } from "@/components/chat/composerEditorCore"
-import "@/components/chat/ComposerEditor.css"
+import "@/shared/theme/composer-editor.css"
 
 export type { ComposerFocusSnapshot, ComposerInputHandle, FileSuggestion } from "@/components/chat/composerEditorCore"
 

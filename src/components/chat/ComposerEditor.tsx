@@ -14,7 +14,7 @@ import {
   type ComposerFocusSnapshot,
   type ComposerInputHandle,
 } from "./composerEditorCore"
-import "./ComposerEditor.css"
+import "@/shared/theme/composer-editor.css"
 
 export type { ComposerFocusSnapshot, ComposerInputHandle, FileSuggestion } from "./composerEditorCore"
 

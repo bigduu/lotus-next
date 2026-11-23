@@ -4,7 +4,7 @@ import i18n from "@shared/i18n/runtime"
 import { uiText } from "@shared/i18n/text"
 import { themeStore, type ThemeState } from "@shared/store/themeState"
 import { Button } from "./ui/button"
-import "../components/chat/Settings.css"
+import "@/shared/theme/settings.css"
 
 const choices = [
   { mode: "light", label: "light_aa0819df", Icon: Sun },
