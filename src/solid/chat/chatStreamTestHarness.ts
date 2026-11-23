@@ -108,12 +108,15 @@ export function useChatStreamFixture() {
     vi.restoreAllMocks()
   })
 
-  return async function mount(bound?: string | null, observe?: (chat: Chat) => void) {
+  return async function mount(bound?: string | null, options: {
+    observe?: (chat: Chat) => void
+    pageVisible?: () => boolean
+  } = {}) {
     const pane = createRoot((dispose) => {
       roots.add(dispose)
       const [id, setId] = createSignal(bound ?? null)
-      const chat = createChat(bound === undefined ? undefined : id)
-      observe?.(chat)
+      const chat = createChat(bound === undefined ? undefined : id, undefined, { pageVisible: options.pageVisible })
+      options.observe?.(chat)
       return {
         chat,
         rebind: (next: string | null) => settleChat(() => setId(next)),

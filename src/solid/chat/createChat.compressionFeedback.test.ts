@@ -35,7 +35,7 @@ async function mountCompressionRun(observe?: (chat: Chat) => void) {
   const sessionId = "synthetic-compression-session"
   feedSessions([session(sessionId)])
   const stream = queueStream(sessionId, null)
-  const pane = await mount(sessionId, observe)
+  const pane = await mount(sessionId, { observe })
   await send(pane.chat, "synthetic compression lifecycle")
   return { pane, stream, sessionId }
 }
