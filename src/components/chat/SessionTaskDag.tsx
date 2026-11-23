@@ -1,4 +1,4 @@
-import { ChevronDown, Maximize2, Minimize2, Minus, Plus, Scan, X } from "lucide-react"
+import { Check, ChevronDown, Maximize2, Minimize2, Minus, Plus, Scan, X } from "lucide-react"
 import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { uiList, uiText, useUiLocale } from "@shared/i18n/ui"
 import { useAppStore } from "@shared/store/appStore"
@@ -21,8 +21,28 @@ const taskStatus = {
 
 function TaskStatus({ status }: { status: TaskItem["status"] }) {
   const { label, color } = taskStatus[status] ?? taskStatus.pending
+  const checkmark = useRef<SVGSVGElement>(null)
+  const previousStatus = useRef(status)
+  useLayoutEffect(() => {
+    const justCompleted = status === "completed" && previousStatus.current !== "completed"
+    previousStatus.current = status
+    const icon = checkmark.current
+    if (!justCompleted || !icon) return
+    const document = icon.ownerDocument
+    if (document.hidden || document.body.dataset.vdiSafe === "true" ||
+      document.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return
+    const animation = icon.animate?.([
+      { opacity: 0.4, transform: "scale(0.65)" },
+      { opacity: 1, transform: "scale(1.18)", offset: 0.65 },
+      { opacity: 1, transform: "scale(1)" },
+    ], { duration: 280, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" })
+    return () => animation?.cancel()
+  }, [status])
   return <span className={cn("inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium", color)}>
-    <span className="size-1.5 rounded-full" style={{ backgroundColor: "currentColor" }} aria-hidden="true" />
+    <span className="inline-flex size-3 shrink-0 items-center justify-center" aria-hidden="true">
+      {status === "completed" ? <Check ref={checkmark} className="size-3" strokeWidth={2.5} />
+        : <span className="size-1.5 rounded-full" style={{ backgroundColor: "currentColor" }} />}
+    </span>
     {uiText(label)}
   </span>
 }

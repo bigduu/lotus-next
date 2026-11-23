@@ -134,16 +134,46 @@ async function prepare(page: Page, info: TestInfo, { multipleSessions = false, r
     )).toBe(String(seq))
   }
   const barrier = () => emitChange({ type: "task_list_updated", session_id: primary })
+  const reconnect = async () => {
+    const previousSocket = socket!
+    channels.clear()
+    await previousSocket.close({ code: 4000, reason: "Synthetic connection drop" })
+    await expect.poll(() => socket !== previousSocket && channels.has("feed")).toBe(true)
+  }
   return { page, info, phone, theme, locale, observation, requests, clientFrames, events, protocolErrors, channels, barrier,
-    copy, emit, emitChange, status, budget, summary,
+    copy, emit, emitChange, reconnect, status, budget, summary,
     notice: page.getByTestId("context-compression-notice"),
   }
 }
 
 type Fixture = Awaited<ReturnType<typeof prepare>>
 
+async function observeCompletionChecks(page: Page) {
+  await page.addInitScript(() => {
+    type AnimatedElement = {
+      matches(selector: string): boolean
+      closest(selector: string): unknown
+      getAttribute(name: string): string | null
+      setAttribute(name: string, value: string): void
+    }
+    const { Element: { prototype } } = globalThis as unknown as {
+      Element: { prototype: { animate(this: AnimatedElement, ...args: unknown[]): unknown } }
+    }
+    const original = prototype.animate
+    prototype.animate = function (...args) {
+      if (this.matches("svg.lucide-check") && this.closest("#right-workbench")) {
+        const count = Number(this.getAttribute("data-e2e-check-plays") ?? "0") + 1
+        this.setAttribute("data-e2e-check-plays", String(count))
+      }
+      return original.apply(this, args)
+    }
+  })
+}
+
 test("Session DAG opens in the workbench, fits a large graph and shows live task details", async ({ page }, info) => {
+  await observeCompletionChecks(page)
   const f = await prepare(page, info)
+  await page.emulateMedia({ reducedMotion: "no-preference" })
   const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
   const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
   await expect(shortcut).toHaveCount(0)
@@ -171,6 +201,9 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
   const graph = card.getByRole("region", { name: f.copy("session_task_dag_dependencies"), exact: true })
   await expect(graph.locator("path[marker-end]")).toHaveCount(8)
   await expect(graph.locator("path[stroke-dasharray]")).toHaveCount(1)
+  const savedCheck = graph.getByRole("button", { name: /Prepare the evidence/ }).locator("svg.lucide-check")
+  await expect(savedCheck).toHaveCount(1)
+  expect(await savedCheck.getAttribute("data-e2e-check-plays")).toBeNull()
   const zoom = (key: "session_task_dag_zoom_in" | "session_task_dag_zoom_out" | "session_task_dag_fit") =>
     card.getByRole("button", { name: f.copy(key), exact: true }).click()
   await zoom("session_task_dag_zoom_in")
@@ -211,9 +244,14 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
   await expect(steps.getByRole("listitem")).toHaveCount(3)
   const lotus = steps.getByRole("listitem").filter({ hasText: "Check Lotus source" })
   await expect(lotus).toContainText(f.copy("ticket_in_progress_5026a63b"))
-  f.emit({ type: "task_list_item_progress", session_id: primary, item_id: "lotus",
-    status: "completed", tool_calls_count: 1, version: 4 })
+  const completion = { type: "task_list_item_progress", session_id: primary, item_id: "lotus",
+    status: "completed", tool_calls_count: 1, version: 4 }
+  f.emit(completion)
   await expect(lotus).toContainText(f.copy("completed_f28461bb"))
+  const check = graph.getByRole("button", { name: /Check Lotus source/ }).locator("svg.lucide-check")
+  await expect(check).toHaveAttribute("data-e2e-check-plays", "1")
+  await f.emitChange(completion)
+  await expect(check).toHaveAttribute("data-e2e-check-plays", "1")
   await expect(card.getByText(f.phone ? "已完成 4 / 9" : "4 of 9 complete", { exact: true })).toBeVisible()
   await capture(f, "session-task-dag")
   if (info.project.name === "desktop-chromium") {
@@ -224,8 +262,10 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
   await verifyIsolation(f)
 })
 
-test("Session DAG catches up from the durable feed while the viewer is idle", async ({ page }, info) => {
+test("Session DAG keeps task states current on the idle feed and after reconnect with reduced motion", async ({ page }, info) => {
+  await observeCompletionChecks(page)
   const f = await prepare(page, info, { running: false })
+  await page.emulateMedia({ reducedMotion: "reduce" })
   const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
   const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
   await expect(shortcut).toHaveCount(0)
@@ -240,11 +280,29 @@ test("Session DAG catches up from the durable feed while the viewer is idle", as
   await expect(review).toContainText(f.copy("session_task_dag_pending"))
   const completed = f.phone ? "已完成 1 / 1" : "1 of 1 complete"
   const progress = { type: "task_list_item_progress", session_id: primary, item_id: task.id, tool_calls_count: 1 }
+  const reviewCheck = review.locator("svg.lucide-check")
+  await f.emitChange({ ...progress, status: "in_progress", version: 6 })
+  await expect(review).toContainText(f.copy("ticket_in_progress_5026a63b"))
+  await f.emitChange({ ...progress, status: "blocked", version: 7 })
   await f.emitChange({ ...progress, status: "completed", version: 6 })
+  await expect(review).toContainText(f.copy("session_task_dag_blocked"))
+  await expect(reviewCheck).toHaveCount(0)
+  await f.emitChange({ ...progress, status: "completed", version: 8 })
   await expect(review).toContainText(f.copy("completed_f28461bb"))
+  await expect(reviewCheck).toHaveCount(1)
+  expect(await reviewCheck.getAttribute("data-e2e-check-plays")).toBeNull()
   await f.emitChange({ type: "task_list_updated", task_list: saved, version: 4 })
   await f.emitChange({ ...progress, status: "in_progress", version: 5 })
   await expect(card.getByText(completed, { exact: true })).toBeVisible()
+
+  const followUp = { ...task, id: "follow-up", description: "Follow up on the evidence", status: "blocked", depends_on: [task.id] }
+  await page.route(`**/api/v1/task/${primary}`, (route) => route.fulfill({
+    json: { ...saved, items: [{ ...task, status: "completed" }, followUp], version: 9 },
+  }))
+  await f.reconnect()
+  await expect(card.getByRole("button", { name: /Follow up on the evidence/ }))
+    .toContainText(f.copy("session_task_dag_blocked"))
+  await expect(card.getByText(f.phone ? "已完成 1 / 2" : "1 of 2 complete", { exact: true })).toBeVisible()
   expect(f.clientFrames).not.toContainEqual(expect.objectContaining({ type: "subscribe", ch: `agent.${primary}` }))
   await verifyIsolation(f)
 })
