@@ -1,4 +1,4 @@
-import { BookOpen, Cpu, Gauge, Plug, Settings2, ShieldCheck, X } from "@lucide/solid"
+import { BookOpen, Cpu, Gauge, Plug, RotateCw, Settings2, ShieldCheck, X } from "@lucide/solid"
 import { createMemo, createUniqueId, For, lazy, Loading, Show } from "solid-js"
 import { Dynamic, type JSX } from "@solidjs/web"
 import { ADVANCED_ONLY_SETTINGS_TABS, experienceModeStore } from "@shared/store/experienceModeState"
@@ -9,6 +9,7 @@ import { SettingsGeneral } from "./SettingsGeneral"
 import "../../components/chat/Settings.css"
 
 const SettingsProviders = lazy(() => import("./SettingsProviders"), { export: "SettingsProviders" })
+const SettingsRetry = lazy(() => import("./retry/SettingsRetry"), { export: "SettingsRetry" })
 const SettingsSkills = lazy(() => import("./skills/SettingsSkills"), { export: "SettingsSkills" })
 const SettingsMcp = lazy(() => import("./mcp/SettingsMcp"), { export: "SettingsMcp" })
 const SettingsModelLimits = lazy(() => import("./model-limits/SettingsModelLimits"), { export: "SettingsModelLimits" })
@@ -21,6 +22,7 @@ const groups = [
   { label: "settings_group_connections", tabs: [
     { id: "providers", label: "provider_9e218722", icon: Cpu, owner: true },
     { id: "model-limits", label: "model_limits_05ff605e", icon: Gauge, owner: true },
+    { id: "retry", label: "retry_settings_1a7c4e91", icon: RotateCw, owner: true },
     { id: "mcp", label: "MCP", icon: Plug, owner: true },
   ] },
   { label: "settings_group_capabilities", tabs: [
@@ -38,6 +40,7 @@ const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
   general: () => <SettingsGeneral />,
   providers: () => <SettingsProviders />,
   "model-limits": () => <SettingsModelLimits />,
+  retry: () => <SettingsRetry />,
   mcp: () => <SettingsMcp />,
   skills: () => <SettingsSkills />,
   permissions: (owner) => <SettingsPermissions ownerAccess={owner} />,

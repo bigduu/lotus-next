@@ -43,7 +43,7 @@ const walk = (directory) => {
       }
       if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isJsxText(node)) && /\p{Script=Han}/u.test(node.text)) {
         const text = node.text.trim()
-        // Catastrophic pre-React startup deliberately remains dependency-free and bilingual.
+        // Fatal startup fallback deliberately remains dependency-free and bilingual.
         if (path !== bootstrapFallbackPath && !(localeSwitcherPaths.has(path) && permittedNativeNames.has(text))) report(node, `Unlocalized application literal ${JSON.stringify(text)}`)
       }
       if (ts.isTemplateExpression(node) && /\p{Script=Han}/u.test(node.head.text + node.templateSpans.map((s) => s.literal.text).join(""))) report(node, "Unlocalized template literal")
