@@ -4,7 +4,7 @@ import type { SectionUpdate } from "@/lib/projectSidebarWrites"
 import { commitSessionOrder, rankSessionAt, sessionOrderSnapshot, sortSessionIds } from "@/lib/sidebarSessionOrderState"
 import {
   validSidebarDrop, type SidebarDragPickup, type SidebarDragState, type SidebarDropTarget,
-} from "@/components/app/sidebarDrag"
+} from "@/lib/workbench/sidebarDrag"
 
 interface Options {
   state: () => SidebarDragState

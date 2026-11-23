@@ -4,7 +4,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { ChatItem } from "@shared/types/chatMessages"
 import type { PatchProjectRequest, ProjectManifest } from "@services/project"
 import { ApiError } from "@services/api"
-import type { SidebarProjectDragProps, SidebarDragParts, SidebarDragPickup } from "./sidebarDrag"
+import type { SidebarProjectDragProps, SidebarDragParts } from "./sidebarDrag"
+import type { SidebarDragPickup } from "@/lib/workbench/sidebarDrag"
 const dragHarness = vi.hoisted(() => ({ current: null as SidebarProjectDragProps | null }))
 vi.mock("./SidebarProjectDrag", () => {
   const Handle: SidebarDragParts["Handle"] = ({ source, label, disabled }) => <button data-sidebar-drag-handle={`${source.kind}:${source.id}`} aria-label={label} disabled={disabled} />

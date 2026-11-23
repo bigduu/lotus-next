@@ -36,7 +36,8 @@ import { cn } from "@/lib/utils"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { getErrorMessage } from "@services/api/errors"
 import type { ChatItem } from "@shared/types/chatMessages"
-import type { SidebarDragParts, SidebarDragPickup, SidebarDropTarget } from "./sidebarDrag"
+import type { SidebarDragParts } from "./sidebarDrag"
+import type { SidebarDragPickup, SidebarDropTarget } from "@/lib/workbench/sidebarDrag"
 import { confirmedProjectRevision } from "@shared/store/appStore/slices/projectSlice"
 
 const SidebarProjectDrag = lazy(() => import("./SidebarProjectDrag"))

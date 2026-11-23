@@ -4,12 +4,13 @@ import { GripVertical } from "lucide-react"
 import { Feedback } from "@dnd-kit/dom"
 import { useUiText } from "@shared/i18n/ui"
 import { useAppStore } from "@shared/store/appStore"
-import { workbenchSensors } from "./workbenchSensors"
-import { workbenchDragCancellation } from "./workbenchDragCancellation"
+import { workbenchSensors } from "@/lib/workbench/workbenchSensors"
+import { workbenchDragCancellation } from "@/lib/workbench/workbenchDragCancellation"
 import {
   sidebarDragSource, sidebarDropTarget, validSidebarSource, validSidebarDrop,
-  type SidebarDragPickup, type SidebarDragParts, type SidebarProjectDragProps,
-} from "./sidebarDrag"
+  type SidebarDragPickup,
+} from "@/lib/workbench/sidebarDrag"
+import type { SidebarDragParts, SidebarProjectDragProps } from "./sidebarDrag"
 
 const Handle: SidebarDragParts["Handle"] = ({ source, label, disabled }) => {
   const { ref, isDragging } = useDraggable({ id: JSON.stringify([source.kind, source.projectId, source.id]), data: source, disabled,

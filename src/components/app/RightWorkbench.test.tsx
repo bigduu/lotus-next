@@ -1,6 +1,6 @@
 import { Feedback } from "@dnd-kit/dom"
 import type { DragDropManager } from "@dnd-kit/react"
-import * as cancellationModule from "./workbenchDragCancellation"
+import * as cancellationModule from "@/lib/workbench/workbenchDragCancellation"
 import type { WorkbenchTabDrag } from "./workbenchSurfaceContext"
 import { act, lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"

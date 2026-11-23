@@ -6,9 +6,9 @@ import { appStore } from "@shared/store/appStore/state"
 import {
   sidebarDragSource, sidebarDropTarget, validSidebarDrop, validSidebarSource,
   type SidebarDragPickup, type SidebarDragSource, type SidebarDragState, type SidebarDropTarget,
-} from "@/components/app/sidebarDrag"
-import { workbenchDragCancellation } from "@/components/app/workbenchDragCancellation"
-import { workbenchSensors } from "@/components/app/workbenchSensors"
+} from "@/lib/workbench/sidebarDrag"
+import { workbenchDragCancellation } from "@/lib/workbench/workbenchDragCancellation"
+import { workbenchSensors } from "@/lib/workbench/workbenchSensors"
 import { createUiText } from "../uiText"
 
 interface HandleProps {
