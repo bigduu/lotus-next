@@ -79,7 +79,6 @@ const rawEndpointOwners = new Set([
   "src/shared/i18n/resources/zh-CN.ts",
 ]);
 const providerEndpointDebt = new Map([
-  ["src/components/chat/settings/providers/InstanceEditor.tsx", new Set(["https://api.openai.com/v1"])],
   [
     "src/lib/providerPresets.ts",
     new Set([
@@ -185,7 +184,6 @@ const expectedInventory = {
     "src/runtime/runtimeConfig.ts": 5,
   },
   "provider-endpoint-debt": {
-    "src/components/chat/settings/providers/InstanceEditor.tsx": 1,
     "src/lib/providerPresets.ts": 4,
     "src/shared/i18n/runtime.ts": 1,
     "src/shared/i18n/resources/en-US.ts": 2,
