@@ -32,38 +32,39 @@ type RowActions = {
 type ReasoningPart = Extract<ProcessPart, { kind: "reasoning" }>
 type ToolPart = Extract<ProcessPart, { kind: "tools" }>
 
-function DisclosurePanel(props: ComponentProps<"div"> & { expanded: boolean }) {
+function DisclosurePanel(props: ComponentProps<"div"> & { expanded: boolean; trigger: () => HTMLButtonElement }) {
+  let panel!: HTMLDivElement
+  createEffect(() => props.expanded, (expanded, previous) => {
+    // The owner may also close the disclosure directly. Return its internal
+    // focus before the browser makes the focused descendant inert.
+    if (previous && !expanded && panel.contains(panel.ownerDocument.activeElement)) props.trigger()?.focus({ preventScroll: true })
+    panel.toggleAttribute("inert", !expanded)
+    panel.setAttribute("aria-hidden", String(!expanded))
+  })
   return (
-    <div data-disclosure-panel="" data-state={props.expanded ? "open" : "closed"}
-      aria-hidden={props.expanded ? "false" : "true"} inert={!props.expanded}
-      class={cn("disclosure-panel", props.class)} {...omit(props, "children", "class", "expanded")}>
+    <div ref={(element) => { panel = element }} data-disclosure-panel="" data-state={props.expanded ? "open" : "closed"}
+      class={cn("disclosure-panel", props.class)} {...omit(props, "children", "class", "expanded", "trigger")}>
       <div class="disclosure-panel-clip">{props.children}</div>
     </div>
   )
-}
-
-function toggleDisclosure(trigger: HTMLButtonElement, disclosure: HistoryDisclosure, key: string) {
-  const doc = trigger.ownerDocument
-  const panel = doc.getElementById(trigger.getAttribute("aria-controls") ?? "")
-  if (disclosure.isOpen(key) && panel?.contains(doc.activeElement)) trigger.focus({ preventScroll: true })
-  disclosure.toggle(key)
 }
 
 function Reasoning(props: { part: ReasoningPart; rowKey: string; disclosure: HistoryDisclosure }) {
   const text = createUiText()
   const id = createUniqueId()
   const open = () => props.disclosure.isOpen(props.rowKey)
+  let trigger!: HTMLButtonElement
   return (
     <div class="px-3.5">
-      <button type="button" aria-expanded={open() ? "true" : "false"} aria-controls={id} data-reasoning-toggle=""
-        onClick={(event) => toggleDisclosure(event.currentTarget, props.disclosure, props.rowKey)}
+      <button ref={(element) => { trigger = element }} type="button" aria-expanded={open() ? "true" : "false"} aria-controls={id} data-reasoning-toggle=""
+        onClick={() => props.disclosure.toggle(props.rowKey)}
         class="reasoning-toggle inline-flex items-center gap-1.5 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground">
         <Brain class="reasoning-brain size-3.5 shrink-0" aria-hidden="true" />
         <span>{text("reasoning_a62acb18")}</span>
         <ChevronRight aria-hidden="true"
           class={cn("reasoning-chevron size-3.5 transition-transform duration-(--motion-normal) ease-(--motion-ease)", open() && "rotate-90")} />
       </button>
-      <DisclosurePanel expanded={open()}>
+      <DisclosurePanel expanded={open()} trigger={() => trigger}>
         <div id={id} tabindex={open() ? 0 : -1} role="region" aria-label={text("reasoning_a62acb18")}
           class="mb-1.5 mt-1 max-h-32 overflow-y-auto overscroll-contain whitespace-pre-wrap border-l-2 border-border pl-2.5 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           {props.part.text}
@@ -80,30 +81,33 @@ function hasCall(part: ToolPart, id: string) {
     && message.toolCalls.some((call) => call.toolCallId === id))
 }
 
-function canAnimateHandoff() {
-  return document.body.dataset.vdiSafe !== "true" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+function canAnimateProcess() {
+  return document.body.dataset.vdiSafe !== "true" && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+}
+
+function processMotion(element: HTMLElement, token: "--motion-fast" | "--motion-normal") {
+  const styles = getComputedStyle(element)
+  const time = styles.getPropertyValue(token).trim()
+  const duration = Number.parseFloat(time) * (time.endsWith("ms") ? 1 : 1_000)
+  return {
+    duration: Number.isFinite(duration) ? duration : token === "--motion-fast" ? 140 : 220,
+    easing: styles.getPropertyValue("--motion-ease").trim() || "cubic-bezier(0.2, 0.8, 0.2, 1)",
+  }
 }
 
 function ToolHandoff(props: { onFinish: () => void; children: ComponentProps<"div">["children"] }) {
   let element!: HTMLDivElement
   onSettled(() => {
-    if (!canAnimateHandoff() || typeof element.animate !== "function") {
+    if (!canAnimateProcess() || typeof element.animate !== "function") {
       props.onFinish()
       return
     }
-    const styles = getComputedStyle(element)
-    const duration = styles.getPropertyValue("--motion-normal").trim()
-    const milliseconds = Number.parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1_000)
     const height = `${element.getBoundingClientRect().height}px`
     const animation = element.animate([
-      { height, opacity: 1, transform: "translateY(0)" },
-      { height, opacity: 1, transform: "translateY(0)", offset: 0.35 },
+      { height, opacity: 1, transform: "translateY(0) scale(1)", offset: 0 },
+      { height, opacity: 1, transform: "translateY(0) scale(1)", offset: 0.35 },
       { height: "0px", opacity: 0, transform: "translateY(-12px) scale(0.98)" },
-    ], {
-      duration: Number.isFinite(milliseconds) ? milliseconds : 220,
-      easing: styles.getPropertyValue("--motion-ease").trim() || "ease",
-      fill: "forwards",
-    })
+    ], { ...processMotion(element, "--motion-normal"), fill: "forwards" })
     void animation.finished.then(props.onFinish, () => {})
     return () => animation.cancel()
   })
@@ -123,7 +127,7 @@ function ProcessPreview(props: RowActions & { item: ProcessItem; open: boolean }
   createEffect(() => [current(), props.open] as const, ([preview, open]) => {
     const old = previous
     previous = preview
-    if (open || !canAnimateHandoff()) setLeaving(undefined)
+    if (open || !canAnimateProcess()) setLeaving(undefined)
     else if (old && old.id !== preview?.id) {
       const part = props.item.parts.findLast((entry): entry is ToolPart => entry.kind === "tools" && hasCall(entry, old.id))
       setLeaving({ id: old.id, part: part ?? old.part })
@@ -137,12 +141,24 @@ function ProcessPreview(props: RowActions & { item: ProcessItem; open: boolean }
             disclosure={props.disclosure} onPreviewImage={props.onPreviewImage} />
         </ToolHandoff>
       )}</Show>
-      <Show when={current()}>{(entry) => (
-        <div data-process-current="">
-          <ToolActivity part={entry().part} groupKey={props.item.key} active preview previewCallId={entry().id}
-            disclosure={props.disclosure} onPreviewImage={props.onPreviewImage} />
-        </div>
-      )}</Show>
+      <Show when={current()}>{(entry) => {
+        let element!: HTMLDivElement
+        const currentId = createMemo(() => entry().id)
+        createEffect(currentId, () => {
+          if (!canAnimateProcess() || typeof element.animate !== "function") return
+          const animation = element.animate([
+            { opacity: 0, transform: "translateY(4px)" },
+            { opacity: 1, transform: "translateY(0)" },
+          ], processMotion(element, "--motion-fast"))
+          return () => animation.cancel()
+        })
+        return (
+          <div ref={(node) => { element = node }} data-process-current="">
+            <ToolActivity part={entry().part} groupKey={props.item.key} active preview previewCallId={entry().id}
+              disclosure={props.disclosure} onPreviewImage={props.onPreviewImage} />
+          </div>
+        )
+      }}</Show>
     </div>
   )
 }
@@ -151,6 +167,7 @@ function Process(props: RowActions & { item: ProcessItem; live?: boolean }) {
   const text = createUiText()
   const contentId = createUniqueId()
   const open = () => props.disclosure.isOpen(props.item.key)
+  let trigger!: HTMLButtonElement
   const count = createMemo(() => toolCallCount([props.item]))
   const label = createMemo(() => {
     const start = itemTimestamp(props.item)
@@ -187,13 +204,13 @@ function Process(props: RowActions & { item: ProcessItem; live?: boolean }) {
       <Show when={props.item.parts.length} fallback={
         <div data-process-status="" role="status" class="process-activity-toggle cursor-default rounded-sm text-xs">{summary()}</div>
       }>
-        <button type="button" data-process-toggle="" aria-label={label()} aria-expanded={open() ? "true" : "false"}
+        <button ref={(element) => { trigger = element }} type="button" data-process-toggle="" aria-label={label()} aria-expanded={open() ? "true" : "false"}
           aria-controls={contentId} class="process-activity-toggle rounded-sm text-xs"
-          onClick={(event) => toggleDisclosure(event.currentTarget, props.disclosure, props.item.key)}>
+          onClick={() => props.disclosure.toggle(props.item.key)}>
           {summary()}
         </button>
         <Show when={props.live}><ProcessPreview {...props} open={open()} /></Show>
-        <DisclosurePanel id={contentId} data-process-content="" role="region" aria-label={label()} expanded={open()}
+        <DisclosurePanel id={contentId} data-process-content="" role="region" aria-label={label()} expanded={open()} trigger={() => trigger}
           class="process-activity-content">
           <div class="process-activity-content-body">
             <div class="-mx-3.5 flex flex-col gap-2">
@@ -233,6 +250,7 @@ function FoldedTurn(props: RowActions & { item: TurnCollapseItem }) {
   const text = createUiText()
   const contentId = createUniqueId()
   const open = () => props.disclosure.isOpen(props.item.key)
+  let trigger!: HTMLButtonElement
   const detail = createMemo(() => {
     const { startedAt, finishedAt, toolCalls } = props.item
     const elapsed = startedAt !== null && finishedAt !== null ? formatElapsedDuration(finishedAt - startedAt, text) : null
@@ -242,15 +260,15 @@ function FoldedTurn(props: RowActions & { item: TurnCollapseItem }) {
   })
   return (
     <div data-turn-collapse={props.item.key} data-expansion-key={props.item.key}>
-      <button type="button" data-turn-toggle="" aria-expanded={open() ? "true" : "false"} aria-controls={contentId}
+      <button ref={(element) => { trigger = element }} type="button" data-turn-toggle="" aria-expanded={open() ? "true" : "false"} aria-controls={contentId}
         aria-label={detail()} class="flex w-full items-center gap-3 py-1 text-xs text-muted-foreground"
-        onClick={(event) => toggleDisclosure(event.currentTarget, props.disclosure, props.item.key)}>
+        onClick={() => props.disclosure.toggle(props.item.key)}>
         <span class="h-px flex-1 bg-border" aria-hidden="true" />
         <span class="whitespace-nowrap" data-turn-brief="">{detail()}</span>
         <ChevronRight class={cn("size-3 shrink-0", open() && "rotate-90")} aria-hidden="true" />
         <span class="h-px flex-1 bg-border" aria-hidden="true" />
       </button>
-      <DisclosurePanel id={contentId} expanded={open()} class="turn-collapse-content">
+      <DisclosurePanel id={contentId} expanded={open()} trigger={() => trigger} class="turn-collapse-content">
         <div class="flex flex-col gap-2 pt-1">
           <For each={props.item.items} keyed={renderItemKey}>{(item) => <RenderHistoryRow {...props} item={item()} />}</For>
         </div>
