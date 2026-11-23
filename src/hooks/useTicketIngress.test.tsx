@@ -9,7 +9,7 @@ import { useTicketIngress } from "./useTicketIngress"
 
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { postOnce: vi.fn() } }))
 vi.mock("@services/chat/AgentService", () => ({ agentClient: { execute: vi.fn() } }))
-vi.mock("@shared/store/appStore", () => ({ useAppStore: { getState: () => ({ loadChatHistory: async () => {} }) } }))
+vi.mock("@shared/store/appStore/state", () => ({ appStore: { getState: () => ({ loadChatHistory: async () => {} }) } }))
 let root: Root, container: HTMLDivElement, ingress: ReturnType<typeof useTicketIngress>
 function Harness() { ingress = useTicketIngress("ticket-root"); return null }
 function NavigationHarness({ sessionId }: { sessionId: string }) { ingress = useTicketIngress(sessionId); return null }
