@@ -485,7 +485,7 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
   await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
   await page.getByRole("menuitem", { name: "检查器" }).click()
   const tablist = panel.getByRole("tablist", { name: "工作面板标签页" })
-  const order = () => tablist.locator('[role="tab"]').allTextContents()
+  const order = () => tablist.getByRole("tab").allTextContents()
   await expect.poll(order).toEqual(["Alpha", "Beta", "检查器"])
   const inspectorHandle = panel.getByRole("button", { name: "调整检查器标签页顺序" })
   await inspectorHandle.focus()

@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Camera, Code2, ExternalLink, Globe2, LoaderCircl
 import { matchesActiveBrowserPage, pointInBrowserFrame } from "@/lib/browserFrame"
 import { normalizeBrowserAddress, playwrightKey } from "@/lib/browserInput"
 import { FileOperationsService } from "@shared/services/FileOperationsService"
+import type { BrowserProfileMode } from "@services/browser/types"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
 import { BrowserProfileSelector } from "./BrowserProfileSelector"
@@ -46,6 +47,7 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
   const browser = () => props.browser
   const [address, setAddress] = createSignal("")
   const enteredAddress = () => props.newTabEntry ? props.entryDraft ?? address() : address()
+  const [profileDraft, setProfileDraft] = createSignal<{ sessionId: string; mode: BrowserProfileMode } | null>(null)
   const [addressError, setAddressError] = createSignal<string | null>(null)
   const [saveError, setSaveError] = createSignal<string | null>(null)
   const [promptInput, setPromptInput] = createSignal<{ dialogId: string; value: string; edited: boolean } | null>(null)
@@ -280,6 +282,8 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
       <summary class="cursor-pointer text-muted-foreground">{uiText("browser_profile_label")}</summary>
       <div class="pt-2"><BrowserProfileSelector
         sessionId={session} profile={browser().profilePhase === "unknown" ? { kind: "unreported" } : browser().profile} phase={browser().profilePhase === "closed" ? "closed" : "active"}
+        nextMode={profileDraft()?.sessionId === session ? profileDraft()!.mode : "shared"}
+        onNextModeChange={(mode) => { if (props.sessionId === session) setProfileDraft({ sessionId: session, mode }) }}
         pending={browser().busy || browser().loading || dialogBlocked()}
         actions={browser().profilePhase === "unknown" ? undefined : { openDefault: (id) => { void browser().openDefault(id) }, openClean: (id) => { void browser().openClean(id) }, open: (id, mode) => { void browser().openProfile(id, mode) }, close: (id) => { void browser().closeProfile(id) } }}
       /></div>

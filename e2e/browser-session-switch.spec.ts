@@ -144,7 +144,7 @@ test("each chat restores its own browser and workbench tab order while keeping t
   expect(opened).toEqual([])
 
   const tablist = panel.getByRole("tablist", { name: "工作面板标签页" })
-  const order = () => tablist.locator('[role="tab"]').allTextContents()
+  const order = () => tablist.getByRole("tab").allTextContents()
   await panel.getByRole("button", { name: "调整检查器标签页顺序" }).press("Alt+ArrowLeft")
   await expect.poll(order).toEqual(["检查器", "Page B"])
   await page.getByRole("button", { name: "Session A", exact: true }).click()

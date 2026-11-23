@@ -1,4 +1,4 @@
-import { createSignal, createUniqueId, Show } from "solid-js"
+import { createUniqueId, Show } from "solid-js"
 import type { BrowserProfileMode } from "@services/browser/types"
 import type { BrowserProfileReport } from "@services/browser/profileMode"
 import { createUiText } from "../../shell/uiText"
@@ -15,6 +15,8 @@ interface BrowserProfileSelectorProps {
   sessionId: string
   profile: BrowserProfileReport
   phase: "active" | "closed"
+  nextMode: BrowserProfileMode
+  onNextModeChange: (mode: BrowserProfileMode) => void
   pending?: boolean
   notice?: "mode_conflict"
   actions?: BrowserProfileActions
@@ -23,11 +25,6 @@ interface BrowserProfileSelectorProps {
 export function BrowserProfileSelector(props: BrowserProfileSelectorProps) {
   const text = createUiText()
   const selectId = createUniqueId()
-  const [draft, setDraft] = createSignal<{ sessionId: string; mode: BrowserProfileMode } | null>(null)
-  const selected = () => {
-    const current = draft()
-    return current?.sessionId === props.sessionId ? current.mode : "shared"
-  }
 
   return (
     <Show when={props.profile.kind === "reported"} fallback={
@@ -65,13 +62,13 @@ export function BrowserProfileSelector(props: BrowserProfileSelectorProps) {
           <form class="flex flex-col gap-2" onSubmit={(event) => {
             event.preventDefault()
             if (props.pending || props.phase !== "closed") return
-            props.actions?.open(props.sessionId, selected())
+            props.actions?.open(props.sessionId, props.nextMode)
           }}>
             <label for={selectId}>{text("browser_profile_next_mode")}</label>
-            <select id={selectId} class="h-9 min-w-0 rounded-md border bg-background px-2" value={selected()} disabled={props.pending}
+            <select id={selectId} class="h-9 min-w-0 rounded-md border bg-background px-2" value={props.nextMode} disabled={props.pending}
               onChange={(event) => {
                 const mode = event.currentTarget.value
-                if (mode === "shared" || mode === "clean") setDraft({ sessionId: props.sessionId, mode })
+                if (mode === "shared" || mode === "clean") props.onNextModeChange(mode)
               }}>
               <option value="shared">{text("browser_profile_shared")}</option>
               <option value="clean">{text("browser_profile_clean")}</option>

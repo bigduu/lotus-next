@@ -81,8 +81,11 @@ const userMessage = (error: unknown, text: ReturnType<typeof createUiText>): str
   return text("the_browser_is_unavailable_right_now_try_again_93656b3a")
 }
 
-export function createBrowserSession(sessionId: Accessor<string | null>, active: Accessor<boolean>) {
+export function createBrowserSession(readSessionId: Accessor<string | null>, readActive: Accessor<boolean>) {
   const text = createUiText()
+  // Workbench order and selection can change while this same browser stays live.
+  const sessionId = createMemo(readSessionId)
+  const active = createMemo(readActive)
   const [state, setState] = createSignal<BrowserState | null>(null)
   const [readySessionId, setReadySessionId] = createSignal<string | null>(null)
   const [frame, setFrame] = createSignal<DisplayedBrowserFrame | null>(null)
