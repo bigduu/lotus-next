@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, Errored, For, lazy, Loading, Show, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js"
 import { ArrowRight, Copy, FileDiff, FolderGit2, X } from "@lucide/solid"
 import { appStore, selectCurrentChat } from "@shared/store/appStore/state"
 import { providerStore } from "@shared/store/appStore/slices/providerState"
@@ -13,6 +13,7 @@ import { Button } from "../../ui/button"
 import { ActorSnapshotPanel } from "./ActorSnapshotPanel"
 import { createManagedNavigation } from "./createManagedNavigation"
 import { GoalSection } from "./GoalSection"
+import { LazySupervisorManagedSessionsPanel } from "./LazySupervisorManagedSessionsPanel"
 import { ContextUsageDetails, InspectorRow, PrefixCacheDetails } from "./UsageDetails"
 
 export interface InspectorProps {
@@ -178,19 +179,10 @@ function ChangeCounts(props: { added: number; removed: number }) {
 function SupervisorExtras(props: { active: boolean; actors: (input: { active: boolean }) => ReturnType<typeof ActorSnapshotPanel> }) {
   const text = createUiText()
   const [auxiliaryOpen, setAuxiliaryOpen] = createSignal(false)
-  const [attempt, setAttempt] = createSignal(1)
   const openSession = createManagedNavigation(() => props.active)
   const Actors = untrack(() => props.actors)
   return <>
-    <Show when={attempt()} keyed>{(_attempt) => {
-      const Panel = lazy(() => import("./SupervisorManagedSessions"), { export: "SupervisorManagedSessionsPanel" })
-      return <Errored fallback={() => <div role="alert" class="text-sm">
-        <p>{text("supervisor_sessions_render_failed")}</p>
-        <button type="button" class="mt-2 underline" onClick={() => setAttempt((value) => value + 1)}>{text("retry_b8784c8d")}</button>
-      </div>}><Loading fallback={<p role="status" class="text-xs text-muted-foreground">{text("supervisor_sessions_loading")}</p>}>
-        <Panel active={props.active} onSelectSession={openSession} />
-      </Loading></Errored>
-    }}</Show>
+    <LazySupervisorManagedSessionsPanel active={props.active} onSelectSession={openSession} />
     <details class="rounded-lg border p-3" onToggle={(event) => setAuxiliaryOpen(event.currentTarget.open)} data-testid="supervisor-auxiliary-agents">
       <summary class="cursor-pointer text-xs font-medium text-muted-foreground">{text("supervisor_sessions_auxiliary")}</summary>
       <div class="mt-3"><Actors active={auxiliaryOpen() && props.active} /></div>

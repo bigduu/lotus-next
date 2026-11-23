@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 import { currentUserManagedSessionsFixture, currentUserScopeFixture } from "../../src/services/supervisorScope/testFixtures"
 import { actorSnapshotFixture } from "../../src/test/fixtures/actorSnapshot.js"
-import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
+import { artifactFileForSource, installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
 
 const supervisor = "bamboo-default-supervisor"
 const ordinary = "inspector-root"
@@ -161,4 +161,50 @@ test("Solid Supervisor Inspector loads current-user scope and auxiliary actors o
   await expect(auxiliary.getByRole("tree")).toBeVisible()
   expect(fixture.snapshots).toContain(supervisor)
   expect(fixture.observation.pageErrors).toEqual([])
+})
+
+test("Supervisor directory chunk recovers in place while the Inspector stays usable", async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "One built Supervisor directory chunk recovery case")
+  const source = "src/solid/workbench/inspector/SupervisorManagedSessions.tsx"
+  const [original, alternate] = await Promise.all([
+    artifactFileForSource(source),
+    artifactFileForSource(`${source}?supervisor-sessions-retry`),
+  ])
+  expect(original).not.toBe(alternate)
+  const fixture = await prepare(page, baseURL, supervisor)
+  const hold = Promise.withResolvers<void>()
+  const requests: string[] = []
+  let navigations = 0
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations += 1 })
+  await page.route("**/assets/SupervisorManagedSessions-*.js", async (route) => {
+    const asset = new URL(route.request().url()).pathname.slice(1)
+    requests.push(asset)
+    if (asset === original) {
+      await hold.promise
+      return route.abort("failed")
+    }
+    return route.fallback()
+  })
+  try {
+    const inspector = await openInspector(page)
+    const task = inspector.getByText("Verified fixture task", { exact: true })
+    await expect(task).toBeVisible()
+    await expect(inspector.getByRole("status")).toBeVisible()
+    await expect.poll(() => requests).toEqual([original])
+    expect(fixture.directoryQueries).toEqual([])
+    hold.resolve()
+    const alert = inspector.getByRole("alert")
+    await expect(alert).toBeVisible()
+    await expect(task).toBeVisible()
+    await alert.getByRole("button", { name: "重试", exact: true }).click()
+    await expect(inspector.getByTestId("supervisor-managed-panel").getByText("Managed target", { exact: true })).toBeVisible()
+    await expect(task).toBeVisible()
+    expect(requests).toEqual([original, alternate])
+    expect(fixture.directoryQueries).toEqual([""])
+    expect(fixture.boundReads).toEqual([])
+    expect(navigations).toBe(0)
+    expect(fixture.observation.pageErrors).toEqual([])
+  } finally {
+    hold.resolve()
+  }
 })

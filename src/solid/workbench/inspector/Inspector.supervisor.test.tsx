@@ -1,7 +1,7 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { createSignal, flush, untrack } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
-import { useAppStore } from "@shared/store/appStore"
+import { appStore } from "@shared/store/appStore/state"
 import { createInitialExecutionState } from "@shared/store/appStore/slices/executionStateSlice/reducer"
 import { agentClient, type SessionSummary } from "@services/chat/AgentService"
 import { managedSessionsClient } from "@services/supervisorScope/managedSessions"
@@ -9,20 +9,38 @@ import { currentUserManagedSessionsFixture } from "@services/supervisorScope/tes
 import type { ChatItem } from "@shared/types/chatMessages"
 import { Inspector } from "./Inspector"
 const managed = vi.hoisted(() => ({ select: null as null | ((id: string, selection?: unknown, valid?: () => boolean) => Promise<boolean>) }))
-vi.mock("./ActorSnapshotPanel", () => ({ ActorSnapshotPanel: ({ active }: { active: boolean }) => <div data-testid="actor-view" data-active={String(active)} /> }))
+vi.mock("./ActorSnapshotPanel", () => ({ ActorSnapshotPanel: (props: { active: boolean }) => <div data-testid="actor-view" data-active={String(props.active)} /> }))
 vi.mock("./SupervisorManagedSessions", () => ({ SupervisorManagedSessionsPanel: ({ onSelectSession }: { onSelectSession: (id: string) => Promise<boolean> }) => {
-  managed.select = onSelectSession
+  managed.select = untrack(() => onSelectSession)
   return <div data-testid="managed-view" />
 } }))
-Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-const roots: Root[] = []
-const initial = useAppStore.getState()
-afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); useAppStore.setState(initial, true); managed.select = null; vi.restoreAllMocks(); document.body.replaceChildren() })
+vi.mock("@lucide/solid", () => ({ ArrowRight: () => null, Copy: () => null, FileDiff: () => null, FolderGit2: () => null, X: () => null }))
+vi.mock("./GoalSection", () => ({ GoalSection: () => null }))
+
+function dispatch(action: () => void) {
+  action()
+  flush()
+}
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 5; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
+const roots: Array<() => void> = []
+const initial = appStore.getState()
+afterEach(() => { for (const dispose of roots.splice(0)) dispose(); appStore.setState(initial, true); managed.select = null; vi.restoreAllMocks(); document.body.replaceChildren() })
 async function renderSession(chat: Omit<ChatItem, "config" | "createdAt">) {
-  useAppStore.setState({ chats: [{ ...chat, createdAt: 0, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } }], currentSessionId: chat.id, loadTaskList: vi.fn().mockResolvedValue(undefined) })
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => root.render(<Inspector embedded open sessionId={chat.id} onClose={() => {}} onCopySessionId={() => {}} />))
-  return root
+  appStore.setState({ chats: [{ ...chat, createdAt: 0, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } }], currentSessionId: chat.id, loadTaskList: vi.fn().mockResolvedValue(undefined) })
+  const [open, setOpen] = createSignal(true)
+  const host = document.body.appendChild(document.createElement("div"))
+  roots.push(render(() => <Inspector open={open()} sessionId={chat.id} onCopySessionId={() => {}} />, host))
+  await settle(() => {})
+  if (chat.id === "bamboo-default-supervisor") {
+    await vi.waitFor(() => { flush(); expect(managed.select).toBeTypeOf("function") })
+  }
+  return () => dispatch(() => setOpen(false))
 }
 it("places managed sessions first and keeps Supervisor Child topology collapsed and inactive", async () => {
   await renderSession({ id: "bamboo-default-supervisor", title: "Bodhi", kind: "root", messages: [] })
@@ -30,7 +48,7 @@ it("places managed sessions first and keeps Supervisor Child topology collapsed 
   const details = document.querySelector<HTMLDetailsElement>('[data-testid="supervisor-auxiliary-agents"]')!
   expect(managed.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
   expect(details.open).toBe(false); expect(details.querySelector('[data-testid="actor-view"]')?.getAttribute("data-active")).toBe("false")
-  act(() => { details.open = true; details.dispatchEvent(new Event("toggle")) })
+  dispatch(() => { details.open = true; details.dispatchEvent(new Event("toggle")) })
   expect(details.querySelector('[data-testid="actor-view"]')?.getAttribute("data-active")).toBe("true")
 })
 it.each([
@@ -51,12 +69,12 @@ const summaryFor = (target: { session_id: string; kind: "root" | "child"; root_s
   model: "synthetic", message_count: 0, has_attachments: false, is_running: false,
 })
 async function navigation() {
-  const root = await renderSession({ id: supervisor, title: "Supervisor", kind: "root", messages: [] })
-  const source = useAppStore.getState().chats[0]
-  const select = vi.fn((id: string | null) => useAppStore.setState({ currentSessionId: id }))
-  act(() => useAppStore.setState({ chats: [source, { ...source, id: "target", title: "Cold target", messages: [] }],
+  const close = await renderSession({ id: supervisor, title: "Supervisor", kind: "root", messages: [] })
+  const source = appStore.getState().chats[0]
+  const select = vi.fn((id: string | null) => appStore.setState({ currentSessionId: id }))
+  dispatch(() => appStore.setState({ chats: [source, { ...source, id: "target", title: "Cold target", messages: [] }],
     restoreSession: vi.fn().mockResolvedValue(true), selectSession: select }))
-  return { root, select }
+  return { close, select }
 }
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -66,56 +84,56 @@ function deferred<T>() {
 // Match the store contract: an opt-in history read confirms its target before applying.
 const stagedHistory = () => vi.fn(async (id: string, options?: { beforeApply?: () => Promise<boolean>; canApply?: () => boolean; selectOnApply?: boolean }) => {
   if ((options?.beforeApply && !await options.beforeApply()) || (options?.canApply && !options.canApply())) throw new DOMException("History read discarded", "AbortError")
-  if (options?.selectOnApply) useAppStore.setState({ currentSessionId: id, latestActiveSessionId: id })
+  if (options?.selectOnApply) appStore.setState({ currentSessionId: id, latestActiveSessionId: id })
 })
 it("hydrates persisted history before selecting an idle managed target opened for the first time", async () => {
   const { select } = await navigation(), history = deferred<void>()
   const load = vi.fn(async (id: string) => {
     await history.promise
-    useAppStore.setState((state) => ({ chats: state.chats.map((chat) => chat.id !== id ? chat : { ...chat,
+    appStore.setState((state) => ({ chats: state.chats.map((chat) => chat.id !== id ? chat : { ...chat,
       messages: [{ id: "persisted", role: "assistant", type: "text", content: "Saved target history", createdAt: "2026-10-25T00:00:00Z" }] }) }))
   })
-  act(() => useAppStore.setState({ loadChatHistory: load }))
+  dispatch(() => appStore.setState({ loadChatHistory: load }))
   let opening!: Promise<boolean>
-  await act(async () => { opening = managed.select!("target") })
+  await settle(async () => { opening = managed.select!("target") })
   expect(load).toHaveBeenCalledExactlyOnceWith("target", { throwOnError: true })
   expect(select).not.toHaveBeenCalled()
-  expect(useAppStore.getState().currentSessionId).toBe(supervisor)
-  await act(async () => { history.resolve(); await opening })
+  expect(appStore.getState().currentSessionId).toBe(supervisor)
+  await settle(async () => { history.resolve(); await opening })
   expect(select).toHaveBeenCalledExactlyOnceWith("target")
-  expect(useAppStore.getState().chats.find((chat) => chat.id === "target")?.messages[0]).toMatchObject({ content: "Saved target history" })
+  expect(appStore.getState().chats.find((chat) => chat.id === "target")?.messages[0]).toMatchObject({ content: "Saved target history" })
 })
 it("does not hydrate or select a late restored target after the user selects another session", async () => {
   const { select } = await navigation(), restored = deferred<boolean>(), load = vi.fn()
-  act(() => useAppStore.setState({ restoreSession: vi.fn(() => restored.promise), loadChatHistory: load }))
+  dispatch(() => appStore.setState({ restoreSession: vi.fn(() => restored.promise), loadChatHistory: load }))
   let opening!: Promise<boolean>
-  await act(async () => { opening = managed.select!("target") })
-  act(() => useAppStore.setState({ currentSessionId: "other" }))
-  await act(async () => { restored.resolve(true); expect(await opening).toBe(false) })
+  await settle(async () => { opening = managed.select!("target") })
+  dispatch(() => appStore.setState({ currentSessionId: "other" }))
+  await settle(async () => { restored.resolve(true); expect(await opening).toBe(false) })
   expect(load).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled()
-  expect(useAppStore.getState().currentSessionId).toBe("other")
+  expect(appStore.getState().currentSessionId).toBe("other")
 })
 it("a slow managed history read cannot override a newer user selection", async () => {
   const { select } = await navigation(), history = deferred<void>(), load = vi.fn(() => history.promise)
-  act(() => useAppStore.setState({ loadChatHistory: load }))
+  dispatch(() => appStore.setState({ loadChatHistory: load }))
   let opening!: Promise<boolean>
-  await act(async () => { opening = managed.select!("target") })
+  await settle(async () => { opening = managed.select!("target") })
   expect(load).toHaveBeenCalledExactlyOnceWith("target", { throwOnError: true })
-  act(() => useAppStore.setState({ currentSessionId: "other" }))
-  await act(async () => { history.resolve(); expect(await opening).toBe(false) })
+  dispatch(() => appStore.setState({ currentSessionId: "other" }))
+  await settle(async () => { history.resolve(); expect(await opening).toBe(false) })
   expect(select).not.toHaveBeenCalled()
-  expect(useAppStore.getState().currentSessionId).toBe("other")
+  expect(appStore.getState().currentSessionId).toBe("other")
 })
 it("closing the Inspector retires an unfinished managed navigation before selection", async () => {
-  const { root, select } = await navigation(), history = deferred<void>(), load = vi.fn(() => history.promise)
-  act(() => useAppStore.setState({ loadChatHistory: load }))
+  const { close, select } = await navigation(), history = deferred<void>(), load = vi.fn(() => history.promise)
+  dispatch(() => appStore.setState({ loadChatHistory: load }))
   let opening!: Promise<boolean>
-  await act(async () => { opening = managed.select!("target") })
+  await settle(async () => { opening = managed.select!("target") })
   expect(load).toHaveBeenCalledExactlyOnceWith("target", { throwOnError: true })
-  act(() => root.render(<Inspector embedded open={false} sessionId={supervisor} onClose={() => {}} onCopySessionId={() => {}} />))
-  await act(async () => { history.resolve(); expect(await opening).toBe(false) })
+  close()
+  await settle(async () => { history.resolve(); expect(await opening).toBe(false) })
   expect(select).not.toHaveBeenCalled()
-  expect(useAppStore.getState().currentSessionId).toBe(supervisor)
+  expect(appStore.getState().currentSessionId).toBe(supervisor)
 })
 
 
@@ -125,8 +143,8 @@ it("refuses a current-user target replaced before the open click", async () => {
   const changed = { ...target, authority_sha256: "e".repeat(64) }
   vi.spyOn(managedSessionsClient, "read").mockResolvedValue({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: changed }] })
   const restore = vi.fn().mockResolvedValue(true), load = vi.fn().mockResolvedValue(undefined)
-  act(() => useAppStore.setState({ restoreSession: restore, loadChatHistory: load }))
-  await act(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(false) })
+  dispatch(() => appStore.setState({ restoreSession: restore, loadChatHistory: load }))
+  await settle(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(false) })
   expect(restore).not.toHaveBeenCalled(); expect(load).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled()
 })
 it("does not start navigation when the user switches sessions during target revalidation", async () => {
@@ -134,11 +152,11 @@ it("does not start navigation when the user switches sessions during target reva
   const target = { ...fixture.sessions[0]!.current_user_target!, session_id: "target", root_session_id: "target" }
   vi.spyOn(managedSessionsClient, "read").mockReturnValue(pending.promise)
   const restore = vi.fn().mockResolvedValue(true), load = vi.fn().mockResolvedValue(undefined)
-  act(() => useAppStore.setState({ restoreSession: restore, loadChatHistory: load }))
+  dispatch(() => appStore.setState({ restoreSession: restore, loadChatHistory: load }))
   let opening!: Promise<boolean>
-  await act(async () => { opening = managed.select!("target", { target, supervisor: fixture.scope.supervisor }) })
-  act(() => useAppStore.setState({ currentSessionId: "other" }))
-  await act(async () => { pending.resolve({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: target }] }); expect(await opening).toBe(false) })
+  await settle(async () => { opening = managed.select!("target", { target, supervisor: fixture.scope.supervisor }) })
+  dispatch(() => appStore.setState({ currentSessionId: "other" }))
+  await settle(async () => { pending.resolve({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: target }] }); expect(await opening).toBe(false) })
   expect(restore).not.toHaveBeenCalled(); expect(load).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled()
 })
 
@@ -149,11 +167,11 @@ it("opens a matching current-user target only after fresh checks before and afte
   const target = { ...fixture.sessions[0]!.current_user_target!, session_id: "target", root_session_id: "target" }
   const read = vi.spyOn(managedSessionsClient, "read").mockResolvedValue({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: target }] })
   const load = stagedHistory()
-  act(() => useAppStore.setState((state) => ({ loadChatHistory: load, chats: state.chats.map((chat) => chat.id === "target"
+  dispatch(() => appStore.setState((state) => ({ loadChatHistory: load, chats: state.chats.map((chat) => chat.id === "target"
     ? { ...chat, kind: "root", rootSessionId: "target", parentSessionId: null, createdAt: Date.parse(target.created_at), createdAtExact: target.created_at, config: { ...chat.config, projectId: null } } : chat) })))
-  await act(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(true) })
+  await settle(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(true) })
   expect(read).toHaveBeenCalledTimes(2); expect(load).toHaveBeenCalledExactlyOnceWith("target", expect.objectContaining({ throwOnError: true, beforeApply: expect.any(Function) }))
-  expect(useAppStore.getState().currentSessionId).toBe("target")
+  expect(appStore.getState().currentSessionId).toBe("target")
 })
 it("does not select a target whose canonical identity changes during its history read", async () => {
   const { select } = await navigation(), fixture = currentUserManagedSessionsFixture()
@@ -161,9 +179,9 @@ it("does not select a target whose canonical identity changes during its history
   const entry = { ...fixture.sessions[0]!, session_id: "target", current_user_target: target }
   vi.spyOn(managedSessionsClient, "read").mockResolvedValueOnce({ ...fixture, sessions: [entry] })
     .mockResolvedValueOnce({ ...fixture, sessions: [{ ...entry, current_user_target: { ...target, ancestry_sha256: "f".repeat(64) } }] })
-  act(() => useAppStore.setState((state) => ({ loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
+  dispatch(() => appStore.setState((state) => ({ loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
     ? { ...chat, kind: "root", rootSessionId: "target", parentSessionId: null, createdAt: Date.parse(target.created_at), createdAtExact: target.created_at, config: { ...chat.config, projectId: null } } : chat) })))
-  await act(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(false) })
+  await settle(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(false) })
   expect(select).not.toHaveBeenCalled()
 })
 
@@ -173,8 +191,8 @@ it("does not load history into a cached session with a different birth identity"
   const target = { ...fixture.sessions[0]!.current_user_target!, session_id: "target", root_session_id: "target" }
   vi.spyOn(managedSessionsClient, "read").mockResolvedValue({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: target }] })
   const load = vi.fn().mockResolvedValue(undefined)
-  act(() => useAppStore.setState({ loadChatHistory: load }))
-  await act(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(false) })
+  dispatch(() => appStore.setState({ loadChatHistory: load }))
+  await settle(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(false) })
   expect(load).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled()
 })
 
@@ -186,34 +204,34 @@ it("refreshes stale cached Project metadata for the same observed lifetime", asy
   vi.spyOn(managedSessionsClient, "read").mockResolvedValue({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: target }] })
   const detail = summaryFor(target), stage = vi.fn().mockResolvedValue([detail])
   vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: detail })
-  act(() => useAppStore.setState((state) => ({ stageSessionForNavigation: stage, loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
+  dispatch(() => appStore.setState((state) => ({ stageSessionForNavigation: stage, loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
     ? { ...chat, kind: "root", rootSessionId: "target", parentSessionId: null, createdAt: Date.parse(target.created_at), createdAtExact: target.created_at, config: { ...chat.config, projectId: "p1" } } : chat) })))
-  await act(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(true) })
-  expect(stage).toHaveBeenCalledExactlyOnceWith(detail); expect(useAppStore.getState().currentSessionId).toBe("target")
+  await settle(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(true) })
+  expect(stage).toHaveBeenCalledExactlyOnceWith(detail); expect(appStore.getState().currentSessionId).toBe("target")
 })
 it("does not select a cache replaced while the final canonical check is pending", async () => {
   const { select } = await navigation(), fixture = currentUserManagedSessionsFixture(), pending = deferred<typeof fixture>()
   const target = { ...fixture.sessions[0]!.current_user_target!, session_id: "target", root_session_id: "target" }
   const stable = { ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: target }] }
   const read = vi.spyOn(managedSessionsClient, "read").mockResolvedValueOnce(stable).mockReturnValueOnce(pending.promise)
-  act(() => useAppStore.setState((state) => ({ loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
+  dispatch(() => appStore.setState((state) => ({ loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
     ? { ...chat, kind: "root", rootSessionId: "target", parentSessionId: null, createdAt: Date.parse(target.created_at), createdAtExact: target.created_at, config: { ...chat.config, projectId: null } } : chat) })))
   let opening!: Promise<boolean>
-  await act(async () => { opening = managed.select!("target", { target, supervisor: fixture.scope.supervisor }); await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2)) })
-  act(() => useAppStore.setState((state) => ({ chats: state.chats.map((chat) => chat.id === "target" ? { ...chat, createdAt: chat.createdAt + 1 } : chat) })))
-  await act(async () => { pending.resolve(stable); expect(await opening).toBe(false) }); expect(select).not.toHaveBeenCalled()
+  await settle(async () => { opening = managed.select!("target", { target, supervisor: fixture.scope.supervisor }); await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2)) })
+  dispatch(() => appStore.setState((state) => ({ chats: state.chats.map((chat) => chat.id === "target" ? { ...chat, createdAt: chat.createdAt + 1 } : chat) })))
+  await settle(async () => { pending.resolve(stable); expect(await opening).toBe(false) }); expect(select).not.toHaveBeenCalled()
 })
 it("does not select when its originating directory guard expires during final revalidation", async () => {
   const { select } = await navigation(), fixture = currentUserManagedSessionsFixture(), pending = deferred<typeof fixture>()
   const target = { ...fixture.sessions[0]!.current_user_target!, session_id: "target", root_session_id: "target" }
   const stable = { ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: "target", current_user_target: target }] }
   const read = vi.spyOn(managedSessionsClient, "read").mockResolvedValueOnce(stable).mockReturnValueOnce(pending.promise)
-  act(() => useAppStore.setState((state) => ({ loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
+  dispatch(() => appStore.setState((state) => ({ loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
     ? { ...chat, kind: "root", rootSessionId: "target", parentSessionId: null, createdAt: Date.parse(target.created_at), createdAtExact: target.created_at, config: { ...chat.config, projectId: null } } : chat) })))
   let allowed = true, opening!: Promise<boolean>
-  await act(async () => { opening = managed.select!("target", { target, supervisor: fixture.scope.supervisor }, () => allowed); await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2)) })
+  await settle(async () => { opening = managed.select!("target", { target, supervisor: fixture.scope.supervisor }, () => allowed); await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2)) })
   allowed = false
-  await act(async () => { pending.resolve(stable); expect(await opening).toBe(false) }); expect(select).not.toHaveBeenCalled()
+  await settle(async () => { pending.resolve(stable); expect(await opening).toBe(false) }); expect(select).not.toHaveBeenCalled()
 })
 
 
@@ -224,10 +242,10 @@ it("refreshes a stale Child Project through its Root tree even when the child co
   vi.spyOn(managedSessionsClient, "read").mockResolvedValue({ ...fixture, sessions: [{ ...fixture.sessions[1]!, session_id: "target", current_user_target: target }] })
   const detail = summaryFor(target), stage = vi.fn().mockResolvedValue([detail])
   vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: detail })
-  act(() => useAppStore.setState((state) => ({ stageSessionForNavigation: stage, loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
+  dispatch(() => appStore.setState((state) => ({ stageSessionForNavigation: stage, loadChatHistory: stagedHistory(), chats: state.chats.map((chat) => chat.id === "target"
     ? { ...chat, kind: "child", rootSessionId: target.root_session_id, parentSessionId: target.parent_session_id, createdAt: Date.parse(target.created_at), createdAtExact: target.created_at, config: { ...chat.config, projectId: "p1" } } : chat) })))
-  await act(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(true) })
-  expect(stage).toHaveBeenCalledExactlyOnceWith(detail); expect(useAppStore.getState().currentSessionId).toBe("target")
+  await settle(async () => { expect(await managed.select!("target", { target, supervisor: fixture.scope.supervisor })).toBe(true) })
+  expect(stage).toHaveBeenCalledExactlyOnceWith(detail); expect(appStore.getState().currentSessionId).toBe("target")
 })
 
 it.each([
@@ -251,20 +269,20 @@ it.each([
   const execution = createInitialExecutionState(root.id)
   vi.spyOn(managedSessionsClient, "read").mockResolvedValue(fixture)
   vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: detail })
-  act(() => useAppStore.setState({
+  dispatch(() => appStore.setState({
     stageSessionForNavigation: stage,
     loadChatHistory: load,
     executionBySession: { [root.id]: execution },
   }))
 
   let opening!: Promise<boolean>
-  await act(async () => {
+  await settle(async () => {
     opening = managed.select!(child.session_id, { target: child, supervisor: fixture.scope.supervisor })
     await vi.waitFor(() => expect(stage).toHaveBeenCalledOnce())
   })
-  act(() => {
+  dispatch(() => {
     if (event === "unchanged execution summary" || event === "new execution") {
-      useAppStore.setState({
+      appStore.setState({
         executionBySession: {
           [root.id]: {
             ...execution,
@@ -281,13 +299,13 @@ it.each([
         "cold sibling deletion": sibling.id,
         "account-wide invalidation": undefined,
       }[event]
-      useAppStore.getState().invalidateSessionNavigation(deletedId)
+      appStore.getState().invalidateSessionNavigation(deletedId)
     }
   })
-  await act(async () => {
+  await settle(async () => {
     staged.resolve([root, detail, sibling])
     expect(await opening).toBe(opens)
   })
-  expect(useAppStore.getState().currentSessionId).toBe(opens ? child.session_id : supervisor)
+  expect(appStore.getState().currentSessionId).toBe(opens ? child.session_id : supervisor)
   expect(load).toHaveBeenCalledTimes(opens ? 1 : 0)
 })
