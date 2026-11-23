@@ -141,7 +141,7 @@ export function SubagentsPane(props: SubagentsPaneProps) {
   createEffect(() => ({
     active: props.active, childId: props.selection.childId, child: child(), rootId: props.rootId, state: state(),
   }), ({ active, childId, child, rootId, state }) => {
-    if (child || !childId || !rootId) { missingReported = null; return }
+    if (child || !childId || !rootId || childId === rootId) { missingReported = null; return }
     if (!active || !state.snapshot || state.loading || state.error || state.gapReason || state.rootId !== rootId) return
     const key = JSON.stringify([rootId, childId])
     if (missingReported === key) return
