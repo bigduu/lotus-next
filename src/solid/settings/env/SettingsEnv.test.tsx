@@ -1,13 +1,29 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { flush } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { apiClient, ApiError } from "@services/api"
 import { SettingsEnv } from "./SettingsEnv"
 
-const roots: Root[] = []
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-environment.IS_REACT_ACT_ENVIRONMENT = true
+// The fixture observes endpoint identity, receipts, and rendered state.
+vi.mock("@lucide/solid", () => ({ Plus: () => null, Trash2: () => null }))
+
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 4; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
+
+const cleanups: Array<() => void> = []
+
+// The switch primitive itself is exercised by the built Settings and plugin suites.
+vi.mock("../../ui/switch", () => ({
+  Switch: (props: { id: string; checked: boolean; disabled?: boolean; onCheckedChange: (value: boolean) => void }) =>
+    <input type="checkbox" id={props.id} role="switch" checked={props.checked} disabled={props.disabled}
+      onChange={(event) => props.onCheckedChange(event.currentTarget.checked)} />,
+}))
 
 const get = vi.fn()
 const post = vi.fn()
@@ -16,17 +32,16 @@ const del = vi.fn()
 const snapshot = (revision: number, entries: unknown[] = []) => ({ revision, entries })
 
 async function mount() {
-  const root = createRoot(document.body.appendChild(document.createElement("div")))
-  roots.push(root)
-  await act(async () => {
-    root.render(<SettingsEnv />)
-  })
+  const host = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <SettingsEnv />, host)
+  cleanups.push(() => { dispose(); host.remove() })
+  await settle(() => {})
 }
 
 async function fill(placeholder: string, value: string) {
   const input = document.querySelector<HTMLInputElement>(`input[placeholder="${placeholder}"]`)
   expect(input).not.toBeNull()
-  await act(async () => {
+  await settle(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value)
     input!.dispatchEvent(new Event("input", { bubbles: true }))
   })
@@ -47,8 +62,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+  for (const cleanup of cleanups.splice(0)) cleanup()
   vi.restoreAllMocks()
 })
 
@@ -60,10 +74,10 @@ describe("SettingsEnv", () => {
     await mount()
     await fill("名称(如 OPENAI_API_KEY)", " JEV_API_KEY ")
     await fill("值", "private-value")
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('[role="switch"]')!.click()
+    await settle(async () => {
+      document.querySelector<HTMLInputElement>('[role="switch"]')!.click()
     })
-    await act(async () => {
+    await settle(async () => {
       button("添加").click()
     })
 
@@ -84,7 +98,7 @@ describe("SettingsEnv", () => {
     )
     del.mockResolvedValue(snapshot(12))
     await mount()
-    await act(async () => {
+    await settle(async () => {
       document.querySelector<HTMLButtonElement>('[aria-label="删除 OLD_VALUE"]')!.click()
     })
 
@@ -102,12 +116,15 @@ describe("SettingsEnv", () => {
     await mount()
     await fill("名称(如 OPENAI_API_KEY)", "RETRY_ME")
     await fill("值", "PRIVATE_DRAFT_MARKER")
-    await act(async () => {
+    await settle(async () => {
       button("添加").click()
     })
 
     expect(get).toHaveBeenCalledTimes(2)
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("已刷新实际列表")
+    await vi.waitFor(() => {
+      flush()
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain("已刷新实际列表")
+    })
     expect(document.body.textContent).not.toContain("PRIVATE_BACKEND_MARKER")
     expect(document.querySelector<HTMLInputElement>('input[placeholder="值"]')?.value).toBe(
       "PRIVATE_DRAFT_MARKER",

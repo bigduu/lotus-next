@@ -1,28 +1,35 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { flush } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { SettingsPermissions } from "./SettingsPermissions"
 
 const modePath = "/bamboo/permission/default-session-mode"
 const handoffPath = "/bamboo/permission/supervisor-handoff"
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-let root: Root | undefined
+// The fixture observes endpoint identity, receipts, and rendered state.
+vi.mock("@lucide/solid", () => ({ Plus: () => null, Trash2: () => null }))
+
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 4; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
+
+const cleanups: Array<() => void> = []
 
 async function mount() {
-  environment.IS_REACT_ACT_ENVIRONMENT = true
   const host = document.body.appendChild(document.createElement("div"))
-  root = createRoot(host)
-  await act(async () => root?.render(<SettingsPermissions />))
+  const dispose = render(() => <SettingsPermissions ownerAccess />, host)
+  cleanups.push(() => { dispose(); host.remove() })
+  await settle(() => {})
   return host
 }
 
 afterEach(() => {
-  act(() => root?.unmount())
-  root = undefined
-  document.body.replaceChildren()
-  delete environment.IS_REACT_ACT_ENVIRONMENT
+  for (const cleanup of cleanups.splice(0)) cleanup()
   vi.restoreAllMocks()
 })
 
@@ -40,17 +47,20 @@ it("reloads the handoff policy on a revision conflict and waits for another deci
   const host = await mount()
   const toggle = host.querySelector<HTMLButtonElement>('button[aria-pressed]')!
   expect(toggle.getAttribute("aria-pressed")).toBe("false")
-  await act(async () => toggle.click())
+  await settle(async () => toggle.click())
 
   expect(put).toHaveBeenCalledExactlyOnceWith(handoffPath, { enabled: true, expected_revision: 7 })
   expect(get.mock.calls.filter(([path]) => path === modePath)).toEqual([
     [modePath, { cache: "no-store" }], [modePath, { cache: "no-store" }],
   ])
-  expect(toggle.getAttribute("aria-pressed")).toBe("true")
-  expect(host.querySelector('[role="alert"]')?.textContent)
-    .toBe(uiText("the_request_or_permissions_have_changed_confirm_again_u_a1ebae48"))
+  await vi.waitFor(() => {
+    flush()
+    expect(toggle.getAttribute("aria-pressed")).toBe("true")
+    expect(host.querySelector('[role="alert"]')?.textContent)
+      .toBe(uiText("the_request_or_permissions_have_changed_confirm_again_u_a1ebae48"))
+  })
 
-  await act(async () => toggle.click())
+  await settle(async () => toggle.click())
   expect(put).toHaveBeenNthCalledWith(2, handoffPath, { enabled: false, expected_revision: 8 })
   expect(toggle.getAttribute("aria-pressed")).toBe("false")
 })
