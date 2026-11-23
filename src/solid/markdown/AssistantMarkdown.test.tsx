@@ -1,44 +1,19 @@
-import { act, StrictMode } from "react"
-import { createRoot, type Root } from "react-dom/client"
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { render } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { themeStore } from "@shared/store/themeState"
+import { markdownTheme } from "../../components/chat/markdownTheme"
+import { AssistantMarkdown } from "./AssistantMarkdown"
+import { englishMarkdownText } from "./text"
 
-const { highlightCode, renderDeferredMermaid } = vi.hoisted(() => ({
-  highlightCode: vi.fn(),
-  renderDeferredMermaid: vi.fn(),
+const { highlightCode, renderMermaid } = vi.hoisted(() => ({
+  highlightCode: vi.fn(async (source: string) => source.split("\n").map((content) => [{ content, color: "inherit" }])),
+  renderMermaid: vi.fn(async () => '<svg xmlns="http://www.w3.org/2000/svg"/>'),
 }))
+vi.mock("./highlight/highlightCode", () => ({ highlightCode }))
+vi.mock("./renderMermaid", () => ({ renderMermaid }))
 
-vi.mock("@streamdown/code", () => ({
-  code: {
-    name: "shiki",
-    type: "code-highlighter",
-    getSupportedLanguages: () => ["typescript"],
-    getThemes: () => ["github-light", "github-dark-default"],
-    supportsLanguage: () => true,
-    highlight: ({ code, themes }: { code: string; themes: [unknown, unknown] }) => {
-      highlightCode({ code, themes })
-      return {
-        bg: "transparent",
-        fg: "inherit",
-        tokens: code.split("\n").map((line) => [{ content: line, color: "inherit" }]),
-      }
-    },
-  },
-}))
-
-vi.mock("./StreamdownMermaid", () => ({
-  default: ({ code }: { code: string }) => {
-    renderDeferredMermaid(code)
-    return <div data-testid="completed-mermaid">{code}</div>
-  },
-}))
-
-import { StreamdownMarkdown } from "./StreamdownMarkdown"
-import { useThemeStore } from "@/shared/store/themeStore"
-
-type MountedMarkdown = {
-  container: HTMLDivElement
-  render: (source: string, isStreaming: boolean) => Promise<void>
-}
+const mounted: (() => void)[] = []
 
 function semanticHtml(container: HTMLElement): string {
   const clone = container.cloneNode(true) as HTMLElement
@@ -48,66 +23,50 @@ function semanticHtml(container: HTMLElement): string {
   return clone.innerHTML
 }
 
-const mountedRoots: Root[] = []
-const reactActEnvironment = globalThis as typeof globalThis & {
-  IS_REACT_ACT_ENVIRONMENT?: boolean
-}
-
-beforeAll(() => {
-  reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true
-})
-
-afterAll(() => {
-  Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT")
-})
-
 beforeEach(() => {
   document.documentElement.classList.remove("dark")
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })))
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = () => "blob:assistant-markdown-fixture"
+    static revokeObjectURL = () => {}
+  })
 })
-
 afterEach(() => {
-  for (const root of mountedRoots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+  for (const unmount of mounted.splice(0)) unmount()
   document.documentElement.classList.remove("dark")
-  useThemeStore.setState({ themePreference: "system", themeMode: "light" })
+  themeStore.setState({ themePreference: "system", themeMode: "light" })
 })
 
-function applyResolvedAppTheme(
-  themePreference: "light" | "dark" | "system",
-  themeMode: "light" | "dark",
-): void {
-  // App.tsx receives a resolved light/dark mode from this store even when the
-  // persisted preference is "system", then exposes it through the root class.
-  useThemeStore.setState({ themePreference, themeMode })
+function applyResolvedAppTheme(themePreference: "light" | "dark" | "system", themeMode: "light" | "dark") {
+  themeStore.setState({ themePreference, themeMode })
   document.documentElement.classList.toggle("dark", themeMode === "dark")
 }
 
-async function settle(): Promise<void> {
-  await act(async () => {
-    await Promise.resolve()
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
-  })
+async function settle() {
+  flush()
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  flush()
 }
 
-async function mountMarkdown(source = "", isStreaming = false, strict = false): Promise<MountedMarkdown> {
+async function mountMarkdown(source = "", streaming = false, onOpenLink?: (url: string) => void) {
   const container = document.createElement("div")
-  document.body.appendChild(container)
-  const root = createRoot(container)
-  mountedRoots.push(root)
-
-  const render = async (nextSource: string, nextIsStreaming: boolean) => {
-    await act(async () => {
-      const markdown = <StreamdownMarkdown isStreaming={nextIsStreaming}>{nextSource}</StreamdownMarkdown>
-      root.render(strict ? <StrictMode>{markdown}</StrictMode> : markdown)
-    })
-    await settle()
+  document.body.append(container)
+  const [snapshot, set] = createSignal({ source, streaming })
+  const dispose = render(() => (
+    <AssistantMarkdown isStreaming={snapshot().streaming} onOpenLink={onOpenLink}>{snapshot().source}</AssistantMarkdown>
+  ), container)
+  mounted.push(() => { dispose(); container.remove() })
+  await settle()
+  return {
+    container, set,
+    render: async (source: string, streaming: boolean) => {
+      set({ source, streaming })
+      await settle()
+    },
   }
-
-  await render(source, isStreaming)
-  return { container, render }
 }
 
-describe("StreamdownMarkdown streaming behavior", () => {
+describe("AssistantMarkdown streaming behavior", () => {
   const animatedBlocks = vi.fn(function (this: Element) {
     return { cancel: () => undefined }
   })
@@ -124,7 +83,7 @@ describe("StreamdownMarkdown streaming behavior", () => {
     else Reflect.deleteProperty(Element.prototype, "animate")
   })
 
-  it("does not invoke the code plugin for prose or inline code", async () => {
+  it("does not load highlighting for prose or inline code", async () => {
     highlightCode.mockClear()
     const view = await mountMarkdown("ordinary prose with `inline code`", true)
 
@@ -219,17 +178,15 @@ describe("StreamdownMarkdown streaming behavior", () => {
     const view = await mountMarkdown("```mermaid\nflowchart LR\nA[", true)
 
     expect(view.container.querySelector('[data-mermaid-state="incomplete"]')).not.toBeNull()
-    expect(renderDeferredMermaid).not.toHaveBeenCalled()
+    expect(renderMermaid).not.toHaveBeenCalled()
 
     await view.render("```mermaid\nflowchart LR\nA[open", true)
     expect(view.container.querySelector('[data-mermaid-state="incomplete"]')).not.toBeNull()
-    expect(renderDeferredMermaid).not.toHaveBeenCalled()
+    expect(renderMermaid).not.toHaveBeenCalled()
 
     await view.render("```mermaid\nflowchart LR\nA[open]\n```", true)
-    await vi.waitFor(() => expect(renderDeferredMermaid).toHaveBeenCalledTimes(1))
-    expect(view.container.querySelector('[data-testid="completed-mermaid"]')?.textContent).toContain(
-      "A[open]",
-    )
+    await vi.waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(1))
+    expect(renderMermaid).toHaveBeenCalledWith("flowchart LR\nA[open]\n", "light", expect.any(AbortSignal))
   })
 
   it("baselines existing text and converges to deterministic static DOM after stop", async () => {
@@ -238,7 +195,6 @@ describe("StreamdownMarkdown streaming behavior", () => {
 
     expect(transitioning.container.querySelector("[data-assistant-reveal-chunk]")).not.toBeNull()
     expect(transitioning.container.querySelector("[data-assistant-reveal]")).toBeNull()
-    expect(transitioning.container.querySelector("[data-sd-animate]")).toBeNull()
     expect(transitioning.container.querySelector('[data-assistant-streaming-caret]')).not.toBeNull()
 
     await transitioning.render(finalSource, false)
@@ -269,13 +225,14 @@ describe("StreamdownMarkdown streaming behavior", () => {
     expect(view.container.textContent).toBe(prefix + "你好世界")
   })
 
-  it("commits the visible prefix consistently under StrictMode", async () => {
+  it("commits only the published prefix across coalesced signal updates", async () => {
     const source = "中".repeat(32)
-    const view = await mountMarkdown(source, true, true)
+    const view = await mountMarkdown(source, true)
     expect(view.container.querySelector("[data-assistant-reveal]")).toBeNull()
     await view.render(source + "追加", true)
     expect(view.container.querySelectorAll("[data-assistant-reveal]")).toHaveLength(1)
     expect(view.container.textContent).toBe(source + "追加")
+    view.set({ source: source + "追加正", streaming: true })
     await view.render(source + "追加正文", true)
     expect(view.container.querySelectorAll("[data-assistant-reveal]")).toHaveLength(1)
     expect(view.container.textContent).toBe(source + "追加正文")
@@ -335,7 +292,26 @@ describe("StreamdownMarkdown streaming behavior", () => {
 
 })
 
-describe("StreamdownMarkdown security, layout and theme semantics", () => {
+describe("AssistantMarkdown security, layout and theme semantics", () => {
+  it("applies shared prose, inline code, quote and table theme tokens with safe link handling", async () => {
+    const onOpenLink = vi.fn()
+    const source = "# Heading\n\nBody `inline` and [safe](https://example.test).\n\n> Quote\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n<script>unsafe()</script>"
+    const { container } = await mountMarkdown(source, false, onOpenLink)
+    const prose = container.firstElementChild as HTMLElement
+
+    for (const [key, value] of Object.entries(markdownTheme)) expect(prose.style.getPropertyValue(key)).toBe(value)
+    expect(prose.className).not.toContain("prose-invert")
+    expect(prose.className).toContain("prose-headings:mt-4")
+    expect(container.querySelector('[data-streamdown="inline-code"]')?.textContent).toBe("inline")
+    const link = container.querySelector<HTMLAnchorElement>('a[role="link"]')!
+    expect(link.getAttribute("href")).toBeNull()
+    link.click()
+    expect(onOpenLink).toHaveBeenCalledExactlyOnceWith("https://example.test")
+    expect(container.querySelector("blockquote")?.textContent).toContain("Quote")
+    expect(container.querySelector("table")).not.toBeNull()
+    expect(container.querySelector("script")).toBeNull()
+  })
+
   it("keeps raw HTML out of the DOM and rejects unsafe Markdown URLs and attributes", async () => {
     const source = [
       '<script id="raw-script">alert(1)</script>',
@@ -370,7 +346,7 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
   it("explains local image paths in a browser without requesting them", async () => {
     const view = await mountMarkdown("![diagram](/Users/example/diagram.png)", false)
     expect(view.container.querySelector('img[src="/Users/example/diagram.png"]')).toBeNull()
-    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("本地图片无法在此处预览")
+    expect(view.container.querySelector('[role="status"]')?.textContent).toContain(englishMarkdownText("local_images_cannot_be_previewed_here_9378ebfb"))
     await view.render("![file image](file:///Users/example/diagram.png)", false)
     expect(view.container.querySelector('[role="status"]')?.textContent).toContain("file image")
     await view.render("![Windows image](file:///C:/Users/example/diagram.png)", false)
@@ -380,7 +356,6 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
   })
 
   it("exposes responsive contracts and follows the existing dark theme class", async () => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 320 })
     highlightCode.mockClear()
     const source = [
       "[超长 URL](https://example.com/a/very/long/path/without/a/breakpoint)",
@@ -396,18 +371,14 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
     applyResolvedAppTheme("light", "light")
     const view = await mountMarkdown(source, false)
     const root = view.container.querySelector(".assistant-streamdown")
-    const lightDom = semanticHtml(view.container)
 
-    expect(window.innerWidth).toBe(320)
     expect(document.documentElement.classList.contains("dark")).toBe(false)
     expect(root?.className).toContain("assistant-streamdown")
     expect(root?.className).toContain("min-w-0")
     expect(root?.className).toContain("max-w-none")
     expect(root?.className).toContain("[overflow-wrap:anywhere]")
     expect((root as HTMLElement).style.getPropertyValue("--tw-prose-code")).toBe("var(--foreground)")
-    expect(
-      view.container.querySelector('[data-streamdown="table-wrapper"] > div')?.className,
-    ).toContain("overflow-x-auto")
+    expect(view.container.querySelector('[data-streamdown="table-wrapper"] > div > table')).not.toBeNull()
     expect(view.container.querySelector('[data-streamdown="table-header-cell"]')).not.toBeNull()
     const codeBlock = view.container.querySelector<HTMLElement>('[data-streamdown="code-block"]')
     const codeHeader = view.container.querySelector<HTMLElement>(
@@ -417,24 +388,20 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
       '[data-streamdown="code-block-body"]',
     )
     const codeSource = codeBody?.querySelector<HTMLElement>("pre")
-    expect(codeBlock?.style.marginBlock).toBe("0.5rem")
-    expect(codeBlock?.style.padding).toBe("0.375rem")
-    expect(codeBlock?.style.gap).toBe("0.25rem")
-    expect(codeHeader?.style.height).toBe("1.25rem")
-    expect(codeBody?.style.fontSize).toBe("0.875rem")
-    expect(codeBody?.style.padding).toBe("0.625rem 0.75rem")
-    expect(codeSource?.style.margin).toBe("0px")
-    expect(codeSource?.style.padding).toBe("0px")
+    expect(codeBlock?.className.split(" ")).toEqual(expect.arrayContaining(["my-2", "p-1.5", "gap-1"]))
+    expect(codeHeader?.className).toContain("h-5")
+    expect(codeBody?.className.split(" ")).toEqual(expect.arrayContaining(["text-sm", "px-3", "py-2.5"]))
+    expect(codeSource?.className.split(" ")).toEqual(expect.arrayContaining(["m-0", "p-0"]))
 
-    await vi.waitFor(() =>
-      expect(highlightCode).toHaveBeenCalledWith({
-        code: "/a/very/long/path/without/a/breakpoint",
-        themes: ["github-light", "github-dark-default"],
-      }),
-    )
+    await vi.waitFor(() => {
+      flush()
+      expect(highlightCode).toHaveBeenCalledWith("/a/very/long/path/without/a/breakpoint", "text")
+      expect(view.container.querySelector("[data-solid-code-token]")).not.toBeNull()
+    })
+    const lightDom = semanticHtml(view.container)
 
     // Explicit dark and both possible system-resolved modes cross the same
-    // App.tsx class boundary; Markdown semantics and Shiki's dual themes stay
+    // app root class boundary; Markdown semantics and Shiki's dual themes stay
     // stable while CSS selects the visible palette.
     applyResolvedAppTheme("dark", "dark")
     await view.render(source, false)
@@ -443,7 +410,7 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
 
     applyResolvedAppTheme("system", "light")
     await view.render(source, false)
-    expect(useThemeStore.getState()).toMatchObject({
+    expect(themeStore.getState()).toMatchObject({
       themePreference: "system",
       themeMode: "light",
     })
@@ -452,7 +419,7 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
 
     applyResolvedAppTheme("system", "dark")
     await view.render(source, false)
-    expect(useThemeStore.getState()).toMatchObject({
+    expect(themeStore.getState()).toMatchObject({
       themePreference: "system",
       themeMode: "dark",
     })
