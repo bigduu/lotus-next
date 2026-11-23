@@ -70,12 +70,22 @@ function withTaskProgress(item: TaskItem, delta: TaskListDelta): TaskItem {
   return { ...item, status: delta.status, tool_calls_count: delta.tool_calls_count };
 }
 
+function hasProgressForNewTask(
+  snapshot: TaskList,
+  knownIds: ReadonlySet<string>,
+  progress: ReadonlyMap<string, TaskListDelta>,
+): boolean {
+  return snapshot.items.some(({ id }) =>
+    !knownIds.has(id) && (progress.get(id)?.version ?? 0) > (snapshot.version ?? 0),
+  );
+}
+
 export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSlice> = (
   set,
   get,
 ) => {
   const progressBySession = new Map<string, Map<string, TaskListDelta>>();
-  const missingDuringRead = new Map<string, Set<string>>();
+  const pendingReads = new Map<string, Promise<TaskList | null>>();
   return {
     // State
     taskLists: {},
@@ -87,7 +97,8 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
     setTaskList: (sessionId, taskList) =>
       set((state) => {
         const version = taskList.version ?? 0;
-        const previousSnapshotVersion = state.taskLists[sessionId]?.version;
+        const previous = state.taskLists[sessionId];
+        const previousSnapshotVersion = previous?.version;
         const observedVersion = state.taskListVersions[sessionId] ?? 0;
         if (previousSnapshotVersion !== undefined && (
           version < previousSnapshotVersion ||
@@ -97,27 +108,31 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
         }
         // A snapshot containing a missing task can restore the topology while
         // tool progress from that same recovery is already ahead of the read.
-        const missing = missingDuringRead.get(sessionId);
         const progress = progressBySession.get(sessionId);
-        const replayed = new Map<string, TaskListDelta>();
         let restoredList = taskList;
         let latestDelta: TaskListDelta | undefined;
-        if (progress && missing && taskList.items.some((item) => missing.has(item.id))) {
-          const items = [...taskList.items];
-          for (const [index, item] of taskList.items.entries()) {
-            const delta = progress.get(item.id);
-            if (!delta || delta.version <= version) continue;
-            items[index] = withTaskProgress(item, delta);
-            replayed.set(item.id, delta);
-            if (!latestDelta || delta.version > latestDelta.version) latestDelta = delta;
+        if (progress) {
+          const knownIds = new Set(previous?.items.map(({ id }) => id));
+          const snapshotIds = new Set(taskList.items.map(({ id }) => id));
+          const recoversProgress = hasProgressForNewTask(taskList, knownIds, progress);
+          for (const [id, delta] of progress) {
+            // Unseen tasks may arrive after a duplicate or intermediate plan.
+            const stillMissing = !knownIds.has(id) && !snapshotIds.has(id);
+            const replay = recoversProgress && snapshotIds.has(id);
+            if (delta.version <= version || (!stillMissing && !replay)) progress.delete(id);
           }
-          if (latestDelta) restoredList = { ...taskList, items, updated_at: new Date().toISOString() };
+          if (recoversProgress) {
+            const items = [...taskList.items];
+            for (const [index, item] of items.entries()) {
+              const delta = progress.get(item.id);
+              if (!delta) continue;
+              items[index] = withTaskProgress(item, delta);
+              if (!latestDelta || delta.version > latestDelta.version) latestDelta = delta;
+            }
+            restoredList = { ...taskList, items, updated_at: new Date().toISOString() };
+          }
+          if (progress.size === 0) progressBySession.delete(sessionId);
         }
-        // Consume the missing-task evidence on admission. A subsequent full
-        // plan retains its own statuses even while the original read settles.
-        missing?.clear();
-        if (replayed.size) progressBySession.set(sessionId, replayed);
-        else progressBySession.delete(sessionId);
         return {
           taskLists: {
             ...state.taskLists,
@@ -154,7 +169,14 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
         const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
           current?.version === committedAtRequest &&
           version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
-        if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
+        const progress = progressBySession.get(owner);
+        const recoversMissingTask = progress && version !== undefined &&
+          version > (current?.version ?? 0) &&
+          hasProgressForNewTask(taskList, new Set(current?.items.map(({ id }) => id)), progress);
+        if (
+          !progressedDuringRequest || version === undefined || version >= observed ||
+          recoversMissedPlan || recoversMissingTask
+        ) {
           state.setTaskList(owner, taskList);
           break;
         }
@@ -198,29 +220,20 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
             [sessionId]: delta.status === "in_progress" ? delta.item_id : null,
           },
         }));
-      } else {
+      } else if (!pendingReads.has(sessionId)) {
         // Coalesce progress for missing tasks while the authoritative snapshot
-        // is fetched. A plan without the missing task keeps its own statuses.
-        const missing = missingDuringRead.get(sessionId);
-        if (missing) {
-          missing.add(delta.item_id);
-          return;
-        }
-        const pending = new Set([delta.item_id]);
-        missingDuringRead.set(sessionId, pending);
-        void current.loadTaskList(sessionId).catch(() => {}).finally(() => {
-          if (missingDuringRead.get(sessionId) !== pending) return;
-          missingDuringRead.delete(sessionId);
-          const retained = progressBySession.get(sessionId);
-          for (const id of pending) retained?.delete(id);
-          if (retained?.size === 0) progressBySession.delete(sessionId);
+        // is fetched. Progress is retained until its task or version is seen.
+        const request = current.loadTaskList(sessionId);
+        pendingReads.set(sessionId, request);
+        void request.catch(() => {}).finally(() => {
+          if (pendingReads.get(sessionId) === request) pendingReads.delete(sessionId);
         });
       }
     },
 
     // Clear task list for a session
     clearTaskList: (sessionId) => {
-      missingDuringRead.delete(sessionId);
+      pendingReads.delete(sessionId);
       progressBySession.delete(sessionId);
       set((state) => {
         const { [sessionId]: _, ...remainingTaskLists } = state.taskLists;

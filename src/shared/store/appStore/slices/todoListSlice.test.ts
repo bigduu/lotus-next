@@ -43,7 +43,6 @@ describe("Task snapshots and live progress", () => {
     store.getState().setTaskList(sessionId, baseline)
     let respond!: (value: TaskList) => void
     api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
-      .mockResolvedValueOnce(committed)
 
     const missingProgress = {
       session_id: sessionId, item_id: report.id, status: "in_progress", tool_calls_count: 2, version: 5,
@@ -67,7 +66,7 @@ describe("Task snapshots and live progress", () => {
     ])
     expect(store.getState().getTaskListVersion(sessionId)).toBe(6)
     expect(displayed).toEqual(["completed"])
-    expect(api.get).toHaveBeenCalledTimes(2)
+    expect(api.get).toHaveBeenCalledTimes(1)
   })
 
   it.each([5, 7])("preserves known progress when a missing task update arrives at v%i", async (version) => {
@@ -91,6 +90,29 @@ describe("Task snapshots and live progress", () => {
       { id: "report", status: "in_progress" },
     ])
     expect(store.getState().getTaskListVersion(sessionId)).toBe(Math.max(6, version))
+    expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([3, 4])("preserves a missing task's progress through an intervening v%i plan", async (version) => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    const sessionId = "root"
+    const baseline = taskList(sessionId, "pending", 3)
+    const report = { ...baseline.items[0], id: "report", depends_on: ["read"] }
+    store.getState().setTaskList(sessionId, baseline)
+    let respond!: (value: TaskList) => void
+    api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+
+    store.getState().updateTaskListDelta(sessionId, {
+      session_id: sessionId, item_id: report.id, status: "completed", tool_calls_count: 2, version: 6,
+    })
+    store.getState().setTaskList(sessionId, { ...baseline, version })
+    respond({ ...baseline, version: 5, items: [...baseline.items, report] })
+
+    await vi.waitFor(() => expect(store.getState().taskLists[sessionId].version).toBe(5))
+    expect(store.getState().taskLists[sessionId].items[1]).toMatchObject({
+      id: "report", status: "completed", tool_calls_count: 2,
+    })
+    expect(store.getState().getTaskListVersion(sessionId)).toBe(6)
     expect(api.get).toHaveBeenCalledTimes(1)
   })
 
