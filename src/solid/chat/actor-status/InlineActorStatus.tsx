@@ -117,7 +117,7 @@ export function InlineActorPrefix(props: { status: InlineActorStatus; onOpen?: (
   const group = () => props.status.groups()
   const count = createMemo(() => Object.keys(group().folded).length)
   return (
-    <div class="mx-auto flex w-full max-w-4xl flex-col gap-2 px-1 empty:hidden sm:px-4">
+    <div class="flex w-full flex-col gap-2 empty:hidden">
       <Show when={props.status.error()}>{(error) => (
         <div role="status" class="text-xs text-muted-foreground" data-subagent-error="">
           {error()}<Button variant="ghost" size="sm" onClick={() => void props.status.refresh()}>{text("subagent_refresh")}</Button>

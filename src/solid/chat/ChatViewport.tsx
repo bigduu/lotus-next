@@ -139,7 +139,7 @@ export function ChatViewport(props: {
   })
 
   return (
-    <div data-chat-body="" class="relative flex min-h-0 min-w-0 flex-1">
+    <div class="relative flex min-h-0 min-w-0 flex-1">
       <VirtualHistory
         class="w-full"
         entries={timeline().entries}
@@ -163,7 +163,7 @@ export function ChatViewport(props: {
         onScroll={() => { if (!aligningSource()) sticky.onScroll() }}
         before={<>
           <Show when={before()}>
-            <div class="mx-auto flex w-full max-w-4xl flex-col items-center pb-3">
+            <div class="mx-auto flex w-full flex-col items-center pb-3">
               <Button variant="ghost" size="sm" disabled={loadingEarlier()} onClick={() => { void loadEarlier() }}>
                 <Show when={loadingEarlier()}><LoaderCircle class="size-4 animate-spin" /></Show>
                 {text("load_earlier_messages")}
@@ -184,7 +184,7 @@ export function ChatViewport(props: {
           }
           return <Show when={attachment()} fallback={
             <Show when={item()}>{(message) => (
-              <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
+              <div class="w-full">
                 <RenderHistoryRow item={message()} disclosure={disclosure} theme={props.theme}
                   onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} messageActions={messageActions} afterProcess={afterProcess} />
               </div>
@@ -192,7 +192,7 @@ export function ChatViewport(props: {
           }>{(card) => card().render()}</Show>
         }}
         after={
-          <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
+          <div class="w-full">
             <For each={pending()} keyed={(entry) => entry.operationId}>{(entry) => (
               <div data-pending-user-message="" data-pending-operation={entry().operationId}>
                 <MessageBody message={entry().message} theme={props.theme}
@@ -226,8 +226,8 @@ export function ChatViewport(props: {
         </p>}
       </Show>
       <Show when={!sticky.following()}>
-        <div class="absolute bottom-3 right-4" data-scroll-to-bottom-anchor="">
-          <Button size="icon" variant="outline" class="rounded-full"
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex translate-y-1/2 justify-center" data-scroll-to-bottom-anchor="">
+          <Button size="icon" variant="outline" class="pointer-events-auto rounded-full bg-card text-muted-foreground shadow-lg"
             aria-label={text("scroll_to_bottom_2b05ff67")} onClick={sticky.resume}>
             <ArrowDown />
           </Button>

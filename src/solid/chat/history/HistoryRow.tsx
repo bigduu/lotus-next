@@ -299,7 +299,7 @@ function MessageRow(props: RowActions & { item: Extract<RenderItem, { kind: "msg
                 </div>
               )}</Match>
               <Match when={streamed()}>{(content) => (
-                <div data-message-role="assistant" class="min-w-0 py-2">
+                <div data-message-role="assistant" class="min-w-0 px-3.5 py-2 leading-7 [overflow-wrap:anywhere]">
                   <LazyAssistantMarkdown theme={props.theme} text={text} isStreaming
                     onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} readImage={readLocalImage}>
                     {content()}

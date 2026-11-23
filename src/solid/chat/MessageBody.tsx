@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js"
 import type { Message, MessageImage } from "@shared/types/chatMessages"
+import { cn } from "@/lib/utils"
 import { readLocalImage } from "@shared/services/FileOperationsService"
 import { LazyAssistantMarkdown } from "../markdown/LazyAssistantMarkdown"
 import { createUiText } from "../shell/uiText"
@@ -49,7 +50,9 @@ export function MessageBody(props: {
   }
 
   return (
-    <article data-message-role={props.message.role} class="min-w-0 py-2">
+    <article data-message-role={props.message.role}
+      class={cn("min-w-0 overflow-hidden rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]",
+        user() && "user-message-surface ml-auto w-fit max-w-[85%]")}>
       <Show when={user()}>{(entry) => {
         const fileReference = () => "paths" in entry()
         const content = () => {
@@ -65,8 +68,7 @@ export function MessageBody(props: {
           return "images" in message ? message.images : undefined
         }
         return (
-          <div class="ml-auto w-fit max-w-[min(100%,48rem)] rounded-2xl px-4 py-2.5"
-            style={{ background: "var(--user-message-background)", color: "var(--user-message-foreground)" }}>
+          <>
             <Show when={reference()}>
               <div class="mb-1 text-xs" data-testid="message-request-reference">{text("ticket_referenced_request__7209ca36")}{reference()}</div>
             </Show>
@@ -74,7 +76,7 @@ export function MessageBody(props: {
               {content()}
             </div>
             <Images images={images()} onPreview={props.onPreviewImage} />
-          </div>
+          </>
         )
       }}</Show>
       <Show when={assistantText()}>
