@@ -3,7 +3,7 @@ import path from "node:path"
 import { describe, expect, it } from "vitest"
 
 const styles = readFileSync(path.resolve(process.cwd(), "src/app-styles.css"), "utf8")
-const layoutStyles = readFileSync(path.resolve(process.cwd(), "src/components/chat/StreamdownLayout.css"), "utf8")
+const layoutStyles = readFileSync(path.resolve(process.cwd(), "src/lib/markdown/layout.css"), "utf8")
 const componentLayerMarker = "@layer components {"
 const componentLayerStart = layoutStyles.indexOf(componentLayerMarker)
 const componentLayerEnd = layoutStyles.indexOf("\n}", componentLayerStart)
