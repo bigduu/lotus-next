@@ -1,13 +1,10 @@
-import i18next from "i18next"
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
-import { I18nextProvider, initReactI18next } from "react-i18next"
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import { render } from "@solidjs/web"
+import { flush } from "solid-js"
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { JianduMemoryApiError, type JianduMemoryOverviewClient, type JianduMemoryOverview } from "@/services/memory/jianduMemoryApi"
-import { zhCnTranslation } from "@/shared/i18n/resources/zh-CN"
-import { enUsTranslation } from "@/shared/i18n/resources/en-US"
-import { useAppStore } from "@/shared/store/appStore"
+import { changeLocale } from "@shared/i18n/runtime"
+import { appStore } from "@shared/store/appStore/state"
 import { SettingsJiandu } from "./SettingsJiandu"
 
 const projectMount = vi.fn()
@@ -22,50 +19,47 @@ const overview: JianduMemoryOverview = {
   byStatus: { active: 5, stale: 0, superseded: 0, contradicted: 0, archived: 2 },
   lastReindexAt: "2026-10-15T03:00:00Z", lastDreamAt: null,
 }
-const locale = i18next.createInstance()
-const roots: Root[] = []
-const initialStore = useAppStore.getState()
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+const cleanups: Array<() => void> = []
+const initialStore = appStore.getState()
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((accept) => { resolve = accept })
   return { promise, resolve }
 }
 const client = () => ({ getOverview: vi.fn<JianduMemoryOverviewClient["getOverview"]>().mockResolvedValue(overview) })
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 5; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
 const mount = async (api: JianduMemoryOverviewClient) => {
-  const container = document.createElement("div")
-  document.body.append(container)
-  const root = createRoot(container)
-  roots.push(root)
-  await act(async () => { root.render(<I18nextProvider i18n={locale}><SettingsJiandu api={api} /></I18nextProvider>) })
-  return root
+  const container = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <SettingsJiandu api={api} />, container)
+  cleanups.push(() => { dispose(); container.remove() })
+  await settle(() => {})
 }
 const click = async (name: string) => {
   const button = [...document.querySelectorAll("button")].find((element) => element.textContent === name)
   expect(button, name).toBeDefined()
-  await act(async () => { button!.click() })
+  await settle(async () => { button!.click() })
 }
 const count = (label: string) => [...document.querySelectorAll("dt")]
   .find((element) => element.textContent === label)?.nextElementSibling?.textContent
 
-beforeAll(async () => {
-  environment.IS_REACT_ACT_ENVIRONMENT = true
-  await locale.use(initReactI18next).init({ lng: "zh-CN",
-    resources: { "zh-CN": zhCnTranslation, "en-US": enUsTranslation }, interpolation: { escapeValue: false } })
-})
-afterAll(() => { Reflect.deleteProperty(environment, "IS_REACT_ACT_ENVIRONMENT") })
+beforeAll(async () => { await changeLocale("zh-CN", { persist: false }) })
 afterEach(async () => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
-  useAppStore.setState(initialStore, true)
+  for (const cleanup of cleanups.splice(0)) cleanup()
+  appStore.setState(initialStore, true)
   projectMount.mockClear()
-  await locale.changeLanguage("zh-CN")
+  await changeLocale("zh-CN", { persist: false })
 })
 
 describe("Jiandu System Settings overview", () => {
   it.each([null, "unassigned-session", "project-session", "child-session"])(
     "opens the aggregate overview with active session %s without mounting the Project manager", async (sessionId) => {
-      useAppStore.setState({ currentSessionId: sessionId })
+      appStore.setState({ currentSessionId: sessionId })
       const api = client()
       await mount(api)
       expect(document.querySelector("h2")?.textContent).toBe("记忆总览")
@@ -84,7 +78,7 @@ describe("Jiandu System Settings overview", () => {
   it("does not scope or reload the overview when the selected conversation changes", async () => {
     const api = client()
     await mount(api)
-    await act(async () => { useAppStore.setState({ currentSessionId: "different-project" }) })
+    await settle(async () => { appStore.setState({ currentSessionId: "different-project" }) })
     expect(count("持久记忆总数")).toBe("7")
     expect(api.getOverview).toHaveBeenCalledTimes(1)
     expect(projectMount).not.toHaveBeenCalled()
@@ -94,7 +88,7 @@ describe("Jiandu System Settings overview", () => {
     const api = client()
     await mount(api)
     await click("管理当前项目记忆")
-    expect(document.body.textContent).toContain("Project manager")
+    await vi.waitFor(() => { flush(); expect(document.body.textContent).toContain("Project manager") })
     expect(document.body.textContent).not.toContain("持久记忆总数")
     api.getOverview.mockResolvedValue({ ...overview, lastDreamAt: "2026-10-15T04:00:00Z" })
     await click("返回记忆总览")
@@ -109,7 +103,7 @@ describe("Jiandu System Settings overview", () => {
     await mount(api)
     expect(document.querySelector('[role="status"]')?.textContent).toContain("正在加载记忆总览")
     expect(count("持久记忆总数")).toBeUndefined()
-    await act(async () => { pending.resolve(overview) })
+    await settle(async () => { pending.resolve(overview) })
     expect(count("持久记忆总数")).toBe("7")
   })
 
@@ -131,7 +125,7 @@ describe("Jiandu System Settings overview", () => {
     api.getOverview.mockReturnValueOnce(pending.promise)
     await mount(api)
     await click("管理当前项目记忆")
-    await act(async () => { pending.resolve({ ...overview, totalMemories: 999 }) })
+    await settle(async () => { pending.resolve({ ...overview, totalMemories: 999 }) })
     expect(count("持久记忆总数")).toBeUndefined()
     await click("返回记忆总览")
     expect(count("持久记忆总数")).toBe("7")
@@ -143,7 +137,7 @@ describe("Jiandu System Settings overview", () => {
   })
 
   it("localizes the overview independently of the current session", async () => {
-    await locale.changeLanguage("en-US")
+    await changeLocale("en-US", { persist: false })
     await mount(client())
     expect(document.querySelector("h2")?.textContent).toBe("Memory overview")
     expect(count("Durable memories")).toBe("7")
