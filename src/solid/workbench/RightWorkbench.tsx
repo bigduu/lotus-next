@@ -1,3 +1,4 @@
+import { useTabsContext, type TabsContextValue } from "@kobalte/core/tabs"
 import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, useContext, type Accessor } from "solid-js"
 import { Dynamic, type JSX } from "@solidjs/web"
 import { DragDropManager } from "@dnd-kit/dom"
@@ -268,6 +269,11 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
   let tabMenuTrigger: HTMLButtonElement | undefined
   let addTabTrigger: HTMLButtonElement | undefined
   let closingTab: string | null = null
+  let tabsContext: TabsContextValue | undefined
+  const RegisterTabsContext = () => {
+    tabsContext = useTabsContext()
+    return null
+  }
 
   const visible = () => props.visible !== false
   const browserEnabled = () => props.browserEnabled !== false
@@ -297,6 +303,9 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
     reorder(from, from + direction)
   }
   const selectValue = (value: string) => {
+    // A newly opened tab becomes the controlled value before its trigger joins
+    // Kobalte's collection. Ignore the primitive's transient first-tab fallback.
+    if (!tabsContext?.listState().collection().getItem(selectedValue())) return
     if (value.startsWith("browser:")) props.onBrowserActivate?.(value.slice("browser:".length))
     else if (value !== "launcher" && value !== "browser-entry") props.onTabChange(value as WorkbenchToolTab)
   }
@@ -380,6 +389,7 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
 
   return (
     <Tabs value={selectedValue()} onValueChange={selectValue} class="min-h-0 flex-1 gap-0">
+      <RegisterTabsContext />
       <div class="flex shrink-0 items-center gap-1 border-b bg-muted/50 px-2 pt-1">
         <Show when={hasTabs()} fallback={
           <Show when={props.activeTab === "browser"} fallback={<span class="min-w-0 flex-1 px-2 text-sm text-muted-foreground">{text("workbench_c2730bc7")}</span>}>

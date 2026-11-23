@@ -37,6 +37,11 @@ for (const running of [false, true]) {
     await page.route(`**/api/v1/sessions/${id}`, (route) => route.fulfill({
       json: { session }, headers: { ETag: '"1"' },
     }));
+    await page.route(`**/api/v1/task/${id}`, (route) => route.fulfill({ json: {
+      session_id: id, title: "Fixture plan", version: 1,
+      items: [{ id: "prepare", description: "Prepare the workspace", status: "pending", depends_on: [], notes: "" }],
+      progress: { completed: 0, total: 1, percentage: 0 },
+    } }));
     const submissions: unknown[] = [];
     await page.route(running ? `**/api/v1/sessions/${id}/guidance` : "**/api/v1/chat", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
@@ -52,6 +57,12 @@ for (const running of [false, true]) {
     await page.goto(entryUrl);
     await expect(page.getByRole("heading", { name: session.title })).toBeVisible();
     await expect(page.locator("[data-virtual-history]")).toContainText("Existing Solid history");
+    await page.getByRole("button", { name: "会话任务 DAG" }).click();
+    const tasks = page.locator("#right-workbench");
+    await expect(tasks.getByRole("button", { name: /Prepare the workspace/ })).toBeVisible();
+    await tasks.getByRole("button", { name: "收起工作面板" }).click();
+    await expect(tasks).toBeHidden();
+
     const composer = page.getByRole("textbox", { name: "消息", exact: true });
     await composer.focus();
     await page.keyboard.press("Control+k");
@@ -64,7 +75,8 @@ for (const running of [false, true]) {
     await page.locator('button[aria-controls="right-workbench"]').click();
     const workbench = page.locator("#right-workbench");
     await expect(workbench).toBeVisible();
-    await workbench.getByRole("button", { name: /Review/ }).first().click();
+    await workbench.getByRole("button", { name: "打开工作面板标签页" }).click();
+    await workbench.getByRole("menuitem", { name: /Review/ }).click();
     await expect(workbench.getByRole("tab", { name: "Review" })).toHaveAttribute("aria-selected", "true");
     await workbench.getByRole("button", { name: "收起工作面板" }).click();
     await expect(workbench).toBeHidden();
@@ -79,6 +91,7 @@ for (const running of [false, true]) {
       });
       await expect(page.getByRole("img", { name: "fixture.png" })).toBeVisible();
     }
+    if (!running) await expect(page.getByRole("button", { name: "发送消息" })).toBeEnabled();
     await composer.press("Enter");
     await expect.poll(() => submissions).toEqual([expect.objectContaining(running
       ? { text: "从 Solid 发送", mode: "after_run" }

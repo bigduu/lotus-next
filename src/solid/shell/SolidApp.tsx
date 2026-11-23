@@ -1,5 +1,5 @@
-import { FileDiff, FolderClosed, PanelLeftOpen, PanelRightOpen, WifiOff } from "@lucide/solid"
-import { createEffect, createMemo, createSignal, For, lazy, Loading, onSettled, Show } from "solid-js"
+import { FileDiff, FolderClosed, PanelLeftOpen, PanelRightOpen, WifiOff, Workflow } from "@lucide/solid"
+import { createEffect, createMemo, createSignal, lazy, Loading, onSettled, Show } from "solid-js"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
 import { appStore } from "@shared/store/appStore/state"
@@ -36,11 +36,17 @@ import { isPhoneDevice } from "@/lib/browserAvailability"
 import type { BrowserState } from "@services/browser/types"
 import { createBrowserSession } from "../workbench/browser/createBrowserSession"
 import { createWorkbenchState } from "../workbench/createWorkbenchState"
+import { createSessionTaskDag } from "../workbench/tasks/createSessionTaskDag"
 import { ProjectManagerModal } from "./ProjectManagerModal"
 import { WorkspacePicker } from "./WorkspacePicker"
 import { Onboarding } from "./Onboarding"
 import { CommandPalette } from "./CommandPalette"
+import { GoalSection } from "../workbench/inspector/GoalSection"
 
+const WorktreeManager = lazy(() => import("../workspace/WorktreeManager"), { export: "WorktreeManager" })
+const SettingsPermissions = lazy(() => import("../settings/permissions/SettingsPermissions"), { export: "SettingsPermissions" })
+const SubagentsPane = lazy(() => import("../workbench/subagents/SubagentsPane"), { export: "SubagentsPane" })
+const SessionTaskDag = lazy(() => import("../workbench/tasks/SessionTaskDag"), { export: "SessionTaskDag" })
 const RightWorkbench = lazy(() => import("../workbench/RightWorkbench"), { export: "RightWorkbench" })
 const BrowserPaneView = lazy(() => import("../workbench/browser/BrowserPane"), { export: "BrowserPaneView" })
 const ReviewPane = lazy(() => import("../workbench/ReviewPane"), { export: "ReviewPane" })
@@ -63,7 +69,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [projectsOpen, setProjectsOpen] = createSignal(false)
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false)
+  const [worktreeManager, setWorktreeManager] = createSignal<"unopened" | "open" | "closed">("unopened")
   const [pickedWorkspace, setPickedWorkspace] = createSignal<string | null>(null)
+  const [pickedWorktree, setPickedWorktree] = createSignal<{ projectId: string; path: string } | null>(null)
+  const [draftEpoch, setDraftEpoch] = createSignal(0)
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
@@ -88,7 +97,11 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const openError = (error: unknown) => setNotice({ text: getErrorMessage(error), error: true })
   let navigationVersion = 0
   const currentSession = () => chat.currentSessionId
-  const displayWorkspace = () => chat.currentChat?.config?.workspacePath
+  const selectedWorktreePath = () => {
+    const worktree = pickedWorktree()
+    return !currentSession() && worktree?.projectId === newSession()?.projectId ? worktree?.path ?? null : null
+  }
+  const displayWorkspace = () => chat.currentChat?.config?.workspacePath ?? selectedWorktreePath()
     ?? (newSession() ? projects()[newSession()!.projectId]?.project_path : undefined) ?? pickedWorkspace()
   const readingAnchors = new Map<string, HistoryReadingAnchor>()
   const sessionView = createMemo(() => ({ id: currentSession() }), {
@@ -98,7 +111,19 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const workbenchState = workbench.state
   const desktopSidebar = () => containerWidth() >= 768 && !sidebarCollapsed()
   const maxWorkbenchWidth = () => getWorkbenchMaxWidth(containerWidth(), desktopSidebar() ? usedSidebarWidth() : 0)
-  const docked = () => workbenchState().open && maxWorkbenchWidth() >= MIN_WORKBENCH_WIDTH
+  const dagSession = () => {
+    const session = chat.currentChat
+    return !settingsOpen() && session && session.id === currentSession() && session.kind !== "child" && !session.parentSessionId
+      ? session.id : null
+  }
+  const taskList = createSessionTaskDag(dagSession, () => chat.currentChat?.isRunning === true || (chat.sending && chat.streaming !== null))
+  const activeDagScope = () => dagSession() && workbenchState().open && workbenchState().tab === "task-dag" ? workbench.key() : null
+  const [expandedDagScope, setExpandedDagScope] = createSignal<string | null>(null)
+  const taskExpanded = () => activeDagScope() !== null && activeDagScope() === expandedDagScope()
+  createEffect(activeDagScope, (scope) => {
+    if (scope !== expandedDagScope()) setExpandedDagScope(null)
+  })
+  const docked = () => workbenchState().open && !taskExpanded() && maxWorkbenchWidth() >= MIN_WORKBENCH_WIDTH
   const preferredWorkbenchWidth = () => workbenchState().dockWidth ?? 520
   const browserEnabled = () => containerWidth() >= 768 && !isPhoneDevice()
   const [browserEntry, setBrowserEntry] = createSignal<{ scope: string | null; open: boolean; draft: string }>({
@@ -150,10 +175,18 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     collectSessionFileChanges(chat.messages),
     collectLiveSessionFileChanges(chat.liveSegments),
   ), displayWorkspace() ?? undefined))
-  const subagents = () => {
-    const rootId = chat.currentChat?.rootSessionId ?? currentSession()
-    return rootId ? chat.chats.filter((entry) => entry.id !== rootId && entry.rootSessionId === rootId) : []
-  }
+  const rootId = () => chat.currentChat?.kind === "root" ? chat.currentChat.id : chat.currentChat?.rootSessionId ?? null
+  const descendants = () => chat.chats.find((entry) => entry.id === rootId())?.subagentCount ?? null
+  const childReadingAnchors = new Map<string | null, Map<string, HistoryReadingAnchor>>()
+  const childAnchors = createMemo(() => {
+    const scope = workbench.key()
+    let anchors = childReadingAnchors.get(scope)
+    if (!anchors) {
+      anchors = new Map()
+      childReadingAnchors.set(scope, anchors)
+    }
+    return anchors
+  })
   const closePalette = () => {
     const opener = paletteOpener
     setPaletteOpen(false)
@@ -165,8 +198,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     observer.observe(shell)
     measure()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && paletteOpen() && !event.defaultPrevented && !isCommandComposing(event)) {
+      if (event.key === "Escape" && paletteOpen() && !isCommandComposing(event)) {
         event.preventDefault()
+        event.stopPropagation()
         closePalette()
         return
       }
@@ -178,9 +212,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         setPaletteOpen(true)
       }
     }
-    window.addEventListener("keydown", onKey)
+    window.addEventListener("keydown", onKey, true)
     return () => {
-      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("keydown", onKey, true)
       observer.disconnect()
     }
   })
@@ -192,10 +226,6 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       const sessionId = currentSession()
       setBrowserEntry({ scope: workbench.key(), open: true, draft: "" })
       if (sessionId && !browser.hasPendingDialog()) browser.requestEntryOpen(sessionId)
-    }
-    if (tab === "subagents") {
-      const id = currentSession()
-      if (id) void appStore.getState().loadSubagentSessions(id).catch(openError)
     }
   }
   const closeWorkbenchTool = (tab: WorkbenchToolTab) => {
@@ -243,6 +273,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   }
   const newChat = (projectId?: string | null, sectionId?: string | null) => {
     navigationVersion += 1
+    setDraftEpoch((epoch) => epoch + 1)
+    setPickedWorktree(null)
     if (projectId) setPickedWorkspace(null)
     setNewSession(projectId ? { projectId, sectionId } : null)
     chat.newChat()
@@ -298,6 +330,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           onClose={() => setSidebarOpen(false)} onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
           onSelect={select} onNewChat={newChat}
           onOpenProjectManager={() => setProjectsOpen(true)}
+          onOpenWorktrees={() => setWorktreeManager("open")}
           onOpenSettings={() => setSettingsOpen(true)}
           onMoveToSection={(projectId, sessionId, sectionId) => {
             void sections.update(projectId, (previous) =>
@@ -322,14 +355,17 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         />}
         workbench={<Show when={workbenchState().open}>
           <Loading fallback={null}>
-            <RightWorkbench docked={docked()} visible pageVisible={!settingsOpen()}
+            <RightWorkbench docked={docked()} expanded={taskExpanded()} visible pageVisible={!settingsOpen()}
               activeTab={workbenchState().tab} openToolTabs={workbenchState().tools}
               onTabChange={openWorkbenchTab} onToolClose={closeWorkbenchTool}
               tabOrder={workbenchState().order}
               onTabReorder={(order) => workbench.capture().update((state) => ({
                 ...state, order: reorderVisibleWorkbenchTabIds(state.order, order),
               }))}
-              onClose={() => workbench.capture().setField("open", false)}
+              onClose={() => {
+                if (taskExpanded()) setExpandedDagScope(null)
+                else workbench.capture().setField("open", false)
+              }}
               focusScopeKey={workbench.key()} getCurrentFocusScope={workbench.key}
               interactionSuspended={settingsOpen() || paletteOpen()}
               browserEnabled={browserEnabled()} browserSessionAvailable={Boolean(currentSession())}
@@ -365,18 +401,36 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                     <FolderClosed class="size-4 shrink-0" /><span class="truncate">{displayWorkspace()}</span>
                   </div>
                 </Show>
+                <Show when={currentSession()} keyed>{(id) => <GoalSection sessionId={id}
+                  goldConfig={chat.currentChat?.config?.goldConfig} goalState={chat.currentChat?.config?.goalState} />}</Show>
                 <Button variant="ghost" class="justify-start" onClick={() => openWorkbenchTab("review")}>
                   <FileDiff class="size-4" />{text("file_changes_4d016b2f")}
                 </Button>
               </div>}
               review={<ReviewPane sessionId={currentSession()} groups={fileChanges()}
                 workspace={displayWorkspace()} targetFile={workbenchState().reviewTarget} />}
-              subagents={<div class="grid w-full content-start gap-1 overflow-y-auto p-4">
-                <For each={subagents()} keyed={(entry) => entry.id}>{(entry) => (
-                  <Button class="justify-start" variant="ghost"
-                    onClick={() => { void select(entry().id).catch(openError) }}>{entry().title}</Button>
-                )}</For>
-              </div>} />
+              subagents={<SubagentsPane rootId={rootId()} descendantCount={descendants()}
+                active={!settingsOpen() && workbenchState().open && workbenchState().tab === "subagents"}
+                selection={workbenchState().subagents} readingAnchors={childAnchors()}
+                theme={theme().themeMode} onOpenLink={setLink} onPreviewImage={setImage}
+                onSelectChild={(id) => workbench.capture().update((state) => ({
+                  ...state, subagents: { ...state.subagents, childId: id, view: "messages" },
+                }))}
+                onShowTree={() => workbench.capture().update((state) => ({
+                  ...state, subagents: { ...state.subagents, view: "tree" },
+                }))}
+                onMissingChild={(id) => workbench.capture().update((state) => state.subagents.childId === id ? {
+                  ...state, subagents: { ...state.subagents, childId: null, view: "tree" },
+                } : state)}
+                onExpandedChange={(update) => workbench.capture().update((state) => {
+                  const currentRoot = rootId()
+                  const before = new Set(state.subagents.expandedActorIds ?? (currentRoot ? [currentRoot] : []))
+                  const after = update(before)
+                  return before === after ? state : { ...state, subagents: { ...state.subagents, expandedActorIds: [...after] } }
+                })} />}
+              taskDag={dagSession() ? <SessionTaskDag sessionId={dagSession()!} expanded={taskExpanded()}
+                onToggleExpanded={taskExpanded() || containerWidth() >= 768
+                  ? () => setExpandedDagScope(taskExpanded() ? null : activeDagScope()) : undefined} /> : undefined} />
           </Loading>
         </Show>}>
         <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -394,6 +448,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
               <FolderClosed class="size-4" />
             </Button>
+            <Show when={taskList().length > 0}>
+              <Button size="icon" variant="ghost" aria-label={text("session_task_dag_title")}
+                onClick={() => openWorkbenchTab("task-dag")}> <Workflow class="size-4" /> </Button>
+            </Show>
             <Button size="icon" variant="ghost"
               aria-label={text(workbenchState().open ? "collapse_side_panel_e7d2fdd8" : "open_side_panel_732ea38b")}
               aria-expanded={workbenchState().open ? "true" : "false"} aria-controls="right-workbench"
@@ -413,6 +471,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           )}</Show>
           <RunInteractions chat={chat} workspace={displayWorkspace()} />
           <ComposerPanel chat={chat} workspacePath={displayWorkspace()} projectId={newSession()?.projectId ?? null}
+            selectedWorktreePath={selectedWorktreePath()} draftEpoch={draftEpoch()} navigationVersion={() => navigationVersion}
+            onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
             onPreviewImage={setImage} captureSessionCreated={() => {
               const intent = newSession()
               return (id) => sessionCreated(id, intent)
@@ -429,7 +489,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             </div>
             <ThemePreferences preference={theme().themePreference} />
             <Show when={props.ownerAccess}>
-              <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}><SettingsProviders /></Loading>
+              <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
+                <SettingsProviders />
+                <SettingsPermissions ownerAccess={props.ownerAccess} />
+              </Loading>
             </Show>
           </div>
         </div>
@@ -439,9 +502,25 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         <WorkspacePicker current={displayWorkspace()} locked={Boolean(chat.currentChat?.config?.workspacePath)}
           onClose={() => setWorkspaceOpen(false)}
           onSelect={(path) => {
+            navigationVersion += 1
+            setPickedWorktree(null)
             setPickedWorkspace(path)
             if (path) setNewSession(null)
           }} />
+      </Show>
+      <Show when={worktreeManager() !== "unopened"}>
+        <Loading fallback={null}>
+          <WorktreeManager open={worktreeManager() === "open"} onClose={() => setWorktreeManager("closed")}
+            onOpen={(projectId, path) => {
+              newChat(projectId)
+              setPickedWorktree({ projectId, path })
+              setWorktreeManager("closed")
+            }}
+            onSession={(id) => {
+              void select(id).catch(openError)
+              setWorktreeManager("closed")
+            }} />
+        </Loading>
       </Show>
       <Show when={projectsOpen()}>
         <ProjectManagerModal onClose={() => setProjectsOpen(false)} />

@@ -20,6 +20,8 @@ interface SelectProps {
   onValueChange?: (value: string) => void
   placeholder?: string
   label: string
+  describedBy?: string
+  placement?: "top-start" | "bottom-start"
   name?: string
   disabled?: boolean
   required?: boolean
@@ -65,13 +67,14 @@ function SelectContent() {
   )
 }
 
-type SelectTriggerProps = Pick<SelectProps, "label" | "size" | "class">
+type SelectTriggerProps = Pick<SelectProps, "label" | "size" | "class" | "describedBy" | "placeholder">
 
 function SelectTrigger(props: SelectTriggerProps) {
   const select = SelectPrimitive.useSelectContext()
   return (
     <SelectPrimitive.Trigger
       aria-label={props.label}
+      aria-describedby={props.describedBy}
       data-slot="select-trigger"
       data-size={props.size ?? "default"}
       data-state={select.isOpen() ? "open" : "closed"}
@@ -82,7 +85,7 @@ function SelectTrigger(props: SelectTriggerProps) {
       )}
     >
       <SelectPrimitive.Value<SelectOption> data-slot="select-value">
-        {(state) => state.selectedOption()?.label}
+        {(state) => state.selectedOption()?.label ?? props.placeholder}
       </SelectPrimitive.Value>
       <SelectPrimitive.Icon><ChevronDown class="size-4 opacity-50" /></SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
@@ -108,12 +111,12 @@ export function Select(props: SelectProps) {
       disabled={props.disabled}
       required={props.required}
       placeholder={props.placeholder}
-      placement="bottom-start"
+      placement={props.placement ?? "bottom-start"}
       gutter={4}
       itemComponent={SelectItem}
     >
       <SelectPrimitive.HiddenSelect />
-      <SelectTrigger label={props.label} size={props.size} class={props.class} />
+      <SelectTrigger label={props.label} size={props.size} class={props.class} describedBy={props.describedBy} placeholder={props.placeholder} />
       <SelectContent />
     </SelectPrimitive.Root>
   )

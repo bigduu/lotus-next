@@ -1,5 +1,5 @@
 import { ArrowUp, ImagePlus, Square, X } from "@lucide/solid"
-import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js"
+import { createMemo, createSignal, For, onSettled, Show } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
 import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
@@ -11,8 +11,15 @@ import { ComposerEditor, type ComposerFocusSnapshot } from "../composer/Composer
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
 import { createGuidanceQueue } from "./guidance/createGuidanceQueue"
 import { GuidanceQueueControls, GuidanceTimingControl } from "./guidance/GuidanceQueueControls"
+import { createComposerModelControls } from "./model/createComposerModelControls"
+import { ComposerModelControls } from "./model/ComposerModelControls"
 import { createUiText } from "../shell/uiText"
 import type { createChat } from "./createChat"
+import { createComposerCommands } from "./commands/createComposerCommands"
+import { ComposerCommandMenus } from "./commands/ComposerCommandMenus"
+import { NewSessionPermissionControl, PermissionModeControl } from "./permissions/PermissionModeControl"
+import { createNewChatWorktree } from "../workspace/createNewChatWorktree"
+import { NewChatWorktreeControl } from "../workspace/NewChatWorktreeControl"
 
 type Chat = ReturnType<typeof createChat>
 
@@ -20,6 +27,10 @@ export function ComposerPanel(props: {
   chat: Chat
   workspacePath: string | null
   projectId: string | null
+  selectedWorktreePath: string | null
+  draftEpoch: number
+  navigationVersion: () => number
+  onOpenGoal: (sessionId: string) => void
   captureSessionCreated: () => (sessionId: string) => void
   onPreviewImage: (url: string) => void
 }) {
@@ -29,14 +40,44 @@ export function ComposerPanel(props: {
   const value = () => inputs()[draftKey()]?.content ?? ""
   const running = () => props.chat.currentChat?.isRunning === true ||
     (props.chat.sending && props.chat.streaming !== null)
+  const worktree = createNewChatWorktree({
+    sessionId: () => props.chat.currentSessionId,
+    projectId: () => props.projectId,
+    workspacePath: () => props.workspacePath,
+    existingPath: () => props.selectedWorktreePath,
+    draftEpoch: () => props.draftEpoch,
+    navigationVersion: props.navigationVersion,
+  })
   const queue = createGuidanceQueue(() => props.chat.currentSessionId, running)
   const queuedSend = () => Boolean(props.chat.currentSessionId && (running() || queue.hasUnconfirmed))
-  const blocked = () => Boolean(props.chat.pendingQuestion || props.chat.pendingApproval ||
+  const interactionBlocked = () => Boolean(props.chat.pendingQuestion || props.chat.pendingApproval ||
     isSessionExecutionBlocked(props.chat.currentSessionId))
   const [predict, setPredict] = createSignal(getDraftCompletionEnabled())
   const [submitting, setSubmitting] = createSignal(false)
   const [attachments, setAttachments] = createSignal<ChatImageAttachment[]>([])
   let attachmentRevision = 0
+  const models = createComposerModelControls({
+    chat: props.chat,
+    draftKey,
+    disabled: () => interactionBlocked() || running() || submitting() || props.chat.submissionPending || queue.busy || queue.hasUnconfirmed,
+  })
+  const blocked = () => interactionBlocked() || models.sendBlocked
+  const inputId = "lotus-message-input"
+  const mentionWorkspace = () => worktree.preparedPath ?? props.workspacePath
+  const commands = createComposerCommands({
+    chat: props.chat,
+    draftKey,
+    workspacePath: mentionWorkspace,
+    inputId,
+    running,
+    blocked,
+    hasAttachments: () => attachments().length > 0,
+    queueBusy: () => queue.busy || queue.hasUnconfirmed,
+    queuePending: () => queue.pending.length > 0,
+    thinkingMode: () => models.thinkingMode,
+    extraSessionRestricted: () => models.root.child,
+    openGoal: props.onOpenGoal,
+  })
   let filePicker!: HTMLInputElement
   let active = false
   const changeAttachments = (change: (current: ChatImageAttachment[]) => ChatImageAttachment[]) => {
@@ -52,10 +93,6 @@ export function ComposerPanel(props: {
   const completion = createMemo(() => predict()
     ? createDraftCompletionRequest(props.chat.currentSessionId, props.chat.messages)
     : undefined)
-
-  createEffect(draftKey, (key) => {
-    if (key === "") void newSessionPermissionStore.getState().refresh()
-  })
 
   const addFiles = async (files: FileList | File[]) => {
     const identity = draftIdentity()
@@ -77,23 +114,44 @@ export function ComposerPanel(props: {
     const useQueue = queuedSend()
     const payload = images.length ? images.map(({ base64, name, size, type }) => ({ base64, name, size, type })) : undefined
     if ((!draft.content.trim() && !images.length) || (!useQueue && props.chat.sending) ||
-      props.chat.submissionPending || active || blocked() || queue.busy) return
+      props.chat.submissionPending || active || blocked() || queue.busy || commands.busy) return
     active = true
     setSubmitting(true)
-    const projectId = props.projectId
     const sessionCreated = props.captureSessionCreated()
+    const origin = worktree.capture()
+    const submission = {
+      projectId: props.projectId,
+      workspacePath: props.workspacePath,
+      images: payload,
+      permissionMode: key === "" ? newSessionPermissionStore.getState().mode : undefined,
+      rootOrchestrationOnly: key === ""
+        ? (draft.thinkingMode !== undefined ? draft.thinkingMode === "ultra" : models.requestValue)
+        : undefined,
+      thinkingMode: key === "" ? draft.thinkingMode : undefined,
+      reasoningSelection: key === "" ? draft.reasoningEffort : undefined,
+    }
     try {
+      const verdict = commands.handleSubmit(draft)
+      if (verdict !== "pass") {
+        if (await verdict !== "pass" || !origin.isCurrent() || blocked() ||
+          draft.contentRevision !== appStore.getState().getInputState(key).contentRevision ||
+          attachmentRevision !== submittedAttachmentRevision) return
+      }
+      const selectedSkill = commands.selectedSkill
+      if (origin.prepare) {
+        try { submission.workspacePath = await origin.prepare() }
+        catch { return }
+        if (!origin.isCurrent()) return
+      }
       const result = useQueue ? await queue.send(draft.content, payload) : await props.chat.send(draft.content, {
-        projectId,
-        workspacePath: props.workspacePath,
-        images: payload,
-        permissionMode: key === "" ? newSessionPermissionStore.getState().mode : undefined,
-        rootOrchestrationOnly: key === "" && draft.thinkingMode !== undefined ? draft.thinkingMode === "ultra" : undefined,
-        thinkingMode: key === "" ? draft.thinkingMode : undefined,
-        reasoningSelection: key === "" ? draft.reasoningEffort : undefined,
+        ...submission,
+        skillIds: selectedSkill ? [selectedSkill.id] : undefined,
+        isOriginCurrent: origin.prepare ? origin.isCurrent : undefined,
       })
       if (result.kind !== "accepted") return
-      if (!key && projectId) sessionCreated(result.sessionId)
+      if (!key && submission.projectId) sessionCreated(result.sessionId)
+      if (origin.prepare && (!origin.viewerIsCurrent() || (!result.navigated && !origin.isCurrent()))) return
+      if (selectedSkill) commands.clearSkill(selectedSkill)
       if (attachmentRevision === submittedAttachmentRevision) changeAttachments(() => [])
       const latest = appStore.getState()
       const cleared = latest.setInputContentIfRevision(key, draft.contentRevision, "")
@@ -146,22 +204,25 @@ export function ComposerPanel(props: {
             )}</For>
           </div>
         </Show>
+        <ComposerCommandMenus commands={commands} />
         <Show when={draftIdentity()} keyed>
           {(entry) => {
             const previous = focusSnapshots.get(entry.key) ?? { current: null }
             focusSnapshots.set(entry.key, previous)
             return <ComposerEditor
-              id="lotus-message-input"
+              id={inputId}
               value={value()}
-              busy={submitting() || props.chat.submissionPending || queue.busy}
+              busy={submitting() || props.chat.submissionPending || queue.busy || commands.busy}
               label={text("messages_4da199fa")}
               title={text("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
               placeholder={text(queuedSend() ? "type_a_message_to_add_to_the_queue_38c6f67b" : "send_a_message_ae2f86f0")}
-              mentionsEnabled={false}
+              inputRef={commands.setInputRef}
+              mentionsEnabled={Boolean(mentionWorkspace())}
+              mentionScope={mentionWorkspace()}
               onChange={(content) => appStore.getState().setInputContent(entry.key, content)}
               onSubmit={() => { void send() }}
               onAddFiles={(files) => { void addFiles(files) }}
-              onSuggestionChange={() => {}}
+              onSuggestionChange={commands.setFileSuggestion}
               focusSnapshot={previous}
               requestDraftCompletion={completion()}
             />
@@ -176,6 +237,19 @@ export function ComposerPanel(props: {
             onClick={() => filePicker.click()}>
             <ImagePlus class="size-4" />
           </Button>
+          <Show when={draftKey() === ""}>
+            <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
+              value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
+              disabled={worktree.locked || submitting() || props.chat.submissionPending}
+              preparedPath={worktree.preparedPath} error={worktree.error} />
+            <Show when={worktree.busy}><span role="status" class="px-2 text-xs text-muted-foreground">
+              {text("chat_worktree_preparing")}
+            </span></Show>
+          </Show>
+          <Show when={props.chat.currentSessionId} keyed fallback={<NewSessionPermissionControl />}>
+            {(id) => <PermissionModeControl sessionId={id} title={props.chat.currentChat?.title || id} />}
+          </Show>
+          <ComposerModelControls controls={models} />
           <div class="flex-1" />
           <Show when={queuedSend()}><GuidanceTimingControl queue={queue} disabled={blocked() || submitting()} /></Show>
           <Show when={running() || props.chat.sending}>
@@ -188,7 +262,7 @@ export function ComposerPanel(props: {
             <Button size="icon" class="rounded-full" type="button"
               aria-label={text(queuedSend() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
               disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
-                blocked() || submitting() || props.chat.submissionPending || queue.busy}
+                blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy}
               onClick={() => { void send() }}>
               <ArrowUp />
             </Button>
