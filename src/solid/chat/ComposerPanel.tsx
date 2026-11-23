@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, For, lazy, Loading, onSettled, 
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
 import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
+import { isSessionLoopCommand } from "@services/chat/sessionLoop"
 import { getDraftCompletionEnabled, subscribeDraftCompletionEnabled } from "@shared/store/draftCompletionPreferenceState"
 import type { SideChatIntent } from "../workbench/side-chat/SideChatPane"
 import { fileToAttachment, type ChatImageAttachment } from "@/lib/chatImageAttachments"
@@ -162,6 +163,7 @@ export function ComposerPanel(props: {
     openSideChat: () => props.onOpenSideChat,
   })
   const sideChatCommand = () => commands.isSideChatCommand(value())
+  const loopDraft = () => isSessionLoopCommand(value())
   let filePicker!: HTMLInputElement
   const changeAttachments = (change: (current: ChatImageAttachment[]) => ChatImageAttachment[]) => {
     attachmentRevision += 1
@@ -445,7 +447,7 @@ export function ComposerPanel(props: {
               if (id) props.onOpenGoal(id)
             }} />
             <ComposerModelControls controls={models} onRestoreFocus={focusEditor} />
-            <Show when={queuedSend()}><GuidanceTimingControl queue={queue} compact={compactToolbar()} disabled={blocked() || submitting()} /></Show>
+            <Show when={queuedSend() && !loopDraft()}><GuidanceTimingControl queue={queue} compact={compactToolbar()} disabled={blocked() || submitting()} /></Show>
             <Show when={running() || props.chat.sending}>
               <Button size="icon" class="size-8 rounded-full" type="button"
                 aria-label={text("stop_generation_9ad0aac3")} onClick={() => {
@@ -455,9 +457,9 @@ export function ComposerPanel(props: {
                 <Square class="size-4" fill="currentColor" />
               </Button>
             </Show>
-            <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand()}>
+            <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand() || loopDraft()}>
               <Button size="icon" class="size-8 rounded-full" type="button"
-                aria-label={text(queuedSend() && !sideChatCommand() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
+                aria-label={text(queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
                 disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
                   (!sideChatCommand() && (blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}
                 onClick={() => { void send() }}>

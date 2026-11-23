@@ -65,7 +65,7 @@ function describeLoop({ loop }: SessionLoopStatus) {
   const summary = !loop ? uiText("session_loop_absent") : loop.state === "scheduled"
     ? uiText(loop.mode === "adaptive" ? "session_loop_adaptive_scheduled" : "session_loop_scheduled")
     : uiText(labels[loop.state])
-  const details = [summary]
+  const details: string[] = []
   if (loop?.next_fire_at) {
     const time = new Intl.DateTimeFormat(uiLanguage(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(loop.next_fire_at))
     details.push(uiText("session_loop_next_run", { time }))
@@ -74,7 +74,7 @@ function describeLoop({ loop }: SessionLoopStatus) {
     const label = loopRunLabels[loop.last_run_status as keyof typeof loopRunLabels] ?? "session_loop_run_unconfirmed"
     details.push(uiText("session_loop_last_result", { result: uiText(label) }))
   }
-  return details.join(" · ")
+  return details.length ? `${summary} ${details.join(" · ")}` : summary
 }
 
 export function createComposerCommands(options: ComposerCommandsOptions) {
