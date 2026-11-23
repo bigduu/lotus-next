@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, CalendarDays, ChevronRight, CircleDot, Cog, FolderClosed, FolderOpen, GitBranch, List, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, X } from "@lucide/solid"
+import { Archive, ArchiveRestore, CalendarDays, ChevronRight, Cog, FolderClosed, FolderOpen, GitBranch, List, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, onSettled, Show } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import type { ProjectManifest } from "@services/project"
@@ -27,6 +27,7 @@ import { ProjectSectionDialog } from "./ProjectSectionDialog"
 import { createSidebarProjectDragMoves } from "./project-drag/createSidebarProjectDragMoves"
 import type { SidebarDragParts } from "./project-drag/SidebarProjectDrag"
 import { SessionRow } from "./SessionRow"
+import { SupervisorEntry } from "./SupervisorEntry"
 import { createUiLocale, createUiText } from "./uiText"
 
 const GROUPING_KEY = "lotus.sidebar.grouping-mode.v1"
@@ -52,7 +53,7 @@ type Props = {
   onNewChat: (projectId?: string | null, sectionId?: string | null) => void
   onMoveToSection: (projectId: string, sessionId: string, sectionId: string | null) => void
   onTogglePin: (chat: ChatItem) => void
-  onRename: (id: string, title: string) => void
+  onRename: (id: string, title: string) => void | Promise<void>
   onRegenerateTitle: (id: string) => void
   onCopySessionId: (id: string) => void
   onClear: (chat: ChatItem) => void
@@ -305,7 +306,10 @@ export function Sidebar(props: Props) {
               if (current && !dragDisabled(current.id)) props.onMoveToSection(current.id, entry().id, id)
             } : undefined}
             onSelect={() => { void select(entry().id) }}
-            onRename={(title) => props.onRename(entry().id, title)}
+            onRename={(title) => {
+              try { void Promise.resolve(props.onRename(entry().id, title)).catch(props.onError) }
+              catch (error) { props.onError(error) }
+            }}
             onTogglePin={() => props.onTogglePin(entry())}
             onRegenerateTitle={() => props.onRegenerateTitle(entry().id)}
             onCopySessionId={() => props.onCopySessionId(entry().id)}
@@ -469,17 +473,12 @@ export function Sidebar(props: Props) {
           </Button>
         </div>
         <div class="px-2 pb-2">
-          <Button variant="ghost" class="w-full justify-start gap-2"
-            aria-current={props.currentSessionId === DEFAULT_SUPERVISOR_SESSION_ID ? "page" : undefined}
-            aria-busy={supervisorOpening() ? "true" : undefined} disabled={!props.booted || supervisorOpening()}
-            onClick={() => { void select(DEFAULT_SUPERVISOR_SESSION_ID) }}>
-            <CircleDot class="size-4 shrink-0" aria-hidden="true" />
-            <span class="min-w-0 flex-1 truncate text-left">{supervisor()?.title || "Supervisor"}</span>
-            <Show when={supervisor() && props.isRunning(supervisor()!)}>
-              <span data-session-running="" class="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
-            </Show>
-          </Button>
-          <p class="px-3 pb-1 text-xs leading-relaxed text-muted-foreground">{text("supervisor_entry_description")}</p>
+          <SupervisorEntry chat={supervisor()} active={props.currentSessionId === DEFAULT_SUPERVISOR_SESSION_ID}
+            unread={Boolean(supervisor() && isSessionUnread(supervisor()!, readMarkers()))}
+            busy={supervisorOpening()} running={Boolean(supervisor() && props.isRunning(supervisor()!))}
+            disabled={!props.booted || supervisorOpening()}
+            onSelect={() => { void select(DEFAULT_SUPERVISOR_SESSION_ID) }}
+            onRename={props.onRename} onClear={props.onClear} />
           <Button variant="ghost" class="w-full justify-start gap-2"
             onClick={() => openNew(projectMode() && activeGroup() ? props.projects[activeGroup()!.key]?.id : null)}>
             <Plus class="size-4" />{text("new_session_58e21b87")}
