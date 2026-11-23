@@ -1,4 +1,4 @@
-import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js"
+import { createMemo, createSignal, createUniqueId, For, Show, untrack } from "solid-js"
 import type { SprintAction, SprintCommandResult, SprintDefinition, SprintDestination, SprintSummary, SprintView } from "@services/tickets/sprints"
 import { Button } from "../ui/button"
 import type { SprintOwnerControlsCopy } from "@/components/app/project-work/SprintOwnerControls.copy"
@@ -49,8 +49,9 @@ export function SprintOwnerControls(props: SprintOwnerControlsProps) {
 
 function SprintOwnerEditor(props: SprintOwnerControlsProps) {
   const id = createUniqueId()
-  const [draft, setDraft] = createSignal(definitionDraft(props.view))
-  const [baseRevision, setBaseRevision] = createSignal(props.view?.sprint.revision ?? null)
+  const initialView = untrack(() => props.view)
+  const [draft, setDraft] = createSignal(definitionDraft(initialView))
+  const [baseRevision, setBaseRevision] = createSignal(initialView?.sprint.revision ?? null)
   const [workId, setWorkId] = createSignal("")
   const [destinations, setDestinations] = createSignal<Record<string, DestinationDraft>>({})
   const [submitting, setSubmitting] = createSignal(false)
