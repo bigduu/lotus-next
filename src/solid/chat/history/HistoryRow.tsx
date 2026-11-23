@@ -63,8 +63,8 @@ function Reasoning(props: { part: ReasoningPart; rowKey: string; disclosure: His
         <ChevronRight aria-hidden="true"
           class={cn("reasoning-chevron size-3.5 transition-transform duration-(--motion-normal) ease-(--motion-ease)", open() && "rotate-90")} />
       </button>
-      <DisclosurePanel id={id} expanded={open()}>
-        <div tabindex={open() ? 0 : -1} role="region" aria-label={text("reasoning_a62acb18")}
+      <DisclosurePanel expanded={open()}>
+        <div id={id} tabindex={open() ? 0 : -1} role="region" aria-label={text("reasoning_a62acb18")}
           class="mb-1.5 mt-1 max-h-32 overflow-y-auto overscroll-contain whitespace-pre-wrap border-l-2 border-border pl-2.5 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           {props.part.text}
         </div>
@@ -164,7 +164,9 @@ function Process(props: RowActions & { item: ProcessItem; live?: boolean }) {
   const newestTool = () => props.item.parts.findLast((part) => part.kind === "tools" && !!part.runningCallIds?.size) as ToolPart | undefined
   const brief = createMemo(() => {
     const reasoning = extractProcessBrief(newestReasoning()?.text)
-    const progress = extractProcessBrief(newestTool() ? undefined : props.item.status ?? undefined) || toolCountLabel()
+    const status = newestTool() ? undefined : props.item.status ?? undefined
+    if (props.item.active && props.item.thinking && !reasoning && !status?.trim()) return label()
+    const progress = extractProcessBrief(status) || toolCountLabel()
     return props.item.active && !props.item.thinking ? progress || reasoning || label() : reasoning || progress || label()
   })
   const summary = () => (

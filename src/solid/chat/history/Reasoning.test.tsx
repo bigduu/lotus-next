@@ -36,10 +36,10 @@ function mount(text: string, live = false) {
   const click = (button: HTMLButtonElement) => { button.click(); flush() }
   click(host.querySelector("[data-process-toggle]")!)
   const button = () => host.querySelector<HTMLButtonElement>("[data-reasoning-toggle]")!
-  const panel = () => document.getElementById(button().getAttribute("aria-controls")!)!
+  const region = () => document.getElementById(button().getAttribute("aria-controls")!)!
+  const panel = () => region().closest<HTMLElement>('[data-disclosure-panel]')!
   return {
-    host, button, panel, click,
-    region: () => panel().querySelector<HTMLElement>('[role="region"]')!,
+    host, button, panel, click, region,
     update: (value: string, live = row().live) => { setRow({ text: value, live }); flush() },
   }
 }
@@ -55,7 +55,7 @@ it("retains the full collapsed reasoning, panel identity and scroll through live
   expect(region.tabIndex).toBe(-1)
   expect(region.textContent).toBe("first reasoning")
   view.click(button)
-  expect(button.getAttribute("aria-controls")).toBe(panel.id)
+  expect(button.getAttribute("aria-controls")).toBe(region.id)
   expect(panel.getAttribute("aria-hidden")).toBe("false")
   expect(panel.hasAttribute("inert")).toBe(false)
   expect(region.tabIndex).toBe(0)
@@ -100,7 +100,7 @@ it("keeps the same panel and control relationship through rapid reversals", () =
   const region = view.region()
   for (let index = 0; index < 7; index += 1) view.click(button)
   expect(button.getAttribute("aria-expanded")).toBe("true")
-  expect(button.getAttribute("aria-controls")).toBe(panel.id)
+  expect(button.getAttribute("aria-controls")).toBe(region.id)
   expect(view.region()).toBe(region)
   expect(panel.getAttribute("data-state")).toBe("open")
   expect(panel.hasAttribute("inert")).toBe(false)
