@@ -66,7 +66,7 @@ async function openComposer(page: Page, history: readonly unknown[] = []) {
   return { editor, chats, observation, workspaceReads }
 }
 
-test("predicts a follow-up or draft continuation and accepts it with Right Arrow or Tab", async ({ page }) => {
+test("predicts a follow-up or draft continuation and accepts it with Right Arrow or Tab", async ({ page }, testInfo) => {
   const userMessage = "Compare these two approaches."
   const assistantMessage = "Either approach works. The second one takes less time to assemble."
   const { editor, chats, observation } = await openComposer(page, [
@@ -100,6 +100,7 @@ test("predicts a follow-up or draft continuation and accepts it with Right Arrow
   await expect.poll(() => editor.locator("p").first().evaluate((p) =>
     p.ownerDocument.defaultView!.getComputedStyle(p, "::before").content)).toBe("none")
   await expectComposerText(editor, "")
+  await testInfo.attach("Empty composer follow-up", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
   await editor.press("ArrowRight")
   await expect(ghost).toHaveCount(0)
   await expectComposerText(editor, followUp)
@@ -108,6 +109,7 @@ test("predicts a follow-up or draft continuation and accepts it with Right Arrow
   await editor.fill(prefix)
   await expect(ghost).toHaveText(suffix)
   await expectComposerText(editor, prefix)
+  await testInfo.attach("Chinese draft continuation", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
   await editor.dispatchEvent("keydown", { key: "Tab", bubbles: true, cancelable: true, isComposing: true })
   await expectComposerText(editor, prefix)
   await editor.press("Tab")
