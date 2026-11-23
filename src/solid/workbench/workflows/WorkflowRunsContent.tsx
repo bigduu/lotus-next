@@ -129,9 +129,14 @@ export default function WorkflowRunsContent(props: WorkflowRunsContentProps) {
     life.epoch++
     void sync()
   }
-  const actOnRun = async (runId?: string) => {
+  const actOnRun = async (trigger: HTMLButtonElement, runId?: string) => {
     const pendingDraft = draft()
     if (life.mutation || (!runId && !pendingDraft)) return
+    // The action becomes disabled while its receipt is pending. Keep keyboard
+    // focus within the dialog even if that button is removed after completion.
+    if (trigger.ownerDocument.activeElement === trigger) {
+      trigger.closest<HTMLElement>("[role=dialog]")?.focus({ preventScroll: true })
+    }
     life.mutation = true
     setBusy(runId ?? "start")
     setActionError(null)
@@ -219,7 +224,8 @@ export default function WorkflowRunsContent(props: WorkflowRunsContentProps) {
             </Show>
           </>
         )}</Show>
-        <Button size="sm" disabled={!draft() || argsError() !== null || busy() !== null} onClick={() => void actOnRun()}>
+        <Button size="sm" disabled={!draft() || argsError() !== null || busy() !== null}
+          onClick={(event) => void actOnRun(event.currentTarget)}>
           {busy() === "start" ? text("workflow_run_starting") : text("workflow_run_start")}
         </Button>
         <Show when={actionError()}>
@@ -271,7 +277,8 @@ export default function WorkflowRunsContent(props: WorkflowRunsContentProps) {
                       </Button>
                     </Show>
                     <Show when={run().can_cancel && !isWorkflowRunTerminal(run())}>
-                      <Button size="sm" variant="outline" disabled={busy() !== null} onClick={() => void actOnRun(run().run_id)}>
+                      <Button size="sm" variant="outline" disabled={busy() !== null}
+                        onClick={(event) => void actOnRun(event.currentTarget, run().run_id)}>
                         {busy() === run().run_id ? text("workflow_run_cancelling") : text("workflow_run_cancel")}
                       </Button>
                     </Show>

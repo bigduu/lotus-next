@@ -14,6 +14,7 @@ const WorkflowRunsContent = lazy(() => import("./WorkflowRunsContent"))
 export function WorkflowRunsDialog(props: WorkflowRunsDialogProps) {
   const text = createUiText()
   const opener = document.activeElement
+  let panel: HTMLDivElement | undefined
   onCleanup(() => {
     if (!(opener instanceof HTMLElement) || opener === document.body) return
     requestAnimationFrame(() => {
@@ -22,7 +23,13 @@ export function WorkflowRunsDialog(props: WorkflowRunsDialogProps) {
   })
   return (
     <ResponsiveDialog open onOpenChange={(open) => { if (!open) props.onClose() }}>
-      <ResponsiveDialogContent class="sm:max-w-2xl">
+      <ResponsiveDialogContent ref={(element: HTMLDivElement) => { panel = element }}
+        tabIndex={-1} class="sm:max-w-2xl"
+        onOpenAutoFocus={(event: Event) => {
+          event.preventDefault()
+          const target = panel?.querySelector<HTMLElement>('[data-slot="responsive-dialog-close"]') ?? panel
+          target?.focus({ preventScroll: true })
+        }}>
         <div class="shrink-0 border-b px-5 py-4 pr-12">
           <ResponsiveDialogTitle>{text("workflow_run_title")}</ResponsiveDialogTitle>
           <ResponsiveDialogDescription class="mt-2 break-words">{props.sessionTitle}</ResponsiveDialogDescription>
