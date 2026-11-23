@@ -156,6 +156,7 @@ export function Composer({
   onPickSkill,
   skills,
   onOpenWorkflowRuns,
+  onOpenSideChat,
   onPickGoal,
   onPickCompact,
   compactUnavailable,
@@ -203,6 +204,7 @@ export function Composer({
   onPickSkill: (skill: SkillDefinition) => void
   skills: SkillDefinition[]
   onOpenWorkflowRuns?: () => void
+  onOpenSideChat?: () => void
   onPickGoal?: () => void
   onPickCompact?: () => void
   compactUnavailable?: string | null
@@ -301,6 +303,7 @@ export function Composer({
           query={slashQuery}
           onPick={onPickSkill}
           onOpenWorkflowRuns={onOpenWorkflowRuns}
+          onOpenSideChat={onOpenSideChat}
           onPickGoal={onPickGoal}
           onPickCompact={onPickCompact}
           compactUnavailable={compactUnavailable}

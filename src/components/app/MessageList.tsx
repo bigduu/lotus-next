@@ -4,6 +4,7 @@ import {
   Fragment,
   memo,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -18,7 +19,7 @@ import {
   type Rect,
   type Virtualizer,
 } from "@tanstack/react-virtual"
-import { Copy, Pencil, RotateCcw, GitFork, MoreHorizontal, Trash2, ChevronRight } from "lucide-react"
+import { Copy, Pencil, RotateCcw, GitFork, MessageSquarePlus, MoreHorizontal, Trash2, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { DisclosurePanel } from "@/components/chat/DisclosurePanel"
@@ -44,6 +45,7 @@ import { cn } from "@/lib/utils"
 import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
 import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import { messageOccurrenceKey, type Message } from "@shared/types/chatMessages"
+import { sideChatQuote, type SideChatQuote } from "@services/chat/sideChat"
 import type { SubAgentCard } from "@/hooks/useSubAgentView"
 import type { LiveSegment, PendingUserMessageView } from "@/hooks/useChat"
 
@@ -516,6 +518,7 @@ function MessageActions({
   onRegenerate,
   onFork,
   onDelete,
+  onAskSideChat,
 }: {
   messageId: string
   text: string
@@ -526,6 +529,7 @@ function MessageActions({
   executionBlocked: boolean
   onRegenerate?: () => void
   onFork: () => void
+  onAskSideChat?: () => void
   onDelete: () => void
 }) {
   useUiLocale()
@@ -597,6 +601,9 @@ function MessageActions({
             <GitFork />
             {uiText("fork_from_here_28321cb9")}</DropdownMenuItem>
           <DropdownMenuSeparator className="md:hidden" />
+          {onAskSideChat ? (
+            <DropdownMenuItem onSelect={onAskSideChat}><MessageSquarePlus />{uiText("side_chat_ask_selection")}</DropdownMenuItem>
+          ) : null}
           {isUser ? (
             <DropdownMenuItem disabled={executionBlocked} onClick={onEdit}>
               <Pencil />
@@ -654,6 +661,9 @@ export const MessageList = memo(function MessageList({
   onFork,
   onDelete,
   onEditMessage,
+  onAskSideChat,
+  revealMessage,
+  onMissingRevealedMessage,
 }: {
   scrollRef: Ref<HTMLDivElement>
   contentRef: Ref<HTMLDivElement>
@@ -696,6 +706,9 @@ export const MessageList = memo(function MessageList({
   onFork: (id: string) => void
   onDelete: (id: string) => void
   onEditMessage: (id: string, text: string) => void
+  onAskSideChat?: (quote: SideChatQuote) => void
+  revealMessage?: { id: string; token: number }
+  onMissingRevealedMessage?: () => void
 }) {
   useUiLocale()
   useRenderProbe("app.MessageList")
@@ -745,6 +758,27 @@ export const MessageList = memo(function MessageList({
   openTurnKeysRef.current = openTurnKeys
 
   const scrollElementRef = useRef<HTMLDivElement | null>(null)
+  const [selection, setSelection] = useState<SideChatQuote | null>(null)
+  const canQuote = Boolean(onAskSideChat && !readOnly)
+  useEffect(() => {
+    if (!canQuote) return
+    const update = () => {
+      const selected = document.getSelection()
+      const anchor = selected?.anchorNode?.parentElement?.closest<HTMLElement>("[data-side-chat-source]")
+      const id = anchor?.dataset.sideChatSource
+      const text = selected?.toString().trim()
+      const next = id && text && anchor?.contains(selected?.focusNode ?? null) && scrollElementRef.current?.contains(anchor)
+        ? sideChatQuote(id, text) : null
+      setSelection((current) => current?.message_id === next?.message_id && current?.text === next?.text ? current : next)
+    }
+    document.addEventListener("selectionchange", update)
+    return () => document.removeEventListener("selectionchange", update)
+  }, [canQuote])
+  const askSideChat = (quote: SideChatQuote) => {
+    onAskSideChat?.(quote)
+    document.getSelection()?.removeAllRanges()
+    setSelection(null)
+  }
   const historyPrefixRef = useRef<HTMLDivElement | null>(null)
   const historyListRef = useRef<HTMLDivElement | null>(null)
   const [historyScrollMargin, setHistoryScrollMargin] = useState(0)
@@ -787,6 +821,29 @@ export const MessageList = memo(function MessageList({
     // already-delivered ancestor again in the same browser frame.
     useAnimationFrameWithResizeObserver: true,
   })
+
+  const revealedToken = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!revealMessage || revealedToken.current === revealMessage.token) return
+    const index = historyEntries.findIndex((entry) => entry.item?.kind === "msg" && entry.item.m.id === revealMessage.id)
+    if (index >= 0) {
+      revealedToken.current = revealMessage.token
+      virtualizer.scrollToIndex(index, { align: "center" })
+      return
+    }
+    if (historyBeforeMessageId && onLoadEarlierHistory) {
+      const request = new AbortController()
+      void onLoadEarlierHistory(request.signal).catch(() => {
+        if (!request.signal.aborted) {
+          revealedToken.current = revealMessage.token
+          onMissingRevealedMessage?.()
+        }
+      })
+      return () => request.abort()
+    }
+    revealedToken.current = revealMessage.token
+    onMissingRevealedMessage?.()
+  }, [historyEntries, historyBeforeMessageId, onLoadEarlierHistory, onMissingRevealedMessage, revealMessage, virtualizer])
 
   const restoredReading = useRef(false)
   const earlierRequest = useRef<AbortController | null>(null)
@@ -1142,6 +1199,8 @@ export const MessageList = memo(function MessageList({
         </div>
       )
     }
+    const canQuoteMessage = canQuote && showMessageActions && !runtimeNotice && Boolean(text.trim())
+    const selectedQuote = canQuoteMessage && selection?.message_id === m.id ? selection : null
     const actions = showMessageActions ? (
       <MessageActions
         messageId={m.id}
@@ -1153,6 +1212,7 @@ export const MessageList = memo(function MessageList({
         onRegenerate={idx === regenerableAssistantIndex ? onRegenerate : undefined}
         executionBlocked={executionBlocked}
         onFork={() => onFork(m.id)}
+        onAskSideChat={canQuoteMessage ? () => askSideChat(selectedQuote ?? sideChatQuote(m.id, text)) : undefined}
         onDelete={() => onDelete(m.id)}
       />
     ) : null
@@ -1169,6 +1229,7 @@ export const MessageList = memo(function MessageList({
         {isUser ? actions : null}
         <div
           data-message-role={isUser ? "user" : "assistant"}
+          data-side-chat-source={canQuoteMessage ? m.id : undefined}
           className={cn(
             MESSAGE_SURFACE_LAYOUT,
             isUser
@@ -1185,6 +1246,12 @@ export const MessageList = memo(function MessageList({
             <AssistantMarkdown isStreaming={Boolean(it.streaming)} onPreviewImage={onPreviewImage}>{text}</AssistantMarkdown>
           ) : null}
         </div>
+        {selectedQuote ? (
+          <Button type="button" variant="secondary" size="sm" className="shrink-0" onMouseDown={(event) => event.preventDefault()}
+            onClick={() => askSideChat(selectedQuote)}>
+            <MessageSquarePlus className="size-3.5" />{uiText("side_chat_ask_selection")}
+          </Button>
+        ) : null}
         {isUser ? null : actions}
       </div>
     )

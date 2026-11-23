@@ -20,6 +20,7 @@ export function SlashMenu({
   onPickCompact,
   compactUnavailable,
   onOpenWorkflowRuns,
+  onOpenSideChat,
   onDismiss,
   inputId,
 }: {
@@ -31,6 +32,7 @@ export function SlashMenu({
   onPickCompact?: () => void
   compactUnavailable?: string | null
   onOpenWorkflowRuns?: () => void
+  onOpenSideChat?: () => void
   onDismiss?: () => void
 }) {
   useUiLocale()
@@ -48,7 +50,12 @@ export function SlashMenu({
     ? { kind: "command", id: "builtin-workflow", name: "workflow", description: workflowDescription,
         action: onOpenWorkflowRuns }
     : null
+  const sideChatDescription = uiText("side_chat_description")
+  const sideChatEntry: Entry | null = onOpenSideChat && matches("side", sideChatDescription)
+    ? { kind: "command", id: "builtin-side", name: "side", description: sideChatDescription, action: onOpenSideChat }
+    : null
   const entries: Entry[] = [
+    ...(sideChatEntry ? [sideChatEntry] : []),
     ...(onPickGoal && matches("goal", uiText("set_session_goal_98fa0b0f")) ? [{ kind: "command" as const, id: "builtin-goal", name: "goal", description: uiText("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8"), action: onPickGoal }] : []),
     ...(compactEntry ? [compactEntry] : []),
     ...(workflowEntry ? [workflowEntry] : []),
@@ -63,7 +70,7 @@ export function SlashMenu({
       })),
   ].slice(0, 8)
   // Exact compact and workflow commands take precedence over matching Skills.
-  const exactCommand = [compactEntry, workflowEntry].find((entry) => entry?.name === q)
+  const exactCommand = [compactEntry, workflowEntry, sideChatEntry].find((entry) => entry?.name === q)
   const shownEntries = exactCommand ? [exactCommand] : entries
   const disabledReason = (entry: Entry) => entry.kind === "command" ? entry.unavailable : null
   const selectable = shownEntries.filter((entry) => !disabledReason(entry))

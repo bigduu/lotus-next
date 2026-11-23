@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { LazyCommandPalette } from "@/components/chat/LazyCommandPalette"
@@ -44,6 +44,9 @@ import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { agentClient } from "@services/chat/AgentService"
+import { SIDE_CHAT_FEATURE } from "@services/chat/sideChat"
+import { backendSupports, onBackendFeatures } from "@/lib/backendFeatures"
+import type { PendingSideChatIntent, SideChatIntent } from "@/components/app/SideChatPane"
 import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
 import type { WorkbenchTabDrag } from "@/components/app/workbenchSurfaceContext"
@@ -53,6 +56,8 @@ import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/Right
 // The optional workbench need not add its tab/drag UI to ordinary-chat startup.
 const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
 
+const SideChatPane = lazy(() => import("@/components/app/SideChatPane").then((module) => ({ default: module.SideChatPane })))
+const supportsSideChat = () => backendSupports(SIDE_CHAT_FEATURE)
 const SubagentsPane = lazy(() => import("@/components/app/SubagentsPane").then((module) => ({ default: module.SubagentsPane })))
 const EMPTY_HISTORY_PREFIX: readonly Message[] = []
 
@@ -179,8 +184,15 @@ function App() {
   const workbenchSelectionVersionRef = useRef(0)
   const [workPanelTarget, setWorkPanelTarget] = useState<HTMLDivElement | null>(null)
   const workEnabled = !!currentChat && isDefaultSupervisor(currentChat)
+  const sideChatSupported = useSyncExternalStore(onBackendFeatures, supportsSideChat)
+  const sideChatSourceId = sideChatSupported && !workEnabled && currentChat?.kind === "root"
+    && !currentChat.parentSessionId && currentChat.id === currentSessionId ? currentSessionId : null
+  const sideChatToken = useRef(0)
+  const [sideChatIntent, setSideChatIntent] = useState<(PendingSideChatIntent & { scope: string }) | null>(null)
+  const [sideChatSourceRequest, setSideChatSourceRequest] = useState<{ id: string; token: number; scope: string } | null>(null)
   const visibleToolTabs = openToolTabs.filter((tab) =>
-    (tab !== "work" || workEnabled) && (tab !== "task-dag" || taskDagSessionId !== null))
+    (tab !== "work" || workEnabled) && (tab !== "task-dag" || taskDagSessionId !== null)
+    && (tab !== "side-chat" || sideChatSourceId !== null))
 
   const [browserEntry, setBrowserEntry] = useState({ scope: workbenchScope, open: false, draft: "", touched: false })
   if (browserEntry.scope !== workbenchScope) {
@@ -506,6 +518,11 @@ function App() {
     }
     updateWorkbench((previous) => activateWorkbenchTab(previous, tab))
   }
+  const openSideChat = (intent?: SideChatIntent) => {
+    if (!sideChatSourceId || !workbenchScope || !isCurrentWorkbench()) return
+    setSideChatIntent({ ...intent, token: ++sideChatToken.current, scope: workbenchScope })
+    openWorkbench("side-chat")
+  }
   const closeToolTab = (tab: WorkbenchToolTab) => {
     workbenchSelectionVersionRef.current += 1
     const key = `tool:${tab}`
@@ -639,7 +656,7 @@ function App() {
             width="100%"
             onClose={() => taskDagExpanded ? setExpandedTaskDagScope(null) : setWorkbenchOpen(false)}
           >
-            {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
+            {workbenchOpen || (workEnabled && openToolTabs.includes("work")) || (sideChatSourceId && openToolTabs.includes("side-chat")) ? (
               <Suspense fallback={null}>
               <RightWorkbench
                 visible={workbenchOpen}
@@ -743,6 +760,27 @@ function App() {
                     }}
                   />
                 ) : null}
+                sideChat={sideChatSourceId && workbenchScope ? (
+                  <SideChatPane key={workbenchScope}
+                    sourceId={sideChatSourceId} scope={workbenchScope}
+                    active={!settingsOpen && workbenchOpen && selectedWorkbenchTab === "side-chat"}
+                    intent={sideChatIntent?.scope === workbenchScope ? sideChatIntent : undefined}
+                    onConsumeIntent={(token) => setSideChatIntent((pending) => pending?.token === token ? null : pending)}
+                    onQuoteToMain={(text) => {
+                      const store = useAppStore.getState()
+                      if (!isCurrentWorkbench() || store.currentSessionId !== sideChatSourceId) return
+                      const draft = store.getInputState(sideChatSourceId).content
+                      const quote = text.split("\n").map((line) => "> " + line).join("\n")
+                      store.setInputContent(sideChatSourceId, draft ? draft + "\n\n" + quote : quote)
+                      if (!dockWorkbench) setWorkbenchOpen(false)
+                    }}
+                    onRevealSource={(id) => {
+                      if (!isCurrentWorkbench()) return
+                      setSideChatSourceRequest({ id, token: ++sideChatToken.current, scope: workbenchScope })
+                      if (!dockWorkbench) setWorkbenchOpen(false)
+                    }}
+                  />
+                ) : undefined}
                 subagents={(
                   <SubagentsPane
                     key={workbenchScope}
@@ -807,6 +845,8 @@ function App() {
           sidePaneOpen={workbenchOpen}
           onToggleSidePane={toggleWorkbench}
           onOpenSubagents={openSubagentTree}
+          onOpenSideChat={sideChatSourceId ? openSideChat : undefined}
+          sideChatSourceRequest={sideChatSourceRequest?.scope === workbenchScope ? sideChatSourceRequest : undefined}
           onOpenTaskDag={taskDagSessionId ? () => openWorkbench("task-dag") : undefined}
           onSelectSubAgent={openSubagentPreview}
           onOpenSidebar={() => {
