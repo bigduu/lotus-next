@@ -26,7 +26,7 @@ async function selectSourceText(source: Locator, quote: string) {
   }, quote)
 }
 
-test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the source", async ({ page, baseURL }, testInfo) => {
+test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the source", async ({ page, baseURL, isMobile }, testInfo) => {
   const entryUrl = new URL("/", baseURL).href
   const origin = new URL(entryUrl).origin
   const source = "all-surface-session"
@@ -172,7 +172,7 @@ test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the s
   turn.answer = "Cargo.lock 和 Cargo.toml 不一致。"
   update({ type: "side_chat_changed" })
   await expect(panel.getByText(turn.answer)).toBeVisible()
-  if (testInfo.project.name === "desktop") {
+  if (!isMobile) {
     const path = testInfo.outputPath("side-chat.png")
     await page.screenshot({ path })
     await testInfo.attach("side-chat", { path, contentType: "image/png" })

@@ -14,8 +14,7 @@ const compositionRoot = "src/main.tsx";
 const solidCompositionRoot = "src/solid/entry.tsx";
 const browserEntrySupport = "src/runtime/browserEntrySupport.ts";
 const applicationDocuments = new Map([
-  ["index.html", `/${compositionRoot}`],
-  ["solid-candidate.html", `/${solidCompositionRoot}`],
+  ["index.html", `/${solidCompositionRoot}`],
 ]);
 const httpOwner = "src/services/api/transport.ts";
 const apiCompositionOwner = "src/services/api/index.ts";

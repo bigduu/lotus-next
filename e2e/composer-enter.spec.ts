@@ -47,7 +47,7 @@ for (const running of [false, true]) {
     // Enter chooses the highlighted built-in slash command before the composer sees it.
     await input.fill("/goal")
     await expectComposerText(input, "/goal")
-    await expect(page.getByRole("button", { name: /^\/goal(?:\s|$)/ })).toBeVisible()
+    await expect(page.getByRole("option", { name: /^\/goal(?:\s|$)/ })).toBeVisible()
     await input.press("Enter")
     await expectComposerText(input, "")
     expect(requests).toHaveLength(0)

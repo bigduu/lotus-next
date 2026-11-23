@@ -40,12 +40,11 @@ npm run dev -- --host 127.0.0.1
 
 显式指定 host 参数会让开发服务器只监听回环地址；仓库里不带参数的 `npm run dev` 会监听网络。Vite 会把 `/api` 和 `/v2` 代理到 9562 端口的 Bamboo。后端不可用时，无法执行任务，也无法提供依赖服务端的设置。
 
-### Solid 2 预览
+### Solid 2 组件预览
 
-让 Bamboo 在 9562 端口运行，再执行 `npm run dev:solid`，打开
-`http://127.0.0.1:9573`。后端声明支持侧聊后，预览才会开放工作台侧聊、
-`/side` 和消息引用。执行 `npm run test:e2e:solid` 可运行预览浏览器用例。
-[查看侧聊预览截图](docs/demos/solid-preview-side-chat.png)。
+执行 `npm run dev:solid`，打开 `http://127.0.0.1:9573/solid-preview.html`。
+执行 `npm run test:e2e:solid` 可运行 Solid 浏览器用例。侧聊需要 Bamboo 后端声明支持。
+[查看侧聊截图](docs/demos/solid-preview-side-chat.png)。
 
 ### 生产构建
 

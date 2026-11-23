@@ -147,13 +147,16 @@ const solidOptionalFeatureEntries = Object.freeze([
   { label: "ComposerEditor", source: "src/solid/composer/ComposerEditor.tsx" },
   { label: "Settings", source: "src/solid/settings/SettingsPage.tsx" },
   { label: "AssistantMarkdown", source: "src/solid/markdown/AssistantMarkdown.tsx" },
+  { label: "highlightCode", source: "src/solid/markdown/highlight/highlightCode.ts" },
   { label: "renderMermaid", source: "src/solid/markdown/renderMermaid.ts" },
   { label: "renderPdf", source: "src/solid/chat/export/renderPdf.ts" },
   { label: "HomeDashboard", source: "src/solid/chat/home/HomeDashboard.tsx" },
   { label: "SidebarProjectDrag", source: "src/solid/shell/project-drag/SidebarProjectDrag.tsx" },
 ])
 const solidBootstrapNames = new Set(["Root", "SolidApp"])
-const reactPackagePattern = /^(?:@[^/]+\/)?(?:react(?:-.*)?|.+-react)$/
+const reactPackagePattern = /^(?:(?:@[^/]+\/)?(?:react(?:-.*)?|.+-react)|streamdown|@streamdown\/[^/]+)$/
+const solidMarkdownCore = ["unified", "remark-parse", "rehype-sanitize"]
+const deferredMarkdownPackages = /^(?:@shikijs\/[^/]+|shiki|mermaid|jspdf|html2canvas)$/
 
 const forbiddenStartupModulePaths = Object.freeze([
   "src/components/app/ProjectWorkBoard.tsx",
@@ -420,6 +423,11 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   const missingSettingsOwnedPackages = (solid ? ["@kobalte/core"] : requiredSettingsOwnedPackages).filter(
     (packageName) => !settingsOwnedPackages.includes(packageName),
   )
+  const assistantMarkdown = optionalFeatures.find((feature) => feature.label === "AssistantMarkdown")
+  const assistantMarkdownPackages = assistantMarkdown
+    ? [...new Set([...collectStaticClosure(manifest, [assistantMarkdown.key])]
+      .flatMap((key) => readChunkOwnership(manifest[key].file).packages))].sort()
+    : []
   const rootKey = Object.entries(manifest).find(([, manifestEntry]) =>
     manifestEntry.src === (solid ? "src/solid/shell/SolidApp.tsx" : "src/Root.tsx")
   )?.[0]
@@ -443,6 +451,8 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
     settingsOwnedModules: [...settingsOwnedModules].sort(),
     settingsOwnedPackages,
     forbiddenStartupModules,
+    missingMarkdownCore: solid ? solidMarkdownCore.filter((pkg) => !assistantMarkdownPackages.includes(pkg)) : [],
+    leakedMarkdownPackages: assistantMarkdownPackages.filter((pkg) => deferredMarkdownPackages.test(pkg)),
     leakedStartupPackages,
     missingSettingsOwnedModules,
     missingSettingsOwnedPackages,
@@ -470,6 +480,12 @@ export function findBundleBudgetViolations(report) {
   }
   if (report.reactPackages?.length) {
     violations.push(`Solid artifact contains React packages: ${report.reactPackages.join(", ")}.`)
+  }
+  if (report.missingMarkdownCore?.length) {
+    violations.push(`Assistant Markdown first-render closure is incomplete: ${report.missingMarkdownCore.join(", ")}.`)
+  }
+  if (report.leakedMarkdownPackages?.length) {
+    violations.push(`Heavy plugins leaked into the plain assistant Markdown closure: ${report.leakedMarkdownPackages.join(", ")}.`)
   }
   if (!report.settingsIsOwnedByRoot) {
     violations.push("Root must own Settings through one direct dynamic feature entry.")

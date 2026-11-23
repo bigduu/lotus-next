@@ -1,47 +1,14 @@
 import tailwindcss from "@tailwindcss/vite"
 import solid from "@solidjs/vite-plugin"
-import { defineConfig, loadEnv, type Plugin, type PreviewServer, type ViteDevServer } from "vite"
+import { defineConfig, loadEnv, type ConfigEnv, type Plugin, type UserConfig } from "vite"
 import {
   assertSafePublicBuildEnvironment, bundleOwnershipPlugin, developmentProxy, packageNameFromModuleId, portableArtifactBase, sourceAliases,
 } from "./vite.shared.ts"
 
-const previewEntry = "solid-preview.html"
-const candidateEntry = "solid-candidate.html"
-const artifactEntry = "index.html"
-
-function useSolidArtifactEntry(): Plugin {
-  return {
-    name: "lotus-solid-artifact-entry",
-    transformIndexHtml: {
-      order: "pre",
-      handler(html) {
-        const entry = 'src="/src/main.tsx"'
-        if (!html.includes(entry)) throw new Error("The production application entry cannot be selected.")
-        return html.replace(entry, 'src="/src/solid/entry.tsx"')
-      },
-    },
-  }
-}
-
-function serveSolidIndex(): Plugin {
-  const configure = (server: ViteDevServer | PreviewServer) => {
-    server.middlewares.use((request, _response, next) => {
-      // Both preview servers use the Solid entry at the URL printed by Vite.
-      request.url = request.url?.replace(/^\/(?:index\.html)?(?=\?|$)/, `/${candidateEntry}`)
-      next()
-    })
-  }
-  return {
-    name: "lotus-solid-preview-index",
-    configureServer: configure,
-    configurePreviewServer: configure,
-  }
-}
-
 function assertSolidRuntime(): Plugin {
-  const reactRuntime = /^(?:@[^/]+\/)?(?:react(?:-.*)?|.+-react)$/
+  const reactRuntime = /^(?:(?:@[^/]+\/)?(?:react(?:-.*)?|.+-react)|streamdown|@streamdown\/[^/]+)$/
   return {
-    name: "lotus-solid-preview-runtime",
+    name: "lotus-next-solid-runtime",
     generateBundle(_options, bundle) {
       for (const entry of Object.values(bundle)) {
         if (entry.type !== "chunk") continue
@@ -49,29 +16,42 @@ function assertSolidRuntime(): Plugin {
           const pkg = packageNameFromModuleId(id)
           return pkg && reactRuntime.test(pkg)
         })
-        if (incompatible) this.error(`Solid preview imports a React runtime: ${incompatible}`)
+        if (incompatible) this.error(`Solid application imports a React runtime: ${incompatible}`)
       }
     },
   }
 }
 
-export default defineConfig(({ mode }) => {
+export function configureSolidApplication(
+  { mode }: ConfigEnv,
+  output: "application" | "preview" | "candidate",
+): UserConfig {
   assertSafePublicBuildEnvironment(loadEnv(mode, process.cwd(), "VITE_"))
-  const artifact = mode === "solid-artifact"
-  const entries = artifact ? [artifactEntry] : [previewEntry, candidateEntry]
+  const application = output === "application"
+  const entries = output === "preview" ? ["index.html", "solid-preview.html"] : ["index.html"]
 
   return {
-    appType: "mpa",
+    appType: application ? "spa" : "mpa",
     base: portableArtifactBase,
-    cacheDir: "node_modules/.vite-solid-preview",
+    cacheDir: application ? undefined : "node_modules/.vite-solid-preview",
     optimizeDeps: { entries },
-    plugins: [solid(), tailwindcss(), artifact ? useSolidArtifactEntry() : serveSolidIndex(), assertSolidRuntime(), bundleOwnershipPlugin()],
+    plugins: [solid(), tailwindcss(), assertSolidRuntime(), bundleOwnershipPlugin()],
     resolve: { alias: sourceAliases },
-    server: { host: "127.0.0.1", port: 9573, strictPort: true, proxy: developmentProxy },
+    server: {
+      host: application ? true : "127.0.0.1",
+      port: application ? 9563 : 9573,
+      strictPort: true,
+      proxy: developmentProxy,
+    },
     build: {
-      outDir: artifact ? "dist-solid-artifact" : "dist-solid-preview",
+      outDir: application ? "dist" : output === "candidate" ? "dist-solid-artifact" : "dist-solid-preview",
       manifest: "asset-manifest.json",
       rollupOptions: { input: entries },
     },
   }
-})
+}
+
+export default defineConfig((environment) => configureSolidApplication(
+  environment,
+  environment.mode === "solid-artifact" ? "candidate" : "preview",
+))

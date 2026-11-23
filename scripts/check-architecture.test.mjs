@@ -1181,7 +1181,7 @@ describe("architecture boundary fixtures", () => {
 
   it("allows only the canonical composition script in index.html", () => {
     const allowed = new Map([
-      ["index.html", `<main id="root"></main><script type="module" src="/src/main.tsx"></script>`],
+      ["index.html", `<main id="root"></main><script type="module" src="/src/solid/entry.tsx"></script>`],
     ]);
     const bypasses = new Map([
       [
@@ -1194,14 +1194,14 @@ describe("architecture boundary fixtures", () => {
     const violations = findArchitectureViolations(bypasses).join("\n");
     expect(violations).toMatch(/\/bypass\.js.*bypasses/);
     expect(violations).toMatch(/https:\/\/evil\.example\/app\.js.*bypasses/);
-    expect(violations).toMatch(/exactly one \/src\/main\.tsx/);
+    expect(violations).toMatch(/exactly one \/src\/solid\/entry\.tsx/);
   });
 
   it.each(["text/plain", "application/json", "importmap", "text/javascript"])(
     "rejects the canonical composition source with non-module type %s",
     (type) => {
       const sources = new Map([
-        ["index.html", `<script type="${type}" src="/src/main.tsx"></script>`],
+        ["index.html", `<script type="${type}" src="/src/solid/entry.tsx"></script>`],
       ]);
 
       expect(findArchitectureViolations(sources).join("\n")).toMatch(
@@ -1414,9 +1414,9 @@ describe("architecture boundary fixtures", () => {
   });
 
   it("checks the Solid document for a single executable source entry", () => {
-    expect(fixtureMessages("solid-candidate.html", '<script type="module" src="/src/solid/entry.tsx"></script>')).toBe("");
-    expect(fixtureMessages("solid-candidate.html", '<script type="module" src="/src/main.tsx"></script>')).toMatch(/bypasses the canonical/);
-    expect(fixtureMessages("solid-candidate.html", '<script>start()</script>')).toMatch(/inline application scripts/);
+    expect(fixtureMessages("index.html", '<script type="module" src="/src/solid/entry.tsx"></script>')).toBe("");
+    expect(fixtureMessages("index.html", '<script type="module" src="/src/main.tsx"></script>')).toMatch(/bypasses the canonical/);
+    expect(fixtureMessages("index.html", '<script>start()</script>')).toMatch(/inline application scripts/);
   });
 
   it("allows runtime installation before a dynamic Root import", () => {
