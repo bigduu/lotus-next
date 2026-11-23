@@ -36,6 +36,7 @@ import { SupervisorApprovalEntry } from "../chat/supervisor-approvals/Supervisor
 import { createRootModeAuthority } from "../chat/model/createRootModeAuthority"
 import { createTicketIngress } from "../chat/createTicketIngress"
 import { createTicketWork } from "../workbench/work/createTicketWork"
+import { LazyTicketWorkPanel } from "../workbench/work/LazyTicketWorkPanel"
 import { TicketWorkAvailability } from "../workbench/work/TicketWorkAvailability"
 import { SupervisorOverview } from "../workbench/work/SupervisorOverview"
 import type { PendingRequest } from "@services/tickets/types"
@@ -74,7 +75,6 @@ import { createSubagentFileChanges } from "../workbench/review/createSubagentFil
 import { createHistoryPrefix } from "../workbench/review/createHistoryPrefix"
 
 const WorkflowRunsDialog = lazy(() => import("../workbench/workflows/WorkflowRunsDialog"), { export: "WorkflowRunsDialog" })
-const TicketWorkPanel = lazy(() => import("../workbench/work/TicketWorkPanel"), { export: "TicketWorkPanel" })
 const WorktreeManager = lazy(() => import("../workspace/WorktreeManager"), { export: "WorktreeManager" })
 const SettingsPage = lazy(() => import("../settings/SettingsPage"), { export: "SettingsPage" })
 const SubagentsPane = lazy(() => import("../workbench/subagents/SubagentsPane"), { export: "SubagentsPane" })
@@ -789,7 +789,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   canInitialize={tickets.canInitialize} initializing={tickets.initializing}
                   initializationError={tickets.initializationError} onInitialize={() => { void tickets.initialize() }} />
               }>
-                <TicketWorkPanel controller={tickets} selectedWorkId={currentWorkSelection()?.id}
+                <LazyTicketWorkPanel controller={tickets} selectedWorkId={currentWorkSelection()?.id}
                   onShowAll={() => openTicketWork(null)} onReady={() => { requestAnimationFrame(focusWorkPanel) }}
                   onReference={tickets.canSendIngress && ticketScope()?.capabilities?.message_references_v1 === true && !ingress.pending
                     ? (request) => {
