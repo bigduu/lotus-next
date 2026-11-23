@@ -17,7 +17,7 @@ for (const key of new Set([...Object.keys(english), ...Object.keys(chinese)])) {
   else if (placeholders(english[key]) !== placeholders(chinese[key])) problems.push(`Interpolation mismatch: ${key}`)
   if (typeof english[key] === "string" && /[、。；（）「」]/.test(english[key])) problems.push(`Chinese punctuation in English UI key: ${key}`)
 }
-const localeSwitcherPaths = new Set(["src/components/chat/Settings.tsx", "src/solid/settings/SettingsGeneral.tsx"])
+const localeSwitcherPaths = new Set(["src/solid/settings/SettingsGeneral.tsx"])
 const bootstrapFallbackPath = "src/runtime/browserEntrySupport.ts"
 const permittedNativeNames = new Set(["简体中文", "繁體中文", "日本語"])
 const walk = (directory) => {

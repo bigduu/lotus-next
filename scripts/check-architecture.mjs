@@ -72,9 +72,6 @@ const backendOverrideStorageKeys = new Set([
   "lotus_next_backend_endpoint_v1",
   "copilot_backend_base_url",
 ]);
-const nonRuntimeEndpointBindingOwners = new Set([
-  "src/components/chat/settings/metrics/ForwardEndpointsList.tsx",
-]);
 const rawEndpointOwners = new Set([
   runtimeResolver,
   runtimeContract,
@@ -181,9 +178,6 @@ const expectedInventory = {
   "runtime-endpoint-read": {
     "src/services/api/index.ts": 1,
     "src/services/chat/v2Stream.ts": 1,
-  },
-  "non-runtime-endpoint-binding": {
-    "src/components/chat/settings/metrics/ForwardEndpointsList.tsx": 1,
   },
   "runtime-composition-api": {
     [compositionRoot]: 4,
@@ -2038,14 +2032,10 @@ const analyzeSource = (file, source) => {
     const endpointPropertyAccess =
       (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       resolvedPropertyName(node) === "endpoints";
-    let endpointBinding =
+    const endpointBinding =
       ts.isBindingElement(node) &&
       staticName(node.propertyName ?? node.name) === "endpoints" &&
       ts.isObjectBindingPattern(node.parent);
-    if (endpointBinding && nonRuntimeEndpointBindingOwners.has(file)) {
-      addCount(inventory, "non-runtime-endpoint-binding", file);
-      endpointBinding = false;
-    }
     const endpointProperty = endpointPropertyAccess || endpointBinding;
     if (endpointProperty) {
       addCount(inventory, "runtime-endpoint-read", file);
