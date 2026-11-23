@@ -1,30 +1,45 @@
-import { act } from "react"
-import { createRoot } from "react-dom/client"
-import { expect, it } from "vitest"
+import { render, type JSX } from "@solidjs/web"
+import { flush } from "solid-js"
+import { afterEach, expect, it, vi } from "vitest"
+import type { CheckoutMergeState } from "@/lib/worktreeMergeState"
+import type { ChatItem } from "@shared/types/chatMessages"
 import { SessionRow } from "./SessionRow"
-import type { CheckoutMergeState } from "@/hooks/useWorktreeMergeStates"
 
-const noop = () => {}
+vi.mock("@lucide/solid", () => {
+  const Icon = (props: Pick<JSX.IntrinsicElements["svg"], "class" | "aria-hidden">) =>
+    <svg class={props.class} aria-hidden={props["aria-hidden"]} />
+  return { AlertCircle: Icon, Check: Icon, Copy: Icon, List: Icon, MoreHorizontal: Icon, Pencil: Icon,
+    Pin: Icon, PinOff: Icon, RotateCcw: Icon, Sparkles: Icon, Trash2: Icon, GitBranch: Icon, GitMerge: Icon }
+})
+
+// This fixture measures which badge slots the actual row creates. The row's
+// interactive menus run through their native primitives in the browser suite.
+vi.mock("../ui/dropdown-menu", () => {
+  const ignore = () => null
+  return { DropdownMenu: ignore, DropdownMenuContent: ignore, DropdownMenuItem: ignore, DropdownMenuSub: ignore,
+    DropdownMenuSubContent: ignore, DropdownMenuSubTrigger: ignore, DropdownMenuTrigger: ignore }
+})
+
+const cleanups = new Set<() => void>()
+afterEach(() => {
+  for (const cleanup of cleanups) cleanup()
+})
 
 function renderRow(mergeState?: CheckoutMergeState, running = false) {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const noop = () => {}
   const host = document.body.appendChild(document.createElement("div"))
-  const root = createRoot(host)
-  act(() =>
-    root.render(
-      <SessionRow
-        chat={{ id: "s1", title: "Worktree session", isRunning: running }}
-        active={false}
-        mergeState={mergeState}
-        onSelect={noop}
-        onRename={noop}
-        onDelete={noop}
-        onTogglePin={noop}
-        onCopySessionId={noop}
-      />,
-    ),
-  )
-  return { host, cleanup: () => { act(() => root.unmount()); host.remove() } }
+  const chat = { id: "s1", title: "Worktree session", isRunning: running } as ChatItem
+  const dispose = render(() => <SessionRow chat={chat} active={false} unread={false} running={running}
+    mergeState={mergeState} onSelect={noop} onRename={noop} onDelete={noop} onClear={noop}
+    onTogglePin={noop} onRegenerateTitle={noop} onCopySessionId={noop} />, host)
+  flush()
+  const cleanup = () => {
+    cleanups.delete(cleanup)
+    dispose()
+    host.remove()
+  }
+  cleanups.add(cleanup)
+  return { host, cleanup }
 }
 
 it("renders no badge at all when the session has no registered worktree", () => {

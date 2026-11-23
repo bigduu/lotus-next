@@ -3,6 +3,7 @@ import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { cn } from "@/lib/utils"
+import type { CheckoutMergeState } from "@/lib/worktreeMergeState"
 import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
 import {
   DropdownMenu,
@@ -14,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu"
 import { createUiText } from "./uiText"
+import { WorktreeStateBadge } from "./WorktreeStateBadge"
 
 export function SessionRow(props: {
   chat: ChatItem
@@ -22,6 +24,7 @@ export function SessionRow(props: {
   running: boolean
   projectId?: string
   sectionId?: string | null
+  mergeState?: CheckoutMergeState
   dragHandle?: JSX.Element
   sections?: readonly ProjectSidebarSection[]
   onMoveToSection?: (sectionId: string | null) => void
@@ -40,6 +43,8 @@ export function SessionRow(props: {
   const [draft, setDraft] = createSignal("")
   const [menuOpen, setMenuOpen] = createSignal(false)
   let dragged = false
+  let menuTrigger: HTMLButtonElement | undefined
+  let contextOrigin: HTMLElement | undefined
 
   const runFailed = () => !props.running && props.chat.lastRunStatus === "error"
   const failureDetail = () => runFailed()
@@ -58,6 +63,26 @@ export function SessionRow(props: {
     const title = draft().trim()
     setEditing(false)
     if (title && title !== props.chat.title) props.onRename(title)
+  }
+  const openContextMenu = (event: (MouseEvent | KeyboardEvent) & { currentTarget: HTMLDivElement }) => {
+    const target = event.target
+    if (!(target instanceof Element) || !event.currentTarget.contains(target) ||
+      target.closest('input, textarea, [contenteditable="true"], [role="menu"]')) return
+    event.preventDefault()
+    event.stopPropagation()
+    contextOrigin = target.closest<HTMLElement>("button:not(:disabled), [tabindex]")
+      ?? event.currentTarget.querySelector<HTMLElement>("button:not(:disabled), [tabindex]") ?? undefined
+    setMenuOpen(true)
+  }
+  const restoreContextFocus = () => {
+    const origin = contextOrigin
+    contextOrigin = undefined
+    queueMicrotask(() => {
+      const active = document.activeElement
+      if (origin?.isConnected && (active === menuTrigger || active === document.body)) {
+        origin.focus({ preventScroll: true })
+      }
+    })
   }
 
   return (
@@ -96,9 +121,11 @@ export function SessionRow(props: {
           }))
           if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove"
         }}
-        onContextMenu={(event) => {
-          event.preventDefault()
-          setMenuOpen(true)
+        onContextMenu={openContextMenu}
+        onKeyDown={(event) => {
+          if (!event.isComposing && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+            openContextMenu(event)
+          }
         }}
         style={props.active ? { "box-shadow": "inset 0 0 0 1px var(--border)" } : undefined}
         class={cn(
@@ -138,16 +165,24 @@ export function SessionRow(props: {
         <Show when={runFailed()}>
           <span id={failureId} class="sr-only">{text("session_last_run_failed_hint")}</span>
         </Show>
+        <Show when={props.mergeState}>{(merge) => (
+          <span class={merge().state === "merged" || merge().state === "in_progress"
+            ? undefined : "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 transition-opacity"}>
+            <WorktreeStateBadge merge={merge()} running={props.running} />
+          </span>
+        )}</Show>
         {props.dragHandle}
         <DropdownMenu open={menuOpen()} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger
+            ref={(element: HTMLButtonElement) => { menuTrigger = element }}
+            aria-haspopup="menu"
             aria-label={text("session_actions_e6f6d875")}
             style={props.active ? { opacity: "1" } : undefined}
             class="mr-1 shrink-0 rounded p-1 text-muted-foreground outline-none feedback-motion transition-opacity hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground opacity-100 data-[state=open]:opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover/row:opacity-100 md:group-focus-within/row:opacity-100"
           >
             <MoreHorizontal class="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent class="min-w-32 rounded-xl">
+          <DropdownMenuContent class="min-w-32 rounded-xl" onCloseAutoFocus={restoreContextFocus}>
             <Show when={props.projectId && props.onMoveToSection}>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger><List />{text("sidebar_move_to_section")}</DropdownMenuSubTrigger>
