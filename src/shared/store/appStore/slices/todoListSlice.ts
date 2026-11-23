@@ -66,145 +66,184 @@ export type TaskListSlice = TaskListState & TaskListActions;
 
 const agentClient = AgentClient.getInstance();
 
+type TaskProgressRecovery = {
+  missingIds: Set<string>;
+  deltas: Map<string, TaskListDelta>;
+};
+
+function withTaskProgress(item: TaskItem, delta: TaskListDelta): TaskItem {
+  return { ...item, status: delta.status, tool_calls_count: delta.tool_calls_count };
+}
+
 export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSlice> = (
   set,
   get,
-) => ({
-  // State
-  taskLists: {},
-  taskListVersions: {},
-  activeItems: {},
-  evaluationStates: {},
+) => {
+  const recoveries = new Map<string, TaskProgressRecovery>();
+  return {
+    // State
+    taskLists: {},
+    taskListVersions: {},
+    activeItems: {},
+    evaluationStates: {},
 
-  // A newer full list can supersede provisional progress from a tool run.
-  setTaskList: (sessionId, taskList) =>
-    set((state) => {
-      const version = taskList.version ?? 0;
-      const previousSnapshotVersion = state.taskLists[sessionId]?.version;
-      const observedVersion = state.taskListVersions[sessionId] ?? 0;
-      if (previousSnapshotVersion !== undefined && (
-        version < previousSnapshotVersion ||
-        (version === previousSnapshotVersion && version < observedVersion)
-      )) {
-        return state;
-      }
-      return {
-        taskLists: {
-          ...state.taskLists,
-          [sessionId]: taskList,
-        },
-        taskListVersions: {
-          ...state.taskListVersions,
-          [sessionId]: version,
-        },
-      };
-    }),
-
-  loadTaskList: async (sessionId) => {
-    let latest: TaskList | null = null;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const { taskLists: listsAtRequest, taskListVersions: versionsAtRequest } = get();
-      const request = agentClient.getTaskList(sessionId);
-      const taskList = await (attempt === 0 ? request : request.catch(() => null));
-      if (!taskList) break;
-      latest = taskList;
-      const owner = taskList.session_id || sessionId;
-      const state = get();
-      const version = taskList.version;
-      const previous = listsAtRequest[owner];
-      const current = state.taskLists[owner];
-      const observed = state.getTaskListVersion(owner);
-      // Compare immutable lists because a commit can reset the progress version.
-      const progressedDuringRequest = current !== previous;
-      const committedAtRequest = previous?.version;
-      const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
-        current?.version === committedAtRequest &&
-        version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
-      if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
-        state.setTaskList(owner, taskList);
-        break;
-      }
-      // An overtaken response can still reveal a missed commit. Recheck once
-      // from the new baseline; never replace newer live progress on this reply.
-      if (current?.version === undefined || version <= current.version) break;
-    }
-    return latest;
-  },
-
-  // Update from delta (from TaskListItemProgress event)
-  updateTaskListDelta: (sessionId, delta) => {
-    const current = get();
-    if (delta.session_id !== sessionId || delta.version <= current.getTaskListVersion(sessionId)) return;
-    const apply = (state: TaskListSlice) => {
-      const list = state.taskLists[sessionId];
-      if (!list || delta.version <= state.getTaskListVersion(sessionId)) return state;
-      const itemIndex = list.items.findIndex((item) => item.id === delta.item_id);
-      if (itemIndex < 0) return state;
-      const items = [...list.items];
-      items[itemIndex] = { ...items[itemIndex]!, status: delta.status, tool_calls_count: delta.tool_calls_count };
-      return {
-        taskLists: {
-          ...state.taskLists,
-          [sessionId]: {
-            ...list,
-            items,
-            updated_at: new Date().toISOString(),
+    // A newer full list can supersede provisional progress from a tool run.
+    setTaskList: (sessionId, taskList) =>
+      set((state) => {
+        const version = taskList.version ?? 0;
+        const previousSnapshotVersion = state.taskLists[sessionId]?.version;
+        const observedVersion = state.taskListVersions[sessionId] ?? 0;
+        if (previousSnapshotVersion !== undefined && (
+          version < previousSnapshotVersion ||
+          (version === previousSnapshotVersion && version < observedVersion)
+        )) {
+          return state;
+        }
+        // A snapshot containing a missing task can restore the topology while
+        // tool progress from that same recovery is already ahead of the read.
+        const recovery = recoveries.get(sessionId);
+        let restoredList = taskList;
+        let latestDelta: TaskListDelta | undefined;
+        if (recovery && taskList.items.some((item) => recovery.missingIds.has(item.id))) {
+          const items = [...taskList.items];
+          for (const [index, item] of taskList.items.entries()) {
+            const delta = recovery.deltas.get(item.id);
+            if (!delta || delta.version <= version) continue;
+            items[index] = withTaskProgress(item, delta);
+            if (!latestDelta || delta.version > latestDelta.version) latestDelta = delta;
+          }
+          if (latestDelta) restoredList = { ...taskList, items, updated_at: new Date().toISOString() };
+        }
+        return {
+          taskLists: {
+            ...state.taskLists,
+            [sessionId]: restoredList,
           },
+          taskListVersions: {
+            ...state.taskListVersions,
+            [sessionId]: latestDelta?.version ?? version,
+          },
+          ...(latestDelta && { activeItems: {
+            ...state.activeItems,
+            [sessionId]: latestDelta.status === "in_progress" ? latestDelta.item_id : null,
+          } }),
+        };
+      }),
+
+    loadTaskList: async (sessionId) => {
+      let latest: TaskList | null = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const { taskLists: listsAtRequest, taskListVersions: versionsAtRequest } = get();
+        const request = agentClient.getTaskList(sessionId);
+        const taskList = await (attempt === 0 ? request : request.catch(() => null));
+        if (!taskList) break;
+        latest = taskList;
+        const owner = taskList.session_id || sessionId;
+        const state = get();
+        const version = taskList.version;
+        const previous = listsAtRequest[owner];
+        const current = state.taskLists[owner];
+        const observed = state.getTaskListVersion(owner);
+        // Compare immutable lists because a commit can reset the progress version.
+        const progressedDuringRequest = current !== previous;
+        const committedAtRequest = previous?.version;
+        const recoversMissedPlan = version !== undefined && committedAtRequest !== undefined &&
+          current?.version === committedAtRequest &&
+          version > committedAtRequest && version <= (versionsAtRequest[owner] ?? 0);
+        if (!progressedDuringRequest || version === undefined || version >= observed || recoversMissedPlan) {
+          state.setTaskList(owner, taskList);
+          break;
+        }
+        // An overtaken response can still reveal a missed commit. Recheck once
+        // from the new baseline; never replace newer live progress on this reply.
+        if (current?.version === undefined || version <= current.version) break;
+      }
+      return latest;
+    },
+
+    // Update from delta (from TaskListItemProgress event)
+    updateTaskListDelta: (sessionId, delta) => {
+      if (delta.session_id !== sessionId) return;
+      const current = get();
+      const list = current.taskLists[sessionId];
+      const itemIndex = list?.items.findIndex((item) => item.id === delta.item_id) ?? -1;
+      const recovery = recoveries.get(sessionId);
+      if (recovery && delta.version > (list?.version ?? 0)) {
+        const bufferedVersion = recovery.deltas.get(delta.item_id)?.version ?? 0;
+        if (delta.version > bufferedVersion) recovery.deltas.set(delta.item_id, delta);
+        if (itemIndex < 0) recovery.missingIds.add(delta.item_id);
+      }
+      if (delta.version <= current.getTaskListVersion(sessionId)) return;
+      if (list && itemIndex >= 0) {
+        const items = [...list.items];
+        items[itemIndex] = withTaskProgress(items[itemIndex]!, delta);
+        set((state) => ({
+          taskLists: {
+            ...state.taskLists,
+            [sessionId]: {
+              ...list,
+              items,
+              updated_at: new Date().toISOString(),
+            },
+          },
+          taskListVersions: {
+            ...state.taskListVersions,
+            [sessionId]: delta.version,
+          },
+          activeItems: {
+            ...state.activeItems,
+            [sessionId]: delta.status === "in_progress" ? delta.item_id : null,
+          },
+        }));
+      } else if (!recovery) {
+        // Coalesce progress for missing tasks while the authoritative snapshot
+        // is fetched. A plan without the missing task keeps its own statuses.
+        const pending = { missingIds: new Set([delta.item_id]), deltas: new Map([[delta.item_id, delta]]) };
+        recoveries.set(sessionId, pending);
+        void current.loadTaskList(sessionId).catch(() => {}).finally(() => {
+          if (recoveries.get(sessionId) === pending) recoveries.delete(sessionId);
+        });
+      }
+    },
+
+    // Clear task list for a session
+    clearTaskList: (sessionId) => {
+      recoveries.delete(sessionId);
+      set((state) => {
+        const { [sessionId]: _, ...remainingTaskLists } = state.taskLists;
+        const { [sessionId]: __, ...remainingVersions } = state.taskListVersions;
+        const { [sessionId]: ___, ...remainingActive } = state.activeItems;
+        const { [sessionId]: ____, ...remainingEvaluations } = state.evaluationStates;
+        return {
+          taskLists: remainingTaskLists,
+          taskListVersions: remainingVersions,
+          activeItems: remainingActive,
+          evaluationStates: remainingEvaluations,
+        };
+      });
+    },
+
+    // Get current version
+    getTaskListVersion: (sessionId) => {
+      return get().taskListVersions[sessionId] || 0;
+    },
+
+    // Set evaluation state (NEW)
+    setEvaluationState: (sessionId, evalState) =>
+      set((state) => ({
+        evaluationStates: {
+          ...state.evaluationStates,
+          [sessionId]: evalState,
         },
-        taskListVersions: {
-          ...state.taskListVersions,
-          [sessionId]: delta.version,
-        },
-        activeItems: {
-          ...state.activeItems,
-          [sessionId]: delta.status === "in_progress" ? delta.item_id : null,
-        },
-      };
-    };
-    if (current.taskLists[sessionId]?.items.some((item) => item.id === delta.item_id)) {
-      set(apply);
-    } else {
-      // A new viewer may see progress before its snapshot, or may have missed
-      // a committed plan introducing this item. Recheck after the snapshot read.
-      void current.loadTaskList(sessionId).then(() => set(apply), () => {});
-    }
-  },
+      })),
 
-  // Clear task list for a session
-  clearTaskList: (sessionId) =>
-    set((state) => {
-      const { [sessionId]: _, ...remainingTaskLists } = state.taskLists;
-      const { [sessionId]: __, ...remainingVersions } = state.taskListVersions;
-      const { [sessionId]: ___, ...remainingActive } = state.activeItems;
-      const { [sessionId]: ____, ...remainingEvaluations } = state.evaluationStates;
-      return {
-        taskLists: remainingTaskLists,
-        taskListVersions: remainingVersions,
-        activeItems: remainingActive,
-        evaluationStates: remainingEvaluations,
-      };
-    }),
-
-  // Get current version
-  getTaskListVersion: (sessionId) => {
-    return get().taskListVersions[sessionId] || 0;
-  },
-
-  // Set evaluation state (NEW)
-  setEvaluationState: (sessionId, evalState) =>
-    set((state) => ({
-      evaluationStates: {
-        ...state.evaluationStates,
-        [sessionId]: evalState,
-      },
-    })),
-
-  // Clear evaluation state (NEW)
-  clearEvaluationState: (sessionId) =>
-    set((state) => {
-      const { [sessionId]: _, ...remainingEvaluations } = state.evaluationStates;
-      return {
-        evaluationStates: remainingEvaluations,
-      };
-    }),
-});
+    // Clear evaluation state (NEW)
+    clearEvaluationState: (sessionId) =>
+      set((state) => {
+        const { [sessionId]: _, ...remainingEvaluations } = state.evaluationStates;
+        return {
+          evaluationStates: remainingEvaluations,
+        };
+      }),
+  };
+};

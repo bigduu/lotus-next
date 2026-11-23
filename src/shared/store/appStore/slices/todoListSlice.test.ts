@@ -34,30 +34,40 @@ describe("Task snapshots and live progress", () => {
     expect(store.getState().getTaskListVersion("work-child")).toBe(48)
   })
 
-  it("recovers a missing task and applies its live delta after the snapshot arrives", async () => {
+  it("recovers missing tasks without reverting newer live progress or duplicating the read", async () => {
     const store = createStore<TaskListSlice>()(createTaskListSlice)
     const sessionId = "root"
     const baseline = taskList(sessionId, "pending", 3)
     const report = { ...baseline.items[0], id: "report", depends_on: ["read"] }
+    const committed = { ...taskList(sessionId, "pending", 4), items: [...baseline.items, report] }
     store.getState().setTaskList(sessionId, baseline)
     let respond!: (value: TaskList) => void
     api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+      .mockResolvedValueOnce(committed)
 
-    store.getState().updateTaskListDelta(sessionId, {
+    const missingProgress = {
       session_id: sessionId, item_id: report.id, status: "in_progress", tool_calls_count: 2, version: 5,
-    })
+    } as const
+    store.getState().updateTaskListDelta(sessionId, missingProgress)
     expect(store.getState().getTaskListVersion(sessionId)).toBe(3)
     store.getState().updateTaskListDelta(sessionId, {
-      session_id: sessionId, item_id: "read", status: "completed", tool_calls_count: 1, version: 4,
+      session_id: sessionId, item_id: "read", status: "completed", tool_calls_count: 1, version: 6,
     })
-    respond({ ...taskList(sessionId, "completed", 4), items: [...store.getState().taskLists[sessionId].items, report] })
+    const displayed: TaskItemStatus[] = []
+    const stop = store.subscribe((state) => { displayed.push(state.taskLists[sessionId].items[0].status) })
+    store.getState().updateTaskListDelta(sessionId, missingProgress)
+    expect(api.get).toHaveBeenCalledTimes(1)
+    respond(committed)
 
-    await vi.waitFor(() => expect(store.getState().getTaskListVersion(sessionId)).toBe(5))
+    await vi.waitFor(() => expect(store.getState().taskLists[sessionId].version).toBe(4))
+    stop()
     expect(store.getState().taskLists[sessionId].items).toMatchObject([
       { id: "read", status: "completed" },
       { id: "report", status: "in_progress", depends_on: ["read"], tool_calls_count: 2 },
     ])
-    expect(api.get).toHaveBeenCalledTimes(1)
+    expect(store.getState().getTaskListVersion(sessionId)).toBe(6)
+    expect(displayed).toEqual(["completed"])
+    expect(api.get).toHaveBeenCalledTimes(2)
   })
 
   it("keeps a newer Worker update when an older HTTP response or full event arrives", async () => {

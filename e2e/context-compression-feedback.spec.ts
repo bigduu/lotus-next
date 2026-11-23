@@ -272,6 +272,10 @@ test("Session DAG opens in the workbench, fits a large graph and shows live task
     await expect(steps).toBeVisible()
     await capture(f, "session-task-dag-docked")
   }
+  await card.getByRole("button", { name: f.copy("project_work_close_details"), exact: true }).focus()
+  await page.keyboard.press("Enter")
+  await expect(reviewNode).toBeFocused()
+  await expect(steps).toHaveCount(0)
   await verifyIsolation(f)
 })
 

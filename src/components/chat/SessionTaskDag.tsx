@@ -106,6 +106,7 @@ export function SessionTaskDag({ sessionId, expanded, onToggleExpanded }: {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [scale, setScale] = useState(1)
   const viewport = useRef<HTMLDivElement>(null)
+  const selectedButton = useRef<HTMLButtonElement>(null)
   const scrollAfterZoom = useRef<{ left: number; top: number } | null>(null)
   const drag = useRef<{ pointerId: number; left: number; top: number } | null>(null)
   const arrowId = useId()
@@ -153,7 +154,8 @@ export function SessionTaskDag({ sessionId, expanded, onToggleExpanded }: {
   }
 
   const node = (item: TaskItem, style?: CSSProperties) => (
-    <button key={item.id} type="button" title={item.description} style={style}
+    <button key={item.id} ref={selected?.id === item.id ? selectedButton : undefined}
+      type="button" title={item.description} style={style}
       aria-expanded={selected?.id === item.id} aria-controls={selected?.id === item.id ? detailId : undefined}
       onClick={() => setSelectedId((previous) => previous === item.id ? null : item.id)}
       className={cn("flex cursor-pointer flex-col justify-center gap-1 rounded-lg border bg-card px-2.5 py-1.5 text-left shadow-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ring-inset", style ? "absolute" : "min-w-0", selected?.id === item.id && "border-primary")}>
@@ -246,6 +248,9 @@ export function SessionTaskDag({ sessionId, expanded, onToggleExpanded }: {
       <p className="text-xs text-muted-foreground">{uiText("session_task_dag_cycle")}</p>
       <div className="grid gap-2 sm:grid-cols-2">{items.map((item) => node(item))}</div>
     </div> : <p className="p-4 text-sm text-muted-foreground">{uiText("session_task_dag_empty")}</p>}
-    {selected ? <TaskDagDetails task={selected} items={items} id={detailId} onClose={() => setSelectedId(null)} /> : null}
+    {selected ? <TaskDagDetails task={selected} items={items} id={detailId} onClose={() => {
+      (selectedButton.current ?? viewport.current)?.focus()
+      setSelectedId(null)
+    }} /> : null}
   </section>
 }
