@@ -70,6 +70,60 @@ describe("Task snapshots and live progress", () => {
     expect(api.get).toHaveBeenCalledTimes(2)
   })
 
+  it.each([5, 7])("preserves known progress when a missing task update arrives at v%i", async (version) => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    const sessionId = "root"
+    const baseline = taskList(sessionId, "pending", 3)
+    const report = { ...baseline.items[0], id: "report", depends_on: ["read"] }
+    store.getState().setTaskList(sessionId, baseline)
+    api.get.mockResolvedValueOnce({ ...baseline, version: 4, items: [...baseline.items, report] })
+
+    store.getState().updateTaskListDelta(sessionId, {
+      session_id: sessionId, item_id: "read", status: "completed", tool_calls_count: 2, version: 6,
+    })
+    store.getState().updateTaskListDelta(sessionId, {
+      session_id: sessionId, item_id: "report", status: "in_progress", tool_calls_count: 1, version,
+    })
+
+    await vi.waitFor(() => expect(store.getState().taskLists[sessionId].version).toBe(4))
+    expect(store.getState().taskLists[sessionId].items).toMatchObject([
+      { id: "read", status: "completed" },
+      { id: "report", status: "in_progress" },
+    ])
+    expect(store.getState().getTaskListVersion(sessionId)).toBe(Math.max(6, version))
+    expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
+  it("honors a later committed plan after an earlier push already resolved the missing task", async () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    const sessionId = "root"
+    const baseline = taskList(sessionId, "pending", 3)
+    const report = { ...baseline.items[0], id: "report", depends_on: ["read"] }
+    const recovered = { ...baseline, version: 4, items: [...baseline.items, report] }
+    store.getState().setTaskList(sessionId, baseline)
+    let respond!: (value: TaskList) => void
+    api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+
+    store.getState().updateTaskListDelta(sessionId, {
+      session_id: sessionId, item_id: "report", status: "in_progress", tool_calls_count: 1, version: 5,
+    })
+    store.getState().updateTaskListDelta(sessionId, {
+      session_id: sessionId, item_id: "read", status: "completed", tool_calls_count: 2, version: 6,
+    })
+    store.getState().setTaskList(sessionId, recovered)
+    expect(store.getState().getTaskListVersion(sessionId)).toBe(6)
+    const committed: TaskList = {
+      ...recovered, version: 5,
+      items: [{ ...baseline.items[0], status: "blocked" }, { ...report, status: "completed" }],
+    }
+    store.getState().setTaskList(sessionId, committed)
+    respond(recovered)
+    await Promise.resolve()
+
+    expect(store.getState().taskLists[sessionId]).toEqual(committed)
+    expect(store.getState().getTaskListVersion(sessionId)).toBe(5)
+  })
+
   it("keeps a newer Worker update when an older HTTP response or full event arrives", async () => {
     const store = createStore<TaskListSlice>()(createTaskListSlice)
     const root = taskList("supervisor", "blocked", 1491)

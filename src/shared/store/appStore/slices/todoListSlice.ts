@@ -66,11 +66,6 @@ export type TaskListSlice = TaskListState & TaskListActions;
 
 const agentClient = AgentClient.getInstance();
 
-type TaskProgressRecovery = {
-  missingIds: Set<string>;
-  deltas: Map<string, TaskListDelta>;
-};
-
 function withTaskProgress(item: TaskItem, delta: TaskListDelta): TaskItem {
   return { ...item, status: delta.status, tool_calls_count: delta.tool_calls_count };
 }
@@ -79,7 +74,8 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
   set,
   get,
 ) => {
-  const recoveries = new Map<string, TaskProgressRecovery>();
+  const progressBySession = new Map<string, Map<string, TaskListDelta>>();
+  const missingDuringRead = new Map<string, Set<string>>();
   return {
     // State
     taskLists: {},
@@ -101,19 +97,27 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
         }
         // A snapshot containing a missing task can restore the topology while
         // tool progress from that same recovery is already ahead of the read.
-        const recovery = recoveries.get(sessionId);
+        const missing = missingDuringRead.get(sessionId);
+        const progress = progressBySession.get(sessionId);
+        const replayed = new Map<string, TaskListDelta>();
         let restoredList = taskList;
         let latestDelta: TaskListDelta | undefined;
-        if (recovery && taskList.items.some((item) => recovery.missingIds.has(item.id))) {
+        if (progress && missing && taskList.items.some((item) => missing.has(item.id))) {
           const items = [...taskList.items];
           for (const [index, item] of taskList.items.entries()) {
-            const delta = recovery.deltas.get(item.id);
+            const delta = progress.get(item.id);
             if (!delta || delta.version <= version) continue;
             items[index] = withTaskProgress(item, delta);
+            replayed.set(item.id, delta);
             if (!latestDelta || delta.version > latestDelta.version) latestDelta = delta;
           }
           if (latestDelta) restoredList = { ...taskList, items, updated_at: new Date().toISOString() };
         }
+        // Consume the missing-task evidence on admission. A subsequent full
+        // plan retains its own statuses even while the original read settles.
+        missing?.clear();
+        if (replayed.size) progressBySession.set(sessionId, replayed);
+        else progressBySession.delete(sessionId);
         return {
           taskLists: {
             ...state.taskLists,
@@ -166,15 +170,14 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
       if (delta.session_id !== sessionId) return;
       const current = get();
       const list = current.taskLists[sessionId];
+      if (delta.version <= (list?.version ?? 0)) return;
       const itemIndex = list?.items.findIndex((item) => item.id === delta.item_id) ?? -1;
-      const recovery = recoveries.get(sessionId);
-      if (recovery && delta.version > (list?.version ?? 0)) {
-        const bufferedVersion = recovery.deltas.get(delta.item_id)?.version ?? 0;
-        if (delta.version > bufferedVersion) recovery.deltas.set(delta.item_id, delta);
-        if (itemIndex < 0) recovery.missingIds.add(delta.item_id);
-      }
-      if (delta.version <= current.getTaskListVersion(sessionId)) return;
+      const progress = progressBySession.get(sessionId) ?? new Map<string, TaskListDelta>();
+      const bufferedVersion = progress.get(delta.item_id)?.version ?? 0;
+      if (delta.version > bufferedVersion) progress.set(delta.item_id, delta);
+      progressBySession.set(sessionId, progress);
       if (list && itemIndex >= 0) {
+        if (delta.version <= current.getTaskListVersion(sessionId)) return;
         const items = [...list.items];
         items[itemIndex] = withTaskProgress(items[itemIndex]!, delta);
         set((state) => ({
@@ -195,20 +198,30 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
             [sessionId]: delta.status === "in_progress" ? delta.item_id : null,
           },
         }));
-      } else if (!recovery) {
+      } else {
         // Coalesce progress for missing tasks while the authoritative snapshot
         // is fetched. A plan without the missing task keeps its own statuses.
-        const pending = { missingIds: new Set([delta.item_id]), deltas: new Map([[delta.item_id, delta]]) };
-        recoveries.set(sessionId, pending);
+        const missing = missingDuringRead.get(sessionId);
+        if (missing) {
+          missing.add(delta.item_id);
+          return;
+        }
+        const pending = new Set([delta.item_id]);
+        missingDuringRead.set(sessionId, pending);
         void current.loadTaskList(sessionId).catch(() => {}).finally(() => {
-          if (recoveries.get(sessionId) === pending) recoveries.delete(sessionId);
+          if (missingDuringRead.get(sessionId) !== pending) return;
+          missingDuringRead.delete(sessionId);
+          const retained = progressBySession.get(sessionId);
+          for (const id of pending) retained?.delete(id);
+          if (retained?.size === 0) progressBySession.delete(sessionId);
         });
       }
     },
 
     // Clear task list for a session
     clearTaskList: (sessionId) => {
-      recoveries.delete(sessionId);
+      missingDuringRead.delete(sessionId);
+      progressBySession.delete(sessionId);
       set((state) => {
         const { [sessionId]: _, ...remainingTaskLists } = state.taskLists;
         const { [sessionId]: __, ...remainingVersions } = state.taskListVersions;
