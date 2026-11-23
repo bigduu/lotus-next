@@ -17,7 +17,8 @@ const requestLabels = {
 function RequestCard(props: { controller: TicketWorkController; state: TicketState; request: PendingRequest }) {
   const text = createUiText()
   const locale = createUiLocale()
-  const [answer, setAnswer] = createSignal("")
+  const answer = () => props.controller.answerDraft(props.request)
+  const setAnswer = (value: string) => props.controller.setAnswerDraft(props.request, value)
   const status = () => effectiveStatus(props.state, props.request)
   const title = () => props.state.works[props.request.work_id]?.ticket.contract.title ?? text("supervisor_work_tab")
   const retry = () => props.controller.uncertain[props.request.id]
@@ -51,9 +52,12 @@ function RequestCard(props: { controller: TicketWorkController; state: TicketSta
     <Show when={status() === "open" && !approval()}>
       <form class="mt-2 flex gap-2" onSubmit={(event) => {
         event.preventDefault()
+        const request = props.request
         const value = answer().trim()
         if (!value || disabled()) return
-        void props.controller.respond(props.request, { kind: "question", answer: value }).then((ok) => { if (ok) setAnswer("") })
+        void props.controller.respond(request, { kind: "question", answer: value }).then((ok) => {
+          if (ok) props.controller.setAnswerDraft(request, "")
+        })
       }}>
         <input aria-label={text("ticket_answer_label", { title: title() })} value={answer()} onInput={(event) => setAnswer(event.currentTarget.value)} disabled={disabled()} class="min-w-0 flex-1 rounded-md border bg-background px-2 py-1" />
         <button type="submit" disabled={disabled() || !answer().trim()} class="rounded-md border px-2 py-1 disabled:opacity-50">{text(busy() ? "sending_364970d8" : "ticket_answer_f3f51264")}</button>
@@ -212,7 +216,7 @@ function WorkOverview(props: TicketWorkPanelProps & { state: TicketState }) {
     }
   }
 
-  return <section aria-label={text("ticket_work_overview_223a6f34")} data-testid="ticket-work-overview" tabindex={-1} class="p-4 outline-none">
+  return <section aria-label={text("ticket_work_overview_223a6f34")} data-testid="ticket-work-overview" tabindex={-1} class="w-full min-w-0 overflow-y-auto p-4 outline-none">
     <Show when={selected() && props.onShowAll}>
       <button type="button" onClick={() => props.onShowAll?.()} class="mb-3 text-xs text-muted-foreground underline">{text("supervisor_work_back")}</button>
     </Show>

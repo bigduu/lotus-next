@@ -7,8 +7,8 @@ import {
 } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
 import { clearDecisionReceipt, readDecisionReceipts, saveDecisionReceipt } from "@services/tickets/decisionReceipts"
-import { applyTicketSnapshot, responseCommand, type TicketState } from "@services/tickets/state"
-import type { Decision, PendingRequest, ResponseCommand } from "@services/tickets/types"
+import { applyTicketSnapshot, effectiveStatus, responseCommand, type TicketState } from "@services/tickets/state"
+import type { Decision, PendingRequest, ResponseCommand, ScopeBinding } from "@services/tickets/types"
 
 // Panels may share request admission for one Supervisor, never scope data or an initialization offer.
 const initializingSessions = new Set<string>()
@@ -38,6 +38,9 @@ const FORBIDDEN: TicketAvailability = { kind: "forbidden" }
 const UNBOUND: TicketAvailability = { kind: "unbound" }
 const EMPTY = {}
 
+const draftKey = (binding: ScopeBinding, request: PendingRequest) =>
+  JSON.stringify([binding.scope_id, binding.binding_revision, request.id, request.generation, request.prompt_revision])
+
 export function createTicketWork(options: TicketWorkOptions) {
   const identity = createMemo(() => ({
     sessionId: options.sessionId() ?? null,
@@ -61,8 +64,9 @@ export function createTicketWork(options: TicketWorkOptions) {
   const [negotiatedSession, setNegotiatedSession] = createSignal<string | null>(null)
   const [busy, setBusy] = createSignal<Record<string, boolean>>({})
   const [uncertain, setUncertain] = createSignal<Record<string, ResponseCommand>>({})
+  const [answerDrafts, setAnswerDrafts] = createSignal<ReadonlyMap<string, string>>(new Map())
   const activeRequests = new Set<string>()
-  let read: { identity: ReadIdentity; refresh: (full?: boolean, afterInitialization?: boolean) => Promise<void> } | undefined
+  let read: { identity: ReadIdentity; refresh: (full?: boolean, afterInitialization?: boolean) => Promise<TicketState | null | undefined> } | undefined
 
   const initializing = createMemo(() => {
     initVersion()
@@ -89,7 +93,7 @@ export function createTicketWork(options: TicketWorkOptions) {
       && result.current.scope.mutation_enabled === true && result.current.scope.health === "writable" ? result : null
   }
   const refreshCurrent = async (afterInitialization = false) => {
-    if (read?.identity === identity()) await read.refresh(true, afterInitialization)
+    if (read?.identity === identity()) return read.refresh(true, afterInitialization)
   }
 
   createEffect(identity, (context) => {
@@ -100,6 +104,7 @@ export function createTicketWork(options: TicketWorkOptions) {
     setError(null)
     setBusy({})
     setUncertain({})
+    setAnswerDrafts(new Map())
     setInitializationError(null)
     setSettled(null)
     setDecisionError(null)
@@ -130,6 +135,18 @@ export function createTicketWork(options: TicketWorkOptions) {
       setError(null)
       setAvailability(next ? { kind: "ready" } : UNBOUND)
       setSettled(context)
+      setAnswerDrafts((previous) => {
+        if (!previous.size) return previous
+        if (!next) return new Map()
+        if (!next.current.complete) return previous
+        const binding = next.current.scope.binding
+        const valid = new Set(Object.values(next.requests)
+          .filter((request) => request.kind.kind === "question" && effectiveStatus(next, request) === "open")
+          .map((request) => draftKey(binding, request)))
+        const retained = new Map([...previous].filter(([key]) => valid.has(key)))
+        return retained.size === previous.size ? previous : retained
+      })
+      return next
     }
     const refresh = async (full = true, afterInitialization = false) => {
       if (reading || !stillCurrent() || (initializingSessions.has(sessionId) && !afterInitialization)) return
@@ -146,17 +163,13 @@ export function createTicketWork(options: TicketWorkOptions) {
               && changes.snapshot.authority_epoch === previous.snapshot.authority_epoch) {
               const negotiated = await ticketClient.scope(sessionId, controller.signal)
               if (!stillCurrent()) return
-              if (!negotiated) {
-                accept(null)
-                return
-              }
+              if (!negotiated) return accept(null)
               if (negotiated.binding.scope_id === previous.scope.binding.scope_id
                 && negotiated.binding.binding_revision === previous.scope.binding.binding_revision
                 && negotiated.overview.snapshot.commit === previous.snapshot.commit
                 && negotiated.overview.snapshot.seq === previous.snapshot.seq
                 && negotiated.overview.snapshot.authority_epoch === previous.snapshot.authority_epoch) {
-                accept({ ...cached, current: { ...previous, scope: negotiated } })
-                return
+                return accept({ ...cached, current: { ...previous, scope: negotiated } })
               }
             }
           } catch (failure) {
@@ -168,7 +181,7 @@ export function createTicketWork(options: TicketWorkOptions) {
         if (!stillCurrent()) return
         const next = result ? applyTicketSnapshot(state(), result) : null
         setUncertain(readDecisionReceipts(sessionId))
-        accept(next)
+        return accept(next)
       } catch (failure) {
         if (!stillCurrent()) return
         const next = ticketAvailabilityFailure(failure)
@@ -332,12 +345,12 @@ export function createTicketWork(options: TicketWorkOptions) {
       }
       // Even a refused write can expose a canonical scope. Never replay the POST.
       if (!stillCurrent()) return false
-      await refreshCurrent(true)
+      const canonical = await refreshCurrent(true)
       if (!stillCurrent()) return false
-      const binding = state()?.current.scope.binding
-      const ready = connected() && binding?.supervisor_session_id === confirmation.supervisor_session_id
+      const binding = canonical?.current.scope.binding
+      const ready = binding?.supervisor_session_id === confirmation.supervisor_session_id
         && binding.scope_id === "supervisor/" + confirmation.incarnation_id && binding.binding_revision === confirmation.binding_revision
-      if (conflictDetail && connected() && state()) {
+      if (conflictDetail && canonical) {
         setInitializationError(uiText("supervisor_work_initialization_conflict") + " " + conflictDetail)
       }
       if (confirmed && !ready) setInitializationError(uiText("supervisor_work_initialization_unconfirmed"))
@@ -346,6 +359,15 @@ export function createTicketWork(options: TicketWorkOptions) {
       initializingSessions.delete(sessionId)
       notifyInitialization()
     }
+  }
+
+  const currentDraftKey = (request: PendingRequest) => {
+    const current = readableState()
+    const actual = current?.requests[request.id]
+    if (!current || !actual || actual.kind.kind !== "question" || effectiveStatus(current, actual) !== "open"
+      || actual.work_id !== request.work_id || actual.generation !== request.generation
+      || actual.prompt_revision !== request.prompt_revision) return null
+    return draftKey(current.current.scope.binding, actual)
   }
 
   return {
@@ -372,9 +394,23 @@ export function createTicketWork(options: TicketWorkOptions) {
     get uncertain(): Record<string, ResponseCommand> { return visible() ? uncertain() : EMPTY },
     get canSendIngress() { return mutableState()?.current.scope.capabilities?.semantic_messages_v1 === true },
     get canRespond() { return mutableState()?.current.complete === true },
+    answerDraft(request: PendingRequest) {
+      const key = currentDraftKey(request)
+      return key ? answerDrafts().get(key) ?? "" : ""
+    },
+    setAnswerDraft(request: PendingRequest, answer: string) {
+      const key = currentDraftKey(request)
+      if (!key) return
+      setAnswerDrafts((previous) => {
+        const next = new Map(previous)
+        if (answer) next.set(key, answer)
+        else next.delete(key)
+        return next
+      })
+    },
     initialize,
     respond,
-    refresh: () => refreshCurrent(),
+    refresh: async () => { await refreshCurrent() },
   }
 }
 

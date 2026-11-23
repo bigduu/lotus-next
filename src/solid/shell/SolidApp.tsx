@@ -37,6 +37,7 @@ import { createRootModeAuthority } from "../chat/model/createRootModeAuthority"
 import { createTicketIngress } from "../chat/createTicketIngress"
 import { createTicketWork } from "../workbench/work/createTicketWork"
 import { TicketWorkAvailability } from "../workbench/work/TicketWorkAvailability"
+import { SupervisorOverview } from "../workbench/work/SupervisorOverview"
 import type { PendingRequest } from "@services/tickets/types"
 import { createRunInteractionTimeline, RunInteractions } from "../chat/RunInteractions"
 import { SessionVersionMigrationGate } from "../chat/status/version-migration/SessionVersionMigrationAction"
@@ -403,6 +404,55 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       if (sessionId && !browser.hasPendingDialog()) browser.requestEntryOpen(sessionId)
     }
   }
+  const workBinding = createMemo(() => {
+    const binding = ticketScope()?.binding
+    return binding && binding.supervisor_session_id === currentSession()
+      ? JSON.stringify([binding.scope_id, binding.binding_revision]) : null
+  })
+  const [workSelection, setWorkSelection] = createSignal<{
+    session: ReturnType<typeof sessionView>; binding: string; id: string | null; focus: boolean
+  } | null>(null)
+  const currentWorkSelection = () => {
+    const selection = workSelection()
+    return selection?.session === sessionView() && selection.binding === workBinding() ? selection : null
+  }
+  const openTicketWork = (id: string | null) => {
+    const binding = workBinding()
+    if (!workEnabled() || !binding) return
+    setWorkSelection({ session: sessionView(), binding, id, focus: true })
+    openWorkbenchTab("work")
+  }
+  const finishWorkFocus = (selection: NonNullable<ReturnType<typeof currentWorkSelection>>) => {
+    setWorkSelection((current) => current === selection ? { ...selection, focus: false } : current)
+  }
+  const focusWorkPanel = () => {
+    const selection = currentWorkSelection()
+    if (!selection?.focus || settingsOpen() || !workbenchState().open || visibleWorkbenchTab() !== "work") return
+    const panel = document.getElementById("right-workbench")
+    const overview = panel?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')
+    if (!overview?.getClientRects().length) return
+    const active = document.activeElement
+    if (!active?.matches('input, textarea, [contenteditable="true"]') || panel?.contains(active)) {
+      overview.focus({ preventScroll: true })
+    }
+    finishWorkFocus(selection)
+  }
+  createEffect(
+    () => [currentWorkSelection(), settingsOpen(), workbenchState().open, visibleWorkbenchTab()] as const,
+    ([selection, settings, open, tab]) => {
+      if (!selection?.focus) return
+      if (settings || !open || tab !== "work") { finishWorkFocus(selection); return }
+      const cancel = () => finishWorkFocus(selection)
+      document.addEventListener("pointerdown", cancel, true)
+      document.addEventListener("keydown", cancel, true)
+      const frame = requestAnimationFrame(focusWorkPanel)
+      return () => {
+        cancelAnimationFrame(frame)
+        document.removeEventListener("pointerdown", cancel, true)
+        document.removeEventListener("keydown", cancel, true)
+      }
+    },
+  )
   const openLinkInBrowser = (url: string) => {
     const current = currentSession()
     const origin = link()
@@ -733,13 +783,14 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   onQuoteToMain={(answer) => quoteToMain(scope, answer)}
                   onRevealSource={(id) => revealSideChatSource(scope, id)} />
               }</Show>}
-              work={<Show when={ticketScope()?.binding.supervisor_session_id === currentSession()} fallback={
+              work={<Show when={workBinding()} fallback={
                 <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing}
                   canRefresh={tickets.canRefresh} onRefresh={() => { void tickets.refresh() }}
                   canInitialize={tickets.canInitialize} initializing={tickets.initializing}
                   initializationError={tickets.initializationError} onInitialize={() => { void tickets.initialize() }} />
               }>
-                <TicketWorkPanel controller={tickets}
+                <TicketWorkPanel controller={tickets} selectedWorkId={currentWorkSelection()?.id}
+                  onShowAll={() => openTicketWork(null)} onReady={() => { requestAnimationFrame(focusWorkPanel) }}
                   onReference={tickets.canSendIngress && ticketScope()?.capabilities?.message_references_v1 === true && !ingress.pending
                     ? (request) => {
                         const origin = sessionView()
@@ -837,10 +888,15 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               </Button>
             </Show>
             <Show when={workEnabled()}>
-              <Button size="icon" variant="ghost" aria-label={text("supervisor_work_tab")}
-                data-testid="ticket-work-status" onClick={() => openWorkbenchTab("work")}>
-                <ListChecks class="size-4" />
-              </Button>
+              <Show when={workBinding()} keyed fallback={
+                <Button size="icon" variant="ghost" aria-label={text("supervisor_work_tab")}
+                  data-testid="ticket-work-status" onClick={() => openWorkbenchTab("work")}>
+                  <ListChecks class="size-4" />
+                </Button>
+              }>
+                <SupervisorOverview controller={tickets} onSelectWork={openTicketWork}
+                  running={Boolean(chat.currentChat && sessionHasLiveWork(chat.currentChat, executions()[chat.currentChat.id], backgroundBash()))} />
+              </Show>
             </Show>
             <Show when={taskList().length > 0}>
               <Button size="icon" variant="ghost" title={text("session_task_dag_open")} aria-label={text("session_task_dag_open")}
