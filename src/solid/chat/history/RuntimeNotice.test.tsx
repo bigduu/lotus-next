@@ -1,12 +1,12 @@
 import { render } from "@solidjs/web"
-import { flush } from "solid-js"
+import { createSignal, flush, For } from "solid-js"
 import { expect, it, vi } from "vitest"
 import { uiText } from "@shared/i18n/text"
 import { mapHistoryMessagesToUi } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
 import type { ChatItem, Message } from "@shared/types/chatMessages"
 import { transcriptWorkWait } from "../status/transcriptWorkWait"
 import { RenderHistoryRow } from "./HistoryRow"
-import { buildDisplayItems, buildRenderItems } from "./historyProjection"
+import { buildDisplayItems, buildLiveItems, buildRenderItems, renderItemKey } from "./historyProjection"
 
 vi.mock("@lucide/solid", () => {
   const Icon = () => <svg aria-hidden="true" />
@@ -103,4 +103,34 @@ it("folds the activity only after the recorded final answer arrives", () => {
   expect(folds[0]?.key).toBe("collapsed-turn-build-final")
   expect(folds[0]?.items.filter((item) => item.kind === "msg").map((item) => item.m.id)).toEqual(["build-progress", notice.id])
   expect(display.at(-1)).toMatchObject({ kind: "msg", m: { id: final.id, content: final.content } })
+})
+
+it("shows a yielded parent waiting without thinking and restores thinking only during model work", () => {
+  const yielded: ChatItem = { id: sessionId, title: "Parent", createdAt: 0, messages: [], isRunning: false,
+    lastRunStatus: "suspended", activity: "waiting_children", runningChildCount: 1,
+    config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } }
+  const [session, setSession] = createSignal(yielded)
+  const rows = () => {
+    const currentChat = session()
+    const wait = transcriptWorkWait({ currentChat, pendingQuestion: null, pendingApproval: null })
+    return buildLiveItems([], null, null, currentChat.isRunning === true || wait.yielded,
+      wait.delegationHint ? uiText("process_waiting_for_subagents") : null, uiText)
+  }
+  const host = document.createElement("div")
+  const dispose = render(() => <For each={rows()} keyed={renderItemKey}>{(item) => <RenderHistoryRow live item={item()} theme="light"
+    disclosure={{ isOpen: () => false, toggle: () => {} }} onOpenLink={() => {}} onPreviewImage={() => {}} />}</For>, host)
+  try {
+    flush()
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(uiText("process_waiting_for_subagents"))
+    expect(host.querySelector("[data-process-shimmer], [data-process-toggle]")).toBeNull()
+
+    setSession({ ...yielded, isRunning: true, lastRunStatus: "running", activity: undefined, runningChildCount: 0 })
+    flush()
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(uiText("thinking_64088d8c"))
+    expect(host.querySelector("[data-process-shimmer]")).not.toBeNull()
+
+    setSession({ ...yielded, lastRunStatus: "completed", activity: undefined, runningChildCount: 0 })
+    flush()
+    expect(host.querySelector('[role="status"]')).toBeNull()
+  } finally { dispose() }
 })

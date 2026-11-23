@@ -5,7 +5,7 @@ import { mapHistoryMessagesToUi } from "@shared/store/appStore/slices/chatSessio
 import type { Message } from "@shared/types/chatMessages"
 import {
   buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems,
-  collectMessageActions, findRegenerationKey,
+  collectMessageActions, findRegenerationKey, itemTimestamp, toolCallCount,
 } from "./historyProjection"
 
 const at = "2026-11-08T06:50:00Z"
@@ -104,4 +104,90 @@ it("shows one local completed body with no mutation target while exact-turn hist
   expect(canonical[1]?.id).toBe("synthetic-partial")
   const entries = buildHistoryEntries(buildDisplayItems(items, true))
   expect(collectMessageActions(entries, true).has("message-completed-answer-handoff-1")).toBe(false)
+})
+
+it("joins saved tools and reasoning across empty entries and splits at a visible body", () => {
+  const thought = (id: string, content = ""): Message => ({
+    id, role: "assistant", type: "text", content, createdAt: at, metadata: { reasoning: id },
+  })
+  const tool = (id: string): Message => ({
+    id, role: "assistant", type: "tool_call", createdAt: at,
+    toolCalls: [{ toolCallId: id, toolName: "Read", parameters: {} }],
+  })
+  const items = buildRenderItems([
+    tool("one"), thought("first thought"), { id: "empty", role: "assistant", type: "text", content: "", createdAt: at },
+    { id: "system", role: "system", content: "hidden system record", createdAt: at },
+    tool("two"), thought("second thought"), thought("body thought", "Visible progress"), tool("three"), thought("last thought"),
+  ])
+
+  expect(items.map((item) => item.kind)).toEqual(["process", "msg", "process"])
+  expect(items[1]).toMatchObject({ m: { content: "Visible progress" } })
+  const groups = items.filter((item) => item.kind === "process")
+  expect(groups[0]?.parts.map((part) => part.kind)).toEqual(["tools", "reasoning", "tools", "reasoning", "reasoning"])
+  expect(groups[0]?.parts.filter((part) => part.kind === "reasoning").map((part) => part.text))
+    .toEqual(["first thought", "second thought", "body thought"])
+  expect(groups[1]?.parts.at(-1)).toMatchObject({ text: "last thought" })
+  expect(groups.map((group) => toolCallCount([group]))).toEqual([2, 1])
+})
+
+it("keeps the open tail outside a turn fold until a saved summary and retains the next turn", () => {
+  const user: Message = { id: "user", role: "user", content: "First request", createdAt: "2026-11-08T00:00:00Z" }
+  const intermediate: Message = { id: "intermediate", role: "assistant", type: "text", content: "Working", createdAt: "2026-11-08T00:00:10Z" }
+  const call: Message = { id: "call", role: "assistant", type: "tool_call", createdAt: "2026-11-08T00:00:20Z",
+    toolCalls: [{ toolCallId: "read", toolName: "Read", parameters: {} }] }
+  const result: Message = { id: "result", role: "assistant", type: "tool_result", createdAt: "2026-11-08T00:00:30Z",
+    toolName: "Read", toolCallId: "read", isError: false,
+    result: { tool_name: "Read", display_preference: "Default", result: "Done" } }
+  const final: Message = { id: "final", role: "assistant", type: "text", content: "Conclusion", createdAt: "2026-11-08T00:01:05Z",
+    metadata: { reasoning: "Final thought" } }
+  const messages = [user, intermediate, call, result]
+  const live = buildDisplayItems(buildRenderItems(messages), false)
+  expect(live.map((item) => item.kind)).toEqual(["msg", "msg", "process"])
+  expect(live[1]).toMatchObject({ m: intermediate })
+
+  const settled = buildDisplayItems(buildRenderItems([...messages, final]), true)
+  expect(settled.map((item) => item.kind)).toEqual(["msg", "collapsedTurn", "msg"])
+  const divider = settled.find((item) => item.kind === "collapsedTurn")!
+  expect(divider).toMatchObject({ key: "collapsed-turn-final", toolCalls: 1,
+    items: [{ kind: "msg", m: intermediate }, { kind: "process" }] })
+  expect(divider.finishedAt! - divider.startedAt!).toBe(55_000)
+  const activity = divider.items.find((item) => item.kind === "process")!
+  expect(itemTimestamp(activity, "last")! - itemTimestamp(activity)!).toBe(45_000)
+  expect(activity.parts.filter((part) => part.kind === "reasoning")).toEqual([
+    { kind: "reasoning", text: "Final thought", createdAt: final.createdAt },
+  ])
+  expect(settled.at(-1)).toMatchObject({ m: final })
+
+  const next = buildDisplayItems(buildRenderItems([...messages, final,
+    { ...user, id: "next-user", content: "Next request" },
+    { ...final, id: "next-answer", content: "Next response", metadata: undefined },
+  ]), false)
+  expect(next.find((item) => item.kind === "collapsedTurn")?.key).toBe(divider.key)
+  expect(next.at(-1)).toMatchObject({ m: { id: "next-answer", content: "Next response" } })
+})
+
+it("does not turn a saved tool round active just because an inactive text tail is still retained", () => {
+  const tool: Message = { id: "persisted-tool", role: "assistant", type: "tool_call", createdAt: at,
+    toolCalls: [{ toolCallId: "read", toolName: "Read", parameters: {} }] }
+
+  const items = [...buildRenderItems([tool]), ...buildLiveItems([], "Retained final text", null, false, null, uiText)]
+
+  expect(items).toHaveLength(2)
+  expect(items[0]).toMatchObject({ kind: "process", key: "activity-persisted-tool" })
+  expect(items[0]).not.toHaveProperty("active")
+  expect(items[1]).toMatchObject({ kind: "msg", streaming: false, m: { content: "Retained final text" } })
+})
+
+it("treats an image-only user message from the attachment protocol as a visible activity boundary", () => {
+  const call = (id: string) => ({ id, role: "assistant" as const, content: "", created_at: at,
+    tool_calls: [{ id, type: "function", function: { name: "Read", arguments: "{}" } }] })
+  const messages = mapHistoryMessagesToUi("projection", [call("before"), {
+    id: "image-only", role: "user", content: "", created_at: at,
+    content_parts: [{ type: "image_url", image_url: { url: "bamboo-attachment://projection/asset" } }],
+  }, call("after")])
+
+  const items = buildRenderItems(messages)
+  expect(items.map((item) => item.kind)).toEqual(["process", "msg", "process"])
+  expect(items[1]).toMatchObject({ m: { id: "image-only", role: "user", content: "",
+    images: [{ url: expect.stringMatching(/\/sessions\/projection\/attachments\/asset$/) }] } })
 })
