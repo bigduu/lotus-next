@@ -1,9 +1,10 @@
-import { createEffect, createMemo, createSignal, Match, onSettled, Show, Switch, untrack } from "solid-js"
+import { createEffect, createMemo, Match, Show, Switch, untrack } from "solid-js"
 import { ChevronDown, LoaderCircle, RefreshCw } from "@lucide/solid"
 
 import { messageOccurrenceKey } from "@shared/types/chatMessages"
 
 import { MessageBody } from "../../chat/MessageBody"
+import { createStickyHistoryFollow } from "../../chat/history/createStickyHistoryFollow"
 import { VirtualHistory, type HistoryReadingAnchor } from "../../history/VirtualHistory"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
@@ -23,37 +24,11 @@ export function SubagentTranscriptPane(props: SubagentTranscriptPaneProps) {
   const text = createUiText()
   const transcript = createSubagentTranscript(() => props.sessionId)
   const anchor = untrack(() => props.readingAnchor)
-  const [following, setFollowing] = createSignal(!anchor)
+  const sticky = createStickyHistoryFollow(!anchor)
   const entries = createMemo(() => transcript.messages
     .filter((message) => message.role !== "system")
     .map((message) => ({ key: messageOccurrenceKey(message), message })))
-  let viewport: HTMLDivElement | null = null
-  let resize: ResizeObserver | undefined
-  let scrollFrame: number | undefined
-
-  const follow = () => {
-    if (!viewport || scrollFrame !== undefined || !following()) return
-    scrollFrame = requestAnimationFrame(() => {
-      scrollFrame = undefined
-      if (viewport && following()) viewport.scrollTop = viewport.scrollHeight
-    })
-  }
-  const restoreFollowing = () => { setFollowing(true); follow() }
-  const trackViewport = (element: HTMLDivElement | null) => {
-    resize?.disconnect()
-    viewport = element
-    if (element?.firstElementChild) {
-      resize = new ResizeObserver(follow)
-      resize.observe(element.firstElementChild)
-    }
-    follow()
-  }
-
-  createEffect(entries, follow)
-  onSettled(() => () => {
-    resize?.disconnect()
-    if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame)
-  })
+  createEffect(entries, sticky.follow)
 
   return (
     <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-subagent-transcript-pane="">
@@ -93,19 +68,17 @@ export function SubagentTranscriptPane(props: SubagentTranscriptPaneProps) {
               estimateSize={() => 96}
               initialReadingAnchor={transcript.loading ? null : anchor}
               onReadingAnchor={props.onReadingAnchor}
-              onMissingReadingAnchor={restoreFollowing}
-              onScrollElement={trackViewport}
-              onScroll={() => {
-                if (viewport) setFollowing(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 24)
-              }}
+              onMissingReadingAnchor={sticky.resume}
+              onScrollElement={sticky.bind}
+              onScroll={sticky.onScroll}
               renderEntry={(entry) => (
                 <MessageBody message={entry().message} theme={props.theme ?? "light"}
                   onOpenLink={(url) => props.onOpenLink?.(url)} onPreviewImage={(url) => props.onPreviewImage?.(url)} />
               )}
             />
-            <Show when={!following()}>
+            <Show when={!sticky.following()}>
               <Button size="icon" variant="outline" aria-label={text("scroll_to_bottom_2b05ff67")}
-                class="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full shadow-lg" onClick={restoreFollowing}>
+                class="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full shadow-lg" onClick={sticky.resume}>
                 <ChevronDown />
               </Button>
             </Show>
