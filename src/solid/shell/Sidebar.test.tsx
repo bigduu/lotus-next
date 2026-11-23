@@ -1,55 +1,145 @@
-import { act, StrictMode, type ComponentProps, type ReactNode } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createContext, createSignal, flush, For, omit, Show, useContext } from "solid-js"
+import { render as renderSolid, type ComponentProps, type JSX } from "@solidjs/web"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
 import type { PatchProjectRequest, ProjectManifest } from "@services/project"
 import { ApiError } from "@services/api"
-import type { SidebarProjectDragProps, SidebarDragParts } from "./sidebarDrag"
+import type { SidebarProjectDragProps, SidebarDragParts } from "./project-drag/SidebarProjectDrag"
 import type { SidebarDragPickup } from "@/lib/workbench/sidebarDrag"
+import { Sidebar } from "./Sidebar"
+import { createProjectSections } from "./createProjectSections"
+import { createStoreSelector } from "../state/createStoreSelector"
+import { appStore } from "@shared/store/appStore/state"
+import { uiText } from "@shared/i18n/text"
+import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, setSessionSection, SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
+import { SESSION_ORDER_STORAGE_KEY, clearSessionOrder, parseSessionOrder, recordSessionUserInput } from "@/lib/sidebarSessionOrder"
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
+
 const dragHarness = vi.hoisted(() => ({ current: null as SidebarProjectDragProps | null }))
-vi.mock("./SidebarProjectDrag", () => {
-  const Handle: SidebarDragParts["Handle"] = ({ source, label, disabled }) => <button data-sidebar-drag-handle={`${source.kind}:${source.id}`} aria-label={label} disabled={disabled} />
-  const Target: SidebarDragParts["Target"] = ({ target, disabled, ...attributes }) => { void target; void disabled; return <div {...attributes} /> }
-  return { default: (props: SidebarProjectDragProps) => { dragHarness.current = props; return props.children({ Handle, Target }) } }
+vi.mock("./project-drag/SidebarProjectDrag", () => {
+  const Handle: SidebarDragParts["Handle"] = (props) =>
+    <button data-sidebar-drag-handle={`${props.source.kind}:${props.source.id}`} aria-label={props.label} disabled={props.disabled} />
+  const Target: SidebarDragParts["Target"] = (props) => <div {...omit(props, "target", "disabled")} />
+  return { SidebarProjectDrag: (props: SidebarProjectDragProps) => {
+    dragHarness.current = props
+    return <>{props.children({ Handle, Target })}</>
+  } }
 })
 
-vi.mock("@/components/chat/SessionRow", () => ({
-  SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin, onCopySessionId, sections = [], onMoveToSection, dragHandle }: {
-    chat: ChatItem; active: boolean; onSelect(): void; onRename(title: string): void
-    onDelete(): void; onTogglePin(): void; onCopySessionId(): void
-    dragHandle?: ReactNode; sections?: readonly { id: string; name: string }[]; projectId?: string; onMoveToSection?: (id: string | null) => void
-  }) => (
-    <div data-session={chat.id} data-active={active}>
-      <button onClick={onSelect}>{chat.title}</button>
-      {dragHandle}
-      <button onClick={() => onRename("Renamed")}>Rename {chat.id}</button>
-      <button onClick={onDelete}>Delete {chat.id}</button>
-      <button onClick={onTogglePin}>Pin {chat.id}</button>
-      <button onClick={onCopySessionId}>Copy {chat.id}</button>
-      {onMoveToSection ? <>
-        {sections.map((section) => <button key={section.id} onClick={() => onMoveToSection(section.id)}>Move {chat.id} to {section.name}</button>)}
-        <button onClick={() => onMoveToSection(null)}>Unsection {chat.id}</button>
-      </> : null}
+vi.mock("@lucide/solid", () => {
+  const Icon = () => <svg aria-hidden="true" />
+  const glyphs = [
+    "AlertCircle", "Archive", "ArchiveRestore", "CalendarDays", "ChevronRight", "Circle", "CircleDot", "Cog",
+    "FolderClosed", "FolderOpen", "GitBranch", "List", "MoreHorizontal", "PanelLeftClose", "Pencil", "Pin",
+    "PinOff", "Plus", "RotateCcw", "Search", "SquarePen", "Trash2", "X",
+  ]
+  return Object.fromEntries(glyphs.map((name) => [name, Icon]))
+})
+
+// The browser suites exercise actual portaled menus, modal focus, and drag sensors.
+vi.mock("../ui/dropdown-menu", () => {
+  const Context = createContext<{ open: () => boolean; setOpen: (next: boolean) => void }>()
+  type Children = { children: JSX.Element }
+  return {
+    DropdownMenu: (props: Children & { open?: boolean; onOpenChange?: (next: boolean) => void }) => {
+      const [open, setOpen] = createSignal(false)
+      return <Context value={{ open: () => props.open ?? open(), setOpen: (next) => {
+        setOpen(next)
+        props.onOpenChange?.(next)
+      } }}>{props.children}</Context>
+    },
+    DropdownMenuTrigger: (props: Children & { "aria-label"?: string }) => {
+      const context = useContext(Context)!
+      return <button type="button" aria-haspopup="menu" aria-label={props["aria-label"]} onClick={() => context.setOpen(true)}
+        onKeyDown={(event) => { if (event.key === "Enter") context.setOpen(true) }}>{props.children}</button>
+    },
+    DropdownMenuContent: (props: Children) => {
+      const context = useContext(Context)!
+      return <Show when={context.open()}><div role="menu">{props.children}</div></Show>
+    },
+    DropdownMenuItem: (props: Children & { disabled?: boolean; onSelect?: () => void }) => {
+      const context = useContext(Context)!
+      return <button type="button" role="menuitem" disabled={props.disabled} onClick={() => {
+        props.onSelect?.()
+        context.setOpen(false)
+      }}>{props.children}</button>
+    },
+    DropdownMenuSeparator: () => null,
+  }
+})
+
+vi.mock("../ui/responsive-dialog", () => {
+  type Children = { children: JSX.Element }
+  return {
+    ResponsiveDialog: (props: Children & { open: boolean }) => <Show when={props.open}>{props.children}</Show>,
+    ResponsiveDialogContent: (props: Children) => <div role="dialog">{props.children}</div>,
+    ResponsiveDialogTitle: (props: Children) => <h2>{props.children}</h2>,
+    ResponsiveDialogDescription: (props: Children) => <p>{props.children}</p>,
+  }
+})
+
+vi.mock("../ui/dialog", () => {
+  type Children = { children: JSX.Element }
+  const Body = (props: Children) => props.children
+  return {
+    Dialog: (props: Children & { open: boolean }) => <Show when={props.open}>{props.children}</Show>,
+    DialogContent: (props: Children) => <div role="dialog">{props.children}</div>,
+    DialogDescription: Body, DialogFooter: Body, DialogHeader: Body, DialogTitle: Body,
+  }
+})
+
+vi.mock("./SessionRow", () => ({
+  SessionRow: (props: ComponentProps<typeof import("./SessionRow").SessionRow>) => (
+    <div data-session={props.chat.id} data-active={String(props.active)}>
+      <button onClick={props.onSelect}>{props.chat.title}</button>
+      {props.dragHandle}
+      <button onClick={() => props.onRename("Renamed")}>Rename {props.chat.id}</button>
+      <button onClick={props.onDelete}>Delete {props.chat.id}</button>
+      <button onClick={props.onTogglePin}>Pin {props.chat.id}</button>
+      <button onClick={props.onCopySessionId}>Copy {props.chat.id}</button>
+      <Show when={props.onMoveToSection}>
+        <For each={props.sections}>{(section) => <button onClick={() => props.onMoveToSection?.(section.id)}>
+          Move {props.chat.id} to {section.name}
+        </button>}</For>
+        <button onClick={() => props.onMoveToSection?.(null)}>Unsection {props.chat.id}</button>
+      </Show>
     </div>
   ),
 }))
 
-import { Sidebar } from "./Sidebar"
-import { useAppStore } from "@shared/store/appStore"
-import { uiText } from "@shared/i18n/ui"
-import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
-import { SESSION_ORDER_STORAGE_KEY, clearSessionOrder, parseSessionOrder, recordSessionUserInput } from "@/lib/sidebarSessionOrder"
-import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
-
-type Props = ComponentProps<typeof Sidebar>
-let root: Root
+type Props = Omit<ComponentProps<typeof Sidebar>, "projects" | "sections" | "onMoveToSection">
+let dispose: (() => void) | undefined
+let publish: (next: Props) => void
 let container: HTMLDivElement
 let props: Props
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-environment.IS_REACT_ACT_ENVIRONMENT = true
+const scheduleTurn = setTimeout
+
 const initialProjectActions = {
-  updateProject: useAppStore.getState().updateProject,
-  ensureProject: useAppStore.getState().ensureProject,
+  updateProject: appStore.getState().updateProject,
+  ensureProject: appStore.getState().ensureProject,
+}
+
+function run(action: () => unknown) {
+  const result = action()
+  flush()
+  return result
+}
+async function settle(action: () => unknown = () => undefined) {
+  await run(action)
+  await new Promise<void>((resolve) => scheduleTurn(resolve, 0))
+  flush()
+}
+function unmount() {
+  dispose?.()
+  dispose = undefined
+}
+function SidebarFixture(input: Props) {
+  const projects = createStoreSelector(appStore, (state) => state.projects)
+  const sections = createProjectSections(projects, appStore.getState)
+  return <Sidebar {...input} projects={projects()} sections={sections}
+    onMoveToSection={(projectId, sessionId, target) => {
+      void sections.update(projectId, (previous) => setSessionSection(previous, projectId, sessionId, target, projects()[projectId]?.section))
+    }} />
 }
 
 function chat(id: string, day: number, extra: Partial<ChatItem> = {}): ChatItem {
@@ -62,7 +152,15 @@ function chat(id: string, day: number, extra: Partial<ChatItem> = {}): ChatItem 
 
 function render(changes: Partial<Props> = {}) {
   props = { ...props, ...changes }
-  act(() => root.render(<Sidebar {...props} />))
+  run(() => {
+    if (dispose) {
+      publish(props)
+      return
+    }
+    const [view, setView] = createSignal(props)
+    publish = setView
+    dispose = renderSolid(() => <SidebarFixture {...view()} />, container)
+  })
 }
 
 function button(label: string): HTMLButtonElement {
@@ -72,11 +170,11 @@ function button(label: string): HTMLButtonElement {
 }
 
 function click(label: string) {
-  act(() => button(label).click())
+  run(() => button(label).click())
 }
 
 async function clickAndSave(label: string) {
-  await act(async () => button(label).click())
+  await settle(async () => button(label).click())
 }
 
 function row(id: string) {
@@ -86,22 +184,30 @@ function row(id: string) {
 function search(value: string) {
   const input = container.querySelector("input")!
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
-  act(() => {
+  run(() => {
     setter.call(input, value)
     input.dispatchEvent(new Event("input", { bubbles: true }))
   })
 }
 
+function defaultProps(): Props {
+  return {
+    open: false, onClose: vi.fn(), collapsed: false, onToggleCollapse: vi.fn(), width: 288,
+    chats: Array.from({ length: 7 }, (_, index) => chat(`day-${index}`, 5 - index)),
+    booted: true, currentSessionId: "day-0", onNewChat: vi.fn(), onSelect: vi.fn(),
+    onRename: vi.fn(), onDelete: vi.fn(), onTogglePin: vi.fn(), onCopySessionId: vi.fn(), onOpenSettings: vi.fn(),
+    onOpenProjectManager: vi.fn(), onOpenProjectWork: vi.fn(), onClear: vi.fn(), onRegenerateTitle: vi.fn(),
+    onError: vi.fn(), ownerAccess: true, isRunning: (chat) => chat.isRunning === true,
+  }
+}
+
 beforeAll(async () => {
-  // Resolve the actual lazy boundary once before synchronous disclosure assertions.
   localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
   const host = document.body.appendChild(document.createElement("div"))
-  const primingRoot = createRoot(host)
-  const noop = () => {}
-  await act(async () => primingRoot.render(<Sidebar open={false} onClose={noop} collapsed={false} onToggleCollapse={noop} width={288}
-    chats={[]} booted currentSessionId={null} onNewChat={noop} onSelect={noop} onRename={noop} onDelete={noop}
-    onTogglePin={noop} onCopySessionId={noop} onOpenSettings={noop} onOpenProjectManager={noop} />))
-  act(() => primingRoot.unmount())
+  const input = { ...defaultProps(), chats: [], currentSessionId: null }
+  let cleanup!: () => void
+  await settle(() => { cleanup = renderSolid(() => <SidebarFixture {...input} />, host) })
+  cleanup()
   host.remove()
 })
 
@@ -109,23 +215,18 @@ beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
   clearSessionOrder()
-  useAppStore.setState({ projects: {}, ...initialProjectActions })
+  appStore.setState({ projects: {}, ...initialProjectActions })
   vi.useFakeTimers()
   vi.setSystemTime(new Date("2026-09-05T15:00:00"))
   container = document.body.appendChild(document.createElement("div"))
-  root = createRoot(container)
-  props = {
-    open: false, onClose: vi.fn(), collapsed: false, onToggleCollapse: vi.fn(), width: 288,
-    chats: Array.from({ length: 7 }, (_, index) => chat(`day-${index}`, 5 - index)),
-    booted: true, currentSessionId: "day-0", onNewChat: vi.fn(), onSelect: vi.fn(),
-    onRename: vi.fn(), onDelete: vi.fn(), onTogglePin: vi.fn(), onCopySessionId: vi.fn(), onOpenSettings: vi.fn(),
-    onOpenProjectManager: vi.fn(),
-  }
+  props = defaultProps()
+  dragHarness.current = null
 })
 
 afterEach(() => {
-  act(() => root.unmount())
+  unmount()
   container.remove()
+  vi.useRealTimers()
 })
 
 describe("Sidebar date disclosures", () => {
@@ -157,7 +258,7 @@ describe("Sidebar date disclosures", () => {
     expect(container.querySelectorAll("[data-session]")).toHaveLength(5)
   })
 
-  it("collapses individual dates without changing session actions", () => {
+  it("collapses individual dates without changing session actions", async () => {
     render()
     const today = button("今天")
     expect(today.textContent).toBe("今天1 个会话")
@@ -168,7 +269,7 @@ describe("Sidebar date disclosures", () => {
     render({ chats: [...props.chats] })
     expect(row("day-0")).toBeNull()
     click("今天")
-    click("day-0")
+    await clickAndSave("day-0")
     click("Rename day-0")
     click("Delete day-0")
     click("Pin day-0")
@@ -260,7 +361,7 @@ describe("Sidebar navigation hierarchy", () => {
     expect(button("今天").textContent).toBe("今天1 个会话")
     expect(container.textContent).not.toContain("Pin bamboo-default-supervisor")
     expect(document.getElementById(entry.getAttribute("aria-describedby")!.split(" ")[1]!)?.textContent).toBe("运行中")
-    await act(async () => entry.click())
+    await settle(async () => entry.click())
     expect(props.onSelect).toHaveBeenCalledWith(supervisor.id)
     expect(props.onClose).toHaveBeenCalledOnce()
     expect(props.onNewChat).not.toHaveBeenCalled()
@@ -289,14 +390,13 @@ describe("Sidebar navigation hierarchy", () => {
     expect(button("Supervisor").disabled).toBe(true)
     expect(container.textContent!.indexOf("Supervisor")).toBeLessThan(container.textContent!.indexOf("新建会话"))
     render({ booted: true })
-    await act(async () => button("Supervisor").click())
+    await settle(async () => button("Supervisor").click())
     expect(props.onSelect).toHaveBeenCalledWith(DEFAULT_SUPERVISOR_SESSION_ID)
     expect(props.onNewChat).not.toHaveBeenCalled()
     render({ chats: [], currentSessionId: DEFAULT_SUPERVISOR_SESSION_ID })
     expect(button("Supervisor").getAttribute("aria-current")).toBe("page")
     expect(container.querySelectorAll("[data-session]")).toHaveLength(0)
-    act(() => root.unmount())
-    root = createRoot(container)
+    unmount()
     render({ currentSessionId: null })
     expect(button("Supervisor").disabled).toBe(false)
   })
@@ -306,20 +406,20 @@ describe("Sidebar navigation hierarchy", () => {
     const opening = new Promise<void>((resolve) => { finish = resolve })
     const onSelect = vi.fn().mockReturnValueOnce(opening).mockRejectedValueOnce(new Error("offline"))
     render({ chats: [], onSelect })
-    act(() => {
+    run(() => {
       button("Supervisor").click()
       button("Supervisor").click()
     })
     expect(onSelect).toHaveBeenCalledOnce()
     expect(button("Supervisor").disabled).toBe(true)
-    await act(async () => finish())
+    await settle(async () => finish())
     expect(props.onClose).toHaveBeenCalledOnce()
     expect(button("Supervisor").disabled).toBe(false)
-    await act(async () => button("Supervisor").click())
+    await settle(async () => button("Supervisor").click())
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("offline")
     expect(props.onClose).toHaveBeenCalledOnce()
     expect(button("Supervisor").disabled).toBe(false)
-    await act(async () => button("Supervisor").click())
+    await settle(async () => button("Supervisor").click())
     expect(container.querySelector('[role="alert"]')).toBeNull()
     expect(props.onClose).toHaveBeenCalledTimes(2)
   })
@@ -335,12 +435,12 @@ describe("Sidebar navigation hierarchy", () => {
     expect(projectAction.compareDocumentPosition(searchInput!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
 
     click("新建会话")
-    expect(props.onNewChat).toHaveBeenCalledWith(null)
+    expect(props.onNewChat).toHaveBeenCalledWith(null, undefined)
     click("管理项目")
     expect(props.onOpenProjectManager).toHaveBeenCalledOnce()
     click("系统设置")
     expect(props.onOpenSettings).toHaveBeenCalledOnce()
-    act(() => buttonByLabel("收起侧栏").click())
+    run(() => buttonByLabel("收起侧栏").click())
     expect(props.onToggleCollapse).toHaveBeenCalledOnce()
   })
 
@@ -348,7 +448,7 @@ describe("Sidebar navigation hierarchy", () => {
     render()
     expect(container.textContent).toContain("最近")
     expect(buttonByLabel("切换为项目视图").textContent).toContain("项目")
-    act(() => buttonByLabel("切换为项目视图").click())
+    run(() => buttonByLabel("切换为项目视图").click())
     expect(buttonByLabel("切换为最近视图").textContent).toContain("最近")
   })
 })
@@ -360,7 +460,7 @@ describe("Sidebar project grouping", () => {
   })
 
   it("groups sessions by project after switching the grouping mode", () => {
-    useAppStore.setState({
+    appStore.setState({
       projects: {
         p1: {
           id: "p1", name: "Zenith", status: "active", revision: 1, resource_revision: 1,
@@ -376,7 +476,7 @@ describe("Sidebar project grouping", () => {
         chat("no-project", 4, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: null } }),
       ],
     })
-    act(() => buttonByLabel("切换为项目视图").click())
+    run(() => buttonByLabel("切换为项目视图").click())
     expect(row("in-project")).not.toBeNull()
     expect(row("no-project")).not.toBeNull()
     // Project label renders as the group header button.
@@ -405,7 +505,7 @@ describe("Sidebar project grouping", () => {
     expect(lotusA.textContent).toContain("lotus1 个会话")
     expect(lotusA.contains(row("zenith-chat"))).toBe(true)
     expect(lotusB.contains(row("nova-chat"))).toBe(true)
-    act(() => lotusA.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click())
+    run(() => lotusA.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click())
     expect(row("zenith-chat")).toBeNull()
     expect(row("nova-chat")).not.toBeNull()
     expect(button("Zenith").getAttribute("aria-expanded")).toBe("true")
@@ -417,13 +517,13 @@ describe("Sidebar project grouping", () => {
       currentSessionId: "solo",
       chats: [chat("solo", 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p2" } })],
     })
-    act(() => buttonByLabel("切换为项目视图").click())
+    run(() => buttonByLabel("切换为项目视图").click())
     const newChat = [...container.querySelectorAll("button")].find((b) =>
       b.textContent?.trim().startsWith("新建"),
     )
     expect(newChat).toBeDefined()
-    act(() => newChat!.click())
-    expect(props.onNewChat).toHaveBeenCalledWith("p2")
+    run(() => newChat!.click())
+    expect(props.onNewChat).toHaveBeenCalledWith("p2", undefined)
   })
 
   it("remembers an expanded or folded project session preview across remounts", () => {
@@ -431,23 +531,21 @@ describe("Sidebar project grouping", () => {
       chats: Array.from({ length: 10 }, (_, index) =>
         chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
-    act(() => buttonByLabel("切换为项目视图").click())
+    run(() => buttonByLabel("切换为项目视图").click())
     // Only the first seven are visible, plus the expand affordance.
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
     expect(container.textContent).toContain("展开 3 个")
-    act(() => button("展开 3 个").click())
+    run(() => button("展开 3 个").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(10)
-    act(() => root.unmount())
-    root = createRoot(container)
+    unmount()
     render()
     expect(container.querySelectorAll("[data-session]")).toHaveLength(10)
     render({ currentSessionId: "p-session-8" })
     expect(button("收起")).toBeDefined()
-    act(() => button("收起").click())
+    run(() => button("收起").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
     expect(row("p-session-8")).toBeNull()
-    act(() => root.unmount())
-    root = createRoot(container)
+    unmount()
     render()
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
     expect(button("展开 3 个")).toBeDefined()
@@ -458,7 +556,7 @@ describe("Sidebar project grouping", () => {
       chats: Array.from({ length: 9 }, (_, index) =>
         chat(`p-task-${index}`, 5, { title: `Investigation ${index}`, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
-    act(() => buttonByLabel("切换为项目视图").click())
+    run(() => buttonByLabel("切换为项目视图").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
     search("investigation")
     expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
@@ -474,19 +572,19 @@ describe("Sidebar project grouping", () => {
       chats: Array.from({ length: 9 }, (_, index) =>
         chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
-    act(() => buttonByLabel("切换为项目视图").click())
+    run(() => buttonByLabel("切换为项目视图").click())
     expect(row("p-session-8")?.getAttribute("data-active")).toBe("true")
     expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
     // Selecting a session inside the preview fold keeps the group expanded…
     render({ currentSessionId: "p-session-0" })
     expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
     // …and folding back to the preview only happens through the collapse button.
-    act(() => button("收起").click())
+    run(() => button("收起").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
   })
 
   it("shows empty Projects and quick-creates a session inside the Project", () => {
-    useAppStore.setState({
+    appStore.setState({
       projects: {
         empty: {
           id: "empty", name: "Empty project", status: "active", revision: 1, resource_revision: 1,
@@ -497,11 +595,11 @@ describe("Sidebar project grouping", () => {
       },
     })
     render({ chats: [] })
-    act(() => buttonByLabel("切换为项目视图").click())
+    run(() => buttonByLabel("切换为项目视图").click())
 
     expect(button("Empty project").textContent).toContain("0")
-    act(() => buttonByLabel("在 Empty project 中新建会话").click())
-    expect(props.onNewChat).toHaveBeenCalledWith("empty")
+    run(() => buttonByLabel("在 Empty project 中新建会话").click())
+    expect(props.onNewChat).toHaveBeenCalledWith("empty", undefined)
     expect(props.onClose).toHaveBeenCalledOnce()
   })
 })
@@ -523,14 +621,14 @@ function installProjectBackend(initial: Record<string, ProjectManifest>) {
     if (current.revision !== revision) throw new ApiError("Project changed", 412, "Precondition Failed")
     const next: ProjectManifest = { ...current, ...patch, revision: current.revision + 1 }
     snapshots[id] = next
-    useAppStore.setState((state) => ({ projects: { ...state.projects, [id]: next } }))
+    appStore.setState((state) => ({ projects: { ...state.projects, [id]: next } }))
     return next
   })
   const ensureProject = vi.fn(async (id: string) => {
     const current = snapshots[id]
-    useAppStore.setState((state) => ({ projects: { ...state.projects, [id]: current } }))
+    appStore.setState((state) => ({ projects: { ...state.projects, [id]: current } }))
   })
-  useAppStore.setState({ projects: structuredClone(initial), updateProject, ensureProject })
+  appStore.setState({ projects: structuredClone(initial), updateProject, ensureProject })
   return { snapshots, updateProject, ensureProject }
 }
 
@@ -543,8 +641,8 @@ async function drop(target: Element, payload: unknown, mime = SIDEBAR_SESSION_DR
   const sectionId = target.getAttribute("data-section-id")
   const destination = { projectId, sectionId: sectionId === "none" ? null : sectionId }
   const pickup: SidebarDragPickup = { kind: mime === SIDEBAR_SECTION_DRAG_TYPE ? "section" : "session", projectId: data.projectId,
-    id: (mime === SIDEBAR_SECTION_DRAG_TYPE ? data.sectionId : data.sessionId)!, revision: revision ?? useAppStore.getState().projects[data.projectId]?.revision ?? 0 }
-  await act(async () => {
+    id: (mime === SIDEBAR_SECTION_DRAG_TYPE ? data.sectionId : data.sessionId)!, revision: revision ?? appStore.getState().projects[data.projectId]?.revision ?? 0 }
+  await settle(async () => {
     if (pickup.kind === "session") await dragHarness.current!.onMoveSession(pickup, destination)
     else dragHarness.current!.onMoveSection(pickup, destination, false)
   })
@@ -553,8 +651,8 @@ async function drop(target: Element, payload: unknown, mime = SIDEBAR_SESSION_DR
 /** Drop `sourceId` onto another session row, which is a position request. */
 async function dropOnRow(sourceId: string, targetId: string, after: boolean, sectionId: string | null = null, projectId = "p1") {
   const pickup: SidebarDragPickup = { kind: "session", projectId, id: sourceId,
-    revision: useAppStore.getState().projects[projectId]?.revision ?? 0 }
-  await act(async () => { await dragHarness.current!.onMoveSession(pickup, { projectId, sectionId, sessionId: targetId }, after) })
+    revision: appStore.getState().projects[projectId]?.revision ?? 0 }
+  await settle(async () => { await dragHarness.current!.onMoveSession(pickup, { projectId, sectionId, sessionId: targetId }, after) })
 }
 
 const renderedSessions = (scope: ParentNode) =>
@@ -592,7 +690,7 @@ describe("Sidebar server sections", () => {
   it("reveals a folded drop destination only after a confirmed move", async () => {
     setup()
     const section = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
-    act(() => section.querySelector<HTMLButtonElement>("button")!.click())
+    run(() => section.querySelector<HTMLButtonElement>("button")!.click())
     expect(section.querySelector("button")!.getAttribute("aria-expanded")).toBe("false")
     await drop(section, { projectId: "p1", sessionId: "second" })
     expect(section.querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
@@ -602,7 +700,7 @@ describe("Sidebar server sections", () => {
   it("rejects project-header drops for archived projects", async () => {
     const { snapshots, updateProject } = setup()
     snapshots.p1.status = "archived"
-    act(() => useAppStore.setState({ projects: structuredClone(snapshots) }))
+    run(() => appStore.setState({ projects: structuredClone(snapshots) }))
     await drop(container.querySelector('[data-project-drop="p1"]')!, { projectId: "p1", sessionId: "first" })
     expect(updateProject).not.toHaveBeenCalled()
   })
@@ -611,7 +709,7 @@ describe("Sidebar server sections", () => {
     const { snapshots, updateProject } = setup()
     const other = { id: "section:other", name: "Other" }
     snapshots.p1.sidebar!.sections.push(other)
-    act(() => useAppStore.setState({ projects: structuredClone(snapshots) }))
+    run(() => appStore.setState({ projects: structuredClone(snapshots) }))
     const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     await drop(target, { projectId: "p1", sectionId: other.id }, SIDEBAR_SECTION_DRAG_TYPE)
     expect(snapshots.p1.sidebar!.sections.map((section) => section.id)).toEqual([other.id, lotusA])
@@ -632,18 +730,18 @@ describe("Sidebar server sections", () => {
     expect(disclosure.draggable).toBe(false)
     expect(section.querySelector('[data-sidebar-drag-handle="section:' + lotusA + '"]')).not.toBeNull()
     expect(disclosure.getAttribute("aria-expanded")).toBe("true")
-    act(() => disclosure.click())
+    run(() => disclosure.click())
     expect(disclosure.getAttribute("aria-expanded")).toBe("false")
     const event = new Event("drop", { bubbles: true, cancelable: true })
     Object.defineProperty(event, "dataTransfer", { value: { getData: () => JSON.stringify({ projectId: "p1", sessionId: "first" }) } })
-    await act(async () => section.dispatchEvent(event))
+    await settle(async () => section.dispatchEvent(event))
     expect(updateProject).not.toHaveBeenCalled()
   })
 
   it("rejects an internal drop after its pickup revision has changed", async () => {
     const { snapshots, updateProject } = setup()
     snapshots.p1 = { ...snapshots.p1, revision: 2 }
-    act(() => useAppStore.setState({ projects: structuredClone(snapshots) }))
+    run(() => appStore.setState({ projects: structuredClone(snapshots) }))
     const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     await drop(target, { projectId: "p1", sessionId: "first" }, SIDEBAR_SESSION_DRAG_TYPE, 1)
     await drop(target, { projectId: "p1", sectionId: lotusA }, SIDEBAR_SECTION_DRAG_TYPE, 1)
@@ -671,7 +769,7 @@ describe("Sidebar server sections", () => {
     expect(row("pinned")).not.toBeNull()
     click("Pin pinned")
     expect(props.onTogglePin).toHaveBeenCalledWith(props.chats[3])
-    expect(useAppStore.getState().projects.p1.section).toBe("Development")
+    expect(appStore.getState().projects.p1.section).toBe("Development")
     expect(snapshots.p2).toEqual(originalForeign)
     expect(props.chats[0].config.projectId).toBe("p1")
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
@@ -679,7 +777,7 @@ describe("Sidebar server sections", () => {
 
   it("disables section moves and drops with an upgrade hint for an unsupported backend", async () => {
     const { updateProject } = setup()
-    act(() => useAppStore.setState((state) => ({ projects: { ...state.projects, p1: { ...state.projects.p1!, sidebar: undefined } } })))
+    run(() => appStore.setState((state) => ({ projects: { ...state.projects, p1: { ...state.projects.p1!, sidebar: undefined } } })))
     expect([...container.querySelectorAll("button")].some((item) => item.textContent?.startsWith("Move first to"))).toBe(false)
     expect(container.querySelector('[role="status"]')?.textContent).toContain("更新 Bamboo 后端")
     const target = container.querySelector('[data-section-project="p1"][data-section-id="legacy"]')!
@@ -692,7 +790,7 @@ describe("Sidebar server sections", () => {
     setup()
     const section = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     const create = section.querySelector<HTMLButtonElement>(`button[aria-label="${uiText("sidebar_section_new_session", { v0: "lotus" })}"]`)!
-    await act(async () => create.click())
+    await settle(async () => create.click())
     expect(props.onNewChat).toHaveBeenCalledExactlyOnceWith("p1", lotusA)
     expect(props.onClose).toHaveBeenCalledOnce()
   })
@@ -707,7 +805,7 @@ describe("Sidebar server sections", () => {
     click("Move first to lotus")
     const section = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     expect(section.querySelector(`button[aria-label="${uiText("sidebar_section_new_session", { v0: "lotus" })}"]`)).toBeNull()
-    await act(async () => { await confirm() })
+    await settle(async () => { await confirm() })
     expect(section.querySelector(`button[aria-label="${uiText("sidebar_section_new_session", { v0: "lotus" })}"]`)).not.toBeNull()
   })
 
@@ -718,9 +816,9 @@ describe("Sidebar server sections", () => {
     await clickAndSave("Move first to lotus")
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Zenith · 分区未保存")
     const trigger = buttonByLabel("Nova 项目操作")
-    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
+    await settle(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
     const createMenu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("创建分区"))!
-    await act(async () => createMenu.click())
+    await settle(async () => createMenu.click())
     const dialog = document.querySelector('[role="dialog"]')!
     expect(dialog.textContent).toContain("Nova")
     expect(dialog.querySelector('[role="alert"]')).toBeNull()
@@ -755,7 +853,7 @@ describe("Sidebar server sections", () => {
     expect(target.getAttribute("aria-disabled")).toBe("true")
     await drop(target, { projectId: "p1", sessionId: "second" })
     expect(updateProject).toHaveBeenCalledOnce()
-    await act(async () => { await confirm() })
+    await settle(async () => { await confirm() })
     expect(target.contains(row("first"))).toBe(true)
     expect(target.getAttribute("aria-disabled")).toBe("false")
     expect(projectGroup.getAttribute("aria-busy")).toBe("false")
@@ -786,8 +884,8 @@ describe("Sidebar server sections", () => {
     setup()
     const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     const unsectioned = container.querySelector('[data-section-project="p1"][data-section-id="none"]')!
-    act(() => target.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
-    act(() => unsectioned.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
+    run(() => target.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
+    run(() => unsectioned.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
     expect(row("first")).toBeNull()
     search("first")
     expect(row("first")).not.toBeNull()
@@ -804,7 +902,7 @@ describe("Sidebar server sections", () => {
 
   it("saves server moves when device storage writes are blocked", async () => {
     const { updateProject, snapshots } = setup()
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked") })
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("blocked") })
     await clickAndSave("Move first to lotus")
     expect(container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!.contains(row("first"))).toBe(true)
     await clickAndSave("Unsection first")
@@ -850,28 +948,28 @@ describe("Sidebar server sections", () => {
     const { updateProject } = installProjectBackend({ p1: project("p1", "Zenith", "Development") })
     render({ chats: [projectChat("first", "p1")] })
     click("项目")
-    await act(async () => {})
+    await settle(async () => {})
     expect(container.querySelector('[data-project-section="Stale local"]')).toBeNull()
     expect(container.querySelector('[data-section-id="none"]')!.contains(row("first"))).toBe(true)
     expect(updateProject).not.toHaveBeenCalled()
   })
 
-  it("creates empty sections and preserves only explicit assignments through StrictMode and reload", async () => {
+  it("creates empty sections and preserves only explicit assignments through an owner remount", async () => {
     vi.useRealTimers()
     const { updateProject, snapshots } = installProjectBackend({ p1: project("p1", "Zenith", "lotus") })
     const chats = [projectChat("first", "p1"), projectChat("untouched", "p1")]
-    await act(async () => root.render(<StrictMode><Sidebar {...props} chats={chats} /></StrictMode>))
+    await settle(() => render({ chats }))
     click("项目")
     expect(container.querySelector('[data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
     const trigger = buttonByLabel("Zenith 项目操作")
-    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
+    await settle(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
     const createMenu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("创建分区"))!
     expect(createMenu).toBeDefined()
-    await act(async () => createMenu.click())
-    const input = document.querySelector<HTMLInputElement>("#project-section-name")!
+    await settle(async () => createMenu.click())
+    const input = document.querySelector<HTMLInputElement>('[role="dialog"] form input')!
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
-    act(() => { setter.call(input, "Research"); input.dispatchEvent(new Event("input", { bubbles: true })) })
-    await act(async () => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) })
+    run(() => { setter.call(input, "Research"); input.dispatchEvent(new Event("input", { bubbles: true })) })
+    await settle(async () => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) })
     const section = container.querySelector('[data-project-section="Research"]')!
     expect(section).not.toBeNull()
     expect(section.textContent).toContain("Research0 个会话")
@@ -887,10 +985,9 @@ describe("Sidebar server sections", () => {
     await clickAndSave("Move first to Research")
     expect(section.contains(row("first"))).toBe(true)
     expect(snapshots.p1.sidebar!.session_sections.first).toBe(persisted.id)
-    await act(async () => root.unmount())
-    root = createRoot(container)
+    unmount()
     const refreshedChats = [...chats, projectChat("new-session", "p1")]
-    await act(async () => root.render(<StrictMode><Sidebar {...props} chats={refreshedChats} /></StrictMode>))
+    await settle(() => render({ chats: refreshedChats }))
     const restored = container.querySelector('[data-project-section="Research"]')!
     expect(restored.getAttribute("data-section-id")).toBe(persisted.id)
     expect(restored.textContent).toContain("Research1 个会话")
@@ -911,7 +1008,7 @@ describe("Sidebar session ordering", () => {
     expect(renderedSessions(container).slice(0, 2)).toEqual(["day-0", "day-1"])
     // Submitting input is the recency signal: the session leaves its older date
     // group and becomes the first row of today.
-    act(() => { recordSessionUserInput("day-3") })
+    run(() => { recordSessionUserInput("day-3") })
     expect(renderedSessions(container).slice(0, 3)).toEqual(["day-3", "day-0", "day-1"])
   })
 
@@ -928,9 +1025,8 @@ describe("Sidebar session ordering", () => {
     expect(localStorage.getItem(SESSION_ORDER_STORAGE_KEY)).toContain("second")
 
     // The position survives a remount, which is what makes it a real order.
-    await act(async () => root.unmount())
-    root = createRoot(container)
-    await act(async () => root.render(<Sidebar {...props} />))
+    unmount()
+    await settle(() => render())
     expect(renderedSessions(bucket())).toEqual(["second", "first"])
   })
 
@@ -965,17 +1061,17 @@ describe("Sidebar session ordering", () => {
       confirm = async () => { resolve(await persist(...args)) }
     }))
     const pickup: SidebarDragPickup = { kind: "session", projectId: "p1", id: "second",
-      revision: useAppStore.getState().projects.p1!.revision }
+      revision: appStore.getState().projects.p1!.revision }
     let moved: Promise<boolean> | undefined
     // Act on the drop without waiting: the server response is still pending.
-    await act(async () => {
+    await settle(async () => {
       moved = dragHarness.current!.onMoveSession(pickup, { projectId: "p1", sectionId: lotusA, sessionId: "first" }, true)
     })
     // Another session is written into while the move is in flight.
-    act(() => { recordSessionUserInput("elsewhere", 1_700_000_000_000) })
+    run(() => { recordSessionUserInput("elsewhere", 1_700_000_000_000) })
 
-    await act(async () => { await confirm() })
-    await act(async () => { await moved })
+    await settle(async () => { await confirm() })
+    await settle(async () => { await moved })
 
     const stored = parseSessionOrder(localStorage.getItem(SESSION_ORDER_STORAGE_KEY))
     expect(stored.activity.elsewhere).toBe(1_700_000_000_000)
@@ -1002,17 +1098,17 @@ describe("Sidebar session ordering", () => {
       confirm = async () => { resolve(await persist(...args)) }
     }))
     const pickup: SidebarDragPickup = { kind: "session", projectId: "p1", id: "third",
-      revision: useAppStore.getState().projects.p1!.revision }
+      revision: appStore.getState().projects.p1!.revision }
     let moved: Promise<boolean> | undefined
-    await act(async () => {
+    await settle(async () => {
       moved = dragHarness.current!.onMoveSession(pickup, { projectId: "p1", sectionId: lotusA, sessionId: "first" }, false)
     })
     // While the move is pending, the user writes into the destination's last row,
     // which promotes it above the row the drop is anchored to.
-    act(() => { recordSessionUserInput("second", 1_700_000_100_000) })
+    run(() => { recordSessionUserInput("second", 1_700_000_100_000) })
 
-    await act(async () => { await confirm() })
-    await act(async () => { await moved })
+    await settle(async () => { await confirm() })
+    await settle(async () => { await moved })
 
     expect(snapshots.p1.sidebar!.session_sections.third).toBe(lotusA)
     // third is anchored above first, but `second`'s promotion must survive ahead of it.
