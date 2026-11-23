@@ -24,9 +24,9 @@ const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value
 const canonicalValue = (value: any): any => Array.isArray(value) ? value.map(canonicalValue)
   : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonicalValue(item)])) : value
 const sourceFiles = [
-  "src/components/app/ProjectWorkBoard.tsx", "src/components/app/project-work/ProjectSprintPanel.tsx",
-  "src/components/app/project-work/SprintOwnerControls.tsx", "src/hooks/useProjectSprints.ts",
-  "src/hooks/useProjectWorkBoard.ts", "src/services/tickets/sprints.ts", "src/services/tickets/projectBoard.ts",
+  "src/solid/project-work/ProjectWorkBoard.tsx", "src/solid/project-work/ProjectSprintPanel.tsx",
+  "src/solid/project-work/SprintOwnerControls.tsx", "src/solid/project-work/createProjectSprints.ts",
+  "src/solid/project-work/createProjectWorkBoard.ts", "src/services/tickets/sprints.ts", "src/services/tickets/projectBoard.ts",
   "src/shared/i18n/resources/ui-zh-CN.ts", "e2e/fixtures/project-sprints.tsx", "e2e/project-work-sprints.pw.ts",
 ]
 const sourceProof = () => ({
