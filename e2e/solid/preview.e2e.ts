@@ -28,3 +28,15 @@ test("reads the existing theme preference and follows system appearance on deman
   await page.emulateMedia({ colorScheme: "light" });
   await expect(root).not.toHaveClass(/\bdark\b/);
 });
+
+test("submits Markdown using the Solid Tiptap editor", async ({ page }) => {
+  await page.goto(preview);
+  const composer = page.locator("[data-composer-editor]");
+  await expect(composer).toHaveAttribute("contenteditable", "true");
+  await composer.fill("**从输入框渲染**\n\n- 使用全角中文");
+  await composer.press("Enter");
+
+  await expect(page.locator("strong", { hasText: "从输入框渲染" })).toBeVisible();
+  await expect(page.locator("li", { hasText: "使用全角中文" })).toBeVisible();
+  await expect(composer).not.toContainText("从输入框渲染");
+});
