@@ -155,10 +155,12 @@ test("ordinary and Supervisor expose the same confirmation; cancelling preserves
 })
 test("a missing optional confirmation chunk leaves the conversation usable with no clear request", async ({ page }) => {
   let contentRequests = 0
-  const f = await fixture(page, null, () => page.route(/\/assets\/ConversationClearDialogContent-[A-Za-z0-9_-]+\.js$/, async (route) => {
-    contentRequests += 1
-    await route.abort("failed")
-  }))
+  const f = await fixture(page, null, async () => {
+    await page.route(/\/assets\/ConversationClearDialogContent-[A-Za-z0-9_-]+\.js$/, async (route) => {
+      contentRequests += 1
+      await route.abort("failed")
+    })
+  })
   const history = page.getByText(`Synthetic history ${ordinary}`, { exact: true })
   await expect(history).toBeVisible()
   expect(contentRequests).toBe(0)
