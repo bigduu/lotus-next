@@ -1,31 +1,33 @@
-import { act } from "react"
-import { createRoot } from "react-dom/client"
+import { flush } from "solid-js"
+import { render } from "@solidjs/web"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { useSessionDrop } from "./useSessionDrop"
+import { createSessionDrop } from "./createSessionDrop"
 import { SIDEBAR_SESSION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
 
-const chats = [{ id: "a", kind: "root", config: { projectId: "p" } }, { id: "b", kind: "root" }, { id: "child", kind: "child", parentSessionId: "a" }]
+const chats = [{ id: "a", kind: "root", config: { projectId: "p" } }, { id: "b", kind: "root" }, { id: "child", kind: "child", parentSessionId: "a" }] as const
 let host: HTMLDivElement
-let root: ReturnType<typeof createRoot>
+let dispose: () => void
 const open = vi.fn()
 const editorDrop = vi.fn()
 function Harness() {
-  const drop = useSessionDrop(chats, open)
-  return <div data-active={drop.active} {...drop.handlers}><div data-editor onDrop={editorDrop} /></div>
+  const drop = createSessionDrop(() => chats, open)
+  return <div data-active={drop.active() ? "true" : "false"} ref={drop.bindTarget}><div data-editor onDrop={editorDrop} /></div>
 }
 function drag(type: string, payload: unknown = { sessionId: "a", projectId: "p" }, types = [SIDEBAR_SESSION_DRAG_TYPE], relatedTarget: EventTarget | null = null) {
   const event = new Event(type, { bubbles: true, cancelable: true })
   const transfer = { types, dropEffect: "none", getData: () => typeof payload === "string" ? payload : JSON.stringify(payload) }
   Object.defineProperties(event, { dataTransfer: { value: transfer }, relatedTarget: { value: relatedTarget } })
-  act(() => host.querySelector("[data-editor]")!.dispatchEvent(event))
+  host.querySelector("[data-editor]")!.dispatchEvent(event)
+  flush()
   return { event, transfer }
 }
 beforeEach(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  vi.clearAllMocks(); host = document.body.appendChild(document.createElement("div")); root = createRoot(host)
-  act(() => root.render(<Harness />))
+  vi.clearAllMocks()
+  host = document.body.appendChild(document.createElement("div"))
+  dispose = render(() => <Harness />, host)
+  flush()
 })
-afterEach(() => { act(() => root.unmount()); host.remove() })
+afterEach(() => { dispose(); host.remove() })
 it("offers copy feedback and opens only at drop, intercepting editor insertion", () => {
   expect(drag("dragover").transfer.dropEffect).toBe("copy")
   expect(host.firstElementChild?.getAttribute("data-active")).toBe("true")
@@ -49,6 +51,8 @@ it("clears on leave and cancellation without navigation and keeps child transiti
   drag("dragover"); drag("dragleave", {}, [], host.querySelector("[data-editor]"))
   expect(host.firstElementChild?.getAttribute("data-active")).toBe("true")
   drag("dragleave"); expect(host.firstElementChild?.getAttribute("data-active")).toBe("false")
-  drag("dragover"); act(() => window.dispatchEvent(new Event("dragend")))
+  drag("dragover")
+  window.dispatchEvent(new Event("dragend"))
+  flush()
   expect(host.firstElementChild?.getAttribute("data-active")).toBe("false"); expect(open).not.toHaveBeenCalled()
 })

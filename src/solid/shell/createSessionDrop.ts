@@ -3,7 +3,9 @@ import type { ChatItem } from "@shared/types/chatMessages"
 import { SIDEBAR_SESSION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
 import { readSessionDrag } from "@/lib/sessionDrag"
 
-export function createSessionDrop(chats: () => readonly ChatItem[], onOpen: (id: string) => void) {
+type SidebarSession = Pick<ChatItem, "id" | "kind" | "parentSessionId"> & { config?: { projectId?: string | null } }
+
+export function createSessionDrop(chats: () => readonly SidebarSession[], onOpen: (id: string) => void) {
   const [target, bindTarget] = createSignal<HTMLElement>()
   const [active, setActive] = createSignal(false)
   const clear = () => setActive(false)
