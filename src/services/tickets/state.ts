@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import type { Decision, PendingRequest, ResponseCommand, TicketSnapshot, WorkView } from "./types"
 
 export interface TicketState {

@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { apiClient, isApiError } from "@services/api"
 import { TicketScopeUnavailableError, unavailableScope, isTicketInitialization, scopeAvailability } from "./availability"
 import type { Cursor, IngressPreview, ReadEnvelope, ResponseCommand, ScopeBinding, SnapshotRef, TicketInitialization, TicketInitializationResult, TicketScope, TicketSnapshot, WorkView } from "./types"
