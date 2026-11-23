@@ -169,7 +169,7 @@ test("Solid compatibility distinguishes a failed read, a confirmed conflict, and
   await reread.click()
   await expect(notice).toHaveAttribute("data-session-execution-blocked", "true")
   await expect(notice).toHaveCount(1)
-  const composer = page.locator("[data-composer-editor]")
+  const composer = page.locator('[data-composer-editor][contenteditable="true"]')
   await composer.fill("Preserve the unsent instruction")
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled()
   await composer.press("Enter")
@@ -188,7 +188,7 @@ test("Solid compatibility distinguishes a failed read, a confirmed conflict, and
 
 test("Solid source refusal preserves the draft and continues editing without replay", async ({ page, baseURL }) => {
   const f = await fixture(page, baseURL, "source")
-  const composer = page.locator("[data-composer-editor]")
+  const composer = page.locator('[data-composer-editor][contenteditable="true"]')
   await composer.fill("Keep this instruction after a source conflict")
   await page.getByRole("button", { name: "Send message", exact: true }).click()
   const recovery = page.getByRole("alert").filter({ hasText: "Your draft and original source are preserved" })
