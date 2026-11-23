@@ -1,12 +1,10 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { flush as commit } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { SettingsRetry } from "./SettingsRetry"
 
-const roots: Root[] = []
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-environment.IS_REACT_ACT_ENVIRONMENT = true
+const cleanups: Array<() => void> = []
 
 const getTypedSection = vi.fn()
 const putTypedSection = vi.fn()
@@ -28,18 +26,23 @@ const policy = {
 
 const envelope = (data: unknown, revision: number) => ({ data, revision })
 
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 5; turn += 1) {
+    await Promise.resolve()
+    commit()
+  }
+}
+
 async function mount(): Promise<HTMLElement> {
-  const host = document.createElement("div")
-  document.body.appendChild(host)
-  const root = createRoot(host)
-  roots.push(root)
-  await act(async () => {
-    root.render(<SettingsRetry />)
-  })
+  const host = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <SettingsRetry />, host)
+  cleanups.push(() => { dispose(); host.remove() })
+  await settle(() => {})
   return host
 }
 
-const flush = () => act(async () => { await Promise.resolve() })
+const flush = () => settle(() => {})
 
 function field(host: HTMLElement, key: string): HTMLInputElement {
   const element = host.querySelector<HTMLInputElement>(`#llm-retry-${key}`)
@@ -71,11 +74,8 @@ describe("SettingsRetry", () => {
     getTypedSection.mockResolvedValue(envelope({ llm_retry: policy }, 3))
   })
 
-  afterEach(async () => {
-    await act(async () => {
-      for (const root of roots.splice(0)) root.unmount()
-    })
-    document.body.innerHTML = ""
+  afterEach(() => {
+    for (const cleanup of cleanups.splice(0)) cleanup()
   })
 
   it("loads the core section and renders the current policy", async () => {
@@ -97,10 +97,10 @@ describe("SettingsRetry", () => {
 
     const host = await mount()
     await flush()
-    await act(async () => {
+    await settle(async () => {
       setValue(field(host, "max_attempts"), "10")
     })
-    await act(async () => {
+    await settle(async () => {
       button(host, "save").click()
     })
     await flush()
@@ -115,10 +115,10 @@ describe("SettingsRetry", () => {
   it("refuses an out-of-range value without calling the server", async () => {
     const host = await mount()
     await flush()
-    await act(async () => {
+    await settle(async () => {
       setValue(field(host, "max_attempts"), "99")
     })
-    await act(async () => {
+    await settle(async () => {
       button(host, "save").click()
     })
     await flush()
@@ -140,10 +140,10 @@ describe("SettingsRetry", () => {
 
     const host = await mount()
     await flush()
-    await act(async () => {
+    await settle(async () => {
       setValue(field(host, "max_attempts"), "10")
     })
-    await act(async () => {
+    await settle(async () => {
       button(host, "save").click()
     })
     await flush()
@@ -160,7 +160,7 @@ describe("SettingsRetry", () => {
 
     const host = await mount()
     await flush()
-    await act(async () => {
+    await settle(async () => {
       button(host, "save").click()
     })
     await flush()
