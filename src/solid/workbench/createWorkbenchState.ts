@@ -1,11 +1,12 @@
-import { createEffect, createMemo, createSignal, onSettled } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import { getBackendStorageScope } from "@services/api"
-import { readWorkbenchState, workbenchStorageKey, writeWorkbenchState, type WorkbenchState } from "@/lib/workbenchState"
+import { activateWorkbenchTab, readWorkbenchState, workbenchStorageKey, writeWorkbenchState, type WorkbenchState } from "@/lib/workbenchState"
+import type { WorkbenchToolTab } from "@/lib/workbenchTabTypes"
 
 type Update = (current: WorkbenchState) => WorkbenchState
 
-export function createWorkbenchState(sessionId: () => string | null) {
-  const key = createMemo(() => workbenchStorageKey(getBackendStorageScope(), sessionId()))
+export function createWorkbenchState(sessionId: Accessor<string | null>, backend: Accessor<string> = getBackendStorageScope) {
+  const key = createMemo(() => workbenchStorageKey(backend(), sessionId()))
   const visit = createMemo(() => ({ key: key() }))
   const [sessions, setSessions] = createSignal(new Map<string | null, WorkbenchState>())
   const initial = createMemo(() => readWorkbenchState(key()))
@@ -25,21 +26,39 @@ export function createWorkbenchState(sessionId: () => string | null) {
       persist(key, state)
     },
   )
-  onSettled(() => () => { active = false })
+  onCleanup(() => { active = false })
 
   const capture = () => {
     const currentVisit = visit()
+    const currentInitial = initial()
+    const isCurrent = () => active && currentVisit === visit()
     const update = (change: Update) => {
-      if (!active || visit() !== currentVisit) return
+      if (!isCurrent()) return
       setSessions((current) => {
-        const descriptor = current.get(currentVisit.key) ?? initial()
+        const descriptor = current.get(currentVisit.key) ?? currentInitial
         const next = change(descriptor)
         return descriptor === next ? current : new Map(current).set(currentVisit.key, next)
       })
     }
-    const setField = <K extends keyof WorkbenchState>(field: K, value: WorkbenchState[K]) =>
-      update((before) => Object.is(before[field], value) ? before : { ...before, [field]: value })
-    return { update, setField, isCurrent: () => active && currentVisit === visit() }
+    const setField = <K extends keyof WorkbenchState>(field: K, value: WorkbenchState[K] | ((before: WorkbenchState[K]) => WorkbenchState[K])) => {
+      update((before) => {
+        const next = typeof value === "function" ? value(before[field]) : value
+        return Object.is(before[field], next) ? before : { ...before, [field]: next }
+      })
+    }
+    const openToolForSession = (sessionId: string, tool: WorkbenchToolTab) => {
+      if (!isCurrent()) return
+      const destination = workbenchStorageKey(backend(), sessionId)
+      if (!destination) return
+      if (destination === currentVisit.key) {
+        update((before) => activateWorkbenchTab(before, tool))
+      } else {
+        const initialDestination = readWorkbenchState(destination)
+        setSessions((current) => new Map(current).set(destination,
+          activateWorkbenchTab(current.get(destination) ?? initialDestination, tool)))
+      }
+    }
+    return { update, setField, openToolForSession, isCurrent }
   }
 
   return { state, key, capture }
