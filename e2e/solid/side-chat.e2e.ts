@@ -28,6 +28,7 @@ async function selectSourceText(source: Locator, quote: string) {
 
 test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the source", async ({ page, baseURL }, testInfo) => {
   const entryUrl = new URL("/", baseURL).href
+  const origin = new URL(entryUrl).origin
   const source = "all-surface-session"
   const rootMessage = "root-build-report"
   const sourceText = "Bamboo reported a lockfile mismatch during the build."
@@ -56,22 +57,35 @@ test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the s
 
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const observation = await installArtifactRuntime(page, {
-    ...standaloneScenario, entryUrl, origin: new URL(entryUrl).origin,
+    ...standaloneScenario, entryUrl, origin,
   }, [], { serveStaticFromLocalServer: true, sessionFeatures: ["session_side_chat"] })
   await page.routeWebSocket(/\/v2\/stream(?:\?|$)/, (ws) => {
     socket = ws
     channel = undefined
     sequence = 0
     let welcomed = false
-    if (!ws.protocols().includes("bamboo.v2")) protocolErrors.push("missing bamboo.v2 WebSocket subprotocol")
+    // The standalone artifact uses the default JSON transport without a WebSocket subprotocol.
+    const url = new URL(ws.url())
+    if (url.origin !== origin.replace(/^http/, "ws") || url.pathname !== "/v2/stream" || url.search) {
+      protocolErrors.push("unexpected realtime endpoint")
+    }
+    if (ws.protocols().length !== 0) protocolErrors.push("unexpected subprotocol on the default JSON transport")
     ws.onMessage((raw) => {
-      const frame = JSON.parse(raw.toString())
+      if (typeof raw !== "string") { protocolErrors.push("binary frame on the default JSON transport"); return }
+      let frame: Record<string, unknown>
+      try { frame = JSON.parse(raw) }
+      catch { protocolErrors.push("malformed JSON frame"); return }
+      if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+        protocolErrors.push("invalid realtime envelope")
+        return
+      }
       if (frame.type === "hello") {
         if (welcomed || Object.keys(frame).length !== 1) protocolErrors.push("invalid hello")
         welcomed = true
         ws.send(JSON.stringify({ type: "welcome" }))
       }
       if (frame.type === "subscribe" && !welcomed) protocolErrors.push("subscription preceded welcome")
+      if (frame.type === "stop") protocolErrors.push("Side Chat must not send a main-session Stop frame")
       if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
       if (frame.type === "subscribe" && frame.ch === sideChannel) {
         channel = frame.ch
@@ -132,9 +146,11 @@ test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the s
 
   await page.goto(entryUrl)
   const main = page.locator("[data-composer-editor]")
-  await main.fill("主会话已有草稿")
   const sourceBody = page.locator('[data-message-row="' + rootMessage + '"] [data-message-role]')
   await expect(sourceBody).toContainText(sourceText)
+  await expect(page.getByRole("button", { name: "打开侧聊", exact: true })).toBeVisible()
+  await main.fill("主会话已有草稿")
+  await expectComposerText(main, "主会话已有草稿")
   await selectSourceText(sourceBody, "lockfile mismatch")
   await page.getByRole("button", { name: "在侧聊中提问", exact: true }).click()
   const panel = page.getByRole("region", { name: "侧聊", exact: true })
@@ -161,6 +177,7 @@ test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the s
     await page.screenshot({ path })
     await testInfo.attach("side-chat", { path, contentType: "image/png" })
   }
+  await expectComposerText(main, "主会话已有草稿")
   await panel.getByRole("button", { name: "引用到主输入框" }).click()
   await expectComposerText(main, "主会话已有草稿\n\n> Cargo.lock 和 Cargo.toml 不一致。")
 
@@ -261,6 +278,7 @@ test("Solid Side Chat reveals a virtualized source without jumping back to the l
   await page.getByRole("button", { name: "定位到主会话原文", exact: true }).click()
   await expect(bottomButton).toBeVisible()
   await expect(earlierMessage).toBeInViewport()
+  await expect(earlierMessage).toBeFocused()
   await expect(latestMessage).not.toBeInViewport()
   if (isMobile) await expect(page.getByRole("region", { name: "侧聊", exact: true })).toBeHidden()
   await bottomButton.click()
