@@ -4,7 +4,7 @@ import { installArtifactRuntime, standaloneScenario } from "../support/artifactR
 for (const running of [false, true]) {
   test(`Solid Lotus restores a session and ${running ? "queues guidance during a run" : "sends a draft through Bamboo"}`, async ({ page, baseURL }) => {
     const id = "all-surface-session";
-    const entryUrl = new URL("/solid-candidate.html", baseURL).href;
+    const entryUrl = new URL("/", baseURL).href;
     const session = {
       id,
       title: "Solid active conversation",
@@ -22,7 +22,10 @@ for (const running of [false, true]) {
       is_running: running,
       last_run_status: running ? "running" : "completed",
     };
-    await page.addInitScript((selected) => localStorage.setItem("lotus_next_last_session", selected), id);
+    await page.addInitScript((selected) => {
+      localStorage.setItem("lotus_next_last_session", selected);
+      localStorage.setItem("bodhi_onboarded_v1", "1");
+    }, id);
     const observation = await installArtifactRuntime(page, {
       ...standaloneScenario, origin: new URL(entryUrl).origin, entryUrl,
     }, [{ id: "saved-answer", role: "assistant", content: "Existing **Solid history**", created_at: session.created_at }], {

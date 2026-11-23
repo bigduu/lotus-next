@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const preview = "/";
+const preview = "/solid-preview.html";
 
 test("reads the existing theme preference and follows system appearance on demand", async ({ page }) => {
   await page.addInitScript(() => {

@@ -1,16 +1,16 @@
 import tailwindcss from "@tailwindcss/vite"
 import solid from "@solidjs/vite-plugin"
 import { defineConfig, loadEnv, type Plugin, type PreviewServer, type ViteDevServer } from "vite"
-import { assertSafePublicBuildEnvironment, portableArtifactBase, sourceAliases } from "./vite.config.ts"
+import { assertSafePublicBuildEnvironment, developmentProxy, portableArtifactBase, sourceAliases } from "./vite.config.ts"
 
 const previewEntry = "solid-preview.html"
 const candidateEntry = "solid-candidate.html"
 
-function servePreviewIndex(): Plugin {
+function serveSolidIndex(): Plugin {
   const configure = (server: ViteDevServer | PreviewServer) => {
     server.middlewares.use((request, _response, next) => {
       // Both preview servers use the Solid entry at the URL printed by Vite.
-      request.url = request.url?.replace(/^\/(?:index\.html)?(?=\?|$)/, `/${previewEntry}`)
+      request.url = request.url?.replace(/^\/(?:index\.html)?(?=\?|$)/, `/${candidateEntry}`)
       next()
     })
   }
@@ -43,9 +43,9 @@ export default defineConfig(({ mode }) => {
     base: portableArtifactBase,
     cacheDir: "node_modules/.vite-solid-preview",
     optimizeDeps: { entries: [previewEntry, candidateEntry] },
-    plugins: [solid(), tailwindcss(), servePreviewIndex(), assertSolidRuntime()],
+    plugins: [solid(), tailwindcss(), serveSolidIndex(), assertSolidRuntime()],
     resolve: { alias: sourceAliases },
-    server: { host: "127.0.0.1", port: 9573, strictPort: true },
+    server: { host: "127.0.0.1", port: 9573, strictPort: true, proxy: developmentProxy },
     build: {
       outDir: "dist-solid-preview",
       rollupOptions: { input: [previewEntry, candidateEntry] },

@@ -37,6 +37,8 @@ import type { BrowserState } from "@services/browser/types"
 import { createBrowserSession } from "../workbench/browser/createBrowserSession"
 import { createWorkbenchState } from "../workbench/createWorkbenchState"
 import { ProjectManagerModal } from "./ProjectManagerModal"
+import { WorkspacePicker } from "./WorkspacePicker"
+import { Onboarding } from "./Onboarding"
 import { CommandPalette } from "./CommandPalette"
 
 const RightWorkbench = lazy(() => import("../workbench/RightWorkbench"), { export: "RightWorkbench" })
@@ -60,6 +62,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const text = createUiText()
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [projectsOpen, setProjectsOpen] = createSignal(false)
+  const [workspaceOpen, setWorkspaceOpen] = createSignal(false)
+  const [pickedWorkspace, setPickedWorkspace] = createSignal<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
@@ -85,7 +89,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   let navigationVersion = 0
   const currentSession = () => chat.currentSessionId
   const displayWorkspace = () => chat.currentChat?.config?.workspacePath
-    ?? (newSession() ? projects()[newSession()!.projectId]?.project_path ?? null : null)
+    ?? (newSession() ? projects()[newSession()!.projectId]?.project_path : undefined) ?? pickedWorkspace()
   const readingAnchors = new Map<string, HistoryReadingAnchor>()
   const sessionView = createMemo(() => ({ id: currentSession() }), {
     equals: (previous, next) => previous?.id === next.id,
@@ -239,6 +243,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   }
   const newChat = (projectId?: string | null, sectionId?: string | null) => {
     navigationVersion += 1
+    if (projectId) setPickedWorkspace(null)
     setNewSession(projectId ? { projectId, sectionId } : null)
     chat.newChat()
   }
@@ -385,6 +390,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             <h1 class="min-w-0 flex-1 truncate text-sm font-semibold">
               {chat.currentChat?.title || text("new_session_c57c30bc")}
             </h1>
+            <Button size="icon" variant="ghost" title={displayWorkspace() ?? undefined}
+              aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
+              <FolderClosed class="size-4" />
+            </Button>
             <Button size="icon" variant="ghost"
               aria-label={text(workbenchState().open ? "collapse_side_panel_e7d2fdd8" : "open_side_panel_732ea38b")}
               aria-expanded={workbenchState().open ? "true" : "false"} aria-controls="right-workbench"
@@ -424,6 +433,15 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             </Show>
           </div>
         </div>
+      </Show>
+      <Onboarding />
+      <Show when={workspaceOpen()}>
+        <WorkspacePicker current={displayWorkspace()} locked={Boolean(chat.currentChat?.config?.workspacePath)}
+          onClose={() => setWorkspaceOpen(false)}
+          onSelect={(path) => {
+            setPickedWorkspace(path)
+            if (path) setNewSession(null)
+          }} />
       </Show>
       <Show when={projectsOpen()}>
         <ProjectManagerModal onClose={() => setProjectsOpen(false)} />
