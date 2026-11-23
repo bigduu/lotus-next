@@ -102,19 +102,25 @@ function SelectTrigger(props: SelectTriggerProps) {
 }
 
 export function Select(props: SelectProps) {
+  const options = createMemo(() => props.options, {
+    equals: (previous, next) => previous.length === next.length && previous.every((option, index) => {
+      const candidate = next[index]
+      return option.value === candidate.value && option.label === candidate.label && option.disabled === candidate.disabled
+    }),
+  })
   const selected = createMemo(() => props.value === undefined
     ? undefined
-    : props.options.find((option) => option.value === props.value) ?? null)
+    : options().find((option) => option.value === props.value) ?? null)
 
   return (
     <SelectPrimitive.Root<SelectOption>
       data-slot="select"
-      options={props.options}
+      options={options()}
       optionValue="value"
       optionTextValue="label"
       optionDisabled="disabled"
       value={selected()}
-      defaultValue={props.options.find((option) => option.value === props.defaultValue)}
+      defaultValue={options().find((option) => option.value === props.defaultValue)}
       onChange={(option) => option && props.onValueChange?.(option.value)}
       name={props.name}
       disabled={props.disabled}

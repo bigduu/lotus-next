@@ -73,7 +73,7 @@ function ModelFields(props: ModelFieldsProps) {
   ])
   return (
     <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem]">
-      <Select class="w-full"
+      <Select selectOnly class="w-full"
         label={props.providerLabel}
         value={props.value.provider || (props.canUnset ? UNSET : undefined)}
         disabled={props.disabled}
@@ -93,7 +93,7 @@ function ModelFields(props: ModelFieldsProps) {
         disabled={!props.value.provider || props.disabled}
         onChange={(model) => props.update({ model })}
       />
-      <Select class="w-full"
+      <Select selectOnly class="w-full"
         label={props.effortLabel}
         options={effortOptions()}
         disabled={!props.value.provider || props.disabled}

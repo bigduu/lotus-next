@@ -20,7 +20,8 @@ function SwitchParts(props: SwitchProps) {
     <>
       <SwitchPrimitive.Input
         id={props.id}
-        class="peer"
+        class="peer z-10 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+        style={{ inset: "0", width: "100%", height: "100%", margin: "0", clip: "auto", "clip-path": "none" }}
         aria-label={props["aria-label"]}
         aria-labelledby={props["aria-labelledby"]}
         aria-describedby={props["aria-describedby"]}
@@ -29,10 +30,11 @@ function SwitchParts(props: SwitchProps) {
         onBlur={props.onBlur}
       />
       <SwitchPrimitive.Control
+        aria-hidden="true"
         data-slot="switch"
         data-state={state()}
         class={cn(
-          "data-[state=checked]:bg-primary data-[state=unchecked]:bg-input dark:data-[state=unchecked]:bg-input/80 inline-flex h-[1.15rem] w-8 shrink-0 items-center rounded-full border border-transparent shadow-xs switch-feedback outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2",
+          "data-[state=checked]:bg-primary data-[state=unchecked]:bg-input dark:data-[state=unchecked]:bg-input/80 pointer-events-none inline-flex h-[1.15rem] w-8 shrink-0 items-center rounded-full border border-transparent shadow-xs switch-feedback outline-none data-[disabled]:opacity-50 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2",
           feedbackMotion,
           props.class,
         )}
@@ -54,7 +56,7 @@ export function Switch(props: SwitchProps) {
   return (
     <SwitchPrimitive.Root
       id={props.id ? `${props.id}-root` : undefined}
-      class="inline-flex"
+      class="relative inline-flex"
       onChange={(checked) => (props.onCheckedChange ?? props.onChange)?.(checked)}
       {...omit(props, "id", "class", "children", "onChange", "onCheckedChange", "aria-label", "aria-labelledby", "aria-describedby", "tabindex", "onFocus", "onBlur")}
     >

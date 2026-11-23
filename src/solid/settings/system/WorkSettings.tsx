@@ -95,7 +95,7 @@ export function WorkSettings(props: { flags: WorkFeatureFlags; saveSection: Save
               <p class="text-sm">{text("work_settings_reasoning")}</p>
               <p class="text-xs text-muted-foreground">{text(isUltra() ? "work_settings_ultra_description" : "work_settings_reasoning_description")}</p>
             </div>
-            <Select label={text("work_settings_reasoning")} class="w-36" options={options()} disabled={action.busy()}
+            <Select selectOnly label={text("work_settings_reasoning")} class="w-36" options={options()} disabled={action.busy()}
               value={isUltra() ? "ultra" : execution().reasoning_effort ?? "auto"} onValueChange={setEffort} />
           </div>
           <div class="flex flex-wrap items-center justify-between gap-2">

@@ -41,7 +41,7 @@ export function createSystemAction() {
 
 export function SystemSection(props: { title: string; children: JSX.Element; class?: string }) {
   return (
-    <section class={`space-y-2 rounded-lg border p-3 ${props.class ?? ""}`}>
+    <section aria-label={props.title} class={`space-y-2 rounded-lg border p-3 ${props.class ?? ""}`}>
       <h3 class="text-xs font-medium text-muted-foreground">{props.title}</h3>
       {props.children}
     </section>

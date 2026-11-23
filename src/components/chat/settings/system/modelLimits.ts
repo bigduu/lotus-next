@@ -1,5 +1,5 @@
 import { uiText } from "@shared/i18n/text"
-import type { ModelLimitOverride } from "./useSystemConfig"
+import type { ModelLimitOverride } from "@shared/types/systemConfig"
 
 export const DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
 export const UNLIMITED_OUTPUT = "unlimited"

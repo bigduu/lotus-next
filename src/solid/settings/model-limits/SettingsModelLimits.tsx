@@ -9,7 +9,7 @@ import {
   buildLimitRows, DEFAULT_CONTEXT_WINDOW_TOKENS, formatTokenCount,
   nextModelLimitRowId, UNLIMITED_OUTPUT, validateLimitRows, type LimitRowDraft,
 } from "@/components/chat/settings/system/modelLimits"
-import type { ModelLimitOverride, SectionMessage } from "@/components/chat/settings/system/useSystemConfig"
+import type { ModelLimitOverride, SectionMessage } from "@shared/types/systemConfig"
 import { createUiText } from "../../shell/uiText"
 import { createStoreSelector } from "../../state/createStoreSelector"
 import { Badge } from "../../ui/badge"

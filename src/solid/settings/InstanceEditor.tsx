@@ -162,7 +162,7 @@ export function InstanceEditor(props: InstanceEditorProps) {
         <span class="mb-1 block text-xs text-muted-foreground">
           {text("type_ba40014f")}{edit() ? text("cannot_be_changed_after_creation_0f2775dc") : ""}
         </span>
-        <Select label={text("provider_type_6c9c029c")} class="w-full" value={type()} disabled={edit()}
+        <Select selectOnly label={text("provider_type_6c9c029c")} class="w-full" value={type()} disabled={edit()}
           options={(edit() ? [type()] : PROVIDER_KINDS).map((value) => ({ value, label: PROVIDER_LABELS[value] ?? value }))}
           onValueChange={(value) => { setPresetId(""); patch({ type: value as NewProviderKind }) }} />
       </div>
