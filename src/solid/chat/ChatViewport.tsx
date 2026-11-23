@@ -1,13 +1,13 @@
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js"
 import { ArrowDown, LoaderCircle } from "@lucide/solid"
-import { messageOccurrenceKey } from "@shared/types/chatMessages"
 import { appStore } from "@shared/store/appStore/state"
-import { readLocalImage } from "@shared/services/FileOperationsService"
+import type { UserMessage } from "@shared/types/chatMessages"
 import { Button } from "../ui/button"
-import { AssistantMarkdown } from "../markdown/AssistantMarkdown"
 import { VirtualHistory, type HistoryReadingAnchor } from "../history/VirtualHistory"
 import { createUiText } from "../shell/uiText"
 import { MessageBody } from "./MessageBody"
+import { RenderHistoryRow } from "./history/HistoryRow"
+import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, renderItemKey } from "./history/historyProjection"
 import type { createChat } from "./createChat"
 
 type Chat = ReturnType<typeof createChat>
@@ -24,14 +24,33 @@ export function ChatViewport(props: {
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
   const [earlierError, setEarlierError] = createSignal(false)
   const [following, setFollowing] = createSignal(untrack(() => !props.initialReadingAnchor))
+  const [openKeys, setOpenKeys] = createSignal<ReadonlySet<string>>(new Set())
+  const disclosure = {
+    isOpen: (key: string) => openKeys().has(key),
+    toggle: (key: string) => setOpenKeys((previous) => {
+      const next = new Set(previous)
+      if (!next.delete(key)) next.add(key)
+      return next
+    }),
+  }
   let viewport: HTMLDivElement | null = null
   let loadRequest: AbortController | undefined
   let pendingScroll: number | undefined
   let contentResize: ResizeObserver | undefined
 
-  const messages = createMemo(() => props.chat.messages
-    .filter((message) => message.role !== "system")
-    .map((message) => ({ key: messageOccurrenceKey(message), message })))
+  const rendering = createMemo(() => buildRenderItems(props.chat.messages))
+  const live = createMemo(() => buildLiveItems(
+    props.chat.liveSegments, props.chat.streaming, props.chat.streamingReasoning,
+    props.chat.sending || props.chat.streamPhase === "streaming", props.chat.streamStatus, text,
+  ))
+  const tailCanFold = createMemo(() => !props.chat.sending && live().length === 0)
+  const entries = createMemo(() => buildHistoryEntries(buildDisplayItems(rendering(), tailCanFold())))
+  const pending = createMemo(() => props.chat.pendingUserMessages.map((entry) => ({
+    operationId: entry.operationId,
+    message: {
+      id: `pending-${entry.operationId}`, role: "user", content: entry.text, createdAt: "", images: [...entry.images],
+    } satisfies UserMessage,
+  })))
   const before = () => {
     const window = props.chat.currentChat?.historyWindow
     return window && !window.invalidated ? window.beforeMessageId : null
@@ -57,7 +76,7 @@ export function ChatViewport(props: {
       if (pendingScroll !== undefined) cancelAnimationFrame(pendingScroll)
     }
   })
-  createEffect(() => [messages(), props.chat.streaming, props.chat.liveSegments] as const, followTail)
+  createEffect(() => [entries(), pending(), live()] as const, followTail)
 
   const loadEarlier = async () => {
     const sessionId = props.chat.currentSessionId
@@ -76,19 +95,16 @@ export function ChatViewport(props: {
     }
   }
 
-  const assistant = (content: () => string, streaming = false) => (
-    <AssistantMarkdown theme={props.theme} isStreaming={streaming} text={text}
-      onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} readImage={readLocalImage}>
-      {content()}
-    </AssistantMarkdown>
-  )
-
   return (
     <div data-chat-body="" class="relative flex min-h-0 min-w-0 flex-1">
       <VirtualHistory
         class="w-full"
-        entries={messages()}
-        estimateSize={() => 96}
+        entries={entries()}
+        estimateSize={({ key, item }) => {
+          if (item.kind === "collapsedTurn") return disclosure.isOpen(key) ? 96 + item.items.length * 40 : 24
+          if (item.kind === "process") return disclosure.isOpen(key) ? 96 + item.parts.length * 40 : 36
+          return item.m.role === "user" ? 112 : 160
+        }}
         preserveOnPrepend
         initialReadingAnchor={props.initialReadingAnchor}
         onReadingAnchor={props.onReadingAnchor}
@@ -113,36 +129,23 @@ export function ChatViewport(props: {
         </Show>}
         renderEntry={(entry) => (
           <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
-            <MessageBody message={entry().message} theme={props.theme}
+            <RenderHistoryRow item={entry().item} disclosure={disclosure} theme={props.theme}
               onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
           </div>
         )}
         after={
           <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
-            <For each={props.chat.pendingUserMessages} keyed={(entry) => entry.operationId}>{(entry) => (
-              <div data-message-role="user" class="ml-auto mt-2 w-fit max-w-full whitespace-pre-wrap rounded-2xl px-4 py-2.5"
-                style={{ background: "var(--user-message-background)", color: "var(--user-message-foreground)" }}>
-                {entry().text}
+            <For each={pending()} keyed={(entry) => entry.operationId}>{(entry) => (
+              <div data-pending-user-message="" data-pending-operation={entry().operationId}>
+                <MessageBody message={entry().message} theme={props.theme}
+                  onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
               </div>
             )}</For>
-            <For each={props.chat.liveSegments} keyed={false}>{(segment) => (
-              <Show when={segment().kind === "text"} fallback={
-                <For each={segment().kind === "tools" ? (segment() as Extract<Chat["liveSegments"][number], { kind: "tools" }>).calls : []}
-                  keyed={(call) => call.toolCallId}>{(call) => (
-                    <details class="rounded-md border px-2 py-1 text-sm text-muted-foreground">
-                      <summary>{call().toolName}</summary>
-                      <pre class="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{call().output}</pre>
-                    </details>
-                  )}</For>
-              }>
-                {assistant(() => {
-                  const current = segment()
-                  return current.kind === "text" ? current.text : ""
-                })}
-              </Show>
+            <For each={live()} keyed={renderItemKey}>{(item) => (
+              <RenderHistoryRow item={item()} disclosure={disclosure} theme={props.theme} live
+                onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
             )}</For>
-            <Show when={props.chat.streaming}>{(content) => assistant(content, true)}</Show>
-            <Show when={props.chat.streamStatus}>
+            <Show when={!props.chat.sending && props.chat.streamPhase !== "streaming" && props.chat.streamStatus}>
               <p class="py-1 text-xs text-muted-foreground" role="status">{props.chat.streamStatus}</p>
             </Show>
           </div>

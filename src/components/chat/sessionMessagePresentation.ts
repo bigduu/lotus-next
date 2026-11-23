@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
