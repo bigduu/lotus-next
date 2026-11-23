@@ -14,6 +14,7 @@ import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItem
 import type { createChat } from "./createChat"
 import { createMessageActions, type MessageNotice } from "./message-actions/createMessageActions"
 import type { createRootModeAuthority } from "./model/createRootModeAuthority"
+import { placeTimelineAttachments, type TimelineAttachment, type TimelineHistoryEntry } from "./interactions/timelineAttachments"
 
 type Chat = ReturnType<typeof createChat>
 
@@ -29,6 +30,7 @@ export function ChatViewport(props: {
   onMissingRevealedMessage?: () => void
   rootAuthority?: ReturnType<typeof createRootModeAuthority>
   onMessageNotice?: (notice: MessageNotice) => void
+  attachments?: readonly TimelineAttachment[]
 }) {
   const text = createUiText()
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
@@ -57,6 +59,7 @@ export function ChatViewport(props: {
   ))
   const tailCanFold = createMemo(() => !props.chat.sending && live().length === 0)
   const entries = createMemo(() => buildHistoryEntries(buildDisplayItems(rendering(), tailCanFold())))
+  const timeline = createMemo(() => placeTimelineAttachments(entries(), props.attachments))
   const sourceKeys = createMemo(() => props.onAskSideChat ? collectSideChatSourceKeys(entries(), !props.chat.sending) : new Set<string>())
   const sideChat = createSideChatSources(() => viewport, sourceKeys, () => props.onAskSideChat)
   const messageActions = createMessageActions({
@@ -94,7 +97,7 @@ export function ChatViewport(props: {
       if (pendingScroll !== undefined) cancelAnimationFrame(pendingScroll)
     }
   })
-  createEffect(() => [entries(), pending(), live()] as const, followTail)
+  createEffect(() => [entries(), pending(), live(), timeline()] as const, followTail)
 
   const loadEarlierPage = (sessionId: string): Promise<void> => {
     if (props.chat.currentSessionId !== sessionId || !before()) return Promise.resolve()
@@ -140,8 +143,10 @@ export function ChatViewport(props: {
     <div data-chat-body="" class="relative flex min-h-0 min-w-0 flex-1">
       <VirtualHistory
         class="w-full"
-        entries={entries()}
-        estimateSize={({ key, item }) => {
+        entries={timeline().entries}
+        estimateSize={(entry) => {
+          if ("attachment" in entry) return 132
+          const { key, item } = entry
           if (item.kind === "collapsedTurn") return disclosure.isOpen(key) ? 96 + item.items.length * 40 : 24
           if (item.kind === "process") return disclosure.isOpen(key) ? 96 + item.parts.length * 40 : 36
           return item.m.role === "user" ? 112 : 160
@@ -169,12 +174,24 @@ export function ChatViewport(props: {
             <Show when={earlierError()}><p role="alert" class="text-xs text-destructive">{text("load_earlier_messages_failed")}</p></Show>
           </div>
         </Show>}
-        renderEntry={(entry) => (
-          <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
-            <RenderHistoryRow item={entry().item} disclosure={disclosure} theme={props.theme}
-              onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} messageActions={messageActions} />
-          </div>
-        )}
+        renderEntry={(entry) => {
+          const attachment = () => {
+            const row = entry()
+            return row && "attachment" in row ? row.attachment : null
+          }
+          const item = () => {
+            const row: TimelineHistoryEntry = entry()
+            return row && "item" in row ? row.item : undefined
+          }
+          return <Show when={attachment()} fallback={
+            <Show when={item()}>{(message) => (
+              <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
+                <RenderHistoryRow item={message()} disclosure={disclosure} theme={props.theme}
+                  onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} messageActions={messageActions} />
+              </div>
+            )}</Show>
+          }>{(card) => card().render()}</Show>
+        }}
         after={
           <div class="mx-auto w-full max-w-4xl px-1 sm:px-4">
             <For each={pending()} keyed={(entry) => entry.operationId}>{(entry) => (
@@ -187,6 +204,11 @@ export function ChatViewport(props: {
               <RenderHistoryRow item={item()} disclosure={disclosure} theme={props.theme} live
                 onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
             )}</For>
+            <Show when={timeline().tail.length}>
+              <div class="flex flex-col gap-2">
+                <For each={timeline().tail} keyed={(attachment) => attachment.key}>{(attachment) => attachment().render()}</For>
+              </div>
+            </Show>
             <Show when={!props.chat.sending && props.chat.streamPhase !== "streaming" && props.chat.streamStatus}>
               <p class="py-1 text-xs text-muted-foreground" role="status">{props.chat.streamStatus}</p>
             </Show>

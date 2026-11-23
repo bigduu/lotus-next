@@ -1,7 +1,6 @@
-import { createMemo, createSignal, For, Show, untrack } from "solid-js"
+import { createMemo, createSignal, For, Show, untrack, type Accessor } from "solid-js"
 import { permissionDecisionFor, permissionOperation } from "@services/chat/permissionDecision"
 import type { PermissionRequest } from "@services/chat/AgentService"
-import type { SessionExecutionCompatibility } from "@services/chat/sessionExecutionCompatibility"
 import type { AssistantToolResultMessage } from "@shared/types/chatMessages"
 import { createUiText } from "../shell/uiText"
 import { Button } from "../ui/button"
@@ -11,6 +10,8 @@ import {
 import { Textarea } from "../ui/textarea"
 import type { createChat, PendingApproval, PendingQuestion } from "./createChat"
 import { ApprovalPresentation } from "./interactions/ApprovalPresentation"
+import type { TimelineAttachment } from "./interactions/timelineAttachments"
+import { SessionCompatibilityNotice } from "./status/SessionCompatibilityNotice"
 
 type Chat = ReturnType<typeof createChat>
 type Text = ReturnType<typeof createUiText>
@@ -18,10 +19,9 @@ type PermissionQuestion = Extract<PendingQuestion, { interaction_kind: "permissi
 type Clarification = Extract<PendingQuestion, { interaction_kind: "clarification" }>
 type HistoryDecision = NonNullable<NonNullable<AssistantToolResultMessage["permissionHistory"]>["decision"]>
 type OperationDetails = { operation: string; workingDirectory?: string }
-type Receipt = OperationDetails & { decision: HistoryDecision; continued: boolean }
 
 const permissionKey = (request: PermissionRequest) =>
-  JSON.stringify([request.session_id, request.request_id, request.request_generation])
+  JSON.stringify(["permission", request.session_id, request.request_id, request.request_generation])
 
 function questionIdentity(sessionId: string | null, question: PendingQuestion): string {
   return question.interaction_kind === "permission"
@@ -52,7 +52,7 @@ function receiptLabel(text: Text, decision: HistoryDecision, continued: boolean)
   return text(decision.startsWith("deny_") ? "permission_deny_recorded" : "permission_allow_recorded")
 }
 
-function PermissionReceipt(props: Receipt & { text: Text }) {
+function PermissionReceipt(props: OperationDetails & { decision: HistoryDecision; continued: boolean; text: Text }) {
   return <ApprovalPresentation title={receiptLabel(props.text, props.decision, props.continued)} actions={[]}>
     <ApprovalOperation operation={props.operation} workingDirectory={props.workingDirectory} text={props.text} />
   </ApprovalPresentation>
@@ -218,126 +218,117 @@ function ChildApprovalCard(props: { request: PendingApproval; chat: Chat; text: 
   )
 }
 
-const reasons = {
-  unsupported_session_version: "session_compatibility_version_conflict",
-  session_version_mismatch: "session_compatibility_observation_conflict",
-  unsupported_runtime_state_version: "session_compatibility_runtime_conflict",
-  unsupported_model_context_version: "session_compatibility_context_conflict",
-} as const
-
-function CompatibilityConflictNotice(props: {
-  report: SessionExecutionCompatibility | null
-  loading: boolean
-  refresh: () => void
-  text: Text
-}) {
-  return (
-    <section class="border-b px-3 py-2 text-sm" aria-label={props.text("session_compatibility_label")}
-      data-session-execution-blocked="true">
-      <p role="alert" class="font-medium text-destructive">{props.text("session_compatibility_execution_blocked")}</p>
-      <Show when={props.report}>
-        {(report) => <p class="mt-1 text-xs text-muted-foreground">{props.text("session_compatibility_versions", {
-          session: report().session_version ?? props.text("session_compatibility_unmarked"), current: report().current_session_version,
-        })}</p>}
-      </Show>
-      <p class="mt-1 text-xs">{props.text("session_compatibility_recovery")}</p>
-      <For each={props.report?.conflicts}>
-        {(reason) => (
-          <div class="mt-1 text-xs">
-            <p>{props.text(reasons[reason.code as keyof typeof reasons] ?? "session_compatibility_other_conflict")}</p>
-            <details><summary>{props.text("session_compatibility_diagnostic")}</summary>
-              <p class="break-words">{reason.code}: {reason.message}</p>
-            </details>
-          </div>
-        )}
-      </For>
-      <Button size="sm" variant="ghost" disabled={props.loading} onClick={props.refresh}>
-        {props.text("session_compatibility_refresh")}
-      </Button>
-    </section>
-  )
+function visibleQuestion(chat: Chat) {
+  const question = chat.pendingQuestion
+  if (!question || chat.executionCompatibility.blocked) return null
+  if (question.interaction_kind === "clarification" && chat.pendingApproval && !chat.approvalCompatibility.blocked) return null
+  return question
 }
 
-export function RunInteractions(props: { chat: Chat; workspace?: string | null }) {
+export function createRunInteractionTimeline(options: {
+  chat: Chat
+  workspace: Accessor<string | null | undefined>
+}): Accessor<TimelineAttachment[]> {
   const text = createUiText()
-  const receipts = createMemo(() => {
-    const entries = new Map<string, Receipt>()
-    for (const message of props.chat.messages) {
-      if (message.role !== "assistant" || message.type !== "tool_result") continue
+  const chat = options.chat
+  const history = createMemo(() => {
+    const entries = new Map<string, TimelineAttachment>()
+    const anchors = new Map<string, string>()
+    for (const message of chat.messages) {
+      if (message.role !== "assistant" || message.type !== "tool_result" || !message.permissionHistory) continue
       const record = message.permissionHistory
-      if (record?.decision) {
-        const key = JSON.stringify([props.chat.currentSessionId, record.requestId, record.generation])
-        entries.set(key, { operation: record.operation, workingDirectory: record.workingDirectory,
-          decision: record.decision, continued: false })
-      }
-    }
-    const recorded = props.chat.recordedPermission
-    if (recorded) {
-      const question = recorded.question
-      entries.set(permissionKey(question.permission_request), {
-        ...permissionOperation(question.permission_request, question.tool_arguments, props.workspace),
-        decision: recorded.decision, continued: recorded.continued,
+      const key = JSON.stringify(["permission", chat.currentSessionId, record.requestId, record.generation])
+      const decision = record.decision
+      anchors.set(key, message.id)
+      if (decision) entries.set(key, {
+        key, afterMessageId: message.id,
+        render: () => <PermissionReceipt operation={record.operation} workingDirectory={record.workingDirectory}
+          decision={decision} continued={false} text={text} />,
       })
     }
-    return entries
+    return { entries, anchors }
   })
-  const pending = createMemo(() => {
-    const question = props.chat.pendingQuestion
-    if (!question || props.chat.executionCompatibility.blocked) return null
-    if (question.interaction_kind === "permission" && receipts().has(permissionKey(question.permission_request))) return null
-    if (question.interaction_kind === "clarification" && props.chat.pendingApproval && !props.chat.approvalCompatibility.blocked) {
-      return null
+
+  return createMemo(() => {
+    const { entries, anchors } = history()
+    const cards = new Map(entries)
+    const recorded = chat.recordedPermission
+    if (recorded) {
+      const key = permissionKey(recorded.question.permission_request)
+      const operation = () => permissionOperation(
+        recorded.question.permission_request, recorded.question.tool_arguments, options.workspace(),
+      )
+      cards.set(key, {
+        key, afterMessageId: anchors.get(key) ?? null,
+        render: () => <PermissionReceipt operation={operation().operation} workingDirectory={operation().workingDirectory}
+          decision={recorded.decision} continued={recorded.continued} text={text} />,
+      })
     }
-    return question
+
+    const initial = visibleQuestion(chat)
+    if (initial?.interaction_kind === "permission") {
+      const key = permissionKey(initial.permission_request)
+      if (!cards.has(key)) {
+        const identity = questionIdentity(chat.currentSessionId, initial)
+        const answer = chat.answerQuestion
+        const retry = chat.retryQuestion
+        const question = () => {
+          const latest = visibleQuestion(chat)
+          const confirmed = chat.recordedPermission
+          if (confirmed && permissionKey(confirmed.question.permission_request) === key) return null
+          return latest?.interaction_kind === "permission" && questionIdentity(chat.currentSessionId, latest) === identity
+            ? latest : null
+        }
+        cards.set(key, {
+          key, afterMessageId: anchors.get(key) ?? null,
+          render: () => <Show when={question()}>{(current) => (
+            <PermissionCard question={current()} workspace={options.workspace()} chat={chat} text={text}
+              answer={(choice) => { void answer(choice) }} retry={() => { void retry() }} />
+          )}</Show>,
+        })
+      }
+    }
+    const approval = chat.pendingApproval
+    if (approval && !chat.approvalCompatibility.blocked) {
+      const key = JSON.stringify(["child-approval", approval.childSessionId, approval.requestId])
+      cards.set(key, {
+        key, afterMessageId: null,
+        render: () => <Show when={chat.pendingApproval === approval && !chat.approvalCompatibility.blocked}>
+          <ChildApprovalCard request={approval} chat={chat} text={text} />
+        </Show>,
+      })
+    }
+    return [...cards.values()]
   })
+}
+
+export function RunInteractions(props: { chat: Chat }) {
+  const text = createUiText()
+  const pending = () => visibleQuestion(props.chat)
   const pendingIdentity = () => {
     const question = pending()
     return question ? questionIdentity(props.chat.currentSessionId, question) : null
   }
-  const hasCards = () => receipts().size > 0 || pending()?.interaction_kind === "permission"
-    || !!props.chat.pendingApproval
+  const needsStandaloneError = () => {
+    if (!props.chat.questionError) return false
+    const question = pending()
+    if (!question) return true
+    if (question.interaction_kind !== "permission") return false
+    const request = question.permission_request
+    const recorded = props.chat.recordedPermission
+    return (recorded && permissionKey(recorded.question.permission_request) === permissionKey(request))
+      || props.chat.messages.some((message) => message.role === "assistant" && message.type === "tool_result"
+        && message.permissionHistory?.decision && message.permissionHistory.requestId === request.request_id
+        && message.permissionHistory.generation === request.request_generation)
+  }
 
   return <>
-    <Show when={props.chat.executionCompatibility.blocked}>
-      <CompatibilityConflictNotice text={text} report={props.chat.executionCompatibility.report}
-        loading={props.chat.executionCompatibility.loading}
-        refresh={() => { void props.chat.executionCompatibility.refresh() }} />
-    </Show>
-    <Show when={hasCards()}>
-      <div class="mx-auto mb-3 grid w-full max-w-4xl gap-2 px-3 sm:px-6">
-        <For each={[...receipts()]} keyed={(entry: [string, Receipt]) => entry[0]}>
-          {(entry) => <PermissionReceipt operation={entry()[1].operation} workingDirectory={entry()[1].workingDirectory}
-            decision={entry()[1].decision} continued={entry()[1].continued} text={text} />}
-        </For>
-        <Show when={props.chat.pendingApproval} keyed>
-          {(request) => (
-            <Show when={props.chat.approvalCompatibility.blocked} fallback={
-              <ChildApprovalCard request={request} chat={props.chat} text={text} />
-            }>
-              <section aria-label={text("subagent_approval_request_4321e83b")}>
-                <p class="px-3 pt-2 text-sm font-medium">{text("subagent_approval_request_4321e83b")}</p>
-                <CompatibilityConflictNotice text={text} report={props.chat.approvalCompatibility.report}
-                  loading={props.chat.approvalCompatibility.loading}
-                  refresh={() => { void props.chat.approvalCompatibility.refresh() }} />
-              </section>
-            </Show>
-          )}
-        </Show>
-        <Show when={pending()?.interaction_kind === "permission" ? pendingIdentity() : null} keyed>
-          {(identity) => {
-            const initial = untrack(pending)
-            if (initial?.interaction_kind !== "permission") return null
-            const answer = untrack(() => props.chat.answerQuestion)
-            const retry = untrack(() => props.chat.retryQuestion)
-            const question = () => {
-              const current = pending()
-              return current?.interaction_kind === "permission" && pendingIdentity() === identity ? current : initial
-            }
-            return <PermissionCard question={question()} workspace={props.workspace} chat={props.chat} text={text}
-              answer={(choice) => { void answer(choice) }} retry={() => { void retry() }} />
-          }}
-        </Show>
-      </div>
+    <SessionCompatibilityNotice state={props.chat.executionCompatibility} />
+    <Show when={props.chat.pendingApproval && props.chat.approvalCompatibility.blocked}>
+      <section aria-label={text("subagent_approval_request_4321e83b")}>
+        <p class="px-3 pt-2 text-sm font-medium">{text("subagent_approval_request_4321e83b")}</p>
+        <SessionCompatibilityNotice state={props.chat.approvalCompatibility} />
+      </section>
     </Show>
     <Show when={pending()?.interaction_kind === "clarification" ? pendingIdentity() : null} keyed>
       {(identity) => {
@@ -353,7 +344,7 @@ export function RunInteractions(props: { chat: Chat; workspace?: string | null }
           answer={(choice) => { void answer(choice) }} retry={() => { void retry() }} />
       }}
     </Show>
-    <Show when={!pending() && props.chat.questionError}>
+    <Show when={needsStandaloneError()}>
       <div role="alert" class="mx-4 mb-3 flex items-center gap-3 rounded-lg border p-3 text-sm">
         <span>{props.chat.questionError}</span>
         <button type="button" class="shrink-0 underline" disabled={props.chat.questionLoading || props.chat.questionSubmitting}

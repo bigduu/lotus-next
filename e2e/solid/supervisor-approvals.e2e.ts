@@ -151,8 +151,12 @@ test("Solid Supervisor inbox anchors deduplicated approvals and decides only the
   const card = timeline.getByRole("article", { name: worker.title, exact: true })
   const otherCard = timeline.getByRole("article", { name: other.title, exact: true })
   await expect(card).toHaveCount(1)
-  await expect(card.locator("xpath=ancestor::*[@data-history-entry-key][1]")
-    .locator(`[data-message-row="${supervisorHistory.at(-1)!.id}"]`)).toHaveCount(1)
+  const cardRow = card.locator("xpath=ancestor::*[@data-history-entry-key][1]")
+  await expect(cardRow).toHaveAttribute("data-history-entry-key", /^timeline-/)
+  const anchorRow = cardRow.locator(
+    "xpath=preceding-sibling::*[@data-history-entry-key and not(starts-with(@data-history-entry-key, 'timeline-'))][1]",
+  )
+  await expect(anchorRow.locator(`[data-message-row="${supervisorHistory.at(-1)!.id}"]`)).toHaveCount(1)
   await expect(card).toContainText("git status --short")
   await expect(card).toContainText("/workspace/bamboo")
   await expect(card).not.toContainText("起可交给 Supervisor 处理")

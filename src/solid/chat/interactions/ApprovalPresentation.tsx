@@ -29,7 +29,7 @@ export function ApprovalPresentation(props: {
 
   return (
     <article ref={(element) => { card = element }} aria-label={props.label ?? props.title}
-      class="min-w-0 space-y-2 rounded-xl border bg-card p-3 text-card-foreground" data-approval-presentation="">
+      class="mx-auto w-full min-w-0 max-w-4xl space-y-2 rounded-xl border bg-card p-3 text-card-foreground" data-approval-presentation="">
       <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 class="text-sm font-semibold">{props.title}</h2>
         {props.source}
