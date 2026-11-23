@@ -29,9 +29,9 @@ describe("session workbench persistence", () => {
     render("a")
     act(() => {
       latest.setField("open", true)
-      latest.setField("tools", ["subagents", "review"])
-      latest.setField("tab", "review")
-      latest.setField("order", ["browser:page-1", "tool:subagents", "tool:review"])
+      latest.setField("tools", ["subagents", "review", "side-chat"])
+      latest.setField("tab", "side-chat")
+      latest.setField("order", ["browser:page-1", "tool:subagents", "tool:review", "tool:side-chat"])
       latest.setField("subagents", { childId: "child-2", view: "messages" })
       latest.setField("reviewTarget", "src/App.tsx")
       latest.setField("browserActiveId", "page-1")
@@ -41,7 +41,7 @@ describe("session workbench persistence", () => {
     act(() => root.unmount())
     root = createRoot(container)
     render("a")
-    expect(latest.state).toEqual({ ...expected, tools: ["subagents", "review"] })
+    expect(latest.state).toEqual({ ...expected, tools: ["subagents", "review", "side-chat"] })
     expect(localStorage.getItem(latest.scope!)).not.toMatch(/password|cookie|token|pageContent/)
   })
 

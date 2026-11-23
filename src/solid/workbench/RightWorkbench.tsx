@@ -4,7 +4,7 @@ import { Dynamic, type JSX } from "@solidjs/web"
 import { DragDropManager } from "@dnd-kit/dom"
 import { isSortable, Sortable } from "@dnd-kit/dom/sortable"
 import * as DialogPrimitive from "@kobalte/core/dialog"
-import { ArrowLeft, Bot, ChevronDown, FileDiff, Globe2, GripVertical, ListChecks, Plus, SlidersHorizontal, Workflow, X } from "@lucide/solid"
+import { ArrowLeft, Bot, ChevronDown, FileDiff, Globe2, GripVertical, ListChecks, MessageSquare, Plus, SlidersHorizontal, Workflow, X } from "@lucide/solid"
 
 import { workbenchDragCancellation } from "@/components/app/workbenchDragCancellation"
 import { workbenchSensors } from "@/components/app/workbenchSensors"
@@ -59,6 +59,8 @@ export interface RightWorkbenchProps extends Omit<WorkbenchSurfaceProps, "childr
   review: JSX.Element
   browser: JSX.Element
   subagents: JSX.Element
+  sideChat?: JSX.Element
+  sideChatEnabled?: boolean
   taskDag?: JSX.Element
   work?: JSX.Element
   workEnabled?: boolean
@@ -73,6 +75,7 @@ export interface RightWorkbenchProps extends Omit<WorkbenchSurfaceProps, "childr
 }
 
 const toolEntries = [
+  { id: "side-chat", label: "side_chat_title", description: "side_chat_description", icon: MessageSquare },
   { id: "work", label: "supervisor_work_tab", description: "supervisor_work_description", icon: ListChecks },
   { id: "inspector", label: "inspector_fc48a7f2", description: "view_current_session_ea4cbea5", icon: SlidersHorizontal },
   { id: "review", label: null, description: "view_file_changes_93cce2ed", icon: FileDiff },
@@ -288,6 +291,7 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
   const enabledEntries = createMemo(() => toolEntries.filter((entry) =>
     (browserEnabled() || entry.id !== "browser") &&
     (props.workEnabled || entry.id !== "work") &&
+    (props.sideChatEnabled || entry.id !== "side-chat") &&
     (props.taskDag != null || entry.id !== "task-dag"),
   ))
 
@@ -509,6 +513,11 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
       </Show>
       <Show when={visible() && props.openToolTabs.includes("subagents")}>
         <TabsContent value="subagents" forceMount class={cn("min-h-0 min-w-0 overflow-hidden", props.activeTab === "subagents" ? "flex" : "hidden")}>{props.subagents}</TabsContent>
+      </Show>
+      <Show when={props.sideChatEnabled && props.openToolTabs.includes("side-chat")}>
+        <TabsContent value="side-chat" forceMount class={cn("min-h-0 min-w-0 overflow-hidden", visible() && props.activeTab === "side-chat" ? "flex" : "hidden")}>
+          {props.sideChat}
+        </TabsContent>
       </Show>
       <Show when={visible() && props.taskDag != null && props.openToolTabs.includes("task-dag")}>
         <TabsContent value="task-dag" class="flex min-h-0 min-w-0 overflow-hidden">{props.taskDag}</TabsContent>

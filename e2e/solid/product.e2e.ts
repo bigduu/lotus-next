@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js";
 
-for (const running of [false, true]) {
-  test(`Solid Lotus restores a session and ${running ? "queues guidance during a run" : "sends a draft through Bamboo"}`, async ({ page, baseURL }) => {
+for (const mode of ["idle", "running", "monitoring"] as const) {
+  const queued = mode !== "idle";
+  const action = mode === "monitoring" ? "queues guidance while a command is monitored"
+    : queued ? "queues guidance during a run" : "sends a draft through Bamboo";
+  test(`Solid Lotus restores a session and ${action}`, async ({ page, baseURL }) => {
     const id = "all-surface-session";
     const entryUrl = new URL("/", baseURL).href;
     const session = {
@@ -19,16 +22,22 @@ for (const running of [false, true]) {
       root_mode_transition_epoch: 0,
       root_mode_birth_token: "a".repeat(64),
       thinking_mode: "standard",
-      is_running: running,
-      last_run_status: running ? "running" : "completed",
+      is_running: mode === "running",
+      last_run_status: mode === "monitoring" ? "suspended" : mode === "running" ? "running" : "completed",
+      ...(mode === "monitoring" ? { activity: "waiting_bash" } : {}),
     };
     await page.addInitScript((selected) => {
       localStorage.setItem("lotus_next_last_session", selected);
       localStorage.setItem("bodhi_onboarded_v1", "1");
     }, id);
+    const history = [{ id: "saved-answer", role: "assistant", content: "Existing **Solid history**", created_at: session.created_at }];
+    if (mode === "monitoring") history.push({
+      id: "monitoring-notice", role: "assistant", content: "Moved command `build-001` to background monitoring.",
+      created_at: "2026-09-07T00:00:01Z",
+    });
     const observation = await installArtifactRuntime(page, {
       ...standaloneScenario, origin: new URL(entryUrl).origin, entryUrl,
-    }, [{ id: "saved-answer", role: "assistant", content: "Existing **Solid history**", created_at: session.created_at }], {
+    }, history, {
       serveStaticFromLocalServer: true,
     });
     await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ json: {
@@ -43,11 +52,11 @@ for (const running of [false, true]) {
       progress: { completed: 0, total: 1, percentage: 0 },
     } }));
     const submissions: unknown[] = [];
-    await page.route(running ? `**/api/v1/sessions/${id}/guidance` : "**/api/v1/chat", (route) => {
+    await page.route(queued ? `**/api/v1/sessions/${id}/guidance` : "**/api/v1/chat", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
       const body = route.request().postDataJSON();
       submissions.push(body);
-      return route.fulfill(running
+      return route.fulfill(queued
         ? { status: 202, json: { id: body.id, activation_pending: false } }
         : { json: { session_id: id, status: "success" } });
     });
@@ -81,7 +90,8 @@ for (const running of [false, true]) {
     await workbench.getByRole("button", { name: "收起工作面板" }).click();
     await expect(workbench).toBeHidden();
     await composer.fill("从 Solid 发送");
-    if (running) {
+    if (queued) {
+      await expect(page.getByRole("button", { name: "停止", exact: true })).toBeVisible();
       await page.getByRole("combobox", { name: "发送时机" }).selectOption("after_run");
     } else {
       await page.locator('input[type="file"]').setInputFiles({
@@ -91,9 +101,9 @@ for (const running of [false, true]) {
       });
       await expect(page.getByRole("img", { name: "fixture.png" })).toBeVisible();
     }
-    if (!running) await expect(page.getByRole("button", { name: "发送消息" })).toBeEnabled();
+    if (!queued) await expect(page.getByRole("button", { name: "发送消息" })).toBeEnabled();
     await composer.press("Enter");
-    await expect.poll(() => submissions).toEqual([expect.objectContaining(running
+    await expect.poll(() => submissions).toEqual([expect.objectContaining(queued
       ? { text: "从 Solid 发送", mode: "after_run" }
       : { message: "从 Solid 发送", session_id: id, images: [expect.objectContaining({ name: "fixture.png" })] })]);
     await expect(composer).not.toContainText("从 Solid 发送");

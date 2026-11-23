@@ -42,7 +42,14 @@ Open **http://127.0.0.1:9563**. On a fresh backend, finish `bamboo init` first; 
 
 The explicit host option keeps this development server on loopback; the repository's unqualified `npm run dev` listens on the network. Vite proxies `/api` and `/v2` to Bamboo on port `9562`. An unavailable backend cannot execute tasks or provide server-backed settings.
 
-For a production artifact:
+### Solid 2 preview
+
+Run `npm run dev:solid` and open `http://127.0.0.1:9573` with Bamboo running
+on port 9562. The preview requires a Bamboo version that advertises Side Chat
+before offering the workbench tab, `/side` or message quoting. Use
+`npm run test:e2e:solid` for the preview’s browser fixtures. [Side Chat preview screenshot](docs/demos/solid-preview-side-chat.png).
+
+### Production build
 
 ```bash
 npm run build

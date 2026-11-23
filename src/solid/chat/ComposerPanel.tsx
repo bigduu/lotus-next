@@ -4,6 +4,8 @@ import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
 import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
 import { getDraftCompletionEnabled, subscribeDraftCompletionEnabled } from "@shared/store/draftCompletionPreferenceState"
+import type { SideChatIntent } from "../workbench/side-chat/SideChatPane"
+import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { fileToAttachment, type ChatImageAttachment } from "@/lib/chatImageAttachments"
 import { Button } from "../ui/button"
 import { createStoreSelector } from "../state/createStoreSelector"
@@ -34,6 +36,7 @@ export function ComposerPanel(props: {
   navigationVersion: () => number
   onOpenGoal: (sessionId: string) => void
   onOpenWorkflowRuns: (sessionId: string) => void
+  onOpenSideChat?: (intent?: SideChatIntent) => void
   rootAuthority: ReturnType<typeof createRootModeAuthority>
   ingress: ReturnType<typeof createTicketIngress>
   semantic: boolean
@@ -47,8 +50,17 @@ export function ComposerPanel(props: {
   const draftKey = () => props.chat.currentSessionId ?? ""
   const inputs = createStoreSelector(appStore, (state) => state.inputStates)
   const value = () => inputs()[draftKey()]?.content ?? ""
-  const running = () => props.chat.currentChat?.isRunning === true ||
-    (props.chat.sending && props.chat.streaming !== null)
+  const running = () => {
+    const chat = props.chat.currentChat
+    if (chat?.isRunning === true || (props.chat.sending && props.chat.streaming !== null)) return true
+    if (!chat || chat.lastRunStatus !== "suspended" || props.chat.pendingQuestion || props.chat.pendingApproval ||
+      (chat.activity !== undefined && chat.activity !== "waiting_bash")) return false
+    const last = chat.messages.at(-1)
+    return Boolean(last && backgroundExecWaitActive([{
+      metadata: (last as { metadata?: { runtime_kind?: unknown } }).metadata,
+      content: "content" in last ? last.content : undefined,
+    }]))
+  }
   const worktree = createNewChatWorktree({
     sessionId: () => props.chat.currentSessionId,
     projectId: () => props.projectId,
@@ -91,7 +103,9 @@ export function ComposerPanel(props: {
     extraSessionRestricted: () => models.root.child || props.semantic,
     openGoal: props.onOpenGoal,
     openWorkflowRuns: props.onOpenWorkflowRuns,
+    openSideChat: () => props.onOpenSideChat,
   })
+  const sideChatCommand = () => commands.isSideChatCommand(value())
   let filePicker!: HTMLInputElement
   let active = false
   const changeAttachments = (change: (current: ChatImageAttachment[]) => ChatImageAttachment[]) => {
@@ -123,6 +137,7 @@ export function ComposerPanel(props: {
   const send = async () => {
     const key = draftKey()
     const draft = appStore.getState().getInputState(key)
+    if (commands.handleSideChat(draft)) return
     const images = attachments()
     const submittedAttachmentRevision = attachmentRevision
     const useQueue = queuedSend()
@@ -315,11 +330,11 @@ export function ComposerPanel(props: {
               <Square class="size-3.5" />
             </Button>
           </Show>
-          <Show when={!props.chat.sending || queuedSend() || props.semantic}>
+          <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand()}>
             <Button size="icon" class="rounded-full" type="button"
-              aria-label={text(queuedSend() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
+              aria-label={text(queuedSend() && !sideChatCommand() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
               disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
-                blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy}
+                (!sideChatCommand() && (blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}
               onClick={() => { void send() }}>
               <ArrowUp />
             </Button>

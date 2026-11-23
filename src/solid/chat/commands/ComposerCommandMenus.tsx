@@ -43,13 +43,17 @@ export function ComposerCommandMenus(props: { commands: Commands }) {
     const workflow: Entry | null = control.canOpenWorkflowRuns && matches("workflow", workflowDescription) ? {
       kind: "command", id: "builtin-workflow", name: "workflow", description: workflowDescription, select: control.openWorkflowRuns,
     } : null
-    const exact = [compact, workflow].find((entry) => entry?.name === query)
+    const sideChatDescription = text("side_chat_description")
+    const sideChat: Entry | null = control.canOpenSideChat && matches("side", sideChatDescription) ? {
+      kind: "command", id: "builtin-side", name: "side", description: sideChatDescription, select: control.selectSideChat,
+    } : null
+    const exact = [compact, workflow, sideChat].find((entry) => entry?.name === query)
     if (exact) return [exact]
     const goal: Entry | null = control.canOpenGoal && matches("goal", goalDescription) ? {
       kind: "command", id: "builtin-goal", name: "goal", description: text("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8"),
       select: control.openGoal,
     } : null
-    const builtins = [goal, compact, workflow].filter((entry): entry is Entry => entry !== null)
+    const builtins = [goal, compact, workflow, sideChat].filter((entry): entry is Entry => entry !== null)
     const skills = control.skills.filter((skill) => matches(skill.name, skill.description)).map<Entry>((skill) => ({
       id: "skill-" + skill.id, kind: "skill", name: skill.name, description: skill.description, select: () => control.pickSkill(skill),
     }))

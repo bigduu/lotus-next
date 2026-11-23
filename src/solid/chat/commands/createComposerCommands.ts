@@ -1,3 +1,4 @@
+import type { SideChatIntent } from "../../workbench/side-chat/SideChatPane"
 import { createEffect, createMemo, createSignal, onSettled, untrack, type Accessor } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import type { InputState } from "@shared/store/appStore/slices/inputStateSlice"
@@ -39,6 +40,7 @@ export interface ComposerCommandsOptions {
   extraSessionRestricted?: Accessor<boolean>
   openGoal?: (sessionId: string) => void
   openWorkflowRuns?: (sessionId: string) => void
+  openSideChat?: Accessor<((intent?: SideChatIntent) => void) | undefined>
 }
 
 const operations = new Set<string>()
@@ -330,6 +332,30 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     options.openWorkflowRuns(id)
   }
 
+  const sideChatPrompt = (content: string) => {
+    const normalized = content.trim()
+    return options.openSideChat?.() && /^\/side(?:\s|$)/i.test(normalized)
+      ? normalized.slice("/side".length).trim() : null
+  }
+  const openSideChat = (draft: Draft, prompt: string) => {
+    const open = options.openSideChat?.()
+    if (!open || !liveDraft(draft)) return
+    const origin = scope()
+    open({
+      prompt,
+      onApplied: () => {
+        if (mounted && scope() === origin) clear(origin.key, draft.contentRevision)
+      },
+    })
+    dismiss()
+  }
+  const handleSideChat = (draft: Draft) => {
+    const prompt = sideChatPrompt(draft.content)
+    if (prompt === null) return false
+    openSideChat(draft, prompt)
+    return true
+  }
+
   function handleSubmit(draft: Draft): Result | Promise<Result> {
     const command = parseComposerCommand(draft.content)
     if (!command) {
@@ -366,6 +392,10 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     get compactUnavailable() { return compactUnavailable() },
     get canOpenGoal() { return Boolean(chat.currentSessionId && options.openGoal) },
     get canOpenWorkflowRuns() { return Boolean(chat.currentSessionId && options.openWorkflowRuns) },
+    get canOpenSideChat() { return Boolean(options.openSideChat?.()) },
+    isSideChatCommand: (content: string) => sideChatPrompt(content) !== null,
+    selectSideChat() { openSideChat(appStore.getState().getInputState(draftKey()), "") },
+    handleSideChat,
     setInputRef(handle: ComposerInputHandle | null) { inputHandle = handle },
     setFileSuggestion(next: FileSuggestion | null) {
       const path = workspacePath()

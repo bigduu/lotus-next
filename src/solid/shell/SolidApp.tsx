@@ -1,7 +1,9 @@
-import { FileDiff, FolderClosed, ListChecks, PanelLeftOpen, PanelRightOpen, WifiOff, Workflow } from "@lucide/solid"
+import { FileDiff, FolderClosed, ListChecks, MessageSquarePlus, PanelLeftOpen, PanelRightOpen, WifiOff, Workflow } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, lazy, Loading, onSettled, Show } from "solid-js"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
+import { SIDE_CHAT_FEATURE } from "@services/chat/sideChat"
+import { backendSupports, onBackendFeatures } from "@/lib/backendFeatures"
 import { appStore } from "@shared/store/appStore/state"
 import { themeStore } from "@shared/store/themeState"
 import { copyText } from "@shared/utils/clipboard"
@@ -17,6 +19,8 @@ import { Button } from "../ui/button"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "../ui/responsive-dialog"
 import type { HistoryReadingAnchor } from "../history/VirtualHistory"
 import { createChat } from "../chat/createChat"
+import { createExternalSnapshot } from "../chat/snapshots"
+import type { PendingSideChatIntent, SideChatIntent } from "../workbench/side-chat/SideChatPane"
 import { ChatViewport } from "../chat/ChatViewport"
 import { ComposerPanel } from "../chat/ComposerPanel"
 import { createRootModeAuthority } from "../chat/model/createRootModeAuthority"
@@ -54,6 +58,7 @@ const WorktreeManager = lazy(() => import("../workspace/WorktreeManager"), { exp
 const SettingsPage = lazy(() => import("../settings/SettingsPage"), { export: "SettingsPage" })
 const SubagentsPane = lazy(() => import("../workbench/subagents/SubagentsPane"), { export: "SubagentsPane" })
 const SessionTaskDag = lazy(() => import("../workbench/tasks/SessionTaskDag"), { export: "SessionTaskDag" })
+const SideChatPane = lazy(() => import("../workbench/side-chat/SideChatPane"), { export: "SideChatPane" })
 const RightWorkbench = lazy(() => import("../workbench/RightWorkbench"), { export: "RightWorkbench" })
 const BrowserPaneView = lazy(() => import("../workbench/browser/BrowserPane"), { export: "BrowserPaneView" })
 const ReviewPane = lazy(() => import("../workbench/ReviewPane"), { export: "ReviewPane" })
@@ -147,8 +152,22 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   }
   const workbench = createWorkbenchState(currentSession)
   const workbenchState = workbench.state
+  const supportsSideChat = createExternalSnapshot(onBackendFeatures, () => backendSupports(SIDE_CHAT_FEATURE))
+  const sideChatScope = createMemo(() => {
+    const session = chat.currentChat
+    const key = workbench.key()
+    if (!key || !supportsSideChat() || workEnabled() || session?.kind !== "root" ||
+      session.parentSessionId || session.id !== currentSession()) return null
+    return { sourceId: session.id, key }
+  }, {
+    equals: (before, after) => before === after || Boolean(before && after && before.sourceId === after.sourceId && before.key === after.key),
+  })
+  type SideChatScope = NonNullable<ReturnType<typeof sideChatScope>>
+  const [sideChatIntent, setSideChatIntent] = createSignal<(PendingSideChatIntent & { scope: SideChatScope }) | null>(null)
+  const [sideChatReveal, setSideChatReveal] = createSignal<{ scope: SideChatScope; id: string; token: number } | null>(null)
+  let sideChatToken = 0
   const visibleWorkbenchTools = () => workbenchState().tools.filter((tab) =>
-    tab !== "side-chat" && (tab !== "work" || workEnabled()),
+    (tab !== "side-chat" || sideChatScope() !== null) && (tab !== "work" || workEnabled()),
   )
   const visibleWorkbenchTab = () => {
     const tab = workbenchState().tab
@@ -265,6 +284,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   })
 
   const openWorkbenchTab = (tab: RightWorkbenchTab | null) => {
+    if (tab === "side-chat" && !sideChatScope()) return
     if (tab === null) { workbench.capture().setField("tab", null); return }
     workbench.capture().update((state) => activateWorkbenchTab(state, tab))
     if (tab === "browser" && browserEnabled()) {
@@ -272,6 +292,25 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       setBrowserEntry({ scope: workbench.key(), open: true, draft: "" })
       if (sessionId && !browser.hasPendingDialog()) browser.requestEntryOpen(sessionId)
     }
+  }
+  const openSideChat = (intent?: SideChatIntent) => {
+    const scope = sideChatScope()
+    if (!scope || appStore.getState().currentSessionId !== scope.sourceId) return
+    setSideChatIntent({ ...intent, token: ++sideChatToken, scope })
+    openWorkbenchTab("side-chat")
+  }
+  const quoteToMain = (scope: SideChatScope, answer: string) => {
+    const store = appStore.getState()
+    if (sideChatScope() !== scope || store.currentSessionId !== scope.sourceId) return
+    const draft = store.getInputState(scope.sourceId)
+    const quote = answer.split("\n").map((line) => "> " + line).join("\n")
+    store.setInputContentIfRevision(scope.sourceId, draft.contentRevision, draft.content ? draft.content + "\n\n" + quote : quote)
+    if (!docked()) workbench.capture().setField("open", false)
+  }
+  const revealSideChatSource = (scope: SideChatScope, id: string) => {
+    if (sideChatScope() !== scope || appStore.getState().currentSessionId !== scope.sourceId) return
+    if (!docked()) workbench.capture().setField("open", false)
+    setSideChatReveal({ scope, id, token: ++sideChatToken })
   }
   const closeWorkbenchTool = (tab: WorkbenchToolTab) => {
     workbench.capture().update((state) => {
@@ -400,10 +439,20 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         />}
         workbench={<Show when={workbenchState().open}>
           <Loading fallback={null}>
-            <RightWorkbench docked={docked()} expanded={taskExpanded()} visible pageVisible={!settingsOpen()}
+            <RightWorkbench docked={docked()} expanded={taskExpanded()} pageVisible={!settingsOpen()}
               activeTab={visibleWorkbenchTab()}
               openToolTabs={visibleWorkbenchTools()}
               workEnabled={workEnabled()}
+              sideChatEnabled={sideChatScope() !== null}
+              sideChat={<Show when={sideChatScope()} keyed>{(scope) =>
+                <SideChatPane sourceId={scope.sourceId} scope={scope.key}
+                  theme={theme().themeMode} onOpenLink={setLink} onPreviewImage={setImage}
+                  active={!settingsOpen() && workbenchState().open && visibleWorkbenchTab() === "side-chat"}
+                  intent={sideChatIntent()?.scope === scope ? sideChatIntent() ?? undefined : undefined}
+                  onConsumeIntent={(token) => setSideChatIntent((pending) => pending?.scope === scope && pending.token === token ? null : pending)}
+                  onQuoteToMain={(answer) => quoteToMain(scope, answer)}
+                  onRevealSource={(id) => revealSideChatSource(scope, id)} />
+              }</Show>}
               work={<Show when={ticketScope()?.binding.supervisor_session_id === currentSession()} fallback={
                 <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing}
                   canRefresh={tickets.canRefresh} onRefresh={() => { void tickets.refresh() }}
@@ -512,6 +561,12 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
               <FolderClosed class="size-4" />
             </Button>
+            <Show when={sideChatScope()}>
+              <Button size="icon" variant="ghost" title={text("side_chat_open")} aria-label={text("side_chat_open")}
+                onClick={() => openSideChat()}>
+                <MessageSquarePlus class="size-4" />
+              </Button>
+            </Show>
             <Show when={workEnabled()}>
               <Button size="icon" variant="ghost" aria-label={text("supervisor_work_tab")}
                 data-testid="ticket-work-status" onClick={() => openWorkbenchTab("work")}>
@@ -532,6 +587,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           <Show when={sessionView()} keyed>{(session) => (
             <ChatViewport chat={chat} theme={theme().themeMode}
               onOpenLink={setLink} onPreviewImage={setImage}
+              onAskSideChat={sideChatScope() ? (quote) => openSideChat({ quote }) : undefined}
+              revealMessage={sideChatReveal()?.scope === sideChatScope() ? sideChatReveal() ?? undefined : undefined}
+              onMissingRevealedMessage={() => setNotice({ text: text("side_chat_source_unavailable"), error: false })}
               initialReadingAnchor={session.id ? readingAnchors.get(session.id) : undefined}
               onReadingAnchor={(anchor) => {
                 if (!session.id) return
@@ -546,6 +604,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             reference={ticketReference()} onClearReference={() => setWorkReference(null)} canSendIngress={tickets.canSendIngress}
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
             onOpenWorkflowRuns={(id) => { if (id === currentSession()) setWorkflowSession(id) }}
+            onOpenSideChat={sideChatScope() ? openSideChat : undefined}
             onPreviewImage={setImage} captureSessionCreated={() => {
               const intent = newSession()
               return (id) => sessionCreated(id, intent)
