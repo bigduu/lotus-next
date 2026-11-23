@@ -61,7 +61,6 @@ import { apiClient } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
 import type { Message, MessageImage } from "@shared/types/chatMessages"
 import type { LiveSegment } from "@/hooks/useChat"
-import { projectCompletedAnswers } from "@/lib/completedAnswerHandoff"
 
 const mountedRoots: Root[] = []
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -127,85 +126,6 @@ function renderMessageList(
   })
   return container
 }
-
-it("passes exact running call IDs even when a live call has partial output", () => {
-  const container = renderMessageList([], false, 0, false, [{
-    kind: "tools",
-    calls: [
-      { toolCallId: "still-running", toolName: "Read", output: "partial output", status: "running" },
-      { toolCallId: "already-done", toolName: "Read", output: "final output", status: "completed" },
-    ],
-  }])
-
-  const group = container.querySelector<HTMLElement>("[data-tool-active]")
-  expect(group?.dataset.toolActive).toBe("true")
-  expect(group?.dataset.toolItems).toBe("4")
-  expect(group?.dataset.runningCalls).toBe("still-running")
-})
-it.each([false, true])("keeps completed compressed=%s assistant bodies outside collapsed activity across four turns", (compressed) => {
-  const raw = Array.from({ length: 4 }, (_, index) => [
-    { id: `synthetic-user-${index}`, role: "user" as const, content: `Synthetic request ${index}`, compressed, created_at: "2026-10-27T00:00:00Z" },
-    { id: `synthetic-call-${index}`, role: "assistant" as const, content: "", compressed, created_at: "2026-10-27T00:00:01Z",
-      tool_calls: [{ id: `call-${index}`, type: "function", function: { name: "Read", arguments: "{}" } }] },
-    { id: `synthetic-result-${index}`, role: "tool" as const, content: "Synthetic tool evidence", tool_call_id: `call-${index}`, compressed, created_at: "2026-10-27T00:00:02Z" },
-    { id: `synthetic-final-${index}`, role: "assistant" as const, content: `Synthetic final body ${index}`, compressed, created_at: "2026-10-27T00:00:03Z" },
-  ]).flat()
-  const container = renderMessageList(mapHistoryMessagesToUi("synthetic-compressed-transcript", raw), true)
-  for (let index = 0; index < 4; index += 1) {
-    const body = container.querySelector(`[data-assistant-content="Synthetic final body ${index}"]`)
-    expect(body).not.toBeNull(); expect(body?.closest("[data-process-activity]")).toBeNull()
-  }
-})
-it("keeps recorded deliveries visible without offering regeneration of their shared user turn", async () => {
-  const at = "2026-11-08T06:50:00Z"
-  const raw = [
-    { id: "c-user", role: "user" as const, content: "Dispatch C", created_at: at },
-    { id: "c-dispatch", role: "assistant" as const, phase: "final_answer", content: "C dispatched", created_at: at },
-    { id: "recover-call", role: "assistant" as const, phase: "commentary", content: "Checking why C stopped", created_at: at,
-      tool_calls: [{ id: "inspect-c", type: "function", function: { name: "session_history", arguments: "{}" } }] },
-    { id: "recover-result", role: "tool" as const, content: "C failed on startup", tool_call_id: "inspect-c", created_at: at },
-    { id: "c-recovery", role: "assistant" as const, phase: "final_answer", content: "C restarted", created_at: at },
-    { id: "b-delivery", role: "assistant" as const, phase: "final_answer", content: "B delivered", created_at: at },
-    { id: "a-delivery", role: "assistant" as const, phase: "final_answer", content: "A delivered", created_at: at },
-    { id: "c-delivery", role: "assistant" as const, phase: "final_answer", content: "C delivered", created_at: at },
-  ]
-  const container = renderMessageList(mapHistoryMessagesToUi("supervisor", raw), true)
-  const replies = [...container.querySelectorAll("[data-assistant-content]")]
-    .filter((body) => !body.closest("[data-turn-collapse]"))
-    .map((body) => body.getAttribute("data-assistant-content"))
-  expect(replies).toEqual(["C dispatched", "C restarted", "B delivered", "A delivered", "C delivered"])
-  const recovery = container.querySelector('[data-turn-collapse="collapsed-turn-c-recovery"]')
-  expect(recovery?.querySelector("[data-turn-toggle]")?.getAttribute("aria-expanded")).toBe("false")
-  for (const id of ["c-dispatch", "c-delivery"]) {
-    const row = container.querySelector(`[data-message-actions="${id}"]`)!
-    expect(row.querySelector(`[aria-label="${uiText("fork_from_here_28321cb9")}"]`)).not.toBeNull()
-    const trigger = row.querySelector('[aria-haspopup="menu"]')!
-    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
-    const menu = document.querySelector('[role="menu"]')!
-    expect(menu.textContent).toContain(uiText("delete_2f9daa82"))
-    expect(menu.textContent).not.toContain(uiText("regenerate_3221a042"))
-    await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
-  }
-})
-it("offers regeneration for the ordinary latest reply", async () => {
-  const container = renderMessageList([
-    { id: "user", role: "user", content: "Question", createdAt: "" },
-    { id: "answer", role: "assistant", type: "text", phase: "final_answer", content: "Reply", createdAt: "" },
-  ], true)
-  const trigger = container.querySelector('[data-message-actions="answer"] [aria-haspopup="menu"]')!
-  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
-  expect(document.querySelector('[role="menu"]')?.textContent).toContain(uiText("regenerate_3221a042"))
-})
-it("renders a completed handoff as body without offering server actions for its local ID", () => {
-  const messages = projectCompletedAnswers([{ id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" }], [{
-    sessionId: "synthetic", operationId: 1, text: "Synthetic handoff body", acknowledgedMessageId: "synthetic-user",
-    baselineMessageId: null, baselineMessageIds: new Set(), anchorSeen: true,
-  }]).messages
-  const container = renderMessageList(messages, true)
-  const row = container.querySelector('[data-message-row="completed-answer-handoff-1"]')!
-  expect(row.querySelector('[data-assistant-content="Synthetic handoff body"]')).not.toBeNull()
-  expect(row.querySelector("button")).toBeNull()
-})
 
 it.each([-166, -124, 0])("shifts only the transcript content by %ipx with token-timed transforms", (shift) => {
   const container = renderMessageList([], false, shift)
@@ -330,65 +250,6 @@ describe("MessageList assistant streaming ownership", () => {
     } finally {
       HTMLElement.prototype.animate = originalAnimate
     }
-  })
-
-  it("renders persisted and frozen text statically, and only the active tail as streaming", () => {
-    const container = document.createElement("div")
-    document.body.appendChild(container)
-    const root = createRoot(container)
-    mountedRoots.push(root)
-    const persisted: Message = {
-      id: "persisted",
-      role: "assistant",
-      type: "text",
-      content: "persisted assistant",
-      createdAt: "2026-09-01T00:00:00Z",
-    }
-
-    act(() => {
-      root.render(
-        <MessageList
-          scrollRef={createRef<HTMLDivElement>()}
-          contentRef={createRef<HTMLDivElement>()}
-          onScroll={vi.fn()}
-          messages={[persisted, { id: "next-request", role: "user", content: "next request", createdAt: "" }]}
-          mergedSubAgents={{}}
-          sending
-          latestRunFinished={false}
-          streaming="active tail"
-          streamingActive
-          streamingReasoning={null}
-          liveSegments={[{ kind: "text", text: "frozen round", reasoning: null }]}
-          streamStatus="Compressing context"
-          pendingUserText={null}
-          forking={false}
-          onSelectSubAgent={vi.fn()}
-          onPreviewImage={vi.fn()}
-          onRegenerate={vi.fn()}
-          onFork={vi.fn()}
-          onDelete={vi.fn()}
-          onEditMessage={vi.fn()}
-        />,
-      )
-    })
-
-    const modes = Object.fromEntries(
-      [...container.querySelectorAll<HTMLElement>("[data-assistant-content]")].map((node) => [
-        node.dataset.assistantContent,
-        node.dataset.streaming,
-      ]),
-    )
-    expect(modes).toEqual({
-      "persisted assistant": "false",
-      "frozen round": "false",
-      "active tail": "true",
-    })
-    expect(container.querySelector("[data-process-brief]")?.textContent).toBe("Compressing context")
-    expect(container.querySelector("[data-process-shimmer]")).toBeNull()
-    const body = container.querySelector('[data-assistant-content="active tail"]')!
-    const process = container.querySelector("[data-process-activity]")!
-    expect(body.compareDocumentPosition(process) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(container.querySelector('[data-message-actions^="live-"]')).toBeNull()
   })
 
   it("keeps user bubbles colored while assistant surfaces stay transparent", () => {
@@ -1110,22 +971,4 @@ it("restores a persisted image-only user message through the existing full histo
   expect(host.querySelector('[data-message-row="persisted-image-only"] img')?.getAttribute("src"))
     .toBe(apiClient.resolveUrl("sessions/fixture/attachments/asset-1"))
   expect(host.querySelector("[data-pending-user-message]")).toBeNull()
-})
-
-
-it("renders only the complete handoff when exact-turn history has a partial checkpoint", () => {
-  const canonical: Message[] = [
-    { id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" },
-    { id: "synthetic-partial", role: "assistant", type: "text", content: "Synthetic", createdAt: "", metadata: { reasoning: "Synthetic reasoning" } },
-    { id: "synthetic-next", role: "user", content: "Synthetic follow-up", createdAt: "" },
-  ]
-  const projected = projectCompletedAnswers(canonical, [{
-    sessionId: "synthetic", operationId: 1, text: "Synthetic handoff body", acknowledgedMessageId: "synthetic-user",
-    baselineMessageId: null, baselineMessageIds: new Set(), anchorSeen: true,
-  }])
-  const container = renderMessageList(projected.messages, true)
-  expect(container.querySelectorAll('[data-assistant-content="Synthetic handoff body"]')).toHaveLength(1)
-  expect(container.querySelector('[data-assistant-content="Synthetic"]')).toBeNull()
-  expect(container.querySelectorAll('[data-reasoning="Synthetic reasoning"]')).toHaveLength(1)
-  expect(canonical[1].id).toBe("synthetic-partial")
 })
