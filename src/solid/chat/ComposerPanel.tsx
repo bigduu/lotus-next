@@ -95,7 +95,7 @@ export function ComposerPanel(props: {
   const queue = createGuidanceQueue(() => props.chat.currentSessionId, running)
   const queuedSend = () => !props.semantic && Boolean(props.chat.currentSessionId && (running() || queue.hasUnconfirmed))
   const interactionBlocked = () => Boolean(props.chat.pendingQuestion || props.chat.pendingApproval ||
-    isSessionExecutionBlocked(props.chat.currentSessionId))
+    props.chat.executionCompatibility.blocked || isSessionExecutionBlocked(props.chat.currentSessionId))
   const [predict, setPredict] = createSignal(getDraftCompletionEnabled())
   const [submitting, setSubmitting] = createSignal(false)
   let active = false
