@@ -1,13 +1,22 @@
-import { act, useSyncExternalStore } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render } from "@solidjs/web"
+import { flush } from "solid-js"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { ApiError } from "@services/api/errors"
 import { beginSessionCompatibilityRead, clearSessionCompatibilityObservations, failSessionCompatibilityRead,
   completeSessionCompatibilityRead, getSessionCompatibilitySnapshot, isSessionExecutionBlocked,
   subscribeSessionCompatibility } from "@services/chat/sessionExecutionCompatibility"
-import type { SessionExecutionCompatibilityView } from "@/hooks/useSessionExecutionCompatibility"
-import { SessionCompatibilityNotice } from "./SessionCompatibilityNotice"
+import { createExternalSnapshot } from "../../snapshots"
+import { SessionCompatibilityNotice } from "../SessionCompatibilityNotice"
+import { SessionVersionMigrationGate } from "./SessionVersionMigrationAction"
+
+type SessionExecutionCompatibilityView = Parameters<typeof SessionCompatibilityNotice>[0]["state"]
+function Notices(props: { state: SessionExecutionCompatibilityView }) {
+  return <>
+    <SessionCompatibilityNotice state={props.state} />
+    <SessionVersionMigrationGate sessionId="legacy-a" state={props.state} />
+  </>
+}
 
 const mocks = vi.hoisted(() => ({ assess: vi.fn(), migrate: vi.fn(), getSession: vi.fn() }))
 vi.mock("@services/chat/AgentService", () => ({ agentClient: { getSession: mocks.getSession } }))
@@ -21,29 +30,42 @@ const view = (blocked = false): SessionExecutionCompatibilityView => ({ observed
   readError: false, blocked, refresh: vi.fn(async () => {}), report: { session_version: blocked ? 99 : null,
     current_session_version: 2, status: blocked ? "conflict" : "legacy_compatible", history_readable: true,
     execution_allowed: !blocked, conflicts: [] } })
-let root: Root | null
-const mount = async (blocked = false) => act(async () => root!.render(<SessionCompatibilityNotice sessionId="legacy-a" state={view(blocked)} />))
-const refreshMigration = async () => act(async () => {
+let dispose: (() => void) | undefined
+async function settle(action: () => unknown) {
+  await action()
+  for (let turn = 0; turn < 12; turn += 1) {
+    await Promise.resolve()
+    flush()
+  }
+}
+async function mountView(view: Parameters<typeof render>[0]) {
+  const host = document.body.appendChild(document.createElement("div"))
+  dispose = render(view, host)
+  await settle(() => {})
+}
+const mount = (blocked = false) => mountView(() => <Notices state={view(blocked)} />)
+const refreshMigration = async () => settle(async () => {
   const button = [...document.querySelectorAll("button")].find((node) => node.textContent === uiText("session_migration_refresh"))!
   expect(button).toBeDefined()
   button.click()
 })
 function SubscribedNotice() {
-  const snapshot = useSyncExternalStore(subscribeSessionCompatibility,
-    () => getSessionCompatibilitySnapshot("legacy-a"), () => getSessionCompatibilitySnapshot(null))
-  return <SessionCompatibilityNotice sessionId="legacy-a" state={{ ...snapshot,
-    blocked: snapshot.report?.status === "conflict", refresh: async () => {} }} />
+  const snapshot = createExternalSnapshot(subscribeSessionCompatibility, () => getSessionCompatibilitySnapshot("legacy-a"))
+  return <Notices state={{ ...snapshot(), blocked: snapshot().report?.status === "conflict", refresh: async () => {} }} />
 }
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
   mocks.assess.mockReset().mockResolvedValue(assessment)
   mocks.migrate.mockReset().mockImplementation(async (intent) => ({ status: "committed", session_id: intent.sessionId,
     operation_id: intent.request.operation_id, source_version: null, target_version: 2,
     before_sha256: "a".repeat(64), after_sha256: "b".repeat(64) }))
   mocks.getSession.mockReset()
-  root = createRoot(document.body.appendChild(document.createElement("div")))
 })
-afterEach(() => { if (root) act(() => root!.unmount()); root = null; document.body.replaceChildren(); clearSessionCompatibilityObservations(); vi.unstubAllGlobals() })
+afterEach(() => {
+  dispose?.()
+  dispose = undefined
+  document.body.replaceChildren()
+  clearSessionCompatibilityObservations()
+})
 
 it("offers explicit migration while retaining the compatible legacy message and performs no automatic write", async () => {
   await mount()
@@ -56,12 +78,12 @@ it("keeps the action pending until a matching receipt is followed by canonical c
   mocks.getSession.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
   await mount()
   const button = [...document.querySelectorAll("button")].find((node) => node.textContent === uiText("session_migration_action"))!
-  await act(async () => button.click())
+  await settle(async () => button.click())
   expect(mocks.migrate).toHaveBeenCalledTimes(1)
   expect(mocks.migrate.mock.calls[0][0].sessionId).toBe("legacy-a")
   expect(document.body.textContent).not.toContain(uiText("session_migration_completed"))
   expect(button.disabled).toBe(true)
-  await act(async () => { finish({ session: { id: "legacy-a", root_mode_birth_token: "d".repeat(64), execution_compatibility: { session_version: 2,
+  await settle(async () => { finish({ session: { id: "legacy-a", root_mode_birth_token: "d".repeat(64), execution_compatibility: { session_version: 2,
     current_session_version: 2, status: "compatible", history_readable: true, execution_allowed: true, conflicts: [] } } }); await Promise.resolve() })
   expect(document.body.textContent).toContain(uiText("session_migration_completed"))
 })
@@ -90,20 +112,20 @@ it("a cold detail failure still exposes read-only recovery of the server's exact
     execution_compatibility: { session_version: 2, current_session_version: 2, status: "compatible",
       history_readable: true, execution_allowed: true, conflicts: [] } } })
   const cold: SessionExecutionCompatibilityView = { ...view(), observed: false, report: null, readError: true }
-  await act(async () => root!.render(<SessionCompatibilityNotice sessionId="legacy-a" state={cold} />))
+  await mountView(() => <Notices state={cold} />)
   expect(mocks.assess).not.toHaveBeenCalled()
   await refreshMigration()
   expect(mocks.assess).toHaveBeenCalledTimes(1)
   expect(mocks.migrate).not.toHaveBeenCalled()
   const button = [...document.querySelectorAll("button")].find((node) => node.textContent === uiText("session_migration_confirm_result"))!
   expect(button).toBeDefined()
-  await act(async () => button.click())
+  await settle(async () => button.click())
   expect(mocks.migrate.mock.calls[0][0].request).toEqual(request)
   expect(document.body.textContent).toContain(uiText("session_migration_completed"))
 })
 it("a cold detail failure cannot start a new operation from readiness alone", async () => {
   const cold: SessionExecutionCompatibilityView = { ...view(), observed: false, report: null, readError: true }
-  await act(async () => root!.render(<SessionCompatibilityNotice sessionId="legacy-a" state={cold} />))
+  await mountView(() => <Notices state={cold} />)
   expect(mocks.assess).not.toHaveBeenCalled()
   await refreshMigration()
   expect(mocks.assess).toHaveBeenCalledTimes(1)
@@ -119,13 +141,13 @@ it("subscribed cold recovery stays mounted through loading and retains its exact
   mocks.getSession.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRead = reject }))
   const ticket = beginSessionCompatibilityRead("legacy-a")
   failSessionCompatibilityRead("legacy-a", ticket)
-  await act(async () => root!.render(<SubscribedNotice />))
+  await mountView(() => <SubscribedNotice />)
   await refreshMigration()
   const button = [...document.querySelectorAll("button")].find((node) => node.textContent === uiText("session_migration_confirm_result"))!
-  await act(async () => button.click())
+  await settle(async () => button.click())
   expect(getSessionCompatibilitySnapshot("legacy-a").loading).toBe(true)
   expect(document.querySelector('[data-testid="session-version-migration"]')).not.toBeNull()
-  await act(async () => { rejectRead(new ApiError("still pending", 409, "Conflict", "{}")); await Promise.resolve() })
+  await settle(async () => { rejectRead(new ApiError("still pending", 409, "Conflict", "{}")); await Promise.resolve() })
   expect(document.body.textContent).toContain(uiText("session_migration_unconfirmed"))
   expect(document.body.textContent).toContain(uiText("session_migration_confirm_result"))
   expect(mocks.migrate).toHaveBeenCalledTimes(1)
@@ -136,9 +158,9 @@ it("a subscribed canonical conflict blocks execution and preserves only manual r
   completeSessionCompatibilityRead("legacy-a", ticket, { session: { id: "legacy-a", execution_compatibility: view().report } })
   mocks.getSession.mockResolvedValue({ session: { id: "legacy-a", root_mode_birth_token: assessment.birth_token,
     execution_compatibility: { ...view(true).report, conflicts: [{ code: "unsupported_session_version", message: "Future version" }] } } })
-  await act(async () => root!.render(<SubscribedNotice />))
+  await mountView(() => <SubscribedNotice />)
   const button = [...document.querySelectorAll("button")].find((node) => node.textContent === uiText("session_migration_action"))!
-  await act(async () => button.click())
+  await settle(async () => button.click())
   expect(isSessionExecutionBlocked("legacy-a")).toBe(true)
   expect(getSessionCompatibilitySnapshot("legacy-a")).toMatchObject({ report: { status: "conflict", session_version: 99 }, readError: false, loading: false })
   expect(document.body.textContent).toContain(uiText("session_migration_unconfirmed"))
@@ -149,7 +171,7 @@ it("a subscribed canonical conflict blocks execution and preserves only manual r
   const intent = mocks.migrate.mock.calls[0][0]
   const recover = [...document.querySelectorAll("button")].find((node) => node.textContent === uiText("session_migration_confirm_result"))!
   expect(recover).toBeDefined()
-  await act(async () => recover.click())
+  await settle(async () => recover.click())
   expect(mocks.migrate).toHaveBeenCalledTimes(2)
   expect(mocks.migrate.mock.calls[1][0]).toEqual(intent)
   expect(isSessionExecutionBlocked("legacy-a")).toBe(true)
@@ -161,7 +183,7 @@ it.each(["loading", "unknown", "current", "read-error"] as const)("does not auto
   const state: SessionExecutionCompatibilityView = kind === "current" ? { ...view(), report: {
     ...view().report!, session_version: 2, status: "compatible" } } : { ...view(), report: null,
     observed: kind === "unknown", loading: kind === "loading", readError: kind === "read-error" }
-  await act(async () => root!.render(<SessionCompatibilityNotice sessionId="legacy-a" state={state} />))
+  await mountView(() => <Notices state={state} />)
   expect(mocks.assess).not.toHaveBeenCalled()
   expect(mocks.migrate).not.toHaveBeenCalled()
   if (kind === "read-error") {
@@ -177,12 +199,12 @@ it.each(["loading", "unknown", "current", "read-error"] as const)("does not auto
 
 it("loading followed by canonical current-v2 and permission refreshes never probes migration authority", async () => {
   const ticket = beginSessionCompatibilityRead("legacy-a")
-  await act(async () => root!.render(<SubscribedNotice />))
+  await mountView(() => <SubscribedNotice />)
   const current = { session: { id: "legacy-a", session_version: 2, execution_compatibility: {
     ...view().report!, session_version: 2, status: "compatible" } } }
-  await act(async () => { completeSessionCompatibilityRead("legacy-a", ticket, current) })
+  await settle(async () => { completeSessionCompatibilityRead("legacy-a", ticket, current) })
   for (const permission_mode of ["default", "auto", "default"]) {
-    await act(async () => {
+    await settle(async () => {
       const refresh = beginSessionCompatibilityRead("legacy-a")
       completeSessionCompatibilityRead("legacy-a", refresh, { session: { ...current.session, permission_mode } })
     })
@@ -199,15 +221,15 @@ it("subscribed canonical current-v2 does not reset the acknowledged intent while
     .mockImplementationOnce(() => new Promise((resolve) => { finishLifetime = resolve }))
   mocks.getSession.mockResolvedValue({ session: { id: "legacy-a", execution_compatibility: {
     ...view().report!, session_version: 2, status: "compatible" } } })
-  await act(async () => root!.render(<SubscribedNotice />))
+  await mountView(() => <SubscribedNotice />)
   const button = [...document.querySelectorAll("button")].find((node) => node.textContent === uiText("session_migration_action"))!
-  await act(async () => button.click())
+  await settle(async () => button.click())
   expect(getSessionCompatibilitySnapshot("legacy-a").report?.session_version).toBe(2)
   expect(mocks.assess).toHaveBeenCalledTimes(2)
   expect(document.body.textContent).not.toContain(uiText("session_migration_completed"))
   expect(document.body.textContent).toContain(uiText("session_migration_in_progress"))
   const intent = mocks.migrate.mock.calls[0][0]
-  await act(async () => { finishLifetime({ ...assessment, session_version: 2, eligible: false }); await Promise.resolve() })
+  await settle(async () => { finishLifetime({ ...assessment, session_version: 2, eligible: false }); await Promise.resolve() })
   expect(document.querySelector('[data-testid="session-version-migration"]')).toBeNull()
   expect(document.body.textContent).toBe("")
   expect(mocks.migrate).toHaveBeenCalledTimes(1)
