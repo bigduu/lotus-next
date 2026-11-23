@@ -1,5 +1,5 @@
-import { FileDiff, FolderClosed, ListChecks, MessageSquarePlus, PanelLeftOpen, PanelRightOpen, WifiOff, Workflow } from "@lucide/solid"
-import { createEffect, createMemo, createSignal, lazy, Loading, onSettled, Show } from "solid-js"
+import { BookText, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, WifiOff, Workflow } from "@lucide/solid"
+import { createEffect, createMemo, createSignal, Errored, lazy, Loading, onSettled, Show } from "solid-js"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
 import { SIDE_CHAT_FEATURE } from "@services/chat/sideChat"
@@ -18,7 +18,9 @@ import { assignSessionToSection } from "@/lib/projectSidebarWrites"
 import { sessionHasLiveWork } from "@/lib/sessionBackgroundTasks"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import type { ChatItem } from "@shared/types/chatMessages"
+import type { ChatImageAttachment } from "@/lib/chatImageAttachments"
 import { Button } from "../ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "../ui/responsive-dialog"
 import type { HistoryReadingAnchor } from "../history/VirtualHistory"
 import { createChat } from "../chat/createChat"
@@ -27,24 +29,33 @@ import type { PendingSideChatIntent, SideChatIntent } from "../workbench/side-ch
 import { ChatViewport } from "../chat/ChatViewport"
 import { ComposerPanel } from "../chat/ComposerPanel"
 import { ConversationClearDialog } from "../chat/ConversationClearDialog"
+import { createEnvironment } from "../chat/environment/createEnvironment"
+import { EnvironmentCard, EnvironmentLauncher } from "../chat/environment/Environment"
+import { collectEnvironmentSources } from "../chat/environment/environmentSources"
+import { createSupervisorApprovals } from "../chat/supervisor-approvals/createSupervisorApprovals"
+import { SupervisorApprovalEntry } from "../chat/supervisor-approvals/SupervisorApprovalEntry"
 import { createRootModeAuthority } from "../chat/model/createRootModeAuthority"
 import { createTicketIngress } from "../chat/createTicketIngress"
 import { createTicketWork } from "../workbench/work/createTicketWork"
 import { TicketWorkAvailability } from "../workbench/work/TicketWorkAvailability"
 import type { PendingRequest } from "@services/tickets/types"
-import { RunInteractions } from "../chat/RunInteractions"
+import { createRunInteractionTimeline, RunInteractions } from "../chat/RunInteractions"
+import { SessionVersionMigrationGate } from "../chat/status/version-migration/SessionVersionMigrationAction"
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { SettingsTab } from "../settings/SettingsPage"
 import { Sidebar } from "./Sidebar"
 import { createProjectSections } from "./createProjectSections"
+import { createSessionDrop } from "./createSessionDrop"
 import { createUiText } from "./uiText"
 import { restoreCommandFocus } from "@/lib/commandFocusReturn"
 import { isCommandComposing } from "@/lib/commandComposition"
+import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
 import { getWorkbenchMaxWidth, MIN_WORKBENCH_WIDTH, ResizableLayout } from "../ui/resizable-layout"
 import { activateWorkbenchTab } from "@/lib/workbenchState"
 import type { RightWorkbenchTab, WorkbenchToolTab } from "@/lib/workbenchTabTypes"
+import type { WorkbenchTabDrag } from "../workbench/RightWorkbench"
 import { reorderVisibleWorkbenchTabIds } from "@/lib/workbenchTabs"
-import { collectLiveSessionFileChanges, collectSessionFileChanges, groupSessionFileChanges, mergeSessionFileChanges } from "@/lib/sessionFileChanges"
+import { collectLiveSessionFileChanges, collectSessionFileChanges, groupSessionFileChanges, mergeSessionFileChanges, orderPersistedFileChanges, summarizeSessionFileChangeGroups } from "@/lib/sessionFileChanges"
 import { isPhoneDevice } from "@/lib/browserAvailability"
 import type { BrowserState } from "@services/browser/types"
 import { createBrowserSession } from "../workbench/browser/createBrowserSession"
@@ -53,9 +64,10 @@ import { createSessionTaskDag } from "../workbench/tasks/createSessionTaskDag"
 import { ProjectManagerModal } from "./ProjectManagerModal"
 import { WorkspacePicker } from "./WorkspacePicker"
 import { Onboarding } from "./Onboarding"
-import { CommandPalette } from "./CommandPalette"
-import { GoalSection } from "../workbench/inspector/GoalSection"
+import { Dialog, DialogContent, DialogTitle } from "../ui/dialog"
 import { ProjectWorkDialog } from "../project-work/ProjectWorkDialog"
+import { createSubagentFileChanges } from "../workbench/review/createSubagentFileChanges"
+import { createHistoryPrefix } from "../workbench/review/createHistoryPrefix"
 
 const WorkflowRunsDialog = lazy(() => import("../workbench/workflows/WorkflowRunsDialog"), { export: "WorkflowRunsDialog" })
 const TicketWorkPanel = lazy(() => import("../workbench/work/TicketWorkPanel"), { export: "TicketWorkPanel" })
@@ -67,6 +79,10 @@ const SideChatPane = lazy(() => import("../workbench/side-chat/SideChatPane"), {
 const RightWorkbench = lazy(() => import("../workbench/RightWorkbench"), { export: "RightWorkbench" })
 const BrowserPaneView = lazy(() => import("../workbench/browser/BrowserPane"), { export: "BrowserPaneView" })
 const ReviewPane = lazy(() => import("../workbench/ReviewPane"), { export: "ReviewPane" })
+const ProjectEditDialog = lazy(() => import("../workspace/project-edit/ProjectEditDialog"), { export: "ProjectEditDialog" })
+const CommandPalette = lazy(() => import("./CommandPalette"), { export: "CommandPalette" })
+const Inspector = lazy(() => import("../workbench/inspector/Inspector"), { export: "Inspector" })
+const HomeDashboard = lazy(() => import("../chat/home/HomeDashboard"), { export: "HomeDashboard" })
 
 
 type SectionIntent = { projectId: string; sectionId?: string | null }
@@ -86,6 +102,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [projectsOpen, setProjectsOpen] = createSignal(false)
   const [projectWork, setProjectWork] = createSignal<{ id: string } | null>(null)
   const [projectWorkError, setProjectWorkError] = createSignal<string | null>(null)
+  const [projectToEdit, setProjectToEdit] = createSignal<string | null>(null)
   const [workspaceOpen, setWorkspaceOpen] = createSignal(false)
   const [worktreeManager, setWorktreeManager] = createSignal<"unopened" | "open" | "closed">("unopened")
   const [pickedWorkspace, setPickedWorkspace] = createSignal<string | null>(null)
@@ -97,7 +114,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [workflowSession, setWorkflowSession] = createSignal<string | null>(null)
   const [containerWidth, setContainerWidth] = createSignal(window.innerWidth)
   const [usedSidebarWidth, setSidebarWidth] = createSignal(sidebarWidth())
-  let paletteOpener: HTMLElement | null = null
+  const tabDrag = { current: null as WorkbenchTabDrag | null }
+  let paletteReturnFocus = () => null as HTMLElement | null
+  let paletteNavigationVersion = 0
+  let settingsReturnFocus: () => HTMLElement | null = () => null
   let shell!: HTMLDivElement
   const [notice, setNotice] = createSignal<{ text: string; error: boolean } | null>(null)
   const [newSession, setNewSession] = createSignal<SectionIntent | null>(null)
@@ -124,12 +144,19 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   }
   const displayWorkspace = () => chat.currentChat?.config?.workspacePath ?? selectedWorktreePath()
     ?? (newSession() ? projects()[newSession()!.projectId]?.project_path : undefined) ?? pickedWorkspace()
+  const runTimeline = createRunInteractionTimeline({ chat, workspace: displayWorkspace })
   const readingAnchors = new Map<string, HistoryReadingAnchor>()
   const sessionView = createMemo(() => ({ id: currentSession() }), {
     equals: (previous, next) => previous?.id === next.id,
   })
+  const showHome = () => !currentSession() && !chat.sending && !chat.pendingUserText
+    && chat.pendingUserImages.length === 0 && chat.pendingUserMessages.length === 0
+  const focusComposer = () => document.getElementById("lotus-message-input")?.focus()
   const rootAuthority = createRootModeAuthority(currentSession, () => chat.currentChat?.kind)
   const workEnabled = () => Boolean(chat.currentChat && isDefaultSupervisor(chat.currentChat))
+  const supervisorApprovals = createSupervisorApprovals({
+    active: () => chat.booted && workEnabled() && !settingsOpen(), anchor: () => chat.messages.at(-1)?.id ?? null,
+  })
   const workAuthorityKey = () => {
     const authority = rootAuthority.authority
     return authority ? JSON.stringify([authority.birthToken, authority.epoch, authority.enabled]) : ""
@@ -242,10 +269,46 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     try { localStorage.setItem("lotus_next_sidebar_w", String(width)) } catch { /* Keep the in-memory preference. */ }
   }
 
+  const reviewing = () => workbenchState().open && visibleWorkbenchTab() === "review"
+  const inspecting = () => workbenchState().open && visibleWorkbenchTab() === "inspector"
+  const environment = createEnvironment({ sessionId: currentSession, pageVisible: () => !settingsOpen(), sidePaneOpen: () => workbenchState().open })
+  const [draftAttachments, setDraftAttachments] = createSignal<readonly ChatImageAttachment[]>([])
+  const prefix = createHistoryPrefix({
+    sessionId: currentSession, connectionScope: workbench.key,
+    enabled: () => !settingsOpen() && (reviewing() || inspecting() || environment.requestsHistory()),
+  })
+  const historyStatus = () => {
+    const status = prefix().status
+    return status ? text(status === "loading" ? "history_prefix_loading" : "history_prefix_unavailable") : undefined
+  }
+  const subagentChanges = createSubagentFileChanges(() => chat.currentChat, workbench.key, () => !settingsOpen() && (reviewing() || environment.visible()))
+  const persistedFileChanges = createMemo(() => {
+    const earlier = prefix().messages
+    const own = collectSessionFileChanges(earlier.length ? [...earlier, ...chat.messages] : chat.messages)
+    const descendants = subagentChanges().changes
+    return descendants.length ? orderPersistedFileChanges([...own, ...descendants]) : own
+  })
   const fileChanges = createMemo(() => groupSessionFileChanges(mergeSessionFileChanges(
-    collectSessionFileChanges(chat.messages),
-    collectLiveSessionFileChanges(chat.liveSegments),
+    persistedFileChanges(), collectLiveSessionFileChanges(chat.liveSegments),
   ), displayWorkspace() ?? undefined))
+  const fileChangeSummary = createMemo(() => summarizeSessionFileChangeGroups(fileChanges()))
+  const environmentSources = createMemo(() => collectEnvironmentSources(prefix().messages, chat.messages, draftAttachments()))
+  const subagentFileStatus = () => (
+    <>
+      <Show when={subagentChanges().loading}>
+        <p role="status" class="text-xs text-muted-foreground">{text("review_subagent_changes_loading")}</p>
+      </Show>
+      <Show when={subagentChanges().unavailable}>
+        <div class="flex items-center gap-2">
+          <p role="status" class="text-xs text-muted-foreground">{text("review_subagent_changes_unavailable")}</p>
+          <Button size="sm" variant="ghost" onClick={() => subagentChanges().retry()}>{text("retry_b8784c8d")}</Button>
+        </div>
+      </Show>
+      <Show when={subagentChanges().truncated}>
+        <p role="status" class="text-xs text-muted-foreground">{text("review_subagent_changes_truncated")}</p>
+      </Show>
+    </>
+  )
   const rootId = () => chat.currentChat?.kind === "root" ? chat.currentChat.id : chat.currentChat?.rootSessionId ?? null
   const descendants = () => chat.chats.find((entry) => entry.id === rootId())?.subagentCount ?? null
   const childReadingAnchors = new Map<string | null, Map<string, HistoryReadingAnchor>>()
@@ -259,9 +322,33 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     return anchors
   })
   const closePalette = () => {
-    const opener = paletteOpener
+    const returnFocus = paletteReturnFocus
+    const version = paletteNavigationVersion
     setPaletteOpen(false)
-    requestAnimationFrame(() => restoreCommandFocus(opener))
+    requestAnimationFrame(() => {
+      if (!paletteOpen() && !settingsOpen() && version === navigationVersion) restoreCommandFocus(returnFocus())
+    })
+  }
+  const openSettings = () => {
+    if (settingsOpen()) return
+    const element = document.activeElement
+    const opener = element instanceof HTMLElement ? element : null
+    settingsReturnFocus = paletteOpen() ? paletteReturnFocus
+      : captureWorkbenchFocusReturn(opener, workbench.key(), workbench.key, tabDrag.current?.getSourceId())
+    setSidebarOpen(false)
+    setPaletteOpen(false)
+    setSettingsOpen(true)
+  }
+  const closeSettings = () => {
+    const returnFocus = settingsReturnFocus
+    setSettingsOpen(false)
+    requestAnimationFrame(() => {
+      if (settingsOpen()) return
+      const opener = returnFocus()
+      if (opener?.isConnected && opener.getClientRects().length && !opener.closest('[inert]')
+        && (desktopSidebar() || !opener.closest('[data-slot="sidebar"]'))) opener.focus({ preventScroll: true })
+      else shell.querySelector<HTMLElement>('[data-composer-column] [role="textbox"]')?.focus({ preventScroll: true })
+    })
   }
   onSettled(() => {
     const measure = () => { setContainerWidth(shell.getBoundingClientRect().width || window.innerWidth) }
@@ -269,6 +356,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     observer.observe(shell)
     measure()
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
       if (event.key === "Escape" && paletteOpen() && !isCommandComposing(event)) {
         event.preventDefault()
         event.stopPropagation()
@@ -279,7 +367,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       event.preventDefault()
       if (paletteOpen()) closePalette()
       else {
-        paletteOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        paletteReturnFocus = captureWorkbenchFocusReturn(opener, workbench.key(), workbench.key, tabDrag.current?.getSourceId())
+        paletteNavigationVersion = navigationVersion
         setPaletteOpen(true)
       }
     }
@@ -305,6 +395,19 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     if (!scope || appStore.getState().currentSessionId !== scope.sourceId) return
     setSideChatIntent({ ...intent, token: ++sideChatToken, scope })
     openWorkbenchTab("side-chat")
+  }
+  const openReview = (fileId?: string) => {
+    workbench.capture().update((state) => ({ ...activateWorkbenchTab(state, "review"), reviewTarget: fileId ?? null }))
+  }
+  const selectWorkbenchActor = (id: string) => {
+    const root = id === rootId()
+    workbench.capture().update((state) => ({
+      ...(root ? state : activateWorkbenchTab(state, "subagents")),
+      subagents: { ...state.subagents, childId: id, view: root ? "tree" : "messages" },
+    }))
+  }
+  const copySessionId = (id: string) => {
+    void copyText(id).then(() => setNotice({ text: text("session_id_copied_3afb54a6"), error: false })).catch(openError)
   }
   const quoteToMain = (scope: SideChatScope, answer: string) => {
     const store = appStore.getState()
@@ -350,9 +453,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     }
     setConnectionLost(false)
   })
-  createEffect(() => chat.currentChat, (current) => {
+  createEffect(() => settingsOpen() ? null : chat.currentChat, (current) => {
     if (!current) return
-    const mark = () => markSessionRead(current)
+    const mark = () => { if (!settingsOpen()) markSessionRead(current) }
     mark()
     document.addEventListener("visibilitychange", mark)
     return () => { document.removeEventListener("visibilitychange", mark) }
@@ -363,6 +466,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
 
   const select = async (id: string) => {
     const version = ++navigationVersion
+    setPaletteOpen(false)
     const previousSession = appStore.getState().currentSessionId
     if (id === DEFAULT_SUPERVISOR_SESSION_ID) {
       await agentClient.ensureDefaultSupervisor()
@@ -372,6 +476,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     setNewSession(null)
     chat.select(id)
   }
+  const sessionDrop = createSessionDrop(() => chat.chats, (id) => {
+    if (!settingsOpen()) void select(id).catch(openError)
+  })
   const openProjectWork = (id: string) => {
     const scope = { id }
     setProjectWorkError(null)
@@ -402,8 +509,59 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       notFound: () => new Error(text("workflow_run_not_found")),
     })
   }
+  const openRecordedSession = (id: string, expectedCreatedAt: string) => {
+    const version = ++navigationVersion
+    const initial = appStore.getState()
+    const targetRevision = initial.getSessionNavigationRevision([id])
+    const current = () => {
+      const state = appStore.getState()
+      return version === navigationVersion && initial.currentSessionId === state.currentSessionId
+        && state.getSessionNavigationRevision([id]) === targetRevision
+    }
+    const matchesLifetime = (allowMissing = false) => {
+      const cached = appStore.getState().chats.find((entry) => entry.id === id)
+      return cached ? cached.kind === "root" && cached.createdAtExact === expectedCreatedAt : allowMissing
+    }
+    const verify = async () => {
+      const { session } = await agentClient.getSession(id)
+      return session.id === id && session.kind === "root" && session.created_at === expectedCreatedAt
+    }
+    return navigateRecordedSession(id, verify, {
+      isCurrent: current,
+      restore: async (target) => {
+        if (!matchesLifetime(true) || !await appStore.getState().restoreSession(target)) return false
+        return current() && matchesLifetime() && await verify() && matchesLifetime()
+      },
+      select: (target) => { void select(target).catch(openError) },
+      notFound: () => new Error(text("workflow_run_not_found")),
+    })
+  }
+  const exportConversation = async (format: "markdown" | "pdf") => {
+    const session = chat.currentChat
+    const displayed = chat.messages
+    if (!session || !displayed.length) return
+    const version = navigationVersion
+    const scope = workbench.key()
+    const revision = appStore.getState().getSessionNavigationRevision([session.id])
+    const window = session.historyWindow
+    const current = () => navigationVersion === version && scope === workbench.key() && !settingsOpen()
+      && chat.currentChat?.id === session.id && chat.currentChat?.createdAtExact === session.createdAtExact
+      && appStore.getState().getSessionNavigationRevision([session.id]) === revision
+    try {
+      if (window?.invalidated) throw new Error(text("conversation_export_failed"))
+      const earlier = window?.beforeMessageId ? await appStore.getState().readHistoryPrefix(session.id, window, current) : []
+      if (!current()) return
+      const { downloadMarkdown, downloadPdf } = await import("../chat/export/index")
+      if (!current()) return
+      const download = format === "pdf" ? downloadPdf : downloadMarkdown
+      await download([...earlier, ...displayed], session.title || "chat")
+    } catch {
+      if (current()) setNotice({ text: text("conversation_export_failed"), error: true })
+    }
+  }
   const newChat = (projectId?: string | null, sectionId?: string | null) => {
     navigationVersion += 1
+    setPaletteOpen(false)
     setDraftEpoch((epoch) => epoch + 1)
     setPickedWorktree(null)
     if (projectId) setPickedWorkspace(null)
@@ -455,14 +613,16 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           sidebar={<Sidebar
           open={sidebarOpen()} collapsed={sidebarCollapsed()} width="100%"
           booted={chat.booted} chats={chat.chats} currentSessionId={currentSession()}
-          projects={projects()} sectionPreferences={sections.preferences()}
+          projects={projects()} sections={sections} ownerAccess={props.ownerAccess}
+          suspended={settingsOpen() || paletteOpen() || projectsOpen() || !!projectToEdit() || !!projectWork()}
           isRunning={(entry) => sessionHasLiveWork(entry, executions()[entry.id], backgroundBash())}
           onClose={() => setSidebarOpen(false)} onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
           onSelect={select} onNewChat={newChat}
           onOpenProjectManager={() => setProjectsOpen(true)}
           onOpenProjectWork={openProjectWork}
+          onEditProject={setProjectToEdit}
           onOpenWorktrees={() => setWorktreeManager("open")}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
           onMoveToSection={(projectId, sessionId, sectionId) => {
             void sections.update(projectId, (previous) =>
               setSessionSection(previous, projectId, sessionId, sectionId, projects()[projectId]?.section),
@@ -477,9 +637,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             if (entry.pinned) state.unpinSession(entry.id)
             else state.pinSession(entry.id)
           }}
-          onCopySessionId={(id) => {
-            void copyText(id).then(() => setNotice({ text: text("session_id_copied_3afb54a6"), error: false })).catch(openError)
-          }}
+          onCopySessionId={copySessionId}
           onClear={setSessionToClear}
           onDelete={setSessionToDelete}
           onError={openError}
@@ -527,6 +685,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                 else workbench.capture().setField("open", false)
               }}
               focusScopeKey={workbench.key()} getCurrentFocusScope={workbench.key}
+              tabDragRef={tabDrag}
               interactionSuspended={settingsOpen() || paletteOpen()}
               browserEnabled={browserEnabled()} browserSessionAvailable={Boolean(currentSession())}
               browserEntryOpen={browserEntryOpen()} browserTabs={browserState()?.tabs}
@@ -554,28 +713,18 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   onEntryDraftChange={(draft) => setBrowserEntry({ scope: workbench.key(), open: true, draft })}
                   onNewTabOpened={() => setBrowserEntry({ scope: workbench.key(), open: false, draft: "" })} />
               </Show>}
-              inspector={<div class="grid w-full content-start gap-2 p-4 text-sm">
-                <p class="font-medium">{chat.currentChat?.title}</p>
-                <Show when={displayWorkspace()}>
-                  <div class="flex min-w-0 items-center gap-2">
-                    <FolderClosed class="size-4 shrink-0" /><span class="truncate">{displayWorkspace()}</span>
-                  </div>
-                </Show>
-                <Show when={currentSession()} keyed>{(id) => <GoalSection sessionId={id}
-                  goldConfig={chat.currentChat?.config?.goldConfig} goalState={chat.currentChat?.config?.goalState} />}</Show>
-                <Button variant="ghost" class="justify-start" onClick={() => openWorkbenchTab("review")}>
-                  <FileDiff class="size-4" />{text("file_changes_4d016b2f")}
-                </Button>
-              </div>}
+              inspector={<Inspector open={!settingsOpen() && inspecting()} sessionId={currentSession()}
+                workspace={displayWorkspace()} fileChangeGroups={fileChanges()} historyStatus={historyStatus()}
+                onEditWorkspace={() => setWorkspaceOpen(true)} onOpenReview={openReview} onCopySessionId={copySessionId}
+                onSelectActor={selectWorkbenchActor} selectedActorId={workbenchState().subagents.childId} />}
               review={<ReviewPane sessionId={currentSession()} groups={fileChanges()}
-                workspace={displayWorkspace()} targetFile={workbenchState().reviewTarget} />}
+                workspace={displayWorkspace()} targetFile={workbenchState().reviewTarget}
+                historyStatus={historyStatus()} status={subagentFileStatus()} />}
               subagents={<SubagentsPane rootId={rootId()} descendantCount={descendants()}
                 active={!settingsOpen() && workbenchState().open && workbenchState().tab === "subagents"}
                 selection={workbenchState().subagents} readingAnchors={childAnchors()}
                 theme={theme().themeMode} onOpenLink={setLink} onPreviewImage={setImage}
-                onSelectChild={(id) => workbench.capture().update((state) => ({
-                  ...state, subagents: { ...state.subagents, childId: id, view: "messages" },
-                }))}
+                onSelectChild={selectWorkbenchActor}
                 onShowTree={() => workbench.capture().update((state) => ({
                   ...state, subagents: { ...state.subagents, view: "tree" },
                 }))}
@@ -593,8 +742,13 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   ? () => setExpandedDagScope(taskExpanded() ? null : activeDagScope()) : undefined} /> : undefined} />
           </Loading>
         </Show>}>
-        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <header class="flex min-h-12 shrink-0 items-center gap-2 border-b px-3 py-2">
+        <main data-session-drop-target="main" ref={sessionDrop.bindTarget} class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <Show when={sessionDrop.active()}>
+            <div class="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
+              {text("drop_to_open_session")}
+            </div>
+          </Show>
+          <header role="banner" class="flex min-h-12 shrink-0 items-center gap-2 border-b px-3 py-2">
             <Button variant="ghost" size="icon" class={sidebarCollapsed() ? "" : "md:hidden"}
               aria-label={text("menu_4ce4cafd")} onClick={() => {
                 setSidebarOpen(true); setSidebarCollapsed(false)
@@ -624,6 +778,30 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               <Button size="icon" variant="ghost" aria-label={text("session_task_dag_title")}
                 onClick={() => openWorkbenchTab("task-dag")}> <Workflow class="size-4" /> </Button>
             </Show>
+            <Show when={currentSession()}><EnvironmentLauncher environment={environment} /></Show>
+            <Show when={currentSession()} keyed>{(id) => (
+              <DropdownMenu>
+                <DropdownMenuTrigger aria-label={text("more_38844b13")} class="rounded-md p-2 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+                  <MoreHorizontal class="size-4" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent class="min-w-44">
+                  <DropdownMenuItem onSelect={() => { if (chat.currentChat?.id === id) setSessionToClear(chat.currentChat) }}>
+                    <RotateCcw />{text("conversation_clear_action")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => { if (currentSession() === id) setWorkflowSession(id) }}>
+                    <BookText />{text("workflow_run_title")}
+                  </DropdownMenuItem>
+                  <Show when={chat.messages.length !== 0}>
+                    <DropdownMenuItem onSelect={() => { void exportConversation("markdown") }}>
+                      <Download />{text("export_as_markdown_ac8b027c")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => { void exportConversation("pdf") }}>
+                      <FileDown />{text("export_as_pdf_e42c8735")}
+                    </DropdownMenuItem>
+                  </Show>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}</Show>
             <Button size="icon" variant="ghost"
               aria-label={text(workbenchState().open ? "collapse_side_panel_e7d2fdd8" : "open_side_panel_732ea38b")}
               aria-expanded={workbenchState().open ? "true" : "false"} aria-controls="right-workbench"
@@ -631,10 +809,26 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               <PanelRightOpen />
             </Button>
           </header>
+          <div data-chat-layout="" ref={environment.bindLayout} class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <div data-chat-body="true" class="flex min-h-0 min-w-0 flex-1 flex-col"
+            style={{ "padding-inline-end": `${environment.reservedWidth()}px`, transition: "padding-inline-end 200ms ease-out" }}>
+          <Show when={!showHome()} fallback={<Loading fallback={null}>
+            <HomeDashboard chats={chat.chats} onOpenSession={(id) => { void select(id).catch(openError) }}
+              onPickTemplate={(prefill) => { appStore.getState().setInputContent("", prefill); focusComposer() }} onDescribeTask={focusComposer} />
+          </Loading>}>
           <Show when={sessionView()} keyed>{(session) => (
             <ChatViewport chat={chat} theme={theme().themeMode}
+              pageVisible={!settingsOpen()} onOpenActor={selectWorkbenchActor}
               onOpenLink={setLink} onPreviewImage={setImage}
               rootAuthority={rootAuthority} onMessageNotice={setNotice}
+              attachments={[...runTimeline(), ...(workEnabled() ? supervisorApprovals.entries().map((entry) => ({
+                key: entry.key, afterMessageId: entry.afterMessageId,
+                render: () => {
+                  const latest = () => supervisorApprovals.entries().find((item) => item.key === entry.key) ?? entry
+                  return <SupervisorApprovalEntry entry={latest()} onRefresh={supervisorApprovals.refresh}
+                    onDecide={(choice) => supervisorApprovals.decide(latest(), choice)} onOpenSession={openRecordedSession} />
+                },
+              })) : [])]}
               onAskSideChat={sideChatScope() ? (quote) => openSideChat({ quote }) : undefined}
               revealMessage={sideChatReveal()?.scope === sideChatScope() ? sideChatReveal() ?? undefined : undefined}
               onMissingRevealedMessage={() => setNotice({ text: text("side_chat_source_unavailable"), error: false })}
@@ -645,26 +839,46 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                 else readingAnchors.delete(session.id)
               }} />
           )}</Show>
-          <RunInteractions chat={chat} workspace={displayWorkspace()} />
+          </Show>
+          <RunInteractions chat={chat} />
+          <Show when={currentSession()} keyed>
+            {(sessionId) => <SessionVersionMigrationGate sessionId={sessionId} state={chat.executionCompatibility} />}
+          </Show>
           <ComposerPanel chat={chat} workspacePath={displayWorkspace()} projectId={newSession()?.projectId ?? null}
+            pageVisible={!settingsOpen()}
             selectedWorktreePath={selectedWorktreePath()} draftEpoch={draftEpoch()} navigationVersion={() => navigationVersion}
             rootAuthority={rootAuthority} ingress={ingress} semantic={semanticComposer()}
             reference={ticketReference()} onClearReference={() => setWorkReference(null)} canSendIngress={tickets.canSendIngress}
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
             onOpenWorkflowRuns={(id) => { if (id === currentSession()) setWorkflowSession(id) }}
             onOpenSideChat={sideChatScope() ? openSideChat : undefined}
-            onPreviewImage={setImage} captureSessionCreated={() => {
+            onPreviewImage={setImage} onAttachmentsChange={setDraftAttachments} captureSessionCreated={() => {
               const intent = newSession()
               return (id) => sessionCreated(id, intent)
             }} />
+          </div>
+          <Show when={currentSession()}>
+            <EnvironmentCard environment={environment} workspace={displayWorkspace()}
+              projectName={projects()[chat.currentChat?.config?.projectId ?? ""]?.name} placement={chat.currentChat?.placement}
+              changes={fileChangeSummary()} sources={environmentSources()} hasEarlier={prefix().canRead} historyStatus={historyStatus()}
+              subagentStatus={subagentFileStatus()} onOpenReview={openReview} onPreviewImage={setImage} />
+          </Show>
+          </div>
         </main>
         </ResizableLayout>
       </div>
       <Show when={settingsOpen()}>
-        <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
-          <SettingsPage ownerAccess={props.ownerAccess} tab={settingsTab()} onTabChange={setSettingsTab}
-            onClose={() => setSettingsOpen(false)} />
-        </Loading>
+        <Errored fallback={(_failure) => (
+          <div role="alert" class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+            <h1>{text("could_not_load_settings_05a4babd")}</h1>
+            <p class="text-sm text-muted-foreground">{text("settings_code_could_not_be_loaded_chat_is_still_availab_05bc021f")}</p>
+            <Button onClick={closeSettings}>{text("back_to_chat_5b8ac6b1")}</Button>
+          </div>
+        )}>
+          <Loading fallback={<p role="status">{text("loading_settings_69ede7ee")}</p>}>
+            <SettingsPage ownerAccess={props.ownerAccess} tab={settingsTab()} onTabChange={setSettingsTab} onClose={closeSettings} />
+          </Loading>
+        </Errored>
       </Show>
       <Show when={!settingsOpen() && workflowSession() === currentSession() && workflowSession()} keyed>
         {(id) => <Loading fallback={null}>
@@ -706,6 +920,11 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         <ProjectWorkDialog project={projects()[scope.id] ?? null} metadataError={projectWorkError()}
           ownerAccess={props.ownerAccess} onClose={() => setProjectWork(null)} onOpenSession={openProjectWorkSession} />
       )}</Show>
+      <Show when={props.ownerAccess && projectToEdit()} keyed>{(id) => (
+        <Loading fallback={null}>
+          <ProjectEditDialog projectId={id} onClose={() => setProjectToEdit(null)} />
+        </Loading>
+      )}</Show>
       <Show when={sessionToClear()} keyed>{(session) => (
         <ConversationClearDialog sessionId={session.id} title={session.title || session.id} onClose={() => setSessionToClear(null)} />
       )}</Show>
@@ -738,17 +957,27 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         </ResponsiveDialogContent>
       </ResponsiveDialog>
       <ResponsiveDialog open={image() !== null} onOpenChange={(open) => { if (!open) setImage(null) }}>
-        <ResponsiveDialogContent class="p-5">
+        <ResponsiveDialogContent class="p-5" closeLabel={text("close_preview_1eb05d31")}>
           <ResponsiveDialogTitle class="sr-only">{text("close_preview_1eb05d31")}</ResponsiveDialogTitle>
           <img class="mx-auto max-h-[75dvh] object-contain" src={image() ?? undefined} alt="" />
         </ResponsiveDialogContent>
       </ResponsiveDialog>
       <Show when={paletteOpen()}>
-        <CommandPalette chats={chat.chats} onClose={closePalette}
-          onNewChat={() => { setSettingsOpen(false); newChat() }}
-          onSelect={(id) => { setSettingsOpen(false); setSidebarOpen(false); void select(id).catch(openError) }}
-          onSettings={() => setSettingsOpen(true)}
-          getReturnFocusTarget={() => paletteOpener} />
+        <Loading fallback={<Dialog open onOpenChange={(open) => { if (!open) closePalette() }}>
+          <DialogContent data-command-palette="" showCloseButton={false}
+            class="top-[12vh] w-full max-w-[calc(100%-2rem)] translate-y-0 rounded-2xl bg-popover p-0 shadow-2xl sm:max-w-lg"
+            onEscapeKeyDown={(event: KeyboardEvent) => { if (isCommandComposing(event)) event.preventDefault() }}
+            onCloseAutoFocus={(event: Event) => event.preventDefault()}>
+            <DialogTitle class="sr-only">{text("search_sessions_or_actions_b2a0f9e8")}</DialogTitle>
+            <p role="status" class="px-3 py-6 text-center text-sm text-muted-foreground">{text("loading_4927a53b")}</p>
+          </DialogContent>
+        </Dialog>}>
+          <CommandPalette chats={chat.chats} onClose={closePalette}
+            onNewChat={() => { setSettingsOpen(false); newChat() }}
+            onSelect={(id) => { setSettingsOpen(false); setSidebarOpen(false); void select(id).catch(openError) }}
+            onSettings={openSettings}
+            getReturnFocusTarget={() => !settingsOpen() && paletteNavigationVersion === navigationVersion ? paletteReturnFocus() : null} />
+        </Loading>
       </Show>
       <Show when={notice()}>
         {(value) => (

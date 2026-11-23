@@ -1,7 +1,8 @@
-import { Bell, Blocks, BookOpen, CalendarClock, ChartNoAxesCombined, Cpu, Database, FileText, Gauge, Globe, Monitor, Plug, RotateCw, Settings2, Share2, ShieldCheck, X } from "@lucide/solid"
-import { createMemo, createUniqueId, For, lazy, Loading, Show } from "solid-js"
+import { ArrowLeft, Bell, Blocks, BookOpen, CalendarClock, ChartNoAxesCombined, Cpu, Database, FileText, Gauge, Globe, Monitor, Network, Plug, RotateCw, Settings2, Share2, ShieldCheck } from "@lucide/solid"
+import { createMemo, createUniqueId, For, lazy, Loading, onSettled, Show } from "solid-js"
 import { Dynamic, type JSX } from "@solidjs/web"
 import { ADVANCED_ONLY_SETTINGS_TABS, experienceModeStore } from "@shared/store/experienceModeState"
+import { isCommandComposing } from "@/lib/commandComposition"
 import { createStoreSelector } from "../state/createStoreSelector"
 import { createUiText } from "../shell/uiText"
 import { Button } from "../ui/button"
@@ -24,6 +25,7 @@ const SettingsConfigShare = lazy(() => import("./config-share/SettingsConfigShar
 const SettingsSystem = lazy(() => import("./system/SettingsSystem"), { export: "SettingsSystem" })
 const SettingsPlugins = lazy(() => import("./plugins/SettingsPlugins"), { export: "SettingsPlugins" })
 const SettingsMetrics = lazy(() => import("./metrics/SettingsMetrics"), { export: "SettingsMetrics" })
+const SettingsClusters = lazy(() => import("./clusters/SettingsClusters"), { export: "SettingsClusters" })
 
 const groups = [
   { label: "settings_group_appearance", tabs: [
@@ -36,6 +38,7 @@ const groups = [
     { id: "model-limits", label: "model_limits_05ff605e", icon: Gauge, owner: true },
     { id: "retry", label: "retry_settings_1a7c4e91", icon: RotateCw, owner: true },
     { id: "mcp", label: "MCP", icon: Plug, owner: true },
+    { id: "clusters", label: "clusters_5318ca46", icon: Network, owner: true },
   ] },
   { label: "settings_group_capabilities", tabs: [
     { id: "plugins", label: "plugins_e806fbbe", icon: Blocks, owner: true },
@@ -74,6 +77,7 @@ const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
   system: (owner) => <SettingsSystem ownerAccess={owner} />,
   plugins: () => <SettingsPlugins />,
   metrics: () => <SettingsMetrics />,
+  clusters: () => <SettingsClusters />,
 }
 
 export function SettingsPage(props: {
@@ -83,8 +87,11 @@ export function SettingsPage(props: {
   onClose: () => void
 }) {
   const text = createUiText()
-  const categoryId = createUniqueId()
+  const categoryId = "settings-category"
+  const titleId = createUniqueId()
   const headingId = createUniqueId()
+  let heading: HTMLHeadingElement | undefined
+  onSettled(() => { heading?.focus({ preventScroll: true }) })
   const advanced = createStoreSelector(experienceModeStore, (state) => state.isAdvanced)
   const label = (tab: Tab) => tab.label === "MCP" ? tab.label : text(tab.label)
   const visible = createMemo(() => groups.map((group) => ({
@@ -101,10 +108,16 @@ export function SettingsPage(props: {
   }
 
   return (
-    <div class="flex min-h-0 flex-1 flex-col" data-slot="settings-page">
+    <main class="motion-page-enter flex h-full min-h-0 w-full flex-1 flex-col bg-background" data-slot="settings-page" aria-labelledby={titleId}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented || isCommandComposing(event)) return
+        if (event.target.closest('[role="dialog"], [role="alertdialog"], [role="combobox"], [role="listbox"], [role="menu"], select')) return
+        event.preventDefault()
+        props.onClose()
+      }}>
       <header class="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b px-4">
-        <h1 class="text-sm font-semibold">{text("system_settings_68ea5dd4")}</h1>
-        <Button size="icon" variant="ghost" aria-label={text("close_settings_77b17fc4")} onClick={props.onClose}><X class="size-4" /></Button>
+        <h1 id={titleId} ref={(element) => { heading = element }} tabindex={-1} class="text-sm font-semibold outline-none">{text("system_settings_68ea5dd4")}</h1>
+        <Button size="sm" variant="ghost" onClick={props.onClose}><ArrowLeft class="size-4" />{text("back_to_chat_5b8ac6b1")}</Button>
       </header>
       <div class="settings-layout">
         <div class="settings-mobile-nav">
@@ -139,6 +152,6 @@ export function SettingsPage(props: {
           </div>}</Show>
         </div>
       </div>
-    </div>
+    </main>
   )
 }

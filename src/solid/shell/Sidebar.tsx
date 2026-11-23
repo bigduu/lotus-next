@@ -1,12 +1,17 @@
-import { CalendarDays, ChevronRight, CircleDot, Cog, FolderClosed, GitBranch, List, MoreHorizontal, PanelLeftClose, Plus, Search, X } from "@lucide/solid"
-import { createEffect, createMemo, createSignal, createUniqueId, For, onSettled, Show } from "solid-js"
+import { Archive, ArchiveRestore, CalendarDays, ChevronRight, CircleDot, Cog, FolderClosed, FolderOpen, GitBranch, List, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, X } from "@lucide/solid"
+import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, onSettled, Show } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import type { ProjectManifest } from "@services/project"
+import { getErrorMessage } from "@services/api"
 import type { ChatItem } from "@shared/types/chatMessages"
+import { appStore } from "@shared/store/appStore/state"
+import { confirmedProjectRevision } from "@shared/store/appStore/slices/projectSlice"
+import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
 import {
-  getProjectSections, getSessionSection, readPinnedProjectIds, readProjectDisclosures, writeProjectDisclosure,
-  type ProjectSectionPreferences, type ProjectSidebarSection,
+  createProjectSection, getProjectSections, getSessionSection, LEGACY_PROJECT_SECTION_ID, readPinnedProjectIds, readProjectDisclosures,
+  removeProjectSection, writePinnedProjectIds, writeProjectDisclosure,
+  type ProjectSidebarSection,
 } from "@/lib/projectSidebarPreferences"
 import { isSessionUnread, sessionReadMarkersSnapshot, subscribeSessionReadMarkers } from "@/lib/sessionReadMarkers"
 import { sessionOrderSnapshot, subscribeSessionOrder } from "@/lib/sidebarSessionOrderState"
@@ -14,13 +19,19 @@ import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/superv
 import { cn } from "@/lib/utils"
 import { BrandMark } from "../ui/brand-mark"
 import { Button } from "../ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { Input } from "../ui/input"
+import { ConfirmActionDialog } from "../ui/confirm-action-dialog"
+import type { createProjectSections } from "./createProjectSections"
+import { ProjectSectionDialog } from "./ProjectSectionDialog"
+import { createSidebarProjectDragMoves } from "./project-drag/createSidebarProjectDragMoves"
+import type { SidebarDragParts } from "./project-drag/SidebarProjectDrag"
 import { SessionRow } from "./SessionRow"
 import { createUiLocale, createUiText } from "./uiText"
 
 const GROUPING_KEY = "lotus.sidebar.grouping-mode.v1"
 const PROJECT_PREVIEW_COUNT = 7
+const SidebarProjectDrag = lazy(() => import("./project-drag/SidebarProjectDrag"), { export: "SidebarProjectDrag" })
 type Grouping = "date" | "project"
 
 type Props = {
@@ -31,7 +42,9 @@ type Props = {
   chats: ChatItem[]
   currentSessionId: string | null
   projects: Record<string, ProjectManifest>
-  sectionPreferences: ProjectSectionPreferences
+  sections: ReturnType<typeof createProjectSections>
+  ownerAccess: boolean
+  suspended?: boolean
   isRunning: (chat: ChatItem) => boolean
   onClose: () => void
   onToggleCollapse: () => void
@@ -46,6 +59,7 @@ type Props = {
   onDelete: (chat: ChatItem) => void
   onOpenProjectManager: () => void
   onOpenProjectWork: (projectId: string) => void
+  onEditProject?: (projectId: string) => void
   onOpenSettings: () => void
   onOpenWorktrees?: () => void
   onError: (error: unknown) => void
@@ -63,13 +77,15 @@ function Disclosure(props: {
   detail?: string
   disabled?: boolean
   actions?: JSX.Element
+  wrapHeader?: (header: JSX.Element) => JSX.Element
+  sectionHeader?: boolean
   children: JSX.Element
 }) {
   const id = createUniqueId()
-  return (
-    <div class="rounded-md">
+  const header = () => (
       <div class="flex items-center pt-3 pb-1">
         <button type="button" aria-expanded={props.expanded ? "true" : "false"} aria-controls={id}
+          data-sidebar-section-header={props.sectionHeader ? "" : undefined}
           disabled={props.disabled} onClick={props.onToggle}
           class="flex select-none min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default">
           <ChevronRight aria-hidden="true" class={cn("size-3 shrink-0 feedback-motion transition-transform", props.expanded && "rotate-90")} />
@@ -78,6 +94,10 @@ function Disclosure(props: {
         </button>
         {props.actions}
       </div>
+  )
+  return (
+    <div class="rounded-md">
+      {props.wrapHeader ? props.wrapHeader(header()) : header()}
       <div id={id} hidden={!props.expanded}><Show when={props.expanded}>{props.children}</Show></div>
     </div>
   )
@@ -94,7 +114,36 @@ export function Sidebar(props: Props) {
   const [closedDates, setClosedDates] = createSignal(new Set<string>())
   const [olderOpen, setOlderOpen] = createSignal(false)
   const [supervisorOpening, setSupervisorOpening] = createSignal(false)
-  const pinnedProjects = readPinnedProjectIds()
+  const [pinnedProjects, setPinnedProjects] = createSignal(readPinnedProjectIds())
+  const [sectionDialog, setSectionDialog] = createSignal<{ id: string; mode: "create" | "manage" } | null>(null)
+  const [pendingArchive, setPendingArchive] = createSignal<string | null>(null)
+  const [archiveBusy, setArchiveBusy] = createSignal(false)
+  const [archiveError, setArchiveError] = createSignal<string | null>(null)
+  const archiveProject = () => { const id = pendingArchive(); return id ? props.projects[id] : undefined }
+
+  const toggleProjectPin = (projectId: string) => {
+    const next = new Set(pinnedProjects())
+    if (next.has(projectId)) next.delete(projectId)
+    else next.add(projectId)
+    writePinnedProjectIds(next)
+    setPinnedProjects(next)
+  }
+  const changeArchive = async (id: string, archive: boolean) => {
+    if (!props.ownerAccess || archiveBusy()) return
+    const state = appStore.getState()
+    const project = state.projects[id]
+    if (!project || (project.status === "archived") === archive) return
+    setArchiveBusy(true)
+    setArchiveError(null)
+    try {
+      const write = archive ? state.archiveProject : state.unarchiveProject
+      await write(id, confirmedProjectRevision(project))
+      if (archive) setPendingArchive(null)
+    } catch (error) {
+      if (archive) setArchiveError(getErrorMessage(error))
+      else props.onError(error)
+    } finally { setArchiveBusy(false) }
+  }
 
   onSettled(() => {
     const updateOrder = () => { setOrder(sessionOrderSnapshot()) }
@@ -128,7 +177,8 @@ export function Sidebar(props: Props) {
         projectGroups.push({ key: project.id, label: project.name, chats: [] })
       }
     }
-    projectGroups.sort((left, right) => Number(pinnedProjects.has(right.key)) - Number(pinnedProjects.has(left.key)))
+    const pinned = pinnedProjects()
+    projectGroups.sort((left, right) => Number(pinned.has(right.key)) - Number(pinned.has(left.key)))
     return pinnedSessions ? [pinnedSessions, ...projectGroups] : projectGroups
   })
   const activeGroup = createMemo(() => groups().find((group) => group.chats.some((chat) => chat.id === props.currentSessionId)))
@@ -161,7 +211,7 @@ export function Sidebar(props: Props) {
           const next = new Map(state)
           if (!next.has(projectKey(group.key))) next.set(projectKey(group.key), true)
           if (id) {
-            const sectionId = getSessionSection(props.sectionPreferences, group.key, id, props.projects[group.key]?.section)
+            const sectionId = getSessionSection(props.sections.preferences(), group.key, id, props.projects[group.key]?.section)
             if (!next.has(sectionKey(group.key, sectionId))) next.set(sectionKey(group.key, sectionId), true)
           }
           return next
@@ -195,13 +245,32 @@ export function Sidebar(props: Props) {
     props.onNewChat(projectId, sectionId)
     props.onClose()
   }
+  const dragDisabled = (id: string) => !props.ownerAccess || !!query() || !!props.suspended
+    || props.projects[id]?.status !== "active" || props.projects[id]?.sidebar === undefined || props.sections.busy().has(id)
+  const moves = createSidebarProjectDragMoves({
+    state: () => ({ projects: props.projects, chats: rootChats(), preferences: props.sections.preferences(), busy: props.sections.busy() }),
+    bucketSessionIds: (id, section) => {
+      const group = groups().find((candidate) => candidate.key === id)
+      return group?.chats.filter((entry) => getSessionSection(props.sections.preferences(), id, entry.id, props.projects[id]?.section) === section)
+        .map((entry) => entry.id) ?? []
+    },
+    update: props.sections.update,
+    onMovedSection: (id, section) => {
+      const group = section === null && !getProjectSections(props.sections.preferences(), id, props.projects[id]?.section).length
+        ? projectKey(id) : sectionKey(id, section)
+      setDisclosure(projectKey(id), true)
+      setDisclosure(group, true)
+      setDisclosure(`preview:${group}`, true)
+    },
+  })
 
   const renderSessions = (
     chats: () => ChatItem[],
     groupKey: string,
     projectId?: string,
     section?: ProjectSidebarSection | { id: null; name: string },
-    sections?: readonly ProjectSidebarSection[],
+    sections?: () => readonly ProjectSidebarSection[],
+    drag?: SidebarDragParts,
   ) => {
     const expanded = () => disclosures().get(`preview:${groupKey}`) === true
     const folded = () => !!projectId && !query() && chats().length > PROJECT_PREVIEW_COUNT
@@ -209,16 +278,32 @@ export function Sidebar(props: Props) {
     const visible = () => folded() && !expanded() ? chats().slice(0, PROJECT_PREVIEW_COUNT) : chats()
     return (
       <>
-        <For each={visible()} keyed={(chat) => chat.id}>{(entry) => (
+        <For each={visible()} keyed={(chat) => chat.id}>{(entry) => {
+          const sessionProjectId = () => entry().config?.projectId?.trim() || undefined
+          const sessionProject = () => props.projects[sessionProjectId() ?? ""]
+          const sessionSections = () => {
+            const current = sessionProject()
+            return sections?.() ?? (current ? getProjectSections(props.sections.preferences(), current.id, current.section) : undefined)
+          }
+          const sessionSection = () => {
+            const current = sessionProject()
+            return current ? getSessionSection(props.sections.preferences(), current.id, entry().id, current.section) : section?.id
+          }
+          return (
           <SessionRow
             chat={entry()}
             active={props.currentSessionId === entry().id}
             unread={props.currentSessionId !== entry().id && isSessionUnread(entry(), readMarkers())}
             running={props.isRunning(entry())}
-            projectId={projectId}
-            sectionId={section?.id}
-            sections={sections}
-            onMoveToSection={projectId ? (id) => props.onMoveToSection(projectId, entry().id, id) : undefined}
+            projectId={sessionProjectId()}
+            sectionId={sessionSection()}
+            sections={sessionSections()}
+            dragHandle={drag && projectId ? <drag.Handle source={{ kind: "session", projectId, id: entry().id }} disabled={dragDisabled(projectId)}
+              label={`${text("sidebar_session_drag_hint")} · ${entry().title || text("new_session_c57c30bc")}`} /> : undefined}
+            onMoveToSection={sessionProject() && !dragDisabled(sessionProject()!.id) ? (id) => {
+              const current = sessionProject()
+              if (current && !dragDisabled(current.id)) props.onMoveToSection(current.id, entry().id, id)
+            } : undefined}
             onSelect={() => { void select(entry().id) }}
             onRename={(title) => props.onRename(entry().id, title)}
             onTogglePin={() => props.onTogglePin(entry())}
@@ -227,7 +312,8 @@ export function Sidebar(props: Props) {
             onClear={() => props.onClear(entry())}
             onDelete={() => props.onDelete(entry())}
           />
-        )}</For>
+          )
+        }}</For>
         <Show when={folded()}>
           <button type="button" class="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-sidebar-accent"
             onClick={() => setDisclosure(`preview:${groupKey}`, !expanded())}>
@@ -239,7 +325,7 @@ export function Sidebar(props: Props) {
     )
   }
 
-  const renderGroup = (group: () => ChatGroup) => {
+  const renderGroup = (group: () => ChatGroup, drag?: SidebarDragParts) => {
     const project = () => projectMode() ? props.projects[group().key] : undefined
     const expanded = () => !!query() || (projectMode()
       ? disclosures().get(projectKey(group().key)) ?? true
@@ -259,6 +345,8 @@ export function Sidebar(props: Props) {
     return (
       <Disclosure label={group().label} expanded={expanded()} disabled={!!query()} onToggle={toggle}
         detail={text("project_sessions", { count: group().chats.length })}
+        wrapHeader={drag && project() ? (header) => <drag.Target target={{ projectId: group().key, sectionId: null }}
+          disabled={dragDisabled(group().key)} data-project-drop="">{header}</drag.Target> : undefined}
         actions={<Show when={project()}>{(current) => (
           <DropdownMenu>
             <DropdownMenuTrigger aria-label={text("project_actions_4bc7fa27", { v0: current().name })}
@@ -272,34 +360,78 @@ export function Sidebar(props: Props) {
               <DropdownMenuItem onSelect={() => props.onOpenProjectWork(current().id)}>
                 <List />{text("project_work_title")}
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => toggleProjectPin(current().id)}>
+                {pinnedProjects().has(current().id) ? <PinOff /> : <Pin />}
+                {text(pinnedProjects().has(current().id) ? "unpin_c92179b7" : "pin_173f88d2")}
+              </DropdownMenuItem>
+              <Show when={props.ownerAccess}>
+                <DropdownMenuItem onSelect={() => setSectionDialog({ id: current().id, mode: "create" })}>
+                  <Plus />{text("sidebar_create_section")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setSectionDialog({ id: current().id, mode: "manage" })}>
+                  <List />{text("sidebar_manage_sections")}
+                </DropdownMenuItem>
+                <Show when={props.onEditProject}>
+                  <DropdownMenuItem disabled={current().status === "archived"} onSelect={() => props.onEditProject?.(current().id)}>
+                    <Pencil />{text("edit_project_577feeef")}
+                  </DropdownMenuItem>
+                </Show>
+              </Show>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={!current().project_path} onSelect={() => {
+                const path = current().project_path
+                if (path) void openLocalFolder(path).catch(props.onError)
+              }}>
+                <FolderOpen />{text("show_in_file_manager_1280364b")}
+              </DropdownMenuItem>
+              <Show when={props.ownerAccess}>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled={archiveBusy()} onSelect={() => {
+                  if (current().status === "archived") void changeArchive(current().id, false)
+                  else { setArchiveError(null); setPendingArchive(current().id) }
+                }}>
+                  {current().status === "archived" ? <ArchiveRestore /> : <Archive />}
+                  {text(current().status === "archived" ? "restore_project_52a1d56b" : "remove_local_project_e951cbd0")}
+                </DropdownMenuItem>
+              </Show>
             </DropdownMenuContent>
           </DropdownMenu>
         )}</Show>}>
         <Show when={project()} fallback={renderSessions(() => group().chats, group().key)}>
           {(current) => {
-            const sections = createMemo(() => getProjectSections(props.sectionPreferences, current().id, current().section))
+            const sections = createMemo(() => getProjectSections(props.sections.preferences(), current().id, current().section))
             return <>
-              <Button variant="ghost" size="sm" class="w-full justify-start" onClick={() => openNew(current().id)}>
+              <Button variant="ghost" size="sm" class="w-full justify-start" disabled={current().status !== "active"} onClick={() => openNew(current().id)}>
                 <Plus />{text("new_session_58e21b87")}
               </Button>
-              <Show when={sections().length > 0} fallback={renderSessions(() => group().chats, projectKey(current().id), current().id)}>
+              <Show when={sections().length > 0} fallback={drag ? <drag.Target target={{ projectId: current().id, sectionId: null }}
+                disabled={dragDisabled(current().id)} data-project-section="" data-section-id="none" data-section-project={current().id}>
+                {renderSessions(() => group().chats, projectKey(current().id), current().id, undefined, sections, drag)}
+              </drag.Target> : renderSessions(() => group().chats, projectKey(current().id), current().id)}>
                 <For each={[...sections(), { id: null, name: text("sidebar_no_section") }]} keyed={(section) => section.id}>
                   {(section) => {
                     const groupId = () => sectionKey(current().id, section().id)
                     const selected = () => group().chats.filter((chat) =>
-                      getSessionSection(props.sectionPreferences, current().id, chat.id, current().section) === section().id,
+                      getSessionSection(props.sections.preferences(), current().id, chat.id, current().section) === section().id,
                     )
-                    return (
-                      <Disclosure label={section().name}
+                    const bucket = () => (
+                      <Disclosure label={section().name} sectionHeader
                         expanded={!!query() || (disclosures().get(groupId()) ?? true)}
+                        actions={drag && section().id && section().id !== LEGACY_PROJECT_SECTION_ID ? <drag.Handle
+                          source={{ kind: "section", projectId: current().id, id: section().id! }} disabled={dragDisabled(current().id)}
+                          label={`${text("sidebar_section_drag_hint")} · ${section().name}`} /> : undefined}
                         onToggle={() => setDisclosure(groupId(), !(disclosures().get(groupId()) ?? true))}>
-                        <Button variant="ghost" size="sm" class="w-full justify-start"
+                        <Button variant="ghost" size="sm" class="w-full justify-start" disabled={current().status !== "active"}
                           onClick={() => openNew(current().id, section().id)}>
                           <Plus />{text("new_session_58e21b87")}
                         </Button>
-                        {renderSessions(selected, groupId(), current().id, section(), sections())}
+                        {renderSessions(selected, groupId(), current().id, section(), sections, drag)}
                       </Disclosure>
                     )
+                    return drag ? <drag.Target target={{ projectId: current().id, sectionId: section().id }} disabled={dragDisabled(current().id)}
+                      data-project-section={section().name} data-section-id={section().id ?? "none"} data-section-project={current().id}>
+                      {bucket()}
+                    </drag.Target> : bucket()
                   }}
                 </For>
               </Show>
@@ -317,6 +449,7 @@ export function Sidebar(props: Props) {
           aria-label={text("close_3fd47edc")} onClick={props.onClose} />
       </Show>
       <aside
+        data-slot="sidebar"
         style={{
           "--sidebar-w": typeof props.width === "number" ? `${props.width}px` : props.width,
           color: "var(--sidebar-foreground)",
@@ -383,11 +516,19 @@ export function Sidebar(props: Props) {
           <Show when={!rootChats().length}>
             <p class="px-2 py-4 text-xs text-muted-foreground">{text(props.booted ? "no_sessions_yet_69e71f03" : "loading_4927a53b")}</p>
           </Show>
-          <For each={shownGroups()} keyed={(group) => group.key}>{renderGroup}</For>
+          <Show when={projectMode() && props.ownerAccess} fallback={<For each={shownGroups()} keyed={(group) => group.key}>{(group) => renderGroup(group)}</For>}>
+            <Loading fallback={<For each={shownGroups()} keyed={(group) => group.key}>{(group) => renderGroup(group)}</For>}>
+              <SidebarProjectDrag projects={props.projects} chats={rootChats()} preferences={props.sections.preferences()} busy={props.sections.busy()}
+                scopeKey={JSON.stringify([props.currentSessionId, query(), props.open, props.collapsed, props.suspended, sectionDialog(), pendingArchive()])}
+                onMoveSession={moves.moveSession} onMoveSection={moves.moveSection}>
+                {(drag) => <For each={shownGroups()} keyed={(group) => group.key}>{(group) => renderGroup(group, drag)}</For>}
+              </SidebarProjectDrag>
+            </Loading>
+          </Show>
           <Show when={!query() && older().length > 0}>
             <Disclosure label={text("earlier_c56a5bb6")} expanded={olderOpen()} onToggle={() => setOlderOpen((value) => !value)}
               detail={text("count_days", { count: older().length })}>
-              <For each={older()} keyed={(group) => group.key}>{renderGroup}</For>
+              <For each={older()} keyed={(group) => group.key}>{(group) => renderGroup(group)}</For>
             </Disclosure>
           </Show>
         </div>
@@ -402,6 +543,22 @@ export function Sidebar(props: Props) {
           </Button>
         </div>
       </aside>
+      <Show when={sectionDialog()} keyed>{(scope) => (
+        <Show when={props.ownerAccess && props.projects[scope.id]}>{(project) => (
+          <ProjectSectionDialog projectName={project().name} mode={scope.mode}
+            sections={getProjectSections(props.sections.preferences(), scope.id, project().section)}
+            unavailable={project().sidebar === undefined} busy={props.sections.busy().has(scope.id)} error={props.sections.failures()[scope.id]}
+            onCreate={(name) => props.sections.update(scope.id, (previous) => createProjectSection(previous, scope.id, name, project().section))}
+            onRemove={(id) => props.sections.update(scope.id, (previous) => removeProjectSection(previous, scope.id, id, project().section))}
+            onClose={() => setSectionDialog(null)} />
+        )}</Show>
+      )}</Show>
+      <Show when={archiveProject()}>{(project) => (
+        <ConfirmActionDialog open={props.ownerAccess} title={text("remove_bdb7b58b", { v0: project().name })}
+          description={text("the_project_will_be_removed_from_new_session_choices_ex_d355c682")}
+          confirmLabel={text("remove_project_84663136")} busy={archiveBusy()} error={archiveError()}
+          onClose={() => setPendingArchive(null)} onConfirm={() => { void changeArchive(project().id, true) }} />
+      )}</Show>
     </>
   )
 }

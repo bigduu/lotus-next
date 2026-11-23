@@ -1,5 +1,6 @@
 import { AlertCircle, Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, RotateCcw, Sparkles, Trash2 } from "@lucide/solid"
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js"
+import type { JSX } from "@solidjs/web"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { cn } from "@/lib/utils"
 import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
@@ -21,6 +22,7 @@ export function SessionRow(props: {
   running: boolean
   projectId?: string
   sectionId?: string | null
+  dragHandle?: JSX.Element
   sections?: readonly ProjectSidebarSection[]
   onMoveToSection?: (sectionId: string | null) => void
   onSelect: () => void
@@ -136,6 +138,7 @@ export function SessionRow(props: {
         <Show when={runFailed()}>
           <span id={failureId} class="sr-only">{text("session_last_run_failed_hint")}</span>
         </Show>
+        {props.dragHandle}
         <DropdownMenu open={menuOpen()} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger
             aria-label={text("session_actions_e6f6d875")}

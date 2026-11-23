@@ -3,9 +3,10 @@ import { getErrorMessage } from "@services/api"
 import { serviceFactory, type AccessStatusResponse } from "@services/common/ServiceFactory"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
+import { ConfirmActionDialog } from "../../ui/confirm-action-dialog"
 import { Input } from "../../ui/input"
 import type { SaveSystemSection } from "./createSystemConfig"
-import { ConfirmSystemAction, StatusLine, SystemSection, type SectionMessage } from "./SystemFields"
+import { StatusLine, SystemSection, type SectionMessage } from "./SystemFields"
 
 export function AccessPasswordSettings(props: { configReady: boolean; saveSection: SaveSystemSection; onChange: () => void }) {
   const text = createUiText()
@@ -125,7 +126,7 @@ export function AccessPasswordSettings(props: { configReady: boolean; saveSectio
           </div>
         </div>
       </form>
-      <ConfirmSystemAction open={confirmDisable()} busy={busy() === "disable"} title={text("disable_access_password_eaa845c9")}
+      <ConfirmActionDialog open={confirmDisable()} busy={busy() === "disable"} title={text("disable_access_password_eaa845c9")}
         description={text("access_password_clear_tailscale")} confirmLabel={text("disable_password_a9e26288")} error={disableError()}
         onClose={() => setConfirmDisable(false)} onConfirm={() => { void apply("disable") }} />
     </SystemSection>

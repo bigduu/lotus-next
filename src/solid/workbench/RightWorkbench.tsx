@@ -3,7 +3,7 @@ import { createContext, createEffect, createMemo, createSignal, For, onSettled, 
 import { Dynamic, type JSX } from "@solidjs/web"
 import { DragDropManager } from "@dnd-kit/dom"
 import { isSortable, Sortable } from "@dnd-kit/dom/sortable"
-import * as DialogPrimitive from "@kobalte/core/dialog"
+import { hideOthers } from "aria-hidden"
 import { ArrowLeft, Bot, ChevronDown, FileDiff, Globe2, GripVertical, ListChecks, MessageSquare, Plus, SlidersHorizontal, Workflow, X } from "@lucide/solid"
 
 import { workbenchDragCancellation } from "@/components/app/workbenchDragCancellation"
@@ -101,7 +101,7 @@ const WorkbenchScope = createContext<{
 }>()
 
 function canRestoreFocus(target: HTMLElement | null): target is HTMLElement {
-  if (!target?.isConnected || target === document.body || target.matches(":disabled") || target.closest('[hidden], [inert], [aria-hidden="true"]')) return false
+  if (!target?.isConnected || target === document.body || target === document.documentElement || target.matches(":disabled") || target.closest('[hidden], [inert], [aria-hidden="true"]')) return false
   for (let node: HTMLElement | null = target; node; node = node.parentElement) {
     const style = getComputedStyle(node)
     if (style.display === "none" || style.visibility === "hidden") return false
@@ -149,13 +149,54 @@ export function RightWorkbenchSurface(props: WorkbenchSurfaceProps) {
     },
   )
 
-  const modalElementVisible = () => visible() && pageVisible() && panel()?.matches('[aria-modal="true"]')
+  createEffect(
+    () => [modal() && !props.interactionSuspended, panel()] as const,
+    ([active, element]) => {
+      if (!active || !element) return
+      const externalDialog = (target: Element | null) => {
+        const dialog = target?.closest('[aria-modal="true"]')
+        return dialog && dialog !== element && !element.contains(dialog)
+      }
+      const restoreBackground = hideOthers(element)
+      const onTab = (event: KeyboardEvent) => {
+        if (event.defaultPrevented || event.key !== "Tab") return
+        const current = document.activeElement
+        if (externalDialog(current)) return
+        const stops = [...element.querySelectorAll<HTMLElement>(
+          'a[href], button, input, select, textarea, iframe, summary, [contenteditable="true"], [tabindex]',
+        )].filter((target) => target.tabIndex >= 0 && canRestoreFocus(target))
+        const first = stops[0]
+        const last = stops.at(-1)
+        if (!first || !last || !element.contains(current) || current === element ||
+          (event.shiftKey ? current === first : current === last)) {
+          event.preventDefault()
+          const target = (event.shiftKey ? last : first) ?? element
+          target.focus({ preventScroll: true })
+        }
+      }
+      const onFocus = (event: FocusEvent) => {
+        const target = event.target
+        if (target instanceof Element && !element.contains(target) && !externalDialog(target)) {
+          element.focus({ preventScroll: true })
+        }
+      }
+      document.addEventListener("keydown", onTab)
+      document.addEventListener("focusin", onFocus)
+      return () => {
+        document.removeEventListener("keydown", onTab)
+        document.removeEventListener("focusin", onFocus)
+        restoreBackground()
+      }
+    },
+  )
+
+  const modalElementVisible = () => visible() && pageVisible() && panel()?.isConnected && panel()?.matches('[aria-modal="true"]')
 
   const onEscape = (event: KeyboardEvent) => {
-    if (!modal() || event.key !== "Escape" || event.defaultPrevented || event.isComposing || drag().current?.isActive()) return
+    if (!modal() || props.interactionSuspended || event.key !== "Escape" || event.defaultPrevented || event.isComposing || drag().current?.isActive()) return
     // Nested selector content consumes its own Escape before this stable surface.
     if (event.target instanceof Element &&
-      event.target.closest('[role=listbox], [aria-expanded="true"][aria-haspopup="listbox"]')) return
+      event.target.closest('[role=listbox], [role=menu], [data-slot=popover-content], [aria-expanded="true"][aria-haspopup="listbox"]')) return
     event.preventDefault()
     props.onClose()
   }
@@ -165,16 +206,16 @@ export function RightWorkbenchSurface(props: WorkbenchSurfaceProps) {
       <Show when={modal()}>
         <div
           data-slot="dialog-overlay"
-          class="fixed inset-0 z-40 bg-black/50"
+          class="fixed inset-0 z-40 touch-none bg-black/50"
           style={{ "pointer-events": "auto" }}
           onClick={(event) => {
             if (!event.defaultPrevented && event.button === 0 && !event.ctrlKey) props.onClose()
           }}
         />
       </Show>
-      <DialogPrimitive.Root open={modal()} modal={modal()} forceMount>
-        <DialogPrimitive.Content
+      <aside
           ref={setPanel}
+          tabindex={-1}
           id="right-workbench"
           role={modal() ? "dialog" : "complementary"}
           aria-modal={modal() ? "true" : undefined}
@@ -186,14 +227,10 @@ export function RightWorkbenchSurface(props: WorkbenchSurfaceProps) {
             "max-width": props.docked || props.expanded ? undefined : "min(56rem, max(calc(100vw - 3rem), 48rem))",
             display: visible() ? undefined : "none",
           }}
-          onOpenAutoFocus={(event: Event) => event.preventDefault()}
-          onCloseAutoFocus={(event: Event) => event.preventDefault()}
-          onInteractOutside={(event: Event) => event.preventDefault()}
           onKeyDown={onEscape}
         >
           <DialogLayerMount value={panel}>{props.children}</DialogLayerMount>
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Root>
+      </aside>
     </WorkbenchScope>
   )
 }
@@ -226,10 +263,13 @@ function SortableWorkbenchTab(props: {
       }
     },
   )
-  createEffect(() => ({ instance: sortable(), index: props.index, disabled: props.disabled }), ({ instance, index, disabled }) => {
-    if (!instance) return
-    instance.index = index
-    instance.disabled = disabled
+  createEffect(() => [sortable(), props.index] as const, ([instance, index]) => {
+    if (instance) instance.index = index
+  })
+  // Suspending interaction can cancel an optimistic DOM move. Keep its live
+  // index until the drag manager restores the original order.
+  createEffect(() => [sortable(), props.disabled] as const, ([instance, disabled]) => {
+    if (instance) instance.disabled = disabled
   })
 
   return (
@@ -307,6 +347,7 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
     reorder(from, from + direction)
   }
   const selectValue = (value: string) => {
+    if (props.interactionSuspended || drag().current?.isActive()) return
     // A newly opened tab becomes the controlled value before its trigger joins
     // Kobalte's collection. Ignore the primitive's transient first-tab fallback.
     if (!tabsContext?.listState().collection().getItem(selectedValue())) return

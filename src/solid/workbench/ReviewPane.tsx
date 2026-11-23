@@ -1,5 +1,6 @@
 import { Columns2, FileDiff, Rows3, WrapText } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js"
+import type { JSX } from "@solidjs/web"
 import { displayFileChangePath } from "@/components/chat/fileChangePresentation"
 import { summarizeSessionFileChangeGroups, type SessionFileChangeGroup } from "@/lib/sessionFileChanges"
 import {
@@ -154,6 +155,7 @@ export function ReviewPane(props: {
   targetFile?: string | null
   workspace?: string | null
   historyStatus?: string
+  status?: JSX.Element
 }) {
   const text = createUiText()
   const summary = createMemo(() => summarizeSessionFileChangeGroups(props.groups))
@@ -167,6 +169,7 @@ export function ReviewPane(props: {
       <Show when={props.groups.length} fallback={
         <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
           <FileDiff class="size-6 opacity-60" />
+          {props.status}
           {props.historyStatus || text("this_session_has_no_file_changes_to_review_yet_062e5342")}
         </div>
       }>
@@ -185,6 +188,7 @@ export function ReviewPane(props: {
           <Show when={props.historyStatus}>
             <p role="status" class="mb-3 text-xs text-muted-foreground">{props.historyStatus}</p>
           </Show>
+          {props.status}
           <div class="space-y-3">
             <For each={props.groups} keyed={(group) => group.id}>{(group, index) => (
               <FileChanges group={group()} workspace={props.workspace ?? undefined}

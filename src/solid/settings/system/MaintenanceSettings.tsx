@@ -10,7 +10,8 @@ import { ConversationClearDialog } from "../../chat/ConversationClearDialog"
 import { createUiText } from "../../shell/uiText"
 import { createStoreSelector } from "../../state/createStoreSelector"
 import { Button } from "../../ui/button"
-import { ConfirmSystemAction, SettingToggle, StatusLine, SystemSection, type SectionMessage } from "./SystemFields"
+import { ConfirmActionDialog } from "../../ui/confirm-action-dialog"
+import { SettingToggle, StatusLine, SystemSection, type SectionMessage } from "./SystemFields"
 
 const cleanupModes = [
   { mode: "all", label: "delete_all_sessions_ddae77af", description: "all_sessions_19c6c208" },
@@ -92,7 +93,7 @@ export function SessionMaintenanceSettings(props: { advanced: boolean }) {
       <Show when={pending()} keyed>{(action) => action.type === "clear" ? (
         <ConversationClearDialog sessionId={action.id} title={action.title} onClose={() => setPending(null)} />
       ) : (
-        <ConfirmSystemAction open={props.advanced} title={copy(action).title} description={copy(action).description} confirmLabel={copy(action).confirmLabel}
+        <ConfirmActionDialog open={props.advanced} title={copy(action).title} description={copy(action).description} confirmLabel={copy(action).confirmLabel}
           busy={busy()} error={error()} onClose={() => setPending(null)} onConfirm={() => { void run(action) }} />
       )}</Show>
     </SystemSection>
@@ -159,7 +160,7 @@ export function AppMaintenanceSettings(props: { ownerAccess: boolean }) {
       </Show>
       <StatusLine message={message()} />
       <Show when={pending()} keyed>{(action) => (
-        <ConfirmSystemAction open busy={busy()} error={error()} onClose={() => setPending(null)} onConfirm={() => { void run(action) }}
+        <ConfirmActionDialog open busy={busy()} error={error()} onClose={() => setPending(null)} onConfirm={() => { void run(action) }}
           title={text(action === "reset-app" ? "reset_the_entire_app_60e36122" : "clear_local_storage_1b86d7c0")}
           description={text(action === "reset-app" ? "delete_all_sessions_including_pinned_ones_reset_backend_b03a8b2a" : "this_clears_browser_localstorage_local_preferences_and__acf1cd5f")}
           confirmLabel={text(action === "reset-app" ? "confirm_reset_96f2cb4f" : "clear_and_reload_f19b6e32")} />
