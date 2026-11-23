@@ -1,15 +1,12 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import { ApiError } from "@services/api"
 import type { ProjectManifest } from "@services/project"
 import { projectBoardClient, type ProjectBoardPage, type ProjectContext } from "@services/tickets/projectBoard"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
-import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
-import { ProjectWorkBoard } from "./ProjectWorkBoard"
+import { mountProjectWorkBoard, settle } from "./projectWorkTestHarness"
 vi.mock("@services/tickets/projectBoard", async (original) => ({ ...await original<typeof import("@services/tickets/projectBoard")>(), projectBoardClient: { page: vi.fn(), inspect: vi.fn() } }))
-let root: Root
+let view: ReturnType<typeof mountProjectWorkBoard>
 const project = { id: "project", name: "Project", revision: 3, resource_revision: 2, workspace_bindings: [{ path: "/repo/a" }, { path: "/repo/b" }] } as ProjectManifest
 const context = (revision: number, path = "/repo/a"): ProjectContext => ({
   project_id: project.id, project_revision: revision, resource_revision: 2,
@@ -23,17 +20,15 @@ const page = (): ProjectBoardPage => ({ ...ticketSnapshot().scope.overview, data
     stage: (["todo", "doing", "testing", "done", null] as const)[index], context: null, adopted_context: null,
   })),
 } })
-const click = async (label: string) => { await act(async () => { const element = [...document.querySelectorAll("button")].find((button) => button.textContent === label); if (!element) throw new Error(label); element.click() }) }
-const render = async (owner = true, selectedProject = project) => { await act(async () => root.render(<OwnerAccessContext.Provider value={owner}><ProjectWorkBoard key={selectedProject.id} project={selectedProject} /></OwnerAccessContext.Provider>)) }
+const click = async (label: string) => { await settle(async () => { const element = [...document.querySelectorAll("button")].find((button) => button.textContent === label); if (!element) throw new Error(label); element.click() }) }
+const render = async (owner = true, selectedProject = project) => { await view.update({ ownerAccess: owner, project: selectedProject }) }
 beforeEach(async () => {
   await changeLocale("en-US")
-  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  document.body.replaceChildren()
-  root = createRoot(document.body.appendChild(document.createElement("div")))
+  view = mountProjectWorkBoard()
   vi.mocked(projectBoardClient.page).mockReset().mockResolvedValue(page())
   vi.mocked(projectBoardClient.inspect).mockReset().mockResolvedValue({ ...ticketSnapshot().views[0], ticket: page().data.rows[2].ticket, assignments: [{ id: "assignment-A", runtime: { session_id: "owner-session", run_id: "run-id" }, workspace: null, state: "running" }], submissions: [{ id: "s", work_id: "work-2", generation: 1, contract_revision: 1, stale: true, artifacts: [], evidence: ["Historical result"], updated_seq: 10 }] })
 })
-afterEach(() => act(() => root.unmount()))
+afterEach(() => view.dispose())
 it("renders server stages, blocked overlay, cancelled separately, without mutable or draggable status controls", async () => {
   await render(); await click("Board")
   expect(document.querySelector('section[aria-label="Doing"]')?.textContent).toContain("Work 1")
@@ -48,7 +43,7 @@ it("renders server stages, blocked overlay, cancelled separately, without mutabl
 })
 it("opens pinned evidence and owner-session detail and closes without changing Work", async () => {
   await render()
-  await act(async () => (document.querySelector('[data-testid="project-work-work-2"]') as HTMLButtonElement).click())
+  await settle(async () => (document.querySelector('[data-testid="project-work-work-2"]') as HTMLButtonElement).click())
   expect(projectBoardClient.inspect).toHaveBeenCalledWith("work-2", page().snapshot, expect.any(AbortSignal))
   expect(document.body.textContent).toContain("Historical result")
   expect(document.body.textContent).toContain("owner-session")
@@ -70,7 +65,7 @@ it("aborts stale project requests so late results cannot replace newer project d
   const signal = vi.mocked(projectBoardClient.page).mock.calls[0][3]!
   await render(true, { ...project, id: "another" })
   expect(signal.aborted).toBe(true)
-  await act(async () => { const stale = page(); stale.data.rows[0].ticket.contract.title = "Stale result"; finish(stale) })
+  await settle(async () => { const stale = page(); stale.data.rows[0].ticket.contract.title = "Stale result"; finish(stale) })
   expect(document.body.textContent).not.toContain("Stale result")
 })
 it("shows unknown counts for incomplete coverage and reloads after cursor expiry", async () => {
@@ -90,7 +85,7 @@ it("keeps a visible selected view button after focus moves while preserving aria
   expect(find("List").classList.contains("bg-primary")).toBe(true)
   expect(find("Board").getAttribute("aria-pressed")).toBe("false")
   await click("Board")
-  act(() => find("Refresh").focus())
+  await settle(() => find("Refresh").focus())
   expect(find("Board").getAttribute("aria-pressed")).toBe("true")
   expect(find("Board").classList.contains("bg-primary")).toBe(true)
   expect(find("List").getAttribute("aria-pressed")).toBe("false")
@@ -108,7 +103,7 @@ it("shows server-authorized pending context separately from the running assignme
   await render()
   const card = document.querySelector('[data-testid="project-work-work-0"]') as HTMLButtonElement
   expect(card.textContent).toContain("Pending context for the next eligible start")
-  await act(async () => card.click())
+  await settle(async () => card.click())
   expect(document.querySelector('[data-testid="project-work-context-candidate"]')?.textContent).toContain("Project revision 2")
   expect(document.querySelector('[data-testid="project-work-context-pending"]')?.textContent).toContain("Project revision 2")
   expect(document.querySelector('[data-testid="project-work-context-adopted"]')?.textContent).toContain("Project revision 1")
@@ -126,7 +121,7 @@ it.each([null, undefined])("does not infer pending adoption from candidate diffe
   await render()
   const card = document.querySelector('[data-testid="project-work-work-0"]') as HTMLButtonElement
   expect(card.textContent).not.toContain("Pending context")
-  await act(async () => card.click())
+  await settle(async () => card.click())
   expect(document.querySelector('[data-testid="project-work-context-pending"]')).toBeNull()
   expect(document.querySelector('[data-testid="project-work-context-candidate"]')?.textContent).toContain("/repo/new-source")
   expect(document.querySelector('[data-testid="project-work-context-adopted"]')?.textContent).toContain("/repo/old-source")
@@ -142,7 +137,7 @@ it("retains the last adopted context after an assignment stops without presentin
   vi.mocked(projectBoardClient.page).mockResolvedValueOnce(value)
   vi.mocked(projectBoardClient.inspect).mockResolvedValueOnce({ ...ticketSnapshot().views[0], ticket: row.ticket, assignments: [] })
   await render()
-  await act(async () => (document.querySelector('[data-testid="project-work-work-0"]') as HTMLButtonElement).click())
+  await settle(async () => (document.querySelector('[data-testid="project-work-work-0"]') as HTMLButtonElement).click())
   const adopted = document.querySelector('[data-testid="project-work-context-adopted"]')
   expect(adopted?.textContent).toContain("Project revision 1")
   expect(adopted?.previousElementSibling?.textContent).toBe("Last adopted context")

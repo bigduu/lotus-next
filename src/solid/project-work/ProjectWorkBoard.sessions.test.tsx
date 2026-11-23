@@ -2,17 +2,14 @@
 import { readFileSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { resolve } from "node:path"
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { changeLocale } from "@shared/i18n"
-import { uiText } from "@shared/i18n/ui"
+import { changeLocale } from "@shared/i18n/runtime"
+import { uiText } from "@shared/i18n/text"
 import { ApiError, apiClient } from "@services/api"
 import type { ProjectManifest } from "@services/project"
 import { projectBoardClient, type BoardWorkView, type ProjectBoardPage } from "@services/tickets/projectBoard"
 import type { ReadEnvelope } from "@services/tickets/types"
-import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
-import { ProjectWorkBoard } from "./ProjectWorkBoard"
+import { mountProjectWorkBoard, settle } from "./projectWorkTestHarness"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), post: vi.fn(), postOnce: vi.fn() } }))
 vi.mock("@services/tickets/projectBoard", async (original) => ({ ...await original<typeof import("@services/tickets/projectBoard")>(), projectBoardClient: { page: vi.fn(), inspect: vi.fn() } }))
 vi.mock("@services/tickets/sprints", async (original) => {
@@ -29,21 +26,24 @@ const active = capture("active-board.json") as ProjectBoardPage
 const activeView = (capture("active-inspect.json") as ReadEnvelope<BoardWorkView[]>).data[0]
 const project = { id: active.data.project_id, name: "Synthetic captured Project", revision: 4, resource_revision: 2, workspace_bindings: [] } as unknown as ProjectManifest
 const sessionId = activeView.assignments[0].runtime!.session_id
-let root: Root
+let view: ReturnType<typeof mountProjectWorkBoard>
 beforeEach(async () => {
   await changeLocale("en-US")
-  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  document.body.replaceChildren(); root = createRoot(document.body.appendChild(document.createElement("div")))
+  view = mountProjectWorkBoard()
   vi.mocked(projectBoardClient.page).mockReset().mockResolvedValue(active)
   vi.mocked(projectBoardClient.inspect).mockReset().mockResolvedValue(activeView)
   vi.mocked(apiClient.get).mockReset().mockResolvedValue({ session: { id: sessionId, kind: "child", project_id: project.id } })
   vi.mocked(apiClient.post).mockReset()
   vi.mocked(apiClient.postOnce).mockReset().mockRejectedValue(new ApiError("Legacy backend", 404, "Not Found"))
 })
-afterEach(() => { act(() => root.unmount()); vi.restoreAllMocks() })
+afterEach(() => { view.dispose(); vi.restoreAllMocks() })
 async function render(onOpenSession?: (id: string) => void | Promise<void>) {
-  await act(async () => root.render(<OwnerAccessContext.Provider value={true}><ProjectWorkBoard project={project} onOpenSession={onOpenSession ? async (id, verifyAccess) => { if (!await verifyAccess()) return false; await onOpenSession(id); return true } : undefined} /></OwnerAccessContext.Provider>))
-  await act(async () => (document.querySelector(`[data-testid="project-work-${activeView.ticket.id}"]`) as HTMLButtonElement).click())
+  await view.update({ ownerAccess: true, project, onOpenSession: onOpenSession ? async (id, verifyAccess) => {
+    if (!await verifyAccess()) return false
+    await onOpenSession(id)
+    return true
+  } : undefined })
+  await settle(async () => (document.querySelector(`[data-testid="project-work-${activeView.ticket.id}"]`) as HTMLButtonElement).click())
 }
 const openButton = () => [...document.querySelectorAll("button")].find((button) => button.textContent === "Open verified session")
 const observation = () => document.querySelector('[data-testid="assignment-observation"]')
@@ -69,7 +69,7 @@ it("uses a controlled GET result and rechecks before opening only the exact reco
   const opened = vi.fn()
   await render(opened)
   expect(openButton()).toBeDefined()
-  await act(async () => openButton()!.click())
+  await settle(async () => openButton()!.click())
   expect(opened).toHaveBeenCalledExactlyOnceWith(sessionId)
   expect(apiClient.get).toHaveBeenCalledTimes(2)
   expect(apiClient.get).toHaveBeenLastCalledWith(`sessions/${encodeURIComponent(sessionId)}`, { signal: expect.any(AbortSignal) })
@@ -86,7 +86,7 @@ it.each([[403, "Session access denied"], [404, "Session no longer exists"]] as c
 it("does not open a Session deleted between the first read and click", async () => {
   vi.mocked(apiClient.get).mockResolvedValueOnce({ session: { id: sessionId, kind: "child" } }).mockRejectedValue(new ApiError("fixture", 404, "fixture"))
   const opened = vi.fn(); await render(opened)
-  await act(async () => openButton()!.click())
+  await settle(async () => openButton()!.click())
   expect(opened).not.toHaveBeenCalled()
   expect(openButton()).toBeUndefined()
   expect(document.body.textContent).toContain("Session no longer exists")
@@ -94,7 +94,7 @@ it("does not open a Session deleted between the first read and click", async () 
 it("invalidates current-owner and access observations while offline", async () => {
   const opened = vi.fn(); await render(opened)
   vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
-  await act(async () => window.dispatchEvent(new Event("offline")))
+  await settle(async () => window.dispatchEvent(new Event("offline")))
   expect(openButton()).toBeUndefined()
   expect(document.querySelector('[data-testid="assignment-owner-status"]')?.textContent).toBe(uiText("assignment_health_owner_unknown"))
   expect(opened).not.toHaveBeenCalled()
@@ -104,9 +104,9 @@ it("aborts an outstanding Session read when the selected details close", async (
   vi.mocked(apiClient.get).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
   const opened = vi.fn(); await render(opened)
   const signal = vi.mocked(apiClient.get).mock.calls[0][1]?.signal
-  await act(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === "Close details")!.click())
+  await settle(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === "Close details")!.click())
   expect(signal?.aborted).toBe(true)
-  await act(async () => finish({ session: { id: sessionId, kind: "child" } }))
+  await settle(async () => finish({ session: { id: sessionId, kind: "child" } }))
   expect(document.querySelector('[data-testid="assignment-health-panel"]')).toBeNull()
   expect(opened).not.toHaveBeenCalled()
 })
@@ -136,7 +136,7 @@ it("reads only the pinned current Assignment and clears facts offline", async ()
   expect(observation()?.textContent).toContain("Last effective progressUnknown")
   expect(patrolState()).toBe("Saved checkpoint")
   vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
-  await act(async () => window.dispatchEvent(new Event("offline")))
+  await settle(async () => window.dispatchEvent(new Event("offline")))
   expect(observation()?.querySelector("time")).toBeNull()
   expect(patrolState()).toBe("Unknown")
   expect(apiClient.postOnce).toHaveBeenCalledTimes(2)
@@ -160,10 +160,10 @@ it("cannot paint late runtime or patrol evidence after refreshing to a new commi
   await render()
   const signals = vi.mocked(apiClient.postOnce).mock.calls.map((call) => call[2]?.signal)
   vi.mocked(projectBoardClient.page).mockResolvedValue({ ...active, snapshot: { ...active.snapshot, commit: "new-commit" } })
-  await act(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === uiText("refresh_aee88743"))!.click())
+  await settle(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === uiText("refresh_aee88743"))!.click())
   expect(signals.map((signal) => signal?.aborted)).toEqual([true, true])
   expect(apiClient.postOnce).toHaveBeenCalledTimes(4)
-  await act(async () => {
+  await settle(async () => {
     finishObservation({ ...sample(), progress: { sequence: 1, at_ms: observedAt } })
     finishStatus(savedStatus())
   })
@@ -177,9 +177,9 @@ it("aborts the runtime sample on owner access loss and ignores its late result",
   vi.mocked(apiClient.postOnce).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
   await render()
   const signal = vi.mocked(apiClient.postOnce).mock.calls[0][2]?.signal
-  await act(async () => root.render(<OwnerAccessContext.Provider value={false}><ProjectWorkBoard project={project} /></OwnerAccessContext.Provider>))
+  await view.update({ ownerAccess: false, project })
   expect(signal?.aborted).toBe(true)
-  await act(async () => finish(sample()))
+  await settle(async () => finish(sample()))
   expect(observation()).toBeNull()
   expect(apiClient.postOnce).toHaveBeenCalledTimes(2)
 })

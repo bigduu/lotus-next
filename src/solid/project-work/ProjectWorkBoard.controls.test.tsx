@@ -1,12 +1,10 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import type { ProjectManifest } from "@services/project"
 import { projectBoardClient, type ProjectBoardPage } from "@services/tickets/projectBoard"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
-import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
-import { ProjectWorkBoard, type ProjectWorkBoardControls } from "./ProjectWorkBoard"
+import type { ProjectWorkBoardControls } from "./ProjectWorkBoard"
+import { mountProjectWorkBoard, settle } from "./projectWorkTestHarness"
 import { ownerProps, planningProps } from "@/test/fixtures/projectWorkControls"
 
 vi.mock("@services/tickets/projectBoard", async (original) => ({ ...await original<typeof import("@services/tickets/projectBoard")>(), projectBoardClient: { page: vi.fn(), inspect: vi.fn() } }))
@@ -20,19 +18,17 @@ const page = (): ProjectBoardPage => {
       stage: "doing", context: null, adopted_context: null }],
   } }
 }
-let root: Root
+let view: ReturnType<typeof mountProjectWorkBoard>
 beforeEach(async () => {
   await changeLocale("en-US")
-  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  document.body.replaceChildren()
-  root = createRoot(document.body.appendChild(document.createElement("div")))
+  view = mountProjectWorkBoard()
   vi.mocked(projectBoardClient.page).mockReset().mockResolvedValue(page())
   vi.mocked(projectBoardClient.inspect).mockReset().mockResolvedValue({ ticket: page().data.rows[0].ticket, assignments: [], requests: [], submissions: [] })
 })
-afterEach(() => act(() => root.unmount()))
+afterEach(() => view.dispose())
 async function render(controls?: ProjectWorkBoardControls, owner = true) {
-  await act(async () => root.render(<OwnerAccessContext.Provider value={owner}><ProjectWorkBoard project={project} controls={controls} /></OwnerAccessContext.Provider>))
-  if (owner) await act(async () => (document.querySelector('[data-testid="project-work-work-1"]') as HTMLButtonElement).click())
+  await view.update({ ownerAccess: owner, project, controls })
+  if (owner) await settle(async () => (document.querySelector('[data-testid="project-work-work-1"]') as HTMLButtonElement).click())
 }
 const button = (name: string) => [...document.querySelectorAll("button")].find((item) => item.textContent === name)!
 
@@ -46,7 +42,7 @@ it("delivers a matching controlled draft with its original Work and scope CAS", 
   const planning = planningProps()
   await render({ planning })
   expect(button("Request planning update").disabled).toBe(false)
-  await act(async () => button("Request planning update").click())
+  await settle(async () => button("Request planning update").click())
   expect(planning.onSavePlanning).toHaveBeenCalledExactlyOnceWith({ priority: "high", expectedCompletionAt: "2026-10-19T09:15:00-07:00" }, planning.command)
   expect(planning.command?.recordRevision).toBe(8)
   expect(page().data.rows[0].ticket.state).toBe("active")
@@ -74,7 +70,7 @@ it.each(["scope", "sequence", "epoch"])("disables commands outside the selected 
   await render({ planning, owner })
   expect(button("Request planning update").disabled).toBe(true)
   expect(button("Request pause").disabled).toBe(true)
-  await act(async () => button("Request planning update").click())
+  await settle(async () => button("Request planning update").click())
   expect(planning.onSavePlanning).not.toHaveBeenCalled()
   expect(owner.onRequestAction).not.toHaveBeenCalled()
   expect((document.querySelector('input[type="text"]') as HTMLInputElement).value).toBe(planning.draft.expectedCompletionAt)

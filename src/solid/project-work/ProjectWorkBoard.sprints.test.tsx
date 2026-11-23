@@ -1,16 +1,13 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import { ApiError } from "@services/api"
 import type { ProjectManifest } from "@services/project"
 import { projectBoardClient, type BoardWorkView, type ProjectBoardPage } from "@services/tickets/projectBoard"
 import { sprintClient, type SprintCommand, type SprintInspection, type SprintPage, type SprintReceipt, type SprintSummary, type SprintWorkVersion } from "@services/tickets/sprints"
 import type { SnapshotRef, TicketScope } from "@services/tickets/types"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
-import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
 import { sprintOwnerControlsEnglish as copy } from "@/lib/project-work/SprintOwnerControls.copy"
-import { ProjectWorkBoard } from "./ProjectWorkBoard"
+import { mountProjectWorkBoard, settle } from "./projectWorkTestHarness"
 
 // Keep the real Board, Sprint panel, both hooks, controls and locale adapters.
 // These mocks are the transport ports, not alternate component implementations.
@@ -19,7 +16,7 @@ vi.mock("@services/tickets/projectBoard", async (original) => ({ ...await origin
 vi.mock("@services/tickets/sprints", async (original) => ({ ...await original<typeof import("@services/tickets/sprints")>(),
   sprintClient: { list: vi.fn(), inspect: vi.fn(), scope: vi.fn(), command: vi.fn() } }))
 
-let root: Root
+let view: ReturnType<typeof mountProjectWorkBoard>
 let project: ProjectManifest
 let at: SnapshotRef
 let inspectRevision: number
@@ -60,31 +57,29 @@ function inspection(sprintId = "sprint-active", fixed = at): SprintInspection {
 const receipt = (command: SprintCommand): SprintReceipt => ({ operation: { operation_id: command.operation_id,
   committed_seq: command.expected_seq + 1, ids: { sprint: command.sprint_id }, principal: "user:owner",
   request_hash: "test-command-hash", canonical_request: JSON.stringify(["sprint", command]) }, closure: null })
-const render = async (owner = true) => act(async () => root.render(<OwnerAccessContext.Provider value={owner}><ProjectWorkBoard key={project.id} project={project} /></OwnerAccessContext.Provider>))
+const render = async (owner = true) => view.update({ ownerAccess: owner, project })
 const findButton = (label: string) => [...document.querySelectorAll("button")].find((element) => element.textContent === label)
-const click = async (label: string) => act(async () => {
+const click = async (label: string) => settle(async () => {
   const element = findButton(label)
   if (!element) throw new Error(`Missing real button: ${label}`)
   element.click()
 })
 const field = (label: string) => [...document.querySelectorAll("label")].find((element) => element.querySelector("span")?.textContent === label)!.querySelector("input,textarea") as HTMLInputElement
-const input = async (element: HTMLInputElement, value: string) => act(async () => {
+const input = async (element: HTMLInputElement, value: string) => settle(async () => {
   const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
   Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(element, value)
   element.dispatchEvent(new Event("input", { bubbles: true }))
 })
-const chooseFilter = async (value: string) => act(async () => {
+const chooseFilter = async (value: string) => settle(async () => {
   const select = document.querySelector('[data-testid="project-sprint-filter"]') as HTMLSelectElement
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value)
   select.dispatchEvent(new Event("change", { bubbles: true }))
 })
-const openWork = async () => act(async () => (document.querySelector('[data-testid="project-work-work-a"]') as HTMLButtonElement).click())
+const openWork = async () => settle(async () => (document.querySelector('[data-testid="project-work-work-a"]') as HTMLButtonElement).click())
 
 beforeEach(async () => {
   await changeLocale("en-US")
-  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  document.body.replaceChildren()
-  root = createRoot(document.body.appendChild(document.createElement("div")))
+  view = mountProjectWorkBoard()
   // The production journal is intentionally tab-local and persists across mounts.
   // Distinct Project identities keep these real-parent tests independent.
   project = { id: `sprint-parent-${++projectNumber}`, name: "Canonical Project", status: "active", revision: 2, resource_revision: 1,
@@ -99,7 +94,7 @@ beforeEach(async () => {
   vi.mocked(sprintClient.scope).mockReset().mockImplementation(async () => scope())
   vi.mocked(sprintClient.command).mockReset().mockImplementation(async (command) => receipt(command))
 })
-afterEach(() => act(() => root?.unmount()))
+afterEach(() => view.dispose())
 
 it("does not read or expose Sprint planning writes outside verified owner access", async () => {
   await render(false)
@@ -145,14 +140,14 @@ it("clears selected Work and starts a fresh cursor when changing All Work, Backl
   expect(allSignal.aborted).toBe(true)
   expect(document.querySelector('[data-testid="project-work-details"]')).toBeNull()
   expect(vi.mocked(projectBoardClient.page).mock.calls[2]).toEqual([project.id, false, undefined, expect.any(AbortSignal), { kind: "backlog" }])
-  await act(async () => finishBacklog(boardPage()))
+  await settle(async () => finishBacklog(boardPage()))
   expect(document.querySelector('[data-testid="project-work-work-a"]')).not.toBeNull()
   expect(document.querySelector('[data-testid="project-work-details"]')).toBeNull()
   await openWork()
   await chooseFilter("sprint:sprint-active")
   expect(document.querySelector('[data-testid="project-work-details"]')).toBeNull()
   expect(vi.mocked(projectBoardClient.page).mock.calls[3]).toEqual([project.id, false, undefined, expect.any(AbortSignal), { kind: "sprint", sprint_id: "sprint-active" }])
-  await act(async () => finishSprint(boardPage()))
+  await settle(async () => finishSprint(boardPage()))
   expect(document.querySelector('[data-testid="project-work-details"]')).toBeNull()
   expect(sprintClient.inspect).toHaveBeenCalledWith(project.id, "sprint-active", at, expect.any(AbortSignal))
   expect(sprintClient.command).not.toHaveBeenCalled()
@@ -224,7 +219,7 @@ it("preserves a conflicting edit through real parent refresh and requires anothe
   expect(sprintClient.command).toHaveBeenCalledTimes(1)
   at = snapshot(11)
   inspectRevision = 4
-  await act(async () => finishRefresh(boardPage()))
+  await settle(async () => finishRefresh(boardPage()))
   expect(field(copy.goal)).toBe(goal)
   expect(goal.value).toBe("Preserve this owner draft")
   expect(document.body.textContent).toContain(copy.draftStale)
@@ -261,7 +256,7 @@ it("keeps the original create Sprint ID and draft through a 409 parent loading c
   expect(findButton(copy.create)!.disabled).toBe(true)
   expect(sprintClient.command).toHaveBeenCalledTimes(1)
   at = snapshot(11)
-  await act(async () => finishRefresh(boardPage()))
+  await settle(async () => finishRefresh(boardPage()))
   expect(field(copy.name).value).toBe("Preserved new Sprint")
   expect(field(copy.goal).value).toBe("Reviewed planning goal")
   expect(sprintClient.command).toHaveBeenCalledTimes(1)
@@ -286,7 +281,7 @@ it("reconciles an unknown result only by explicit user action using the exact or
   expect(findButton(copy.reviewLatest)).toBeUndefined()
   expect(projectBoardClient.page).toHaveBeenCalledTimes(1)
   expect(sprintClient.command).toHaveBeenCalledTimes(1)
-  await act(async () => { findButton(copy.reconcile)!.click(); findButton(copy.reconcile)!.click() })
+  await settle(async () => { findButton(copy.reconcile)!.click(); findButton(copy.reconcile)!.click() })
   expect(sprintClient.command).toHaveBeenCalledTimes(2)
   expect(vi.mocked(sprintClient.command).mock.calls[1][0]).toEqual(original)
   expect(document.body.textContent).toContain(copy.committed)
@@ -305,7 +300,7 @@ it.each(["unavailable", "mutation-disabled", "epoch-mismatch", "capability-missi
   expect(document.querySelector('[data-testid="project-work-work-a"]')).not.toBeNull()
   expect(document.querySelector('[data-testid="sprint-owner-controls"]')).not.toBeNull()
   expect(findButton(copy.create)!.disabled).toBe(true)
-  await act(async () => document.querySelector('[data-testid="sprint-owner-controls"] form')!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  await settle(async () => document.querySelector('[data-testid="sprint-owner-controls"] form')!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
   expect(sprintClient.command).not.toHaveBeenCalled()
   await chooseFilter("sprint:sprint-active")
   expect(findButton(copy.add)!.disabled).toBe(true)
