@@ -57,6 +57,16 @@ export function ComposerPanel(props: {
   pageVisible?: boolean
 }) {
   const text = createUiText()
+  let column!: HTMLDivElement
+  let surface!: HTMLDivElement
+  const [compactToolbar, setCompactToolbar] = createSignal(false)
+  onSettled(() => {
+    const measure = () => setCompactToolbar(column.clientWidth > 0 && column.clientWidth < 600)
+    const observer = new ResizeObserver(measure)
+    observer.observe(column)
+    measure()
+    return () => observer.disconnect()
+  })
   const draftKey = () => props.chat.currentSessionId ?? ""
   const inputs = createStoreSelector(appStore, (state) => state.inputStates)
   const usage = createStoreSelector(appStore, (state) => {
@@ -255,7 +265,7 @@ export function ComposerPanel(props: {
   }
 
   return (
-    <div data-composer-column="" class="mx-auto w-full max-w-4xl px-3 pb-3 sm:px-6">
+    <div ref={(element) => { column = element }} data-composer-column="" data-composer-compact={String(compactToolbar())} class="mx-auto w-full max-w-4xl px-3 pb-3 sm:px-6">
       <ContextCompressionNotice feedback={props.pageVisible === false ? null : props.chat.contextCompression}
         sessionId={props.pageVisible !== false && props.chat.currentChat?.kind === "root" ? props.chat.currentSessionId : null}
         manualPending={commands.compactPending} runActive={running()} />
@@ -298,7 +308,8 @@ export function ComposerPanel(props: {
       <Show when={commandNotice()?.key === draftKey()}><p role="alert" class="mx-2 mb-2 text-xs text-destructive">
         {commandNotice()?.message}
       </p></Show>
-      <div class="min-w-0 rounded-3xl border bg-background p-2"
+      <div ref={(element) => { surface = element }} data-composer-surface=""
+        class="min-w-0 rounded-3xl border bg-background p-2"
         onDragOver={(event) => {
           if (event.dataTransfer?.types.includes("Files")) event.preventDefault()
         }}
@@ -355,47 +366,53 @@ export function ComposerPanel(props: {
             if (event.currentTarget.files) void addFiles(event.currentTarget.files)
             event.currentTarget.value = ""
           }} />
-          <Button type="button" variant="ghost" size="icon" aria-label={text("add_images_9f0d4e46")}
-            onClick={() => filePicker.click()}>
-            <ImagePlus class="size-4" />
-          </Button>
-          <Show when={draftKey() === ""}>
-            <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
-              value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
-              disabled={worktree.locked || submitting() || props.chat.submissionPending}
-              preparedPath={worktree.preparedPath} error={worktree.error} />
-            <Show when={worktree.busy}><span role="status" class="px-2 text-xs text-muted-foreground">
-              {text("chat_worktree_preparing")}
-            </span></Show>
-          </Show>
-          <Show when={props.chat.currentSessionId} keyed fallback={<NewSessionPermissionControl />}>
-            {(id) => <PermissionModeControl sessionId={id} title={props.chat.currentChat?.title || id} />}
-          </Show>
-          <ComposerModelControls controls={models} />
-          <ContextUsageRing usage={usage()} onClick={() => {
-            const id = props.chat.currentSessionId
-            if (id) props.onOpenGoal(id)
-          }} />
-          <div class="flex-1" />
-          <Show when={queuedSend()}><GuidanceTimingControl queue={queue} disabled={blocked() || submitting()} /></Show>
-          <Show when={running() || props.chat.sending}>
-            <Button size="icon" class="rounded-full" type="button"
-              aria-label={text("stop_generation_9ad0aac3")} onClick={() => {
-                liveRetry.cancelForStop()
-                void props.chat.stop()
-              }}>
-              <Square class="size-3.5" />
+          <div class="flex min-w-0 flex-wrap items-center gap-1"
+            style={{ flex: compactToolbar() ? "1 0 100%" : "1 1 auto" }}>
+            <Button type="button" variant="ghost" size="icon" aria-label={text("add_images_9f0d4e46")}
+              onClick={() => filePicker.click()}>
+              <ImagePlus class="size-4" />
             </Button>
-          </Show>
-          <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand()}>
-            <Button size="icon" class="rounded-full" type="button"
-              aria-label={text(queuedSend() && !sideChatCommand() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
-              disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
-                (!sideChatCommand() && (blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}
-              onClick={() => { void send() }}>
-              <ArrowUp />
-            </Button>
-          </Show>
+            <Show when={draftKey() === ""}>
+              <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
+                value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
+                disabled={worktree.locked || submitting() || props.chat.submissionPending}
+                preparedPath={worktree.preparedPath} error={worktree.error} />
+              <Show when={worktree.busy}><span role="status" class="px-2 text-xs text-muted-foreground">
+                {text("chat_worktree_preparing")}
+              </span></Show>
+            </Show>
+            <Show when={props.chat.currentSessionId} keyed fallback={<NewSessionPermissionControl />}>
+              {(id) => <PermissionModeControl sessionId={id} title={props.chat.currentChat?.title || id} />}
+            </Show>
+          </div>
+          <div class="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1">
+            <ContextUsageRing usage={usage()} onClick={() => {
+              const id = props.chat.currentSessionId
+              if (id) props.onOpenGoal(id)
+            }} />
+            <ComposerModelControls controls={models} onRestoreFocus={() => {
+              if (props.pageVisible !== false) surface.querySelector<HTMLElement>('[data-composer-editor][contenteditable="true"]')?.focus()
+            }} />
+            <Show when={queuedSend()}><GuidanceTimingControl queue={queue} disabled={blocked() || submitting()} /></Show>
+            <Show when={running() || props.chat.sending}>
+              <Button size="icon" class="rounded-full" type="button"
+                aria-label={text("stop_generation_9ad0aac3")} onClick={() => {
+                  liveRetry.cancelForStop()
+                  void props.chat.stop()
+                }}>
+                <Square class="size-3.5" />
+              </Button>
+            </Show>
+            <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand()}>
+              <Button size="icon" class="rounded-full" type="button"
+                aria-label={text(queuedSend() && !sideChatCommand() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
+                disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
+                  (!sideChatCommand() && (blocked() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}
+                onClick={() => { void send() }}>
+                <ArrowUp />
+              </Button>
+            </Show>
+          </div>
         </div>
       </div>
     </div>

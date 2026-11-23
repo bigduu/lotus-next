@@ -81,7 +81,6 @@ export function ModelEffortPicker(props: {
   })
   const providerLabel = () => props.modelGroups.find((group) => group.provider === props.modelProvider)?.label ?? props.modelProvider
   const providerDescription = () => props.model && providerLabel() ? ` · ${providerLabel()}` : ""
-  const popoverOpen = () => open() && !triggerDisabled()
   const focus = (screen: "effort" | "models", disabled: boolean) => {
     if (screen === "models") searchRef?.focus()
     else if (disabled) modelButtonRef?.focus()
@@ -89,8 +88,8 @@ export function ModelEffortPicker(props: {
   }
 
   createEffect(
-    () => [popoverOpen(), page(), effortDisabled()] as const,
-    ([shown, screen, disabled]) => { if (shown) focus(screen, disabled) },
+    () => [open(), page()] as const,
+    ([shown, screen]) => { if (shown) focus(screen, untrack(effortDisabled)) },
   )
   const changeOpen = (next: boolean) => {
     if (next && triggerDisabled()) return
@@ -112,13 +111,13 @@ export function ModelEffortPicker(props: {
   }
 
   return (
-    <Popover open={popoverOpen()} onOpenChange={changeOpen} placement={
+    <Popover open={open()} onOpenChange={changeOpen} placement={
       `${props.menuPlacement === "down" ? "bottom" : "top"}-${props.menuAlign === "left" ? "start" : "end"}`
     }>
       <PopoverTrigger type="button" data-testid="model-effort-picker" aria-label={text("model_and_reasoning_effort")}
         aria-describedby={`${pickerId}-model${providerDescription() ? ` ${pickerId}-provider` : ""} ${pickerId}-effort`}
-        title={`${modelText()} · ${currentLabel()}`} disabled={triggerDisabled()}
-        class={cn("model-effort-trigger", composerControlClassName)}>
+        title={`${modelText()} · ${currentLabel()}`} aria-disabled={!open() && triggerDisabled() ? "true" : undefined}
+        class={cn("model-effort-trigger aria-disabled:cursor-not-allowed aria-disabled:opacity-50", composerControlClassName)}>
         <span id={`${pickerId}-model`} class="min-w-0 truncate text-left">{modelText()}</span>
         <span id={`${pickerId}-effort`} class="effort-trigger-label shrink-0 truncate">{currentLabel()}</span>
         <Show when={providerDescription()}><span id={`${pickerId}-provider`} class="sr-only">{providerDescription()}</span></Show>
@@ -126,7 +125,7 @@ export function ModelEffortPicker(props: {
       </PopoverTrigger>
       <PopoverContent class="model-effort-panel w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl p-2.5 shadow-xl"
         onOpenAutoFocus={(event) => { event.preventDefault(); untrack(() => focus(page(), effortDisabled())) }}>
-        <Show when={popoverOpen()}>
+        <Show when={open()}>
           <Show when={page() === "effort"} fallback={
             <>
               <div class="mb-2 flex items-center gap-1 text-sm text-muted-foreground">
@@ -222,10 +221,17 @@ export function ModelEffortPicker(props: {
               <div class="effort-slider-ticks" aria-hidden="true"><For each={efforts()}>{(_effort) => <span />}</For></div>
               <input ref={(node) => { sliderRef = node }} type="range" min={0} max={efforts().length - 1} step={1} value={displayIndex()}
                 aria-label={text("reasoning_level_c8c14507")} aria-valuetext={unconfirmed() ? currentLabel() : text(labels[displayed()])}
-                aria-description={effortDescription()} disabled={effortDisabled()}
-                onPointerDown={() => { pointerActive = true }}
+                aria-description={effortDescription()} aria-disabled={effortDisabled() ? "true" : undefined}
+                class="aria-disabled:cursor-not-allowed"
+                onPointerDown={(event) => {
+                  if (effortDisabled()) event.preventDefault()
+                  else pointerActive = true
+                }}
                 onInput={(event) => {
-                  if (effortDisabled()) return
+                  if (effortDisabled()) {
+                    event.currentTarget.value = String(index())
+                    return
+                  }
                   const next = Number(event.currentTarget.value)
                   if (pointerActive || keyboardActive) setPreview(next)
                   else {
@@ -239,7 +245,9 @@ export function ModelEffortPicker(props: {
                 }}
                 onPointerCancel={() => { pointerActive = false; setPreview(null) }}
                 onKeyDown={(event) => {
-                  if (adjustmentKeys.includes(event.key)) keyboardActive = true
+                  if (!adjustmentKeys.includes(event.key)) return
+                  if (effortDisabled()) event.preventDefault()
+                  else keyboardActive = true
                 }}
                 onKeyUp={(event) => {
                   if (keyboardActive && adjustmentKeys.includes(event.key)) commit(Number(event.currentTarget.value))

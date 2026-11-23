@@ -186,7 +186,7 @@ test("short model and effort labels align with the composer toolbar without a sp
   const picker = modelEffortPicker(page)
   const geometry = await picker.evaluate((trigger) => {
     const composer = trigger.closest("[data-composer-surface]")!
-    const permission = composer.querySelector('[role="combobox"]')!
+    const permission = composer.querySelector('[aria-haspopup="listbox"][data-slot="select-trigger"]')!
     const send = composer.querySelector('button[aria-label="发送消息"]')!
     const [model, effort] = [...trigger.querySelectorAll("span")]
     const text = trigger.ownerDocument.createRange()
@@ -473,11 +473,16 @@ test("a pending Ultra selection keeps the composer geometry stable", async ({ pa
     return { x, y, width, height }
   }))
   await picker.click()
+  const slider = page.getByRole("slider", { name: "推理强度", exact: true })
   try {
-    await page.getByRole("slider", { name: "推理强度", exact: true }).press("End")
+    await slider.press("End")
     await expect.poll(() => operations.length).toBe(1)
     await expect(surfaces.getByRole("alert")).toHaveCount(0)
     await expect(surfaces.getByRole("status").filter({ hasText: "等待服务器确认" })).toHaveCount(1)
+    await expect(slider).toBeFocused()
+    await expect(slider).toBeDisabled()
+    await page.keyboard.press("Home")
+    expect(operations).toHaveLength(1)
     const pendingSamples = await surfaces.evaluateAll(async (elements) => {
       const view = elements[0]!.ownerDocument.defaultView!
       const samples = []
@@ -497,6 +502,9 @@ test("a pending Ultra selection keeps the composer geometry stable", async ({ pa
     release()
   }
   await expect(picker).toContainText("Ultra")
+  await expect(slider).toBeEnabled()
+  await expect(slider).toBeFocused()
+  await expect(slider).toHaveAttribute("aria-valuetext", "Ultra")
   await expect(surfaces.getByRole("alert")).toHaveCount(0)
   for (let index = 0; index < before.length; index++) {
     expect(await surfaces.nth(index).boundingBox()).toEqual(before[index]!)

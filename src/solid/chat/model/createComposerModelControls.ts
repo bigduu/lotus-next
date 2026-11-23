@@ -3,7 +3,6 @@ import { appStore } from "@shared/store/appStore/state"
 import { providerStore } from "@shared/store/appStore/slices/providerState"
 import { getRuntimeModelIds, resolveAdmittedModelRef, resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
-import { uiText } from "@shared/i18n/text"
 import { getErrorMessage } from "@services/api/errors"
 import { getSessionCompatibilitySnapshot, isSessionExecutionBlocked, subscribeSessionCompatibility } from "@services/chat/sessionExecutionCompatibility"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
@@ -45,8 +44,11 @@ export function createComposerModelControls(input: {
 
   let modelSaveActive = false
   const [modelSaving, setModelSaving] = createSignal(false)
-  const [modelError, setModelError] = createSignal<{ sessionId: string | null; message: string } | null>(null)
-  createEffect(sessionId, () => { setModelError(null) })
+  const sessionScope = createMemo(() => ({ id: sessionId(), createdAt: input.chat.currentChat?.createdAtExact }), {
+    equals: (previous, next) => previous.id === next.id && previous.createdAt === next.createdAt,
+  })
+  const [modelError, setModelError] = createSignal<{ scope: ReturnType<typeof sessionScope>; details: string } | null>(null)
+  createEffect(sessionScope, () => { setModelError(null) })
   const disabled = () => input.disabled() || modelSaving()
     || input.chat.currentChat?.isRunning === true || root.authority?.isRunning === true
     || input.chat.executionCompatibility.blocked
@@ -77,7 +79,8 @@ export function createComposerModelControls(input: {
   })
 
   const chooseModel = async (model: ProviderModelRef) => {
-    const id = sessionId()
+    const scope = sessionScope()
+    const id = scope.id
     if (modelDisabled() || modelSaveActive || isSessionExecutionBlocked(id)) return
     const reference = activeModel()
     if (reference?.provider === model.provider && reference.model === model.model) return
@@ -95,7 +98,7 @@ export function createComposerModelControls(input: {
     try {
       await appStore.getState().changeSessionModel(id, admitted)
     } catch (error) {
-      if (sessionId() === id) setModelError({ sessionId: id, message: `${uiText("could_not_save_the_model_please_try_again_631991a6")} ${getErrorMessage(error)}` })
+      if (sessionScope() === scope) setModelError({ scope, details: getErrorMessage(error) })
     } finally {
       modelSaveActive = false
       setModelSaving(false)
@@ -119,8 +122,9 @@ export function createComposerModelControls(input: {
     get thinkingMode() { return thinking.thinkingMode },
     get modelError() {
       const error = modelError()
-      return error?.sessionId === sessionId() ? error.message : null
+      return error?.scope === sessionScope() ? error.details : null
     },
+    dismissModelError: () => setModelError(null),
     chooseModel,
   }
 }

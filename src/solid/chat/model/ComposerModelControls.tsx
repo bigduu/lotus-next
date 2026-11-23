@@ -1,13 +1,17 @@
 import { Show } from "solid-js"
 import { createUiText } from "../../shell/uiText"
 import { ModelEffortPicker } from "./ModelEffortPicker"
+import { ModelFailureNotice } from "./ModelFailureNotice"
 import type { createComposerModelControls } from "./createComposerModelControls"
 
-export function ComposerModelControls(props: { controls: ReturnType<typeof createComposerModelControls> }) {
+export function ComposerModelControls(props: {
+  controls: ReturnType<typeof createComposerModelControls>
+  onRestoreFocus: () => void
+}) {
   const text = createUiText()
   const root = () => props.controls.root
   const thinking = () => props.controls.thinking
-  const error = () => thinking().error ?? props.controls.modelError
+  const error = () => thinking().error
   const status = () => {
     const state = root()
     if (state.unsafe && props.controls.busy && !error()) return text("waiting_for_server_confirmation_71efb37a")
@@ -49,5 +53,9 @@ export function ComposerModelControls(props: { controls: ReturnType<typeof creat
       modelDisabled={props.controls.modelDisabled} value={thinking().ordinaryValue}
       allowUltra={root().isRoot} thinkingMode={thinking().thinkingMode}
       disabled={thinking().disabled} onChange={(selection) => { void thinking().choose(selection) }} />
+    <Show when={props.controls.modelError} keyed>
+      {(details) => <ModelFailureNotice details={details} onDismiss={props.controls.dismissModelError}
+        onRestoreFocus={props.onRestoreFocus} />}
+    </Show>
   </>
 }
