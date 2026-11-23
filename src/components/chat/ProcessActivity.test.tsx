@@ -6,7 +6,7 @@ import { extractProcessBrief, ProcessActivity } from "./ProcessActivity"
 import { Reasoning } from "./Reasoning"
 import { readFileSync } from "node:fs"
 
-const processStyles = readFileSync("src/components/chat/ProcessActivity.css", "utf8")
+const processStyles = readFileSync("src/shared/theme/process-activity.css", "utf8")
 
 const views: { container: HTMLDivElement; root: Root }[] = []
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }

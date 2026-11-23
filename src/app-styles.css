@@ -1,10 +1,10 @@
 @import "tw-animate-css";
 @import "./shared/theme/themeColors.css";
 /* Shared controls load with Root; keep their startup styles in one sheet. */
-@import "./components/chat/ModelEffortPicker.css";
-@import "./components/chat/ProcessActivity.css";
-@import "./components/chat/DisclosurePanel.css";
-@import "./components/ui/confirmation-icon.css";
+@import "./shared/theme/model-effort-picker.css";
+@import "./shared/theme/process-activity.css";
+@import "./shared/theme/disclosure-panel.css";
+@import "./shared/theme/confirmation-icon.css";
 @plugin "@tailwindcss/typography";
 /* Translation prose is not a source of utility classes. */
 @source not "./shared/i18n";

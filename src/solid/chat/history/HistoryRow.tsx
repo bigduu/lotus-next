@@ -2,7 +2,7 @@ import { Brain, ChevronRight, Terminal } from "@lucide/solid"
 import type { ComponentProps, JSX } from "@solidjs/web"
 import { createEffect, createMemo, createSignal, createUniqueId, For, Match, omit, onSettled, Show, Switch } from "solid-js"
 
-import "@/components/chat/ProcessActivity.css"
+import "@/shared/theme/process-activity.css"
 import { cn } from "@/lib/utils"
 import { readLocalImage } from "@shared/services/FileOperationsService"
 
