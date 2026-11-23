@@ -37,7 +37,7 @@ async function expectCaretPaint(page: Page, target: Locator, painted: boolean) {
     try {
       withoutCaret = await page.screenshot({ clip, animations: "disabled", caret: "initial" })
     } finally {
-      await hidden.evaluate((element) => element.remove())
+      await hidden.evaluate((element) => (element as HTMLStyleElement).remove())
     }
     // ResizeObserver and sticky following can settle after a layout mutation.
     // Only compare paint when both captures used the caret's actual coordinates.

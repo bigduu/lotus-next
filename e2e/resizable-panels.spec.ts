@@ -115,7 +115,7 @@ test("Escape, pointer cancellation, and global dialogs discard an unfinished res
   expect(await workbenchPreference(page)).toBe(stored)
 
   await startDrag()
-  await page.getByRole("button", { name: "新建会话", exact: true }).evaluate((button) => button.click())
+  await page.getByRole("button", { name: "新建会话", exact: true }).evaluate((button) => (button as HTMLElement).click())
   await page.mouse.move(100, 100)
   await page.mouse.up()
   expect(await workbenchPreference(page)).toBe(stored)

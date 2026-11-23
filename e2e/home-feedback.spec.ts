@@ -12,7 +12,10 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(home).toBeVisible()
     expect(await page.locator("html").evaluate((element) => element.classList.contains("dark"))).toBe(colorScheme === "dark")
     const card = home.getByRole("button", { name: /代码评审/ })
-    const layout = () => card.evaluate((element) => ({ width: element.offsetWidth, height: element.offsetHeight, top: element.offsetTop }))
+    const layout = () => card.evaluate((element) => {
+      const button = element as HTMLElement
+      return { width: button.offsetWidth, height: button.offsetHeight, top: button.offsetTop }
+    })
     const before = await layout()
     await card.hover()
     await card.focus()
