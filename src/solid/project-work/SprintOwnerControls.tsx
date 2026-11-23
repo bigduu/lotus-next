@@ -171,12 +171,10 @@ function SprintOwnerEditor(props: SprintOwnerControlsProps) {
     const target = targets().find((candidate) => `sprint:${candidate.id}` === value)
     const choice: DestinationDraft | null = value === "backlog" ? { destination: "backlog" }
       : target ? { destination: "sprint", sprint_id: target.id, revision: target.revision } : null
-    setDestinations((previous) => {
-      const next = { ...previous }
-      if (choice) next[memberId] = choice
-      else delete next[memberId]
-      return next
-    })
+    setDestinations((previous) => Object.fromEntries([
+      ...Object.entries(previous).filter(([id]) => id !== memberId),
+      ...(choice ? [[memberId, choice] as const] : []),
+    ]))
   }
   const updateMembers = (action: "add" | "remove") => {
     const item = sprint()

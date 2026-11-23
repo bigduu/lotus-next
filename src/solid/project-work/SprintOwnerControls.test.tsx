@@ -1,5 +1,5 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render as mount } from "@solidjs/web"
+import { createSignal, flush, Show } from "solid-js"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import type { SprintSummary, SprintView, SprintWorkVersion } from "@services/tickets/sprints"
 import { SprintOwnerControls, type SprintOwnerControlsProps } from "./SprintOwnerControls"
@@ -7,16 +7,23 @@ import { formatSprintUtcDateTime, parseSprintUtcDateTime } from "@/lib/project-w
 import { sprintOwnerControlsEnglish as copy } from "@/lib/project-work/SprintOwnerControls.copy"
 import { sprintOwnerControlsChinese } from "@/test/fixtures/sprintOwnerCopy"
 
-let root: Root
-const render = async (props: SprintOwnerControlsProps) => act(async () => root.render(<SprintOwnerControls {...props} />))
+let host: HTMLDivElement
+let dispose: () => void
+let setProps: (props: SprintOwnerControlsProps) => void
+async function settle(action: () => void | Promise<void>) {
+  await action()
+  await Promise.resolve()
+  flush()
+}
+const render = (props: SprintOwnerControlsProps) => settle(() => setProps({ ...props }))
 const button = (label: string) => [...document.querySelectorAll("button")].find((element) => element.textContent === label)!
 const field = (label: string) => [...document.querySelectorAll("label")].find((element) => element.querySelector("span")?.textContent === label)!.querySelector("input,textarea,select") as HTMLInputElement
-const value = async (element: HTMLInputElement | HTMLSelectElement, next: string) => act(async () => {
+const value = async (element: HTMLInputElement | HTMLSelectElement, next: string) => settle(async () => {
   const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
   Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(element, next)
   element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }))
 })
-const click = async (label: string) => act(async () => button(label).click())
+const click = async (label: string) => settle(async () => button(label).click())
 const submit = () => document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
 const version = (state: SprintWorkVersion["state"] = "active", accepted = false): SprintWorkVersion => ({
   record_revision: 2, contract_revision: 1, generation: 1, state, blocked_resume_state: null,
@@ -43,18 +50,19 @@ function props(changes: Partial<SprintOwnerControlsProps> = {}): SprintOwnerCont
 const selectDestination = async (workId: string, destination: string) => value(field(`${copy.destination}: ${workId}`) as unknown as HTMLSelectElement, destination)
 
 beforeEach(() => {
-  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  document.body.replaceChildren()
-  root = createRoot(document.body.appendChild(document.createElement("div")))
+  host = document.body.appendChild(document.createElement("div"))
+  const [current, update] = createSignal<SprintOwnerControlsProps | null>(null)
+  setProps = update
+  dispose = mount(() => <Show when={current()}>{(value) => <SprintOwnerControls {...value()} />}</Show>, host)
 })
-afterEach(() => act(() => root?.unmount()))
+afterEach(() => { dispose(); host.remove() })
 
 it("creates one stable Sprint with explicit nullable dates, without claiming a lifecycle change", async () => {
   const current = props({ view: null })
   await render(current)
   await value(field(copy.name), "Sprint B")
   await value(field(copy.goal), "Review existing Work")
-  await act(async () => { submit(); submit() })
+  await settle(async () => { submit(); submit() })
   expect(current.onCommand).toHaveBeenCalledOnce()
   expect(current.onCommand).toHaveBeenCalledWith(expect.stringMatching(/^[a-f\d-]{36}$/i), {
     op: "create", definition: { name: "Sprint B", goal: "Review existing Work", starts_at: null, ends_at: null },
@@ -204,7 +212,7 @@ it("does not turn a manually emptied or partial native field into null", async (
   current.view!.sprint.definition.starts_at = 0
   await render(current)
   await value(field(copy.startsAt), "")
-  await act(async () => submit())
+  await settle(async () => submit())
   expect(field(copy.startsAt).getAttribute("aria-invalid")).toBe("true")
   expect(button(copy.save).disabled).toBe(true)
   expect(current.onCommand).not.toHaveBeenCalled()
@@ -219,7 +227,7 @@ it.each(["2026-02-30T09:00:00", "2026-10-18T12:30:00.5", "2026-10-18T12", "2026-
   current.view!.sprint.definition.starts_at = 0
   await render(current)
   await value(field(copy.startsAt), input)
-  await act(async () => submit())
+  await settle(async () => submit())
   expect(button(copy.save).disabled).toBe(true)
   expect(current.onCommand).not.toHaveBeenCalled()
   expect(document.querySelector('[role="alert"]')?.textContent).toBe(copy.invalidDefinition)
@@ -230,7 +238,7 @@ it("rejects reversed UTC dates while preserving the draft", async () => {
   await render(current)
   await value(field(copy.startsAt), "2026-10-19T10:00:01")
   await value(field(copy.endsAt), "2026-10-19T10:00:00")
-  await act(async () => submit())
+  await settle(async () => submit())
   expect(button(copy.save).disabled).toBe(true)
   expect(parseSprintUtcDateTime(field(copy.startsAt).value)).toBe(1792404001)
   expect(current.onCommand).not.toHaveBeenCalled()
@@ -267,7 +275,7 @@ it("validates UTF-8 byte bounds and nonblank definitions", async () => {
 it.each([{ canWrite: false }, { busy: true }, { projectId: "another-project" }])("blocks unavailable authority, busy reads and a foreign Project (%j)", async (change) => {
   const current = props(change)
   await render(current)
-  await act(async () => submit())
+  await settle(async () => submit())
   expect(button(copy.save).disabled).toBe(true)
   expect(button(copy.add).disabled).toBe(true)
   expect(button(copy.close).disabled).toBe(true)
@@ -467,7 +475,7 @@ it("preserves definition drafts across Sprint revisions and requires explicit re
   expect(field(copy.goal).value).toBe("Keep this draft")
   expect(button(copy.save).disabled).toBe(true)
   expect(document.body.textContent).toContain(copy.draftStale)
-  await act(async () => submit())
+  await settle(async () => submit())
   expect(current.onCommand).not.toHaveBeenCalled()
   await click(copy.reviewLatest)
   expect(current.onReviewLatest).toHaveBeenCalledOnce()
@@ -500,7 +508,7 @@ it("preserves a conflict draft and has no conflict retry or automatic CAS refres
   await render(current)
   expect(field(copy.goal).value).toBe("My conflicting draft")
   expect(button(copy.reconcile)).toBeUndefined()
-  await act(async () => submit())
+  await settle(async () => submit())
   expect(current.onCommand).not.toHaveBeenCalled()
   expect(current.onReviewLatest).not.toHaveBeenCalled()
   await click(copy.reviewLatest)
@@ -513,15 +521,15 @@ it("guards duplicate commands and reconciles unknown outcomes only through the o
   const current = props({ onCommand: vi.fn(() => new Promise<void>((resolve) => { complete = resolve })) })
   await render(current)
   await selectDestination("work-a", "backlog")
-  await act(async () => { button(copy.close).click(); button(copy.close).click() })
+  await settle(async () => { button(copy.close).click(); button(copy.close).click() })
   expect(current.onCommand).toHaveBeenCalledOnce()
   expect(document.body.textContent).toContain(copy.submitting)
-  await act(async () => complete())
+  await settle(async () => complete())
   expect(document.body.textContent).toContain(copy.unknown)
   expect(button(copy.reviewLatest)).toBeUndefined()
   current.request = { status: "unknown", message: "connection lost" }
   await render(current)
-  await act(async () => { button(copy.reconcile).click(); button(copy.reconcile).click() })
+  await settle(async () => { button(copy.reconcile).click(); button(copy.reconcile).click() })
   expect(current.onReconcile).toHaveBeenCalledOnce()
   expect(current.onCommand).toHaveBeenCalledOnce()
   expect(current.view!.sprint.status).toBe("active")
