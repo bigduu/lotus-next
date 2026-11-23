@@ -19,7 +19,7 @@ const lineStyle: Partial<Record<DiffLineKind, string>> = {
   gap: "text-muted-foreground/50",
 }
 
-function DiffBody(props: { value: string; path: string; wrap: boolean; split: boolean }) {
+export function DiffBody(props: { value: string; path: string; wrap: boolean; split: boolean }) {
   const text = createUiText()
   const duplicate = (line: string) => line.startsWith("--- ") || line.startsWith("+++ ")
   const lines = createMemo(() => props.split ? [] : parseUnifiedDiffLines(props.value).filter((line) => !duplicate(line.text)))
