@@ -1,4 +1,4 @@
-import { ArrowUp, Ellipsis, Paperclip, Square, X } from "@lucide/solid"
+import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, Paperclip, Square, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, For, lazy, Loading, onSettled, Show } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
@@ -12,7 +12,7 @@ import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { Button } from "../ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
 import { DialogLayerMount } from "../ui/layer-scope"
-import { composerIconButtonClassName } from "@/components/chat/composerStyles"
+import { composerControlClassName, composerIconButtonClassName } from "@/components/chat/composerStyles"
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { ComposerFocusSnapshot } from "../composer/ComposerEditor"
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
@@ -47,6 +47,7 @@ export function ComposerPanel(props: {
   selectedWorktreePath: string | null
   draftEpoch: number
   navigationVersion: () => number
+  onOpenWorkspacePicker: () => void
   onOpenGoal: (sessionId: string) => void
   onOpenWorkflowRuns: (sessionId: string) => void
   onOpenSideChat?: (intent?: SideChatIntent) => void
@@ -146,6 +147,10 @@ export function ComposerPanel(props: {
   const blocked = () => submissionUnavailable() || models.rootAdmissionBlocked
   const inputId = "lotus-message-input"
   const mentionWorkspace = () => worktree.preparedPath ?? props.workspacePath
+  const workspaceLabel = () => {
+    const path = mentionWorkspace()
+    return path ? path.split(/[\\/]/).filter(Boolean).at(-1) || path : text("select_working_directory_18240aa3")
+  }
   const commands = createComposerCommands({
     chat: props.chat,
     draftKey,
@@ -308,6 +313,15 @@ export function ComposerPanel(props: {
           value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
           disabled={worktree.locked || submitting() || props.chat.submissionPending}
           preparedPath={worktree.preparedPath} error={worktree.error} />
+        <Show when={!props.projectId || props.selectedWorktreePath || worktree.preparedPath}>
+          <button type="button" class={composerControlClassName}
+            title={mentionWorkspace() || text("default_working_directory_3d80c40d")}
+            onClick={() => { setMoreOpen(false); props.onOpenWorkspacePicker() }}>
+            <FolderGit2 class="size-4 shrink-0" />
+            <span class="truncate">{workspaceLabel()}</span>
+            <ChevronDown class="size-3 shrink-0 opacity-60" />
+          </button>
+        </Show>
         <Show when={worktree.busy}><span role="status" class="px-2 text-xs text-muted-foreground">
           {text("chat_worktree_preparing")}
         </span></Show>

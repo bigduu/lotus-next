@@ -621,13 +621,26 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       if (current()) setNotice({ text: text("conversation_export_failed"), error: true })
     }
   }
-  const newChat = (projectId?: string | null, sectionId?: string | null) => {
+  const beginNewDraft = () => {
     navigationVersion += 1
     setPaletteOpen(false)
     setDraftEpoch((epoch) => epoch + 1)
+  }
+  const newChat = (projectId?: string | null, sectionId?: string | null) => {
+    beginNewDraft()
     setPickedWorktree(null)
     if (projectId) setPickedWorkspace(null)
     setNewSession(projectId ? { projectId, sectionId } : null)
+    chat.newChat()
+  }
+  const newChatFromPalette = () => {
+    setSettingsOpen(false)
+    beginNewDraft()
+    const projectId = newSession()?.projectId
+    if (projectId && pickedWorktree()?.projectId === projectId && appStore.getState().projects[projectId]?.new_chat_worktree === true) {
+      setPickedWorkspace(null)
+      setPickedWorktree(null)
+    }
     chat.newChat()
   }
   const sessionCreated = (sessionId: string, intent: SectionIntent | null) => {
@@ -811,10 +824,12 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             <h1 class="min-w-0 flex-1 truncate text-sm font-semibold">
               {chat.currentChat?.title || text("new_session_c57c30bc")}
             </h1>
-            <Button size="icon" variant="ghost" title={displayWorkspace() ?? undefined}
-              aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
-              <FolderClosed class="size-4" />
-            </Button>
+            <Show when={currentSession()}>
+              <Button size="icon" variant="ghost" title={displayWorkspace() ?? undefined}
+                aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
+                <FolderClosed class="size-4" />
+              </Button>
+            </Show>
             <Show when={sideChatScope()}>
               <Button size="icon" variant="ghost" title={text("side_chat_open")} aria-label={text("side_chat_open")}
                 onClick={() => openSideChat()}>
@@ -906,6 +921,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             {(sessionId) => <SessionVersionMigrationGate sessionId={sessionId} state={chat.executionCompatibility} />}
           </Show>
           <ComposerPanel chat={chat} workspacePath={displayWorkspace()} projectId={newSession()?.projectId ?? null}
+            onOpenWorkspacePicker={() => setWorkspaceOpen(true)}
             pageVisible={!settingsOpen()}
             selectedWorktreePath={selectedWorktreePath()} draftEpoch={draftEpoch()} navigationVersion={() => navigationVersion}
             rootAuthority={rootAuthority} ingress={ingress} semantic={semanticComposer()}
@@ -1027,7 +1043,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           </DialogContent>
         </Dialog>}>
           <CommandPalette chats={chat.chats} onClose={closePalette}
-            onNewChat={() => { setSettingsOpen(false); newChat() }}
+            onNewChat={newChatFromPalette}
             onSelect={(id) => { setSettingsOpen(false); setSidebarOpen(false); void select(id).catch(openError) }}
             onSettings={openSettings}
             getReturnFocusTarget={() => !settingsOpen() && paletteNavigationVersion === navigationVersion ? paletteReturnFocus() : null} />
