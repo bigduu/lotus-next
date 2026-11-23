@@ -3,7 +3,7 @@ import { createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { splitAssistantProviderBlocks } from "@/lib/assistantProviderBlocks"
 import { cn } from "@/lib/utils"
 import type { AssistantMarkdownProps } from "./AssistantMarkdown"
-import { englishMarkdownText, type MarkdownText } from "./text"
+import type { MarkdownText } from "./text"
 
 const providerLabelClass = "inline-flex max-w-full items-center rounded-full bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground"
 
@@ -38,9 +38,12 @@ function ProviderTool(props: AssistantMarkdownProps & {
   </div>
 }
 
-export function ProviderMarkdown(props: AssistantMarkdownProps & { prose: Component<AssistantMarkdownProps> }) {
+export function ProviderMarkdown(props: AssistantMarkdownProps & {
+  prose: Component<AssistantMarkdownProps>
+  text: MarkdownText
+}) {
   const parts = createMemo(() => splitAssistantProviderBlocks(props.children, props.isStreaming === true))
-  const text: MarkdownText = (key, values) => (props.text ?? englishMarkdownText)(key, values)
+  const text: MarkdownText = (key, values) => props.text(key, values)
   const Prose = props.prose
   return <For each={parts()} keyed={false}>{(part) => {
     const prose = () => {

@@ -308,5 +308,5 @@ export function MarkdownProse(props: AssistantMarkdownProps) {
 }
 
 export function AssistantMarkdown(props: AssistantMarkdownProps) {
-  return <ProviderMarkdown {...props} prose={MarkdownProse} />
+  return <ProviderMarkdown {...props} prose={MarkdownProse} text={props.text ?? englishMarkdownText} />
 }
