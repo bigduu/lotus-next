@@ -7,7 +7,9 @@ import { ModelEffortPicker } from "./ModelEffortPicker"
 // The production build compiles Kobalte's Solid JSX export. Vitest's scoped
 // JSX transforms cover our sources, so load the equivalent compiled entry.
 vi.mock("@kobalte/core/popover", async () => {
-  const { createRequire } = await import("node:module")
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (name: string) => string }
+  }>("node:module")
   const entry = createRequire(import.meta.url).resolve("@kobalte/core/popover")
   return vi.importActual(entry.replace(/\.jsx$/, ".js"))
 })
