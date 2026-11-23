@@ -984,6 +984,7 @@ export const uiZhCn = {
   "work_settings_dispatch_description": "需先启用 Work。",
   "work_settings_reasoning": "Work 推理强度",
   "work_settings_reasoning_description": "应用于新建的 Work 会话。自动档继承所选模型的默认设置。",
+  "work_settings_ultra_description": "新建的 Work 会话使用模型支持的最高推理档，工具权限由 Work 合同限定。",
   "work_settings_parallel": "Work 并行上限",
   "work_settings_parallel_description": "限制同时派发和执行的 Work 数。留空沿用调度器现有的限制。",
   "work_settings_parallel_invalid": "请输入 1 到 4,294,967,295 之间的整数。",
