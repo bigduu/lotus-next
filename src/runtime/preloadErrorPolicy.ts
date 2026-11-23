@@ -1,4 +1,4 @@
-const localFeatureChunkUrl = /(?:^|\/)(?:Settings(?:Page)?|WorkflowRunsContent|runDiagnostic|RunDiagnosticsDialogContent|BrowserPane|TicketWorkPanel|ConversationClearDialogContent|SupervisorManagedSessions)-[A-Za-z0-9_-]+\.(?:js|css)(?:[?#]|$)/
+const localFeatureChunkUrl = /(?:^|\/)(?:Settings(?:Page)?|WorkflowRunsContent|runDiagnostic|RunDiagnosticsDialogContent|BrowserPane|TicketWorkPanel|ConversationClearDialogContent|SupervisorManagedSessions|ProjectWorkBoard)-[A-Za-z0-9_-]+\.(?:js|css)(?:[?#]|$)/
 
 /**
  * These features have a local error boundary or optional-data fallback. Let an
