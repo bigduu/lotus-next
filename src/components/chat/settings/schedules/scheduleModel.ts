@@ -1,4 +1,4 @@
-import { uiText, uiLanguage, uiList } from "@shared/i18n/ui"
+import { uiText, uiLanguage, uiList } from "@shared/i18n/text"
 import type {
   MisfirePolicy,
   OverlapPolicy,
