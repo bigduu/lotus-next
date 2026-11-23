@@ -1,7 +1,7 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { flush } from "solid-js"
+import { render } from "@solidjs/web"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import { configShareService, ConfigShareError } from "@services/config/ConfigShareService"
 import { apiClient } from "@services/api"
 import { settingsService } from "@services/config/SettingsService"
@@ -10,18 +10,27 @@ import { modelService } from "@services/chat/ModelService"
 import { serviceFactory } from "@services/common/ServiceFactory"
 import type { FetchModelsResponse } from "@services/config/SettingsService"
 import type { ProviderCatalog } from "@shared/types/providerModelRef"
-import { useAppStore } from "@shared/store/appStore"
-import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
+import { appStore } from "@shared/store/appStore/state"
+import { providerStore } from "@shared/store/appStore/slices/providerState"
 import { PROVIDER_DEFAULT_MODEL_REF_KEYS } from "@shared/types/providerConfig"
 import type { ShareInventory, SharePreviewResponse, ShareOperation } from "@shared/types/configShare"
 import { SettingsConfigShare } from "./SettingsConfigShare"
 
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-environment.IS_REACT_ACT_ENVIRONMENT = true
-const roots: Root[] = []
+const disposers: Array<() => void> = []
+const schedule = setTimeout
+const unmount = () => {
+  for (const dispose of disposers.splice(0)) dispose()
+  flush()
+}
+
+async function settle(action: () => unknown = () => undefined) {
+  await action()
+  await new Promise<void>((resolve) => schedule(resolve, 0))
+  flush()
+}
 const source = "BAMBOO-SHARE:1:PRIVATE_SYNTHETIC_BUNDLE"
 const passphrase = "PRIVATE_SYNTHETIC_PASSPHRASE"
-const initialProviderState = useProviderStore.getState()
+const initialProviderState = providerStore.getState()
 const savedSnapshot = (model = "imported-model", provider = "imported-provider") => ({
   default_provider_instance_id: provider, features: { provider_model_ref: true },
   instances: [{ id: provider, label: "Sample", type: "openai" as const, enabled: true, config: { runtime_models: [model, "custom-model"] } }],
@@ -68,21 +77,22 @@ const control = (label: string) => {
   expect(el).toBeDefined()
   return document.getElementById(el!.htmlFor) as HTMLInputElement | HTMLTextAreaElement
 }
-const fill = async (label: string, value: string) => act(async () => {
+const fill = async (label: string, value: string) => settle(() => {
   const input = control(label)
   Object.getOwnPropertyDescriptor(input.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, "value")!.set!.call(input, value)
   input.dispatchEvent(new Event("input", { bubbles: true }))
 })
-const check = async (label: string) => act(async () => {
+const check = async (label: string) => settle(() => {
   const el = [...document.querySelectorAll<HTMLLabelElement>("label")].find((item) => item.textContent?.trim() === label)
   expect(el).toBeDefined()
   el!.querySelector<HTMLInputElement>("input[type=checkbox]")!.click()
 })
-const click = async (label: string) => act(async () => button(label).click())
+const click = async (label: string) => settle(() => button(label).click())
 async function mount() {
-  const root = createRoot(document.body.appendChild(document.createElement("div")))
-  roots.push(root)
-  await act(async () => root.render(<SettingsConfigShare />))
+  const host = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <SettingsConfigShare />, host)
+  disposers.push(() => { dispose(); host.remove() })
+  await settle()
 }
 async function preparedPreview() {
   await fill("Paste sharing string", source)
@@ -97,17 +107,16 @@ beforeEach(async () => {
   vi.spyOn(configShareService, "preview").mockResolvedValue(preview())
   vi.spyOn(configShareService, "apply").mockImplementation(async (request) => ({ operation_id: request.operation_id, state: "committed", revisions: committedRevisions }))
   vi.spyOn(configShareService, "operation")
-  useProviderStore.setState({ ...initialProviderState, providerSnapshot: savedSnapshot("old-model", "old-provider"), providerStatus: "ready" }, true)
-  useAppStore.setState({ models: ["old-model"], selectedModel: { provider: "old", model: "old-model" }, modelsError: null })
+  providerStore.setState({ ...initialProviderState, providerSnapshot: savedSnapshot("old-model", "old-provider"), providerStatus: "ready" }, true)
+  appStore.setState({ models: ["old-model"], selectedModel: { provider: "old", model: "old-model" }, modelsError: null })
   vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue(savedSnapshot())
   vi.spyOn(settingsService, "getProviderCatalog").mockResolvedValue({ providers: [], models: [] })
   vi.spyOn(settingsService, "fetchCatalogModels")
-  vi.spyOn(useAppStore.getState(), "fetchModels")
+  vi.spyOn(appStore.getState(), "fetchModels")
   vi.spyOn(apiClient, "get").mockResolvedValue(liveHealth())
 })
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+  unmount()
 })
 
 describe("SettingsConfigShare", () => {
@@ -116,21 +125,21 @@ describe("SettingsConfigShare", () => {
     vi.mocked(configShareService.operation).mockImplementation(async (operation_id) => ({ operation_id, state: "committed", revisions: committedRevisions }))
     const create = vi.spyOn(AgentClient.prototype, "createSession").mockRejectedValue(new Error("synthetic-stop-before-session-write"))
     const pinnedConfig = { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, model: "pinned-model", model_ref: { provider: "pinned-provider", model: "pinned-model" } }
-    useAppStore.setState({ chats: [{ id: "existing-chat", title: "Existing chat", messages: [], createdAt: 1, config: pinnedConfig }], currentSessionId: "existing-chat" })
-    const existing = useAppStore.getState().chats
+    appStore.setState({ chats: [{ id: "existing-chat", title: "Existing chat", messages: [], createdAt: 1, config: pinnedConfig }], currentSessionId: "existing-chat" })
+    const existing = appStore.getState().chats
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
     if (path === "receipt") await click("Check import result")
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat).toEqual({ provider: "imported-provider", model: "imported-model" })
-    expect(useAppStore.getState().models).toEqual(["custom-model", "imported-model"])
-    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat).toEqual({ provider: "imported-provider", model: "imported-model" })
+    expect(appStore.getState().models).toEqual(["custom-model", "imported-model"])
+    await expect(appStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
     expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "imported-model", model_ref: { provider: "imported-provider", model: "imported-model" }, provider: "imported-provider" }))
-    expect(useAppStore.getState().chats).toBe(existing)
-    expect(useAppStore.getState().chats[0].config).toBe(pinnedConfig)
+    expect(appStore.getState().chats).toBe(existing)
+    expect(appStore.getState().chats[0].config).toBe(pinnedConfig)
     expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
     expect(settingsService.fetchCatalogModels).not.toHaveBeenCalled()
-    expect(useAppStore.getState().fetchModels).not.toHaveBeenCalled()
+    expect(appStore.getState().fetchModels).not.toHaveBeenCalled()
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
   })
 
@@ -143,13 +152,13 @@ describe("SettingsConfigShare", () => {
     expect(document.body.textContent).toContain(`Import receipt: ${id}`)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("saved, but the client settings could not be refreshed")
     expect(document.body.textContent).not.toContain("PRIVATE_REFRESH_ERROR")
-    expect(useProviderStore.getState().providerSnapshot).toBeNull()
-    expect(useAppStore.getState().models).toEqual([])
+    expect(providerStore.getState().providerSnapshot).toBeNull()
+    expect(appStore.getState().models).toEqual([])
     await click("Cancel and clear sharing data")
     expect(document.body.textContent).toContain(`Import receipt: ${id}`)
-    await act(async () => { button("Refresh saved settings").click(); button("Refresh saved settings").click() })
+    await settle(() => { button("Refresh saved settings").click(); button("Refresh saved settings").click() })
     expect(settingsService.getProviderInstances).toHaveBeenCalledTimes(2)
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
     expect(configShareService.operation).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain(`Import receipt: ${id}`)
@@ -167,14 +176,14 @@ describe("SettingsConfigShare", () => {
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
     if (path === "receipt") await click("Check import result")
-    expect.soft(useProviderStore.getState().providerSnapshot).toBeNull()
-    expect.soft(useAppStore.getState().models).toEqual([])
-    act(() => { for (const root of roots.splice(0)) root.unmount() })
+    expect.soft(providerStore.getState().providerSnapshot).toBeNull()
+    expect.soft(appStore.getState().models).toEqual([])
+    unmount()
     const id = vi.mocked(configShareService.apply).mock.calls[0][0].operation_id
-    await act(async () => committed.resolve({ operation_id: id, state: "committed", revisions: committedRevisions }))
-    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    await settle(() => committed.resolve({ operation_id: id, state: "committed", revisions: committedRevisions }))
+    await expect(appStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
     expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "imported-model", model_ref: { provider: "imported-provider", model: "imported-model" }, provider: "imported-provider" }))
-    expect(useAppStore.getState().models).toEqual(["custom-model", "imported-model"])
+    expect(appStore.getState().models).toEqual(["custom-model", "imported-model"])
     expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
     expect(settingsService.fetchCatalogModels).not.toHaveBeenCalled()
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
@@ -186,11 +195,11 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
-    act(() => { for (const root of roots.splice(0)) root.unmount() })
-    await act(async () => apply.reject(new ConfigShareError("unconfirmed")))
-    expect(useProviderStore.getState().providerSnapshot).toBeNull()
-    expect(useProviderStore.getState().providerStatus).not.toBe("ready")
-    expect(useAppStore.getState().models).toEqual([])
+    unmount()
+    await settle(() => apply.reject(new ConfigShareError("unconfirmed")))
+    expect(providerStore.getState().providerSnapshot).toBeNull()
+    expect(providerStore.getState().providerStatus).not.toBe("ready")
+    expect(appStore.getState().models).toEqual([])
     expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
     expect(apiClient.get).not.toHaveBeenCalled()
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
@@ -203,9 +212,9 @@ describe("SettingsConfigShare", () => {
     await click("Save imported settings")
     expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
     expect(apiClient.get).not.toHaveBeenCalled()
-    expect(useProviderStore.getState().providerSnapshot).toBeNull()
-    expect(useProviderStore.getState().providerStatus).not.toBe("ready")
-    expect(useAppStore.getState().models).toEqual([])
+    expect(providerStore.getState().providerSnapshot).toBeNull()
+    expect(providerStore.getState().providerStatus).not.toBe("ready")
+    expect(appStore.getState().models).toEqual([])
   })
 
   it.each(["invalid", "rejected", "receipt-rejected"])("recovers current authority through reads after a known unwritten %s result", async (kind) => {
@@ -221,10 +230,10 @@ describe("SettingsConfigShare", () => {
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
     if (kind === "receipt-rejected") await click("Check import result")
-    expect(useProviderStore.getState().providerStatus).toBe("ready")
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat).toEqual({ provider: "current-provider", model: "current-model" })
-    expect(useAppStore.getState().models).toEqual(["current-model", "custom-model"])
-    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(providerStore.getState().providerStatus).toBe("ready")
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat).toEqual({ provider: "current-provider", model: "current-model" })
+    expect(appStore.getState().models).toEqual(["current-model", "custom-model"])
+    await expect(appStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
     expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
     expect(document.body.textContent).not.toContain("Imported settings are saved")
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
@@ -243,18 +252,18 @@ describe("SettingsConfigShare", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("The import was not saved, and the current client settings could not be refreshed")
     expect(document.body.textContent).not.toContain("Imported settings are saved")
     expect(document.body.textContent).not.toContain("PRIVATE_RECOVERY_ERROR")
-    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect(providerStore.getState().providerSnapshot).toBeNull()
     await click("Cancel and clear sharing data")
     expect(button("Refresh current settings").disabled).toBe(false)
-    await act(async () => { button("Refresh current settings").click(); button("Refresh current settings").click() })
-    expect(useProviderStore.getState().providerStatus).toBe("ready")
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("current-model")
+    await settle(() => { button("Refresh current settings").click(); button("Refresh current settings").click() })
+    expect(providerStore.getState().providerStatus).toBe("ready")
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("current-model")
     expect(settingsService.getProviderInstances).toHaveBeenCalledTimes(2)
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
     expect(configShareService.operation).not.toHaveBeenCalled()
     expect(document.body.textContent).not.toContain("Imported settings are saved")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(kind === "stale" ? "Settings changed after this preview" : "The import was rejected")
-    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    await expect(appStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
     expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
     expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
     expect(settingsService.fetchCatalogModels).not.toHaveBeenCalled()
@@ -268,14 +277,14 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
-    act(() => { for (const root of roots.splice(0)) root.unmount() })
+    unmount()
     const id = vi.mocked(configShareService.apply).mock.calls[0][0].operation_id
-    await act(async () => {
+    await settle(() => {
       if (kind === "stale") apply.reject(new ConfigShareError("stale"))
       else apply.resolve({ operation_id: id, state: "rejected" })
     })
-    expect(useProviderStore.getState().providerStatus).toBe("ready")
-    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(providerStore.getState().providerStatus).toBe("ready")
+    await expect(appStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
     expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
     expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
@@ -287,13 +296,13 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
-    expect(useProviderStore.getState().providerSnapshot).toBeNull()
-    expect(useAppStore.getState().models).toEqual([])
+    expect(providerStore.getState().providerSnapshot).toBeNull()
+    expect(appStore.getState().models).toEqual([])
     expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
     const id = vi.mocked(configShareService.apply).mock.calls[0][0].operation_id
     expect(document.body.textContent).toContain(`Import receipt: ${id}`)
-    await act(async () => health.resolve(liveHealth()))
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
+    await settle(() => health.resolve(liveHealth()))
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
   })
 
   it("keeps a Committed receipt without revisions as saved but refresh-unconfirmed", async () => {
@@ -305,7 +314,7 @@ describe("SettingsConfigShare", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("saved, but the client settings could not be refreshed")
     expect(apiClient.get).not.toHaveBeenCalled()
     expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
-    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect(providerStore.getState().providerSnapshot).toBeNull()
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
   })
 
@@ -319,25 +328,25 @@ describe("SettingsConfigShare", () => {
     vi.mocked(settingsService.fetchCatalogModels).mockReturnValueOnce(discovery.promise)
     vi.spyOn(serviceFactory, "getSetupStatus").mockResolvedValue({ is_complete: true } as Awaited<ReturnType<typeof serviceFactory.getSetupStatus>>)
     vi.spyOn(modelService, "getModels").mockReturnValueOnce(models.promise)
-    const oldProvider = useProviderStore.getState().loadProviderInstances()
-    const oldCatalog = useProviderStore.getState().loadCatalog()
-    const oldDiscovery = useProviderStore.getState().fetchCatalogModels("sample")
-    const oldModels = useAppStore.getState().fetchModels()
+    const oldProvider = providerStore.getState().loadProviderInstances()
+    const oldCatalog = providerStore.getState().loadCatalog()
+    const oldDiscovery = providerStore.getState().fetchCatalogModels("sample")
+    const oldModels = appStore.getState().fetchModels()
     await Promise.resolve()
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
-    await act(async () => {
+    await settle(async () => {
       provider.resolve(savedSnapshot("late-old-model"))
       catalog.resolve({ providers: [], models: [] })
       discovery.resolve({ fetched: [{ provider: "sample", models: [] }] })
       models.resolve(["late-old-model"])
       await Promise.all([oldProvider, oldCatalog, oldDiscovery, oldModels])
     })
-    expect.soft(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
-    expect.soft(useProviderStore.getState().catalog).toBeNull()
-    expect.soft(useProviderStore.getState().discoveredModelsByProvider).toEqual({})
-    expect.soft(useAppStore.getState().models).toEqual(["custom-model", "imported-model"])
+    expect.soft(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
+    expect.soft(providerStore.getState().catalog).toBeNull()
+    expect.soft(providerStore.getState().discoveredModelsByProvider).toEqual({})
+    expect.soft(appStore.getState().models).toEqual(["custom-model", "imported-model"])
     expect(modelService.getModels).toHaveBeenCalledTimes(1)
     expect(settingsService.getProviderCatalog).toHaveBeenCalledTimes(1)
     expect(settingsService.fetchCatalogModels).toHaveBeenCalledTimes(1)
@@ -349,10 +358,10 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
-    await act(async () => { await useProviderStore.getState().loadProviderInstances() })
-    await act(async () => imported.resolve(savedSnapshot()))
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("concurrent-model")
-    expect(useAppStore.getState().models).toEqual([])
+    await settle(() => providerStore.getState().loadProviderInstances())
+    await settle(() => imported.resolve(savedSnapshot()))
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("concurrent-model")
+    expect(appStore.getState().models).toEqual([])
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("saved, but the client settings could not be refreshed")
     expect(document.body.textContent).toContain("Import receipt:")
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
@@ -432,7 +441,7 @@ describe("SettingsConfigShare", () => {
     expect(region.textContent).not.toContain(passphrase)
     expect(region.textContent).toContain("Skipping it also skips its imported references")
     await check("I reviewed the entries and conflict choices")
-    await act(async () => { button("Save imported settings").click(); button("Save imported settings").click() })
+    await settle(() => { button("Save imported settings").click(); button("Save imported settings").click() })
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
     const request = vi.mocked(configShareService.apply).mock.calls[0][0]
     expect(request).toMatchObject({ share_string: source, passphrase, preview_token: "fixture-token", expected_revisions: { providers: 7, env: 8, credentials: 9 }, choices: { providers: { sample: { action: "skip" } }, scenarios: { chat: { action: "skip" } } } })
@@ -440,7 +449,7 @@ describe("SettingsConfigShare", () => {
     expect(control("Paste sharing string").value).toBe("")
     expect(control("Import passphrase (if protected)").value).toBe("")
     expect(button("Cancel and clear sharing data").disabled).toBe(true)
-    await act(async () => pending.resolve({ operation_id: request.operation_id, state: "committed" }))
+    await settle(() => pending.resolve({ operation_id: request.operation_id, state: "committed" }))
     expect(document.body.textContent).toContain("Imported settings are saved. Runtime use may require the next request or a restart.")
     for (const spy of [...storage, ...logs]) expect(JSON.stringify(spy.mock.calls)).not.toContain("PRIVATE_SYNTHETIC")
   })
@@ -457,7 +466,7 @@ describe("SettingsConfigShare", () => {
     expect(signal.aborted).toBe(true)
     expect(control("Paste sharing string").value).toBe("")
     expect(control("Import passphrase (if protected)").value).toBe("")
-    await act(async () => pending.resolve(preview()))
+    await settle(() => pending.resolve(preview()))
     expect(document.querySelector('[aria-label="Preview import"]')).toBeNull()
     expect(configShareService.apply).not.toHaveBeenCalled()
   })
@@ -465,12 +474,12 @@ describe("SettingsConfigShare", () => {
   it("invalidates the preview on input or choice edits and requires reviewing changes again", async () => {
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
-    await act(async () => {
+    await settle(() => {
       const input = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
       input.value = "rename"; input.dispatchEvent(new Event("change", { bubbles: true }))
     })
     expect(button("Save imported settings").disabled).toBe(true)
-    await act(async () => {
+    await settle(() => {
       const input = document.querySelector<HTMLInputElement>('[aria-label="New name providers:sample"]')!
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "SAMPLE")
       input.dispatchEvent(new Event("input", { bubbles: true }))
@@ -493,7 +502,7 @@ describe("SettingsConfigShare", () => {
     expect(region.querySelectorAll('a[href*="imported.example"]')).toHaveLength(0)
     expect(region.textContent).not.toContain("Replacing changes the provider origin")
     await check("I reviewed the entries and conflict choices")
-    await act(async () => {
+    await settle(() => {
       const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
       action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true }))
     })
@@ -512,7 +521,7 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     expect(document.body.textContent).not.toContain("Replacing changes the provider origin")
     for (const choice of ["replace", "rename", "skip"]) {
-      await act(async () => {
+      await settle(() => {
         const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
         action.value = choice; action.dispatchEvent(new Event("change", { bubbles: true }))
       })
@@ -526,7 +535,7 @@ describe("SettingsConfigShare", () => {
     response.preview.providers[0] = { ...response.preview.providers[0], has_api_key: hasApiKey, retains_existing_api_key: false, credential_origin_risk: true }
     vi.mocked(configShareService.preview).mockResolvedValue(response)
     await mount(); await preparedPreview()
-    await act(async () => {
+    await settle(() => {
       const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
       action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true }))
     })
@@ -550,7 +559,7 @@ describe("SettingsConfigShare", () => {
     response.preview.providers[0] = { ...response.preview.providers[0], has_api_key: false, target_origin: undefined, retains_existing_api_key: true, credential_origin_risk: true }
     vi.mocked(configShareService.preview).mockResolvedValue(response)
     await mount(); await preparedPreview()
-    await act(async () => {
+    await settle(() => {
       const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
       action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true }))
     })
@@ -569,12 +578,12 @@ describe("SettingsConfigShare", () => {
     expect(document.body.textContent).toContain("Imported provider type: anthropic")
     expect(document.body.textContent).toContain("Provider types differ. Skip this entry or import it with a new name.")
     await check("I reviewed the entries and conflict choices")
-    await act(async () => { action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true })) })
+    await settle(() => { action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true })) })
     await check("I reviewed the entries and conflict choices")
     expect(button("Save imported settings").disabled).toBe(true)
     await click("Save imported settings")
     expect(configShareService.apply).not.toHaveBeenCalled()
-    await act(async () => { action.value = "skip"; action.dispatchEvent(new Event("change", { bubbles: true })) })
+    await settle(() => { action.value = "skip"; action.dispatchEvent(new Event("change", { bubbles: true })) })
     expect(button("Save imported settings").disabled).toBe(true)
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
@@ -588,13 +597,13 @@ describe("SettingsConfigShare", () => {
     await mount(); await preparedPreview()
     expect(document.body.textContent).toContain("Imported origin: Not included; keep current")
     await check("I reviewed the entries and conflict choices")
-    await act(async () => {
+    await settle(() => {
       const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
       expect(action.querySelector<HTMLOptionElement>('option[value="rename"]')?.disabled).toBe(false)
       action.value = "rename"; action.dispatchEvent(new Event("change", { bubbles: true }))
     })
     expect(document.body.textContent).toContain("Imported origin: Not included; provider default")
-    await act(async () => {
+    await settle(() => {
       const name = document.querySelector<HTMLInputElement>('[aria-label="New name providers:sample"]')!
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "anthropic-shared")
       name.dispatchEvent(new Event("input", { bubbles: true }))
@@ -644,9 +653,9 @@ describe("SettingsConfigShare", () => {
     expect(document.querySelector('[aria-label="Preview import"]')).toBeNull()
     expect(button("Preview import").disabled).toBe(true)
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
-    expect(useProviderStore.getState().providerStatus).toBe("ready")
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("current-model")
-    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(providerStore.getState().providerStatus).toBe("ready")
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("current-model")
+    await expect(appStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
     expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
     expect(document.body.textContent).not.toContain("Imported settings are saved")
   })
@@ -679,11 +688,11 @@ describe("SettingsConfigShare", () => {
     response.preview.env = [{ name: "Token", has_value: true, secret: true, conflict: true }]
     vi.mocked(configShareService.preview).mockResolvedValue(response)
     await mount(); await preparedPreview()
-    await act(async () => {
+    await settle(() => {
       const input = document.querySelector<HTMLSelectElement>('[aria-label="Import action env:Token"]')!
       input.value = "rename"; input.dispatchEvent(new Event("change", { bubbles: true }))
     })
-    const rename = async (target: string) => act(async () => {
+    const rename = async (target: string) => settle(() => {
       const input = document.querySelector<HTMLInputElement>('[aria-label="New name env:Token"]')!
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, target)
       input.dispatchEvent(new Event("input", { bubbles: true }))
