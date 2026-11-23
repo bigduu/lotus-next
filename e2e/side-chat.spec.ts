@@ -104,10 +104,14 @@ test("asks from a selection, stops only the side turn, and restores the side tra
 
   await page.goto(standaloneScenario.entryUrl)
   const main = page.getByRole("textbox", { name: "消息", exact: true })
-  await main.fill("主会话已有草稿")
   const sourceBody = page.locator('[data-message-row="' + rootMessage + '"] [data-message-role]')
-  await expect(sourceBody).toContainText(sourceText)
-  await sourceBody.evaluate((node) => {
+  // A range into the temporary Markdown fallback is removed with that DOM.
+  const sourceParagraph = sourceBody.locator(".assistant-streamdown p")
+  await expect(sourceParagraph).toHaveText(sourceText)
+  await expect(page.getByRole("button", { name: "打开侧聊", exact: true })).toBeVisible()
+  await main.fill("主会话已有草稿")
+  await expectComposerText(main, "主会话已有草稿")
+  await sourceParagraph.evaluate((node) => {
     const document = node.ownerDocument
     const walker = document.createTreeWalker(node, document.defaultView!.NodeFilter.SHOW_TEXT)
     let text = walker.nextNode()
