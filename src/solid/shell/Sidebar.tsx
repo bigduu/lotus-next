@@ -352,6 +352,13 @@ export function Sidebar(props: Props) {
     const project = () => projectMode() ? props.projects[group().key] : undefined
     const DropTarget = drag?.Target ?? StaticDropTarget
     const context = createSidebarContextMenu(() => Boolean(project()))
+    let openWorkAfterMenu: string | undefined
+    const onProjectMenuClosed = () => {
+      const id = openWorkAfterMenu
+      openWorkAfterMenu = undefined
+      context.restoreFocus()
+      if (id) queueMicrotask(() => props.onOpenProjectWork(id))
+    }
     const expanded = () => !!query() || (projectMode()
       ? disclosures().get(projectKey(group().key)) ?? true
       : !closedDates().has(group().key))
@@ -386,11 +393,11 @@ export function Sidebar(props: Props) {
               class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
               <MoreHorizontal class="size-3.5" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent class="min-w-40 rounded-xl" onCloseAutoFocus={context.restoreFocus}>
+            <DropdownMenuContent class="min-w-40 rounded-xl" onCloseAutoFocus={onProjectMenuClosed}>
               <DropdownMenuItem disabled={current().status === "archived"} onSelect={() => openNew(current().id)}>
                 <Plus />{text("new_session_58e21b87")}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => props.onOpenProjectWork(current().id)}>
+              <DropdownMenuItem onSelect={() => { openWorkAfterMenu = current().id }}>
                 <List />{text("project_work_title")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => toggleProjectPin(current().id)}>

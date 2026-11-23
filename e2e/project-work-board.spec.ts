@@ -4,7 +4,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 
 const artifact = JSON.parse(readFileSync("dist/lotus-next-manifest.json", "utf8"))
 const assets = JSON.parse(readFileSync("dist/asset-manifest.json", "utf8")) as Record<string, { src?: string; file: string; isDynamicEntry?: boolean }>
-const workChunk = Object.values(assets).find((entry) => entry.src === "src/components/app/ProjectWorkBoard.tsx")
+const workChunk = assets["src/solid/project-work/ProjectWorkBoard.tsx"]
 
 for (const colorScheme of ["light", "dark"] as const) {
   test(`project Work board remains read-only and responsive in ${colorScheme}`, async ({ page }, info) => {
@@ -120,6 +120,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       await openWork()
       await expect(dialog.getByRole("heading")).toContainText("Project Board")
       await expect(dialog.getByTestId("project-work-loading")).toBeVisible()
+      await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true)
       await expect.poll(() => workLoads.length).toBe(1)
       expect(workReads()).toEqual([])
       const loadedWork = page.waitForResponse((response) => response.url().endsWith(workChunk!.file))
