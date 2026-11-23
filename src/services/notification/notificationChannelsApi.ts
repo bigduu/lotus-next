@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { apiClient, getErrorMessage, isApiError, isRequestError } from "../api/index.ts"
 import { isMaskedSecret } from "@/lib/secrets.ts"
 
