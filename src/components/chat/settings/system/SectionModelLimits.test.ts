@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import {
-  FALLBACK_DEFAULT,
   UNLIMITED_OUTPUT,
   buildLimitRows,
   formatTokenCount,
@@ -10,10 +9,6 @@ import {
 } from "./modelLimits"
 
 describe("model limit table helpers", () => {
-  it("uses a 32K fallback output allowance", () => {
-    expect(FALLBACK_DEFAULT.max_output_tokens).toBe(32_000)
-  })
-
   it("parses and formats compact context-window values", () => {
     expect(parseTokenCount("258K")).toBe(258_000)
     expect(parseTokenCount("1M")).toBe(1_000_000)
@@ -26,7 +21,6 @@ describe("model limit table helpers", () => {
 
   it("shows persisted overrides plus used models without persisting default rows", () => {
     const rows = buildLimitRows(
-      FALLBACK_DEFAULT,
       [{ model_pattern: "gpt-5", max_context_tokens: 400_000, max_output_tokens: 128_000 }],
       ["glm-5.3", "gpt-5"],
     )
@@ -44,6 +38,17 @@ describe("model limit table helpers", () => {
           max_output_tokens: 128_000,
         },
       ],
+    })
+    expect(validateLimitRows([{
+      ...rows[1],
+      customized: true,
+      max_context_tokens: "258K",
+    }])).toEqual({
+      overrides: [{
+        model_pattern: "glm-5.3",
+        max_context_tokens: 258_000,
+        max_output_tokens: null,
+      }],
     })
   })
 
@@ -68,6 +73,7 @@ describe("model limit table helpers", () => {
         },
       ],
     })
+    expect(validateLimitRows([{ ...row, max_context_tokens: "" }])).toHaveProperty("error")
     expect(validateLimitRows([row, { ...row, id: "duplicate", model_pattern: "CUSTOM-MODEL" }]))
       .toEqual({ error: "模型「CUSTOM-MODEL」重复" })
   })
@@ -91,10 +97,13 @@ describe("model limit table helpers", () => {
         max_output_tokens: 32_000,
       },
     ]
-    const rows = buildLimitRows(FALLBACK_DEFAULT, overrides, [])
+    const rows = buildLimitRows(overrides, [])
     expect(rows.map((row) => row.max_output_tokens)).toEqual([UNLIMITED_OUTPUT, null, "32K"])
     expect(validateLimitRows(rows, true)).toEqual({ overrides })
     expect(validateLimitRows(rows)).toHaveProperty("error")
-    expect(validateLimitRows([{ ...rows[0], max_output_tokens: "" }], true)).toHaveProperty("error")
+    expect(validateLimitRows([{ ...rows[1], max_output_tokens: "" }], true)).toEqual({
+      overrides: [overrides[1]],
+    })
+    expect(validateLimitRows([{ ...rows[0], max_output_tokens: "invalid" }], true)).toHaveProperty("error")
   })
 })

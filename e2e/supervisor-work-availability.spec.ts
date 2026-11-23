@@ -190,9 +190,11 @@ test("Work panel reviews and marks the exact oldest chat message", async ({ page
 
 test("Supervisor settings save Work flags, reasoning, and parallel limit with confirmed readback", async ({ page }, testInfo) => {
   type WorkPolicy = { reasoning_effort: string | null; max_parallel: number | null }
-  const features = {
+  type WorkSettings = WorkFlags & { provider_model_ref: boolean; work_ultra_by_default?: boolean; work_execution: WorkPolicy }
+  const features: WorkSettings = {
     ticket_mutation: false, ticket_dispatch: false, provider_model_ref: true,
-    work_execution: { reasoning_effort: null, max_parallel: null } as WorkPolicy,
+    work_ultra_by_default: false,
+    work_execution: { reasoning_effort: null, max_parallel: null },
   }
   await fixture(page, "v1-ready", features)
   const patches: unknown[] = []
@@ -200,7 +202,7 @@ test("Supervisor settings save Work flags, reasoning, and parallel limit with co
     const request = route.request()
     if (request.method() === "POST") {
       const patch = request.postDataJSON() as {
-        features: Partial<WorkFlags> & { work_execution?: Partial<WorkPolicy> }
+        features: Partial<Omit<WorkSettings, "work_execution">> & { work_execution?: Partial<WorkPolicy> }
       }
       patches.push(patch)
       // A success response can still fail to confirm the requested setting.
@@ -212,12 +214,15 @@ test("Supervisor settings save Work flags, reasoning, and parallel limit with co
     }
     return route.fulfill({ json: { features } })
   })
-  if ((page.viewportSize()?.width ?? 0) < 768) {
-    await page.getByRole("button", { name: "菜单", exact: true }).click()
-  }
-  await page.getByRole("button", { name: "系统设置", exact: true }).click()
   const settings = settingsSurface(page)
-  await selectSettingsCategory(settings, "system", "系统")
+  const openSystemSettings = async () => {
+    if ((page.viewportSize()?.width ?? 0) < 768) {
+      await page.getByRole("button", { name: "菜单", exact: true }).click()
+    }
+    await page.getByRole("button", { name: "系统设置", exact: true }).click()
+    await selectSettingsCategory(settings, "system", "系统")
+  }
+  await openSystemSettings()
   const work = settings.getByRole("region", { name: "Supervisor", exact: true })
   const mutation = work.getByRole("switch", { name: "启用 Work", exact: true })
   const dispatch = work.getByRole("switch", { name: "允许工作派发", exact: true })
@@ -251,21 +256,34 @@ test("Supervisor settings save Work flags, reasoning, and parallel limit with co
     { features: { ticket_dispatch: true, work_execution: { reasoning_effort: "max", max_parallel: 6 } } },
   ])
   expect(features.provider_model_ref).toBe(true)
+  await reasoning.click()
+  await page.getByRole("option", { name: "Ultra", exact: true }).click()
+  await save.click()
+  await expect(work).toContainText("已保存")
+  expect(patches.at(-1)).toEqual({ features: { work_ultra_by_default: true } })
+  expect(features.work_execution.reasoning_effort).toBe("max")
   await work.screenshot({ path: testInfo.outputPath("work-settings.png") })
   await closeSettings(settings)
-  if ((page.viewportSize()?.width ?? 0) < 768) {
-    await page.getByRole("button", { name: "菜单", exact: true }).click()
-  }
-  await page.getByRole("button", { name: "系统设置", exact: true }).click()
-  await selectSettingsCategory(settings, "system", "系统")
-  await expect(reasoning).toHaveText("最大")
+  await openSystemSettings()
+  await expect(reasoning).toHaveText("Ultra")
   await expect(parallel).toHaveValue("6")
   await reasoning.click()
   await page.getByRole("option", { name: "自动", exact: true }).click()
   await parallel.clear()
   await save.click()
   await expect(work).toContainText("已保存")
-  expect(patches.at(-1)).toEqual({ features: { work_execution: { reasoning_effort: null, max_parallel: null } } })
+  expect(patches.at(-1)).toEqual({
+    features: { work_ultra_by_default: false, work_execution: { reasoning_effort: null, max_parallel: null } },
+  })
+  await closeSettings(settings)
+
+  delete features.work_ultra_by_default
+  await openSystemSettings()
+  await expect(reasoning).toHaveText("自动")
+  await reasoning.click()
+  await expect(page.getByRole("option", { name: "Ultra", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("option", { name: "最大", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
   await closeSettings(settings)
 
   const workbench = await openWork(page)
