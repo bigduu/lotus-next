@@ -2,7 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react"
 import { DragDropProvider, useDragDropManager } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
-import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks, ChevronDown, Workflow } from "lucide-react"
+import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, MessageSquare, SlidersHorizontal, X, ListChecks, ChevronDown, Workflow } from "lucide-react"
 import { SessionTaskDag } from "@/components/chat/SessionTaskDag"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,6 +27,7 @@ import type { RightWorkbenchTab, WorkbenchToolTab } from "@/lib/workbenchTabType
 export type { RightWorkbenchTab, WorkbenchToolTab } from "@/lib/workbenchTabTypes"
 
 const toolEntries = [
+  { id: "side-chat", get label() { return uiText("side_chat_title") }, get description() { return uiText("side_chat_description") }, icon: MessageSquare },
   { id: "work", get label() { return uiText("supervisor_work_tab") }, get description() { return uiText("supervisor_work_description") }, icon: ListChecks },
   { id: "inspector", get label() { return uiText("inspector_fc48a7f2") }, get description() { return uiText("view_current_session_ea4cbea5") }, icon: SlidersHorizontal },
   { id: "review", label: "Review", get description() { return uiText("view_file_changes_93cce2ed") }, icon: FileDiff },
@@ -128,6 +129,7 @@ export function RightWorkbenchContent({
   review,
   browser,
   subagents,
+  sideChat,
   taskDag,
   work,
   workEnabled = false,
@@ -154,6 +156,7 @@ export function RightWorkbenchContent({
   review: ReactNode
   browser: ReactNode
   subagents: ReactNode
+  sideChat?: ReactNode
   taskDag?: ComponentProps<typeof SessionTaskDag>
   work?: ReactNode
   workEnabled?: boolean
@@ -220,7 +223,7 @@ export function RightWorkbenchContent({
     onTabChange(entry)
   }
   const enabledEntries = toolEntries.filter((entry) =>
-    (browserEnabled || entry.id !== "browser") && (workEnabled || entry.id !== "work") && (taskDag || entry.id !== "task-dag"))
+    (browserEnabled || entry.id !== "browser") && (workEnabled || entry.id !== "work") && (taskDag || entry.id !== "task-dag") && (sideChat || entry.id !== "side-chat"))
   const selectValue = (value: string) => {
     if (value.startsWith("browser:")) onBrowserActivate?.(value.slice("browser:".length))
     else if (value !== "launcher" && value !== "browser-entry") onTabChange(value as WorkbenchToolTab)
@@ -366,6 +369,11 @@ export function RightWorkbenchContent({
       {visible && openToolTabs.includes("subagents") ? (
         <TabsContent value="subagents" forceMount className={cn("min-h-0 min-w-0 overflow-hidden", activeTab === "subagents" ? "flex" : "hidden")}>
           {subagents}
+        </TabsContent>
+      ) : null}
+      {sideChat && openToolTabs.includes("side-chat") ? (
+        <TabsContent value="side-chat" forceMount className={cn("min-h-0 min-w-0 overflow-hidden", visible && activeTab === "side-chat" ? "flex" : "hidden")}>
+          {sideChat}
         </TabsContent>
       ) : null}
       {visible && taskDag && openToolTabs.includes("task-dag") ? (

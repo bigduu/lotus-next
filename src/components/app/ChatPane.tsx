@@ -55,6 +55,7 @@ import {
 } from "@/components/app/RightPanelLauncher"
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
+import type { SideChatIntent } from "@/components/app/SideChatPane"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"
@@ -197,6 +198,8 @@ export function ChatPane({
   sidePaneOpen,
   onToggleSidePane,
   onOpenSubagents,
+  onOpenSideChat,
+  sideChatSourceRequest,
   onOpenTaskDag,
   onSelectSubAgent,
   onOpenSidebar,
@@ -231,6 +234,8 @@ export function ChatPane({
   sidePaneOpen?: boolean
   onToggleSidePane?: () => void
   onOpenSubagents?: () => void
+  onOpenSideChat?: (intent?: SideChatIntent) => void
+  sideChatSourceRequest?: { id: string; token: number }
   onOpenTaskDag?: () => void
   /** Opens a child without replacing this pane's current session. */
   onSelectSubAgent?: (childId: string) => void
@@ -477,6 +482,7 @@ export function ChatPane({
     ? createDraftCompletionRequest(typeof completionSession === "string" ? completionSession : null, messages) : undefined,
   [draftCompletionAllowed, completionSession, messages])
   const loopDraft = isSessionLoopCommand(draft)
+  const sideChatCommand = onOpenSideChat && /^\/side(?:\s|$)/i.test(draft.trim())
   const loopRequests = useRef(new Set<string>())
   const latestSubmit = useRef<(confirmation?: LoopCapabilityConfirmation) => void>(() => {})
   const composerInputRef = useRef<ComposerInputHandle>(null)
@@ -545,6 +551,8 @@ export function ChatPane({
     if (!currentSessionId) return Promise.resolve()
     return useAppStore.getState().loadEarlierChatHistory(currentSessionId, signal, releaseBottomPin)
   }, [currentSessionId, releaseBottomPin])
+
+  const notifyMissingSideChatSource = useCallback(() => showToast(uiText("side_chat_source_unavailable")), [showToast])
 
   const addFiles = async (files: FileList | File[]) => {
     const imgs = Array.from(files).filter((f) => f.type.startsWith("image/"))
@@ -892,6 +900,15 @@ export function ChatPane({
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
+    if (onOpenSideChat && /^\/side(?:\s|$)/i.test(text.trim())) {
+      const prompt = text.trim().slice("/side".length).trim()
+      const revision = draftAtSubmit?.contentRevision ?? 0
+      onOpenSideChat({
+        prompt,
+        onApplied: () => storeAtSubmit.setInputContentIfRevision(draftKey, revision, ""),
+      })
+      return
+    }
     if (currentSessionId && text.trim().toLowerCase() === "/workflow") {
       openWorkflowRuns()
       return
@@ -1300,6 +1317,7 @@ export function ChatPane({
             />
           }
           onOpenSubagents={onOpenSubagents}
+          onOpenSideChat={onOpenSideChat ? () => onOpenSideChat() : undefined}
           onOpenTaskDag={hasSessionTasks ? onOpenTaskDag : undefined}
           sidePaneOpen={sidePaneOpen ?? false}
           onToggleSidePane={() => launchWorkbench(onToggleSidePane ?? onOpenInspector)}
@@ -1387,6 +1405,10 @@ export function ChatPane({
           onFork={handleFork}
           onDelete={deleteMessage}
           onEditMessage={handleEditMessage}
+          onAskSideChat={onOpenSideChat ? (quote) => onOpenSideChat({ quote }) : undefined}
+          revealMessage={sideChatSourceRequest}
+          onBeforeRevealMessage={releaseBottomPin}
+          onMissingRevealedMessage={notifyMissingSideChatSource}
         />
         )}
 
@@ -1517,7 +1539,7 @@ export function ChatPane({
           sending={currentlyRunning}
           queueMode={queue.mode}
           onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer && !loopDraft ? queue.setMode : undefined}
-          sendWhileRunning={semanticComposer || loopDraft}
+          sendWhileRunning={semanticComposer || loopDraft || sideChatCommand}
           queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
           workspaceControl={!currentSessionId ? <Suspense fallback={null}>
             <NewChatWorktreeControl projectId={pendingProjectId ?? null}
@@ -1597,6 +1619,7 @@ export function ChatPane({
           onPickSkill={pickSkill}
           skills={skills}
           onOpenWorkflowRuns={currentSessionId ? openWorkflowRuns : undefined}
+          onOpenSideChat={onOpenSideChat ? () => { onOpenSideChat(); setDraft(""); setMenusDismissed(true) } : undefined}
           onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
           onPickCompact={() => {
             const latest = useAppStore.getState().inputStates[draftKey]

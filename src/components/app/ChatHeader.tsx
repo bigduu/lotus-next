@@ -1,6 +1,6 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { type ReactNode } from "react"
-import { Bot, Menu, Workflow } from "lucide-react"
+import { Bot, Menu, MessageSquarePlus, Workflow } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -20,6 +20,7 @@ export function ChatHeader({
   sidePaneOpen,
   onToggleSidePane,
   onOpenSubagents,
+  onOpenSideChat,
   onOpenTaskDag,
   sidebarCollapsed,
   supervisorControl,
@@ -32,6 +33,7 @@ export function ChatHeader({
   sidePaneOpen: boolean
   onToggleSidePane: () => void
   onOpenSubagents?: () => void
+  onOpenSideChat?: () => void
   onOpenTaskDag?: () => void
   /** Desktop: sidebar is collapsed, so show the menu button to bring it back. */
   sidebarCollapsed: boolean
@@ -78,6 +80,12 @@ export function ChatHeader({
             <Button size="icon" variant="ghost" aria-label={uiText("open_subagent_tree")}
               title={uiText("open_subagent_tree")} onClick={onOpenSubagents}>
               <Bot />
+            </Button>
+          ) : null}
+          {onOpenSideChat ? (
+            <Button size="icon" variant="ghost" aria-label={uiText("side_chat_open")}
+              title={uiText("side_chat_open")} onClick={onOpenSideChat}>
+              <MessageSquarePlus />
             </Button>
           ) : null}
           <RightPanelLauncher open={sidePaneOpen} onToggle={onToggleSidePane} />

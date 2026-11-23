@@ -147,6 +147,13 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   }
   const workbench = createWorkbenchState(currentSession)
   const workbenchState = workbench.state
+  const visibleWorkbenchTools = () => workbenchState().tools.filter((tab) =>
+    tab !== "side-chat" && (tab !== "work" || workEnabled()),
+  )
+  const visibleWorkbenchTab = () => {
+    const tab = workbenchState().tab
+    return tab === "browser" || (tab && visibleWorkbenchTools().includes(tab)) ? tab : null
+  }
   const desktopSidebar = () => containerWidth() >= 768 && !sidebarCollapsed()
   const maxWorkbenchWidth = () => getWorkbenchMaxWidth(containerWidth(), desktopSidebar() ? usedSidebarWidth() : 0)
   const dagSession = () => {
@@ -394,8 +401,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         workbench={<Show when={workbenchState().open}>
           <Loading fallback={null}>
             <RightWorkbench docked={docked()} expanded={taskExpanded()} visible pageVisible={!settingsOpen()}
-              activeTab={workbenchState().tab === "work" && !workEnabled() ? null : workbenchState().tab}
-              openToolTabs={workbenchState().tools.filter((tab) => tab !== "work" || workEnabled())}
+              activeTab={visibleWorkbenchTab()}
+              openToolTabs={visibleWorkbenchTools()}
               workEnabled={workEnabled()}
               work={<Show when={ticketScope()?.binding.supervisor_session_id === currentSession()} fallback={
                 <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing}
