@@ -23,6 +23,8 @@ export default defineConfig(({ mode }) => {
   return {
     appType: "mpa",
     base: portableArtifactBase,
+    cacheDir: "node_modules/.vite-solid-preview",
+    optimizeDeps: { entries: ["solid-preview.html"] },
     plugins: [solid(), tailwindcss(), assertSolidRuntime()],
     resolve: { alias: sourceAliases },
     server: { host: "127.0.0.1", port: 9573, strictPort: true },
