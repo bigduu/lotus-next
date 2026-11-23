@@ -49,6 +49,11 @@ on port 9562. The preview requires a Bamboo version that advertises Side Chat
 before offering the workbench tab, `/side` or message quoting. Use
 `npm run test:e2e:solid` for the preview’s browser fixtures. [Side Chat preview screenshot](docs/demos/solid-preview-side-chat.png).
 
+Build the Solid candidate with `npm run build:solid:artifact`, then run
+`npm run verify:solid:artifact`. The candidate serves from the standalone or
+embedded `index.html` in `dist-solid-artifact` and uses the production bundle
+budgets. The production npm command still builds `dist`.
+
 ### Production build
 
 ```bash

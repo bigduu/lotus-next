@@ -141,6 +141,20 @@ const optionalFeatureEntries = Object.freeze([
   { label: "vendor-highlighter", name: "vendor-highlighter" },
 ])
 
+const solidOptionalFeatureEntries = Object.freeze([
+  { label: "ProjectWorkBoard", source: "src/solid/project-work/ProjectWorkBoard.tsx" },
+  { label: "BrowserPane", source: "src/solid/workbench/browser/BrowserPane.tsx" },
+  { label: "ComposerEditor", source: "src/solid/composer/ComposerEditor.tsx" },
+  { label: "Settings", source: "src/solid/settings/SettingsPage.tsx" },
+  { label: "AssistantMarkdown", source: "src/solid/markdown/AssistantMarkdown.tsx" },
+  { label: "renderMermaid", source: "src/solid/markdown/renderMermaid.ts" },
+  { label: "renderPdf", source: "src/solid/chat/export/renderPdf.ts" },
+  { label: "HomeDashboard", source: "src/solid/chat/home/HomeDashboard.tsx" },
+  { label: "SidebarProjectDrag", source: "src/solid/shell/project-drag/SidebarProjectDrag.tsx" },
+])
+const solidBootstrapNames = new Set(["Root", "SolidApp"])
+const reactPackagePattern = /^(?:@[^/]+\/)?(?:react(?:-.*)?|.+-react)$/
+
 const forbiddenStartupModulePaths = Object.freeze([
   "src/components/app/ProjectWorkBoard.tsx",
   "src/components/app/BrowserPane.tsx",
@@ -318,6 +332,8 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   if (entry.src !== "index.html") {
     throw new Error(`Expected index.html entry; received ${String(entry.src)}.`)
   }
+  const solid = readChunkOwnership(entry.file).modules.includes("src/solid/entry.tsx")
+  const optionalEntries = solid ? solidOptionalFeatureEntries : optionalFeatureEntries
 
   const htmlJavaScriptKeys = htmlAssetsWithExtension(html, "js").map((asset) =>
     findManifestKeyByAsset(manifest, asset),
@@ -355,7 +371,7 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   )
 
   const immediateDynamicNames = immediateDynamicKeys.map((key) => manifest[key]?.name)
-  const optionalFeatures = optionalFeatureEntries.map((descriptor) => {
+  const optionalFeatures = optionalEntries.map((descriptor) => {
     const key = findFeatureKey(manifest, descriptor)
     return {
       ...descriptor,
@@ -370,7 +386,8 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   const startupOwnership = closureFiles.map(readChunkOwnership)
   const startupModules = [...new Set(startupOwnership.flatMap(({ modules }) => modules))].sort()
   const startupPackages = [...new Set(startupOwnership.flatMap(({ packages }) => packages))].sort()
-  const settingsClosure = collectStaticClosure(manifest, [settings.key])
+  const settingsRoots = [settings.key, ...(solid ? manifest[settings.key].dynamicImports ?? [] : [])]
+  const settingsClosure = collectStaticClosure(manifest, settingsRoots)
   const settingsOwnership = [...settingsClosure]
     .map((key) => manifest[key].file)
     .map(readChunkOwnership)
@@ -383,19 +400,28 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   const forbiddenStartupModules = startupModules.filter(
     (module) =>
       forbiddenStartupModulePaths.includes(module) ||
-      forbiddenStartupModulePrefixes.some((prefix) => module.startsWith(prefix)),
+      forbiddenStartupModulePrefixes.some((prefix) => module.startsWith(prefix)) ||
+      (solid && (solidOptionalFeatureEntries.some((entry) => entry.source === module)
+        || ["src/solid/settings/", "src/solid/chat/export/"].some((prefix) => module.startsWith(prefix)))),
   )
   const leakedStartupPackages = startupPackages.filter((packageName) =>
     forbiddenStartupPackages.includes(packageName),
   )
-  const missingSettingsOwnedModules = requiredSettingsOwnedModules.filter(
+  const requiredSettingsModules = solid ? [
+    "src/solid/settings/SettingsPage.tsx",
+    "src/solid/settings/metrics/SettingsMetrics.tsx",
+    "src/solid/settings/plugins/SettingsPlugins.tsx",
+    "src/services/metrics/MetricsService.ts",
+    "src/services/plugin/PluginService.ts",
+  ] : requiredSettingsOwnedModules
+  const missingSettingsOwnedModules = requiredSettingsModules.filter(
     (module) => !settingsOwnedModules.includes(module),
   )
-  const missingSettingsOwnedPackages = requiredSettingsOwnedPackages.filter(
+  const missingSettingsOwnedPackages = (solid ? ["@kobalte/core"] : requiredSettingsOwnedPackages).filter(
     (packageName) => !settingsOwnedPackages.includes(packageName),
   )
   const rootKey = Object.entries(manifest).find(([, manifestEntry]) =>
-    manifestEntry.src === "src/Root.tsx"
+    manifestEntry.src === (solid ? "src/solid/shell/SolidApp.tsx" : "src/Root.tsx")
   )?.[0]
 
   return {
@@ -406,6 +432,9 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
     closureFiles: [...closureFiles].sort(),
     cssFiles: [...cssFiles].sort(),
     immediateDynamicNames,
+    framework: solid ? "solid" : "react",
+    reactPackages: solid ? [...new Set(Object.keys(ownership.chunks).flatMap((file) =>
+      readChunkOwnership(file).packages.filter((pkg) => reactPackagePattern.test(pkg))))].sort() : [],
     rootKey,
     settingsIsOwnedByRoot:
       Boolean(rootKey && settings) && (manifest[rootKey].dynamicImports ?? []).includes(settings.key),
@@ -428,15 +457,19 @@ const percent = (value) => `${(value * 100).toFixed(2)}%`
 export function findBundleBudgetViolations(report) {
   const violations = []
   const immediateNames = new Set(report.immediateDynamicNames)
+  const expectedNames = report.framework === "solid" ? solidBootstrapNames : immediateBootstrapNames
   if (
-    immediateNames.size !== immediateBootstrapNames.size ||
-    [...immediateBootstrapNames].some((name) => !immediateNames.has(name))
+    immediateNames.size !== expectedNames.size ||
+    [...expectedNames].some((name) => !immediateNames.has(name))
   ) {
     violations.push(
-      `HTML entry immediate dynamic owners must be exactly ErrorBoundary and Root; received ${[
+      `HTML entry immediate dynamic owners must be exactly ${[...expectedNames].join(" and ")}; received ${[
         ...immediateNames,
       ].sort().join(", ")}.`,
     )
+  }
+  if (report.reactPackages?.length) {
+    violations.push(`Solid artifact contains React packages: ${report.reactPackages.join(", ")}.`)
   }
   if (!report.settingsIsOwnedByRoot) {
     violations.push("Root must own Settings through one direct dynamic feature entry.")
