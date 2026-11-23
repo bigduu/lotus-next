@@ -8,7 +8,9 @@ import { appStore } from "@shared/store/appStore/state"
 import { themeStore } from "@shared/store/themeState"
 import { copyText } from "@shared/utils/clipboard"
 import { openExternalLink } from "@shared/utils/openExternalLink"
+import { applyGlobalAccentToDocument, getGlobalAccentColors } from "@shared/theme/globalAccentColors"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
+import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { markSessionRead } from "@/lib/sessionReadMarkers"
 import { navigateRecordedSession } from "@/lib/recordedSessionNavigation"
 import { setSessionSection } from "@/lib/projectSidebarPreferences"
@@ -24,6 +26,7 @@ import { createExternalSnapshot } from "../chat/snapshots"
 import type { PendingSideChatIntent, SideChatIntent } from "../workbench/side-chat/SideChatPane"
 import { ChatViewport } from "../chat/ChatViewport"
 import { ComposerPanel } from "../chat/ComposerPanel"
+import { ConversationClearDialog } from "../chat/ConversationClearDialog"
 import { createRootModeAuthority } from "../chat/model/createRootModeAuthority"
 import { createTicketIngress } from "../chat/createTicketIngress"
 import { createTicketWork } from "../workbench/work/createTicketWork"
@@ -67,7 +70,6 @@ const ReviewPane = lazy(() => import("../workbench/ReviewPane"), { export: "Revi
 
 
 type SectionIntent = { projectId: string; sectionId?: string | null }
-type ConfirmSession = { chat: ChatItem; action: "delete" | "clear" }
 
 function sidebarWidth() {
   try {
@@ -99,7 +101,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   let shell!: HTMLDivElement
   const [notice, setNotice] = createSignal<{ text: string; error: boolean } | null>(null)
   const [newSession, setNewSession] = createSignal<SectionIntent | null>(null)
-  const [confirm, setConfirm] = createSignal<ConfirmSession | null>(null)
+  const [sessionToDelete, setSessionToDelete] = createSignal<ChatItem | null>(null)
+  const [sessionToClear, setSessionToClear] = createSignal<ChatItem | null>(null)
   const [confirmationBusy, setConfirmationBusy] = createSignal(false)
   const [link, setLink] = createSignal<string | null>(null)
   const [image, setImage] = createSignal<string | null>(null)
@@ -329,6 +332,16 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     const colors = getUserMessageColors(state.themeMode, state.userMessageColorPreset, state.customUserMessageColor)
     root.style.setProperty("--user-message-background", colors.background)
     root.style.setProperty("--user-message-foreground", colors.foreground)
+    applyGlobalAccentToDocument(getGlobalAccentColors(state.themeMode, state.globalAccentPreset, state.customGlobalAccentColor))
+  })
+  onSettled(() => {
+    const sync = () => {
+      const enabled = String(isVdiSafeModeEnabled())
+      document.body.setAttribute("data-vdi-safe", enabled)
+      document.getElementById("root")?.setAttribute("data-vdi-safe", enabled)
+    }
+    sync()
+    return onVdiSafeModeChange(sync)
   })
   createEffect(availability, (available) => {
     if (available === false) {
@@ -408,14 +421,13 @@ export function SolidApp(props: { ownerAccess: boolean }) {
       }).catch(openError)
     }
   }
-  const confirmAction = async () => {
-    const action = confirm()
-    if (!action || confirmationBusy()) return
+  const confirmDeletion = async () => {
+    const session = sessionToDelete()
+    if (!session || confirmationBusy()) return
     setConfirmationBusy(true)
     try {
-      if (action.action === "delete") await appStore.getState().deleteSession(action.chat.id)
-      else await appStore.getState().clearConversation(action.chat.id)
-      setConfirm(null)
+      await appStore.getState().deleteSession(session.id)
+      setSessionToDelete(null)
     } catch (error) {
       openError(error)
     } finally {
@@ -468,8 +480,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           onCopySessionId={(id) => {
             void copyText(id).then(() => setNotice({ text: text("session_id_copied_3afb54a6"), error: false })).catch(openError)
           }}
-          onClear={(entry) => setConfirm({ chat: entry, action: "clear" })}
-          onDelete={(entry) => setConfirm({ chat: entry, action: "delete" })}
+          onClear={setSessionToClear}
+          onDelete={setSessionToDelete}
           onError={openError}
         />}
         workbench={<Show when={workbenchState().open}>
@@ -694,22 +706,23 @@ export function SolidApp(props: { ownerAccess: boolean }) {
         <ProjectWorkDialog project={projects()[scope.id] ?? null} metadataError={projectWorkError()}
           ownerAccess={props.ownerAccess} onClose={() => setProjectWork(null)} onOpenSession={openProjectWorkSession} />
       )}</Show>
-      <ResponsiveDialog open={confirm() !== null} onOpenChange={(open) => {
-        if (!open && !confirmationBusy()) setConfirm(null)
+      <Show when={sessionToClear()} keyed>{(session) => (
+        <ConversationClearDialog sessionId={session.id} title={session.title || session.id} onClose={() => setSessionToClear(null)} />
+      )}</Show>
+      <ResponsiveDialog open={sessionToDelete() !== null} onOpenChange={(open) => {
+        if (!open && !confirmationBusy()) setSessionToDelete(null)
       }}>
         <ResponsiveDialogContent class="p-5" showCloseButton={false} dismissable={!confirmationBusy()}>
-          <ResponsiveDialogTitle>{text(confirm()?.action === "clear" ? "conversation_clear_title" : "delete_session_d51250d1")}</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{text("delete_session_d51250d1")}</ResponsiveDialogTitle>
           <ResponsiveDialogDescription class="mt-2">
-            {confirm()?.action === "clear"
-              ? text("conversation_clear_impact")
-              : text("delete_session_description", { title: confirm()?.chat.title ?? "" })}
+            {text("delete_session_description", { title: sessionToDelete()?.title ?? "" })}
           </ResponsiveDialogDescription>
           <div class="mt-5 flex justify-end gap-2">
-            <Button variant="secondary" disabled={confirmationBusy()} onClick={() => setConfirm(null)}>
+            <Button variant="secondary" disabled={confirmationBusy()} onClick={() => setSessionToDelete(null)}>
               {text("cancel_2cd0f3be")}
             </Button>
-            <Button variant="destructive" disabled={confirmationBusy()} onClick={() => { void confirmAction() }}>
-              {text(confirm()?.action === "clear" ? "conversation_clear_action" : "delete_2f9daa82")}
+            <Button variant="destructive" disabled={confirmationBusy()} onClick={() => { void confirmDeletion() }}>
+              {text("delete_2f9daa82")}
             </Button>
           </div>
         </ResponsiveDialogContent>

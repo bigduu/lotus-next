@@ -24,6 +24,10 @@ test("Solid Lotus keeps appearance and owner settings in the real application sh
   await expect(settings.getByRole("heading", { name: "通用", exact: true })).toBeVisible()
   await settings.getByRole("button", { name: "浅色", exact: true }).click()
   await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
+  const root = page.locator("html")
+  const defaultAccent = await root.evaluate((element) => element.style.getPropertyValue("--primary"))
+  await settings.getByRole("button", { name: "蓝色", exact: true }).click()
+  await expect.poll(() => root.evaluate((element) => element.style.getPropertyValue("--primary"))).not.toBe(defaultAccent)
   if (isMobile) await settings.getByRole("combobox", { name: "系统设置" }).selectOption("providers")
   else await settings.getByRole("button", { name: "提供方", exact: true }).click()
   await expect(settings.getByRole("heading", { name: "提供方", exact: true })).toBeVisible()
@@ -150,5 +154,75 @@ test("Solid prompt settings save a custom preset and preserve built-in presets",
   if (isMobile) await page.getByRole("button", { name: "菜单", exact: true }).click()
   await page.getByRole("button", { name: "系统设置", exact: true }).click()
   await expect(enhancement).toHaveValue("Fixture enhancement")
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("Solid system settings preserve current model limits and require explicit strategy readback", async ({ page, baseURL, isMobile }) => {
+  const { entryUrl, observation } = await installSettingsFixture(page, baseURL)
+  const originalLimits = [{ model_pattern: "fixture-model", max_context_tokens: 80_000 }]
+  const currentLimits = [{ model_pattern: "fixture-model", max_context_tokens: 96_000 }]
+  let limits = originalLimits
+  const config = { proxy_auth_mode: "auto", features: { ticket_mutation: true, ticket_dispatch: false } }
+  const writes: unknown[] = []
+  await page.route("**/api/v1/bamboo/config", async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { ...config, model_limits: limits } })
+    const patch = route.request().postDataJSON()
+    writes.push(patch)
+    return route.fulfill({ json: { ...config, model_limits: limits, ...(writes.length > 1 ? patch : {}) } })
+  })
+
+  const settings = await openSettings(page, entryUrl, isMobile)
+  if (isMobile) await settings.getByRole("combobox", { name: "系统设置" }).selectOption("system")
+  else await settings.getByRole("button", { name: "系统", exact: true }).click()
+  await expect(settings.getByRole("heading", { name: "Supervisor", exact: true })).toBeVisible()
+  const context = settings.locator("section").filter({ has: page.getByRole("radiogroup", { name: "上下文管理", exact: true }) })
+  const strategy = context.getByRole("radio", { name: "原文检索窗口", exact: true })
+  await strategy.check()
+  limits = currentLimits
+  const save = context.getByRole("button", { name: "保存", exact: true })
+  await save.click()
+  await expect(context.getByRole("alert")).toBeVisible()
+  await expect(strategy).toBeChecked()
+  await save.click()
+  await expect(context.getByRole("status")).toHaveText("策略已保存，将在下次压缩时使用。")
+  const expected = {
+    context_management: { strategy: "retrieval_window", retrieval_window: { history_tool_required: true, fallback_strategy: "none" } },
+    model_limits: currentLimits,
+  }
+  expect(writes).toEqual([expected, expected])
+
+  const compatibility = settings.getByRole("switch", { name: "图形兼容模式" })
+  await compatibility.press("Space")
+  await expect(page.locator("body")).toHaveAttribute("data-vdi-safe", "true")
+  await compatibility.press("Space")
+  await expect(page.locator("body")).toHaveAttribute("data-vdi-safe", "false")
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("Solid session maintenance only reads back after an unconfirmed conversation clear", async ({ page, baseURL, isMobile }) => {
+  const { entryUrl, observation } = await installSettingsFixture(page, baseURL)
+  let requested = 0
+  await page.route("**/api/v1/sessions/all-surface-session/clear", async (route) => {
+    expect(route.request().method()).toBe("POST")
+    requested += 1
+    return route.fulfill({ json: { success: true, session_id: "incorrect-receipt" } })
+  })
+  await page.goto(entryUrl)
+  if (isMobile) await page.getByRole("button", { name: "菜单", exact: true }).click()
+  await page.getByRole("button", { name: "All-surface acceptance", exact: true }).click()
+  if (isMobile) await page.getByRole("button", { name: "菜单", exact: true }).click()
+  await page.getByRole("button", { name: "系统设置", exact: true }).click()
+  const settings = page.locator('[data-slot="settings-page"]')
+  if (isMobile) await settings.getByRole("combobox", { name: "系统设置" }).selectOption("system")
+  else await settings.getByRole("button", { name: "系统", exact: true }).click()
+  await settings.getByRole("button", { name: "清除会话消息", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "清除这个会话的消息？", exact: true })
+  await expect(dialog).toContainText("all-surface-session")
+  await dialog.getByRole("button", { name: "清除会话消息", exact: true }).click()
+  await expect(dialog.getByRole("alert")).toContainText("结果未知")
+  await expect(dialog.getByRole("button", { name: "清除会话消息", exact: true })).toHaveCount(0)
+  await dialog.getByRole("button", { name: "刷新存储状态", exact: true }).click()
+  await expect(dialog.getByRole("status")).toContainText("未发送新的清理请求")
+  expect(requested).toBe(1)
   expect(observation.pageErrors).toEqual([])
 })

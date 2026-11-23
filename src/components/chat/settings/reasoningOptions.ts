@@ -1,5 +1,5 @@
 import type { ReasoningEffort } from "@services/chat/AgentService"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 
 export const REASONING_OPTIONS: readonly { value: ReasoningEffort; label: string }[] = [
   { value: "none", get label() { return uiText("reasoning_none") } },

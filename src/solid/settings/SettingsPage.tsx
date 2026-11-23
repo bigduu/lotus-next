@@ -1,4 +1,4 @@
-import { Bell, BookOpen, CalendarClock, Cpu, FileText, Gauge, Globe, Plug, RotateCw, Settings2, ShieldCheck, X } from "@lucide/solid"
+import { Bell, Blocks, BookOpen, CalendarClock, ChartNoAxesCombined, Cpu, Database, FileText, Gauge, Globe, Monitor, Plug, RotateCw, Settings2, Share2, ShieldCheck, X } from "@lucide/solid"
 import { createMemo, createUniqueId, For, lazy, Loading, Show } from "solid-js"
 import { Dynamic, type JSX } from "@solidjs/web"
 import { ADVANCED_ONLY_SETTINGS_TABS, experienceModeStore } from "@shared/store/experienceModeState"
@@ -19,6 +19,11 @@ const SettingsMasking = lazy(() => import("./masking/SettingsMasking"), { export
 const SettingsSchedules = lazy(() => import("./schedules/SettingsSchedules"), { export: "SettingsSchedules" })
 const SettingsPrompts = lazy(() => import("./prompts/SettingsPrompts"), { export: "SettingsPrompts" })
 const SettingsNotifications = lazy(() => import("./notifications/SettingsNotifications"), { export: "SettingsNotifications" })
+const SettingsJiandu = lazy(() => import("./jiandu/SettingsJiandu"), { export: "SettingsJiandu" })
+const SettingsConfigShare = lazy(() => import("./config-share/SettingsConfigShare"), { export: "SettingsConfigShare" })
+const SettingsSystem = lazy(() => import("./system/SettingsSystem"), { export: "SettingsSystem" })
+const SettingsPlugins = lazy(() => import("./plugins/SettingsPlugins"), { export: "SettingsPlugins" })
+const SettingsMetrics = lazy(() => import("./metrics/SettingsMetrics"), { export: "SettingsMetrics" })
 
 const groups = [
   { label: "settings_group_appearance", tabs: [
@@ -27,19 +32,24 @@ const groups = [
   ] },
   { label: "settings_group_connections", tabs: [
     { id: "providers", label: "provider_9e218722", icon: Cpu, owner: true },
+    { id: "config-share", label: "share_title", icon: Share2, owner: true },
     { id: "model-limits", label: "model_limits_05ff605e", icon: Gauge, owner: true },
     { id: "retry", label: "retry_settings_1a7c4e91", icon: RotateCw, owner: true },
     { id: "mcp", label: "MCP", icon: Plug, owner: true },
   ] },
   { label: "settings_group_capabilities", tabs: [
+    { id: "plugins", label: "plugins_e806fbbe", icon: Blocks, owner: true },
     { id: "skills", label: "skills_99aea2f9", icon: BookOpen, owner: true },
     { id: "prompts", label: "prompts_4b47dbae", icon: FileText, owner: true },
     { id: "schedules", label: "scheduled_tasks_3c39e9bd", icon: CalendarClock, owner: true },
+    { id: "jiandu", label: "jiandu_memory_6567932c", icon: Database, owner: true },
   ] },
   { label: "settings_group_safety", tabs: [
     { id: "permissions", label: "permission_978cbca6", icon: ShieldCheck, owner: true },
     { id: "masking", label: "keyword_masking_62e701d9", icon: ShieldCheck, owner: true },
     { id: "env", label: "environment_variables_ae27b474", icon: Globe, owner: true },
+    { id: "metrics", label: "metrics_b87e67c7", icon: ChartNoAxesCombined, owner: true },
+    { id: "system", label: "system_5b50d7c4", icon: Monitor, owner: true },
   ] },
 ] as const
 
@@ -59,6 +69,11 @@ const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
   schedules: () => <SettingsSchedules />,
   prompts: () => <SettingsPrompts />,
   notifications: () => <SettingsNotifications />,
+  jiandu: () => <SettingsJiandu />,
+  "config-share": () => <SettingsConfigShare />,
+  system: (owner) => <SettingsSystem ownerAccess={owner} />,
+  plugins: () => <SettingsPlugins />,
+  metrics: () => <SettingsMetrics />,
 }
 
 export function SettingsPage(props: {
@@ -113,7 +128,7 @@ export function SettingsPage(props: {
           </div>}</For>
         </nav>
         <div class="settings-scroll">
-          <Show when={current()} keyed>{(tab) => <div role="region" aria-labelledby={headingId} class={`settings-panel motion-content-enter${tab.id === "model-limits" ? " settings-panel-wide" : ""}`}>
+          <Show when={current()} keyed>{(tab) => <div role="region" aria-labelledby={headingId} class={`settings-panel motion-content-enter${tab.id === "model-limits" || tab.id === "metrics" ? " settings-panel-wide" : ""}`}>
             <div class="settings-panel-heading">
               <h2 id={headingId} class="settings-title">{label(tab)}</h2>
               <p class="settings-panel-hint">{text(`settings_hint_${tab.id}`)}</p>
