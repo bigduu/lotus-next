@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import type { ModelLimitOverride } from "./useSystemConfig"
 
 export const DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
