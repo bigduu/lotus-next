@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { commandMatches, deadlineInstant, planningValue, workDeadlineStatus } from "@/lib/project-work/projectWorkControls"
-import { commandContext } from "./testFixtures"
+import { commandContext } from "@/test/fixtures/projectWorkControls"
 
 describe("explicit-offset desired deadline", () => {
   it("preserves the original offset and maps clearing only to null", () => {

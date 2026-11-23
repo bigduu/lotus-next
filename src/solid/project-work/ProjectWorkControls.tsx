@@ -150,7 +150,11 @@ export function ProjectWorkPlanningControls(props: ProjectWorkPlanningControlsPr
           <label class="min-w-0 space-y-1">
             <span>{copy().priority}</span>
             <select class={controlClass} value={props.draft.priority}
-              onChange={(event) => updateDraft({ priority: event.currentTarget.value as WorkPlanningDraft["priority"] })}>
+              onChange={(event) => {
+                const select = event.currentTarget
+                updateDraft({ priority: select.value as WorkPlanningDraft["priority"] })
+                select.value = props.draft.priority
+              }}>
               <For each={workPriorities}>{(priority) => <option value={priority}>{copy().priorities[priority]}</option>}</For>
             </select>
           </label>
@@ -173,7 +177,11 @@ export function ProjectWorkPlanningControls(props: ProjectWorkPlanningControlsPr
         <legend id={`${id}-query`} class="px-1 font-medium">{copy().query}</legend>
         <label class="min-w-0 space-y-1">
           <span>{copy().order}</span>
-          <select class={controlClass} value={props.query.order} onChange={(event) => updateQuery({ order: event.currentTarget.value as WorkPlanningQuery["order"] })}>
+          <select class={controlClass} value={props.query.order} onChange={(event) => {
+            const select = event.currentTarget
+            updateQuery({ order: select.value as WorkPlanningQuery["order"] })
+            select.value = props.query.order
+          }}>
             <option value="updated">{copy().orderUpdated}</option><option value="priority">{copy().orderPriority}</option>
             <option value="expected_completion">{copy().orderDeadline}</option>
           </select>
@@ -181,8 +189,10 @@ export function ProjectWorkPlanningControls(props: ProjectWorkPlanningControlsPr
         <label class="min-w-0 space-y-1">
           <span>{copy().filterPriority}</span>
           <select class={controlClass} value={props.query.priority ?? "all"} onChange={(event) => {
-            const priority = event.currentTarget.value
+            const select = event.currentTarget
+            const priority = select.value
             updateQuery({ priority: priority === "all" ? null : priority as WorkPlanningDraft["priority"] })
+            select.value = props.query.priority ?? "all"
           }}>
             <option value="all">{copy().allPriorities}</option>
             <For each={workPriorities}>{(priority) => <option value={priority}>{copy().priorities[priority]}</option>}</For>
@@ -191,7 +201,11 @@ export function ProjectWorkPlanningControls(props: ProjectWorkPlanningControlsPr
         <label class="min-w-0 space-y-1">
           <span>{copy().filterDeadline}</span>
           <select class={controlClass} value={props.query.deadline}
-            onChange={(event) => updateQuery({ deadline: event.currentTarget.value as WorkPlanningQuery["deadline"] })}>
+            onChange={(event) => {
+              const select = event.currentTarget
+              updateQuery({ deadline: select.value as WorkPlanningQuery["deadline"] })
+              select.value = props.query.deadline
+            }}>
             <option value="any">{copy().anyDeadline}</option>
             <option value="overdue" disabled={deadlineInstant(props.query.asOf) === null}>{copy().overdueOnly}</option>
             <option value="unset">{copy().unsetOnly}</option>
@@ -313,7 +327,11 @@ export function ProjectWorkOwnerControls(props: ProjectWorkOwnerControlsProps) {
         <Show when={!props.capabilities.accept.available}><p role="status" class="text-xs text-muted-foreground">{capabilityReason(props.capabilities.accept, copy().unsupported)}</p></Show>
         <label class="flex items-start gap-2">
           <input type="checkbox" class="mt-1" checked={confirmed()} disabled={!props.owner || !props.capabilities.accept.available || !acceptanceSafe() || busy()}
-            onChange={(event) => confirm(event.currentTarget.checked)} />
+            onChange={(event) => {
+              const confirmation = event.currentTarget
+              confirm(confirmation.checked)
+              confirmation.checked = confirmed()
+            }} />
           <span>{copy().acceptanceConfirmation}</span>
         </label>
         <Button type="button" size="sm" disabled={!allowed("accept")} onClick={() => requestAction("accept")}>{copy().accept}</Button>

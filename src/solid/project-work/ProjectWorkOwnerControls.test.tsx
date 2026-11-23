@@ -1,23 +1,36 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { render as mount } from "@solidjs/web"
+import { createSignal, flush, Show } from "solid-js"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./ProjectWorkOwnerControls"
-import { commandContext, controlCopy as copy, ownerProps } from "./testFixtures"
+import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./ProjectWorkControls"
+import { commandContext, controlCopy as copy, ownerProps } from "@/test/fixtures/projectWorkControls"
 
-let root: Root
-const render = async (props: ProjectWorkOwnerControlsProps) => act(async () => root.render(<ProjectWorkOwnerControls {...props} />))
+let host: HTMLDivElement
+let unmount: () => void
+let setProps: (props: ProjectWorkOwnerControlsProps) => void
+async function settle(update: () => unknown) {
+  await update()
+  await Promise.resolve()
+  flush()
+}
+const render = (props: ProjectWorkOwnerControlsProps) => settle(() => setProps({ ...props }))
 const button = (label: string) => [...document.querySelectorAll("button")].find((element) => element.textContent === label)!
-beforeEach(() => {
-  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  document.body.replaceChildren()
-  root = createRoot(document.body.appendChild(document.createElement("div")))
-})
-afterEach(() => act(() => root.unmount()))
+function open() {
+  host = document.body.appendChild(document.createElement("div"))
+  const [current, update] = createSignal<ProjectWorkOwnerControlsProps | null>(null)
+  setProps = update
+  unmount = mount(() => <Show when={current()}>{(value) => <ProjectWorkOwnerControls {...value()} />}</Show>, host)
+}
+function close() {
+  unmount()
+  host.remove()
+}
+beforeEach(open)
+afterEach(close)
 
 it("guards duplicate and conflicting click/Enter delivery with the same semantic command identity", async () => {
   const props = ownerProps()
   await render(props)
-  await act(async () => { button(copy.pause).click(); button(copy.pause).click(); button(copy.cancel).click() })
+  await settle(async () => { button(copy.pause).click(); button(copy.pause).click(); button(copy.cancel).click() })
   expect(props.onRequestAction).toHaveBeenCalledExactlyOnceWith({ kind: "pause" }, props.commands.pause)
   expect(button(copy.pause).disabled).toBe(true)
   expect(button(copy.cancel).disabled).toBe(true)
@@ -26,7 +39,7 @@ it("never equates receipt/ACK with actual paused or terminal state", async () =>
   const props = ownerProps()
   props.work = { ...props.work, state: "active" }
   await render(props)
-  await act(async () => button(copy.cancel).click())
+  await settle(async () => button(copy.cancel).click())
   expect(document.querySelector('[data-testid="work-authoritative-state"]')?.textContent).toBe("Active")
   for (const phase of ["requested", "awaiting_ack", "acknowledged"] as const) {
     props.request = { phase, operationId: "operation-cancel" }
@@ -43,11 +56,11 @@ it("reloads a pending request without another mutation and retains the operation
   const props = ownerProps()
   props.request = { phase: "awaiting_ack", operationId: "saved-operation" }
   await render(props)
-  act(() => root.unmount())
-  root = createRoot(document.body.appendChild(document.createElement("div")))
+  close()
+  open()
   await render(props)
   expect(document.body.textContent).toContain("saved-operation")
-  await act(async () => button(copy.pause).click())
+  await settle(async () => button(copy.pause).click())
   expect(props.onRequestAction).not.toHaveBeenCalled()
 })
 it("ignores an old Work receipt while a new Work command is in flight", async () => {
@@ -56,16 +69,16 @@ it("ignores an old Work receipt while a new Work command is in flight", async ()
   let resolveNew!: (value: { operationId: string }) => void
   props.onRequestAction = vi.fn(() => new Promise<{ operationId: string }>((resolve) => { resolveOld = resolve }))
   await render(props)
-  await act(async () => button(copy.pause).click())
+  await settle(async () => button(copy.pause).click())
   props.work = { ...props.work, id: "work-2", generation: 4 }
   props.commands = { pause: { ...commandContext("new-work-operation"), workId: "work-2", generation: 4 } }
   props.onRequestAction = vi.fn(() => new Promise<{ operationId: string }>((resolve) => { resolveNew = resolve }))
   await render(props)
-  await act(async () => button(copy.pause).click())
-  await act(async () => resolveOld({ operationId: "operation-pause" }))
+  await settle(async () => button(copy.pause).click())
+  await settle(async () => resolveOld({ operationId: "operation-pause" }))
   expect(document.body.textContent).toContain(copy.submitting)
   expect(props.onRequestAction).toHaveBeenCalledOnce()
-  await act(async () => resolveNew({ operationId: "new-work-operation" }))
+  await settle(async () => resolveNew({ operationId: "new-work-operation" }))
   expect(document.body.textContent).not.toContain(copy.submitting)
   expect(document.querySelector('[data-testid="work-authoritative-state"]')?.textContent).toBe("Submitted")
 })
@@ -81,7 +94,7 @@ it("requires owner authorization, explicit capability and matching generation/re
   await render(props)
   for (const label of [copy.pause, copy.resume, copy.cancel]) expect(button(label).disabled).toBe(true)
   expect(document.body.textContent).toContain("Runtime pause unsupported")
-  await act(async () => button(copy.pause).click())
+  await settle(async () => button(copy.pause).click())
   expect(props.onRequestAction).not.toHaveBeenCalled()
 })
 it("does not enable acceptance from absent active_assignment: it requires the exact stop guard and stop confirmation", async () => {
@@ -95,7 +108,7 @@ it("does not enable acceptance from absent active_assignment: it requires the ex
     expect(button(copy.accept).disabled).toBe(true)
     expect(document.querySelector('input[type="checkbox"]')?.hasAttribute("disabled")).toBe(true)
     expect(document.body.textContent).toContain(copy.completionGuard)
-    await act(async () => button(copy.accept).click())
+    await settle(async () => button(copy.accept).click())
   }
   expect(props.onRequestAction).not.toHaveBeenCalled()
 })
@@ -104,12 +117,12 @@ it("requires explicit User confirmation and preserves exact submission and unver
   props.acceptanceConfirmation = null
   await render(props)
   expect(button(copy.accept).disabled).toBe(true)
-  await act(async () => (document.querySelector('input[type="checkbox"]') as HTMLInputElement).click())
+  await settle(async () => (document.querySelector('input[type="checkbox"]') as HTMLInputElement).click())
   expect(props.onAcceptanceConfirmationChange).toHaveBeenCalledExactlyOnceWith({ submissionId: "submission-1", generation: 3, contractRevision: 5 })
   expect((document.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
   props.acceptanceConfirmation = ownerProps().acceptanceConfirmation
   await render(props)
-  await act(async () => button(copy.accept).click())
+  await settle(async () => button(copy.accept).click())
   expect(props.onRequestAction).toHaveBeenCalledExactlyOnceWith({ kind: "accept", source: "user", submissionId: "submission-1",
     generation: 3, contractRevision: 5, unverifiedItems: ["Live backend integration has not been verified"] }, props.commands.accept)
   expect(document.body.textContent).toContain("Live backend integration has not been verified")
@@ -123,7 +136,7 @@ it("does not reuse User confirmation for another submission or generation", asyn
     await render(props)
     expect(button(copy.accept).disabled).toBe(true)
     expect((document.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false)
-    await act(async () => button(copy.accept).click())
+    await settle(async () => button(copy.accept).click())
   }
   expect(props.onRequestAction).not.toHaveBeenCalled()
 })
@@ -141,7 +154,7 @@ it.each(["conflict", "denied", "outcome_unknown", "failed"] as const)("keeps %s 
   const props = ownerProps()
   props.request = { phase, operationId: "operation-cancel" }
   await render(props)
-  await act(async () => { button(copy.reload).click(); button(copy.reconcile).click(); button(copy.cancel).click() })
+  await settle(async () => { button(copy.reload).click(); button(copy.reconcile).click(); button(copy.cancel).click() })
   expect(props.onReload).toHaveBeenCalledOnce()
   expect(props.onReconcile).toHaveBeenCalledExactlyOnceWith("operation-cancel")
   expect(props.onRequestAction).not.toHaveBeenCalled()
@@ -150,9 +163,9 @@ it("keeps transport uncertainty latched, then accepts only a newly authorized co
   const props = ownerProps()
   props.onRequestAction = vi.fn().mockRejectedValue(new Error("lost ACK"))
   await render(props)
-  await act(async () => button(copy.pause).click())
+  await settle(async () => button(copy.pause).click())
   expect(document.body.textContent).toContain(copy.outcomeUnknown)
-  await act(async () => { button(copy.reconcile).click(); button(copy.resume).click() })
+  await settle(async () => { button(copy.reconcile).click(); button(copy.resume).click() })
   expect(props.onReconcile).toHaveBeenCalledExactlyOnceWith("operation-pause")
   expect(props.onRequestAction).toHaveBeenCalledOnce()
   props.work = { ...props.work, id: "work-2", generation: 4, recordRevision: 9 }
@@ -160,7 +173,7 @@ it("keeps transport uncertainty latched, then accepts only a newly authorized co
   props.onRequestAction = vi.fn(async (_intent, context) => ({ operationId: context.operationId }))
   await render(props)
   expect(button(copy.pause).disabled).toBe(false)
-  await act(async () => button(copy.pause).click())
+  await settle(async () => button(copy.pause).click())
   expect(props.onRequestAction).toHaveBeenCalledOnce()
 })
 
@@ -174,12 +187,12 @@ it.each([
   let rejectReceipt!: (reason: Error) => void
   props.onRequestAction = vi.fn(() => new Promise<{ operationId: string }>((resolve, reject) => { resolveReceipt = resolve; rejectReceipt = reject }))
   await render(props)
-  await act(async () => { button(copy.pause).click() })
+  await settle(async () => { button(copy.pause).click() })
   props.request = { phase, operationId }
   await render(props)
   const pendingCopy = phase === "requested" ? copy.requestSent : copy.awaitingAck
   expect(document.body.textContent).toContain(pendingCopy)
-  await act(async () => {
+  await settle(async () => {
     if (failure === "rejection") rejectReceipt(new Error("Private transport detail should not be displayed"))
     else resolveReceipt({ operationId: "foreign-operation" })
   })
@@ -188,7 +201,7 @@ it.each([
   expect(document.body.textContent).not.toContain("Private transport detail")
   expect(document.body.textContent).not.toContain("foreign-operation")
   expect(document.querySelector('[data-testid="work-authoritative-state"]')?.textContent).toBe(copy.states[props.work.state])
-  await act(async () => { button(copy.reload).click(); button(copy.reconcile).click(); button(copy.pause).click() })
+  await settle(async () => { button(copy.reload).click(); button(copy.reconcile).click(); button(copy.pause).click() })
   expect(props.onReload).toHaveBeenCalledOnce()
   expect(props.onReconcile).toHaveBeenCalledExactlyOnceWith(operationId)
   expect(props.onRequestAction).toHaveBeenCalledOnce()
