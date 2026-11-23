@@ -1,35 +1,54 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createRoot, createSignal, flush } from "solid-js"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
+
 import { ApiError } from "@services/api/errors"
 import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
-import { useSessionExecutionCompatibility } from "./useSessionExecutionCompatibility"
+
+import { createSessionExecutionCompatibility } from "../observation"
 
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), listeners: new Set<() => void>() }))
 vi.mock("@services/chat/AgentService", () => ({ agentClient: { getSession: mocks.getSession } }))
 vi.mock("@services/chat/v2Stream", () => ({ onReconnected: (listener: () => void) => {
-  mocks.listeners.add(listener); return () => { mocks.listeners.delete(listener) }
+  mocks.listeners.add(listener)
+  return () => { mocks.listeners.delete(listener) }
 } }))
-let root: Root | null
-let value: ReturnType<typeof useSessionExecutionCompatibility>
+let dispose: (() => void) | undefined
+let value: ReturnType<typeof createSessionExecutionCompatibility>
+let setSession: (id: string | null) => void
 const body = (id: string, status = "compatible") => ({ session: { id, execution_compatibility: {
   session_version: status === "legacy_compatible" ? null : status === "conflict" ? 99 : 1,
   current_session_version: 1, status, history_readable: true, execution_allowed: status !== "conflict",
   conflicts: status === "conflict" ? [{ code: "unsupported_session_version", message: "New canonical conflict" }] : [],
 } } })
-function Pane({ id }: { id: string | null }) { value = useSessionExecutionCompatibility(id); return null }
-const mount = async (id: string | null) => act(async () => root!.render(<Pane id={id} />))
-const reconnect = async () => act(async () => { for (const callback of [...mocks.listeners]) callback(); await Promise.resolve() })
+
+async function apply(change: () => void | Promise<void>) {
+  const result = change()
+  flush()
+  await result
+  await Promise.resolve()
+  flush()
+}
+const mount = (id: string | null) => apply(() => setSession(id))
+const reconnect = () => apply(() => { for (const callback of [...mocks.listeners]) callback() })
+
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
   mocks.getSession.mockReset().mockImplementation(async (id: string) => body(id))
   mocks.listeners.clear()
-  root = createRoot(document.body.appendChild(document.createElement("div")))
+  createRoot((cleanup) => {
+    dispose = cleanup
+    const [session, select] = createSignal<string | null>(null)
+    setSession = select
+    value = createSessionExecutionCompatibility(session)
+  })
+  flush()
 })
 afterEach(() => {
-  if (root) act(() => root!.unmount())
-  document.body.replaceChildren(); clearSessionCompatibilityObservations(); mocks.listeners.clear(); vi.unstubAllGlobals()
+  dispose?.()
+  dispose = undefined
+  clearSessionCompatibilityObservations()
+  mocks.listeners.clear()
 })
+
 it("refreshes current bound canonical detail after a real reconnect notification", async () => {
   mocks.getSession.mockResolvedValueOnce(body("a")).mockResolvedValueOnce(body("a", "conflict"))
   await mount("a"); expect(value.blocked).toBe(false)
@@ -50,7 +69,7 @@ it("follows only the current binding and removes the reconnect listener on unmou
   await reconnect()
   expect(mocks.getSession.mock.calls).toEqual([["a"], ["b"], ["b"]])
   expect(mocks.listeners.size).toBe(1)
-  await act(async () => { root!.unmount(); root = null })
+  await apply(async () => { dispose?.(); dispose = undefined })
   await reconnect(); expect(mocks.listeners.size).toBe(0)
   expect(mocks.getSession).toHaveBeenCalledTimes(3)
 })
@@ -60,7 +79,16 @@ it("an execution refusal still wins over an older reconnect read", async () => {
   await mount("a"); await reconnect()
   const error = new ApiError("incompatible", 409, "Conflict", JSON.stringify({ session_id: "a",
     error: { code: "session_execution_incompatible" }, compatibility: body("a", "conflict").session.execution_compatibility }))
-  await act(async () => { expect(observeSessionExecutionConflict("a", error)).toBe(true) })
-  await act(async () => { resolve(body("a")); await Promise.resolve() })
+  await apply(async () => { expect(observeSessionExecutionConflict("a", error)).toBe(true) })
+  await apply(async () => { resolve(body("a")); await Promise.resolve() })
   expect(value.blocked).toBe(true)
+})
+
+it("keeps an unobserved session unassessed until canonical detail arrives", async () => {
+  let resolve!: (result: ReturnType<typeof body>) => void
+  mocks.getSession.mockImplementationOnce(() => new Promise((finish) => { resolve = finish }))
+  await mount("a")
+  expect(value).toMatchObject({ report: null, observed: false, loading: true, readError: false })
+  await apply(() => resolve(body("a", "legacy_compatible")))
+  expect(value).toMatchObject({ observed: true, loading: false, blocked: false, report: { status: "legacy_compatible" } })
 })
