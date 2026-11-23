@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onSettled, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import { copyText } from "@shared/utils/clipboard"
 
 type Feedback = { status: "idle" | "copied" | "error"; sequence: number }
@@ -21,32 +21,35 @@ export function createCopyFeedback(text: Accessor<string>, source: Accessor<stri
     clearTimer()
     setFeedback(IDLE)
   })
-  onSettled(() => () => {
+  onCleanup(() => {
     mounted = false
     clearTimer()
   })
 
-  const copy = async () => {
+  const boundCopy = createMemo(() => {
     const origin = identity()
-    const token = ++request
-    const owns = () => mounted && identity() === origin && request === token
-    setFeedback((current) => current.status === "error" ? IDLE : current)
-    try {
-      await copyText(origin.text)
-    } catch {
+    return async () => {
+      if (!mounted || identity() !== origin) return
+      const token = ++request
+      const owns = () => mounted && identity() === origin && request === token
+      setFeedback((current) => current.status === "error" ? IDLE : current)
+      try {
+        await copyText(origin.text)
+      } catch {
+        if (!owns()) return
+        clearTimer()
+        setFeedback({ status: "error", sequence })
+        return
+      }
       if (!owns()) return
       clearTimer()
-      setFeedback({ status: "error", sequence })
-      return
+      const completion = ++sequence
+      setFeedback({ status: "copied", sequence: completion })
+      timer = setTimeout(() => {
+        if (mounted && identity() === origin && sequence === completion) setFeedback(IDLE)
+      }, 2500)
     }
-    if (!owns()) return
-    clearTimer()
-    const completion = ++sequence
-    setFeedback({ status: "copied", sequence: completion })
-    timer = setTimeout(() => {
-      if (mounted && identity() === origin && sequence === completion) setFeedback(IDLE)
-    }, 2500)
-  }
+  })
 
-  return { feedback, copy }
+  return { feedback, get copy() { return boundCopy() } }
 }

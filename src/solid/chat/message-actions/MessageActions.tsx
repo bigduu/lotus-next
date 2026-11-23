@@ -22,12 +22,14 @@ export function MessageActions(props: {
 }) {
   const text = createUiText()
   const locale = createUiLocale()
-  const { feedback, copy } = createCopyFeedback(() => props.target.text, () => props.target.key)
+  const copyAction = createCopyFeedback(() => props.target.text, () => props.target.key)
+  const { feedback } = copyAction
   const copied = () => feedback().status === "copied"
   const user = () => props.target.message.role === "user"
   const selection = () => props.sideChat?.selected(props.target.key)
   const ask = (quote: SideChatQuote) => props.sideChat?.ask(props.target.key, quote)
   let menuTarget: MessageTarget | undefined
+  let menuCopy: (() => Promise<void>) | undefined
   let menuQuote: SideChatQuote | null | undefined
   const selected = () => menuTarget ?? props.target
   const label = () => text("more_message_actions_cecaef80")
@@ -52,7 +54,7 @@ export function MessageActions(props: {
       </Show>
       <button type="button" disabled={!props.target.text} class={cn(actionClass, "hidden size-7 md:inline-flex")}
         aria-label={text("copy_63d90d97")} title={text(copied() ? "copied_8f6f8d97" : "copy_63d90d97")}
-        onClick={() => { void copy() }}>
+        onClick={() => { void copyAction.copy() }}>
         <ConfirmationIcon confirmed={copied()} sequence={feedback().sequence} class="size-3.5" />
       </button>
       <button type="button" class={cn(actionClass, "hidden size-7 md:inline-flex")}
@@ -65,6 +67,7 @@ export function MessageActions(props: {
         onOpenChange={(open) => {
           if (open) {
             menuTarget = props.target
+            menuCopy = copyAction.copy
             menuQuote = selection()
           }
         }}>
@@ -75,7 +78,7 @@ export function MessageActions(props: {
           <ConfirmationIcon confirmed={copied()} sequence={feedback().sequence} fallback={Ellipsis} class="size-3.5 md:hidden" />
         </DropdownMenuTrigger>
         <DropdownMenuContent class="min-w-40 rounded-xl">
-          <DropdownMenuItem class="md:hidden" disabled={!props.target.text} onSelect={() => { void copy() }}>
+          <DropdownMenuItem class="md:hidden" disabled={!props.target.text} onSelect={() => { void menuCopy?.() }}>
             <Copy aria-hidden="true" />{text("copy_63d90d97")}
           </DropdownMenuItem>
           <DropdownMenuItem class="md:hidden" disabled={!props.controller.allows("fork", props.target)}
