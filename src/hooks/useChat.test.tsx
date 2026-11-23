@@ -4,6 +4,7 @@ import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import type { AgentEvent, ContextSummaryInfo, PermissionDecisionResult, ReasoningEffort, TokenBudgetUsage } from "@services/chat/AgentService"
 import type { TokenUsage } from "@shared/types/tokenBudget"
+import type { ChatHistoryWindow } from "@shared/types/chatMessages"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
 import { ApiError, NetworkRequestError } from "@services/api/errors"
 import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => {
     chats: [] as Array<{
       id: string
       messages?: unknown[]
+      historyWindow?: ChatHistoryWindow
       isRunning?: boolean
       lastRunStatus?: string | null
       tokenUsage?: TokenUsage
@@ -42,6 +44,7 @@ const mocks = vi.hoisted(() => {
     loadSubagentSessions: vi.fn(),
     restoreSession: vi.fn(),
     loadChatHistory: vi.fn(),
+    invalidateHistoryAfterMessageDelete: vi.fn(),
     refreshChatsNow: vi.fn(),
     reconcileOpenSession: vi.fn(),
     markCancel: vi.fn(),
@@ -310,6 +313,7 @@ beforeEach(() => {
     mocks.appState.loadSubagentSessions,
     mocks.appState.restoreSession,
     mocks.appState.loadChatHistory,
+    mocks.appState.invalidateHistoryAfterMessageDelete,
     mocks.appState.refreshChatsNow,
     mocks.appState.reconcileOpenSession,
     mocks.appState.markCancel,
@@ -1448,6 +1452,50 @@ describe("useChat two-phase send lifecycle", () => {
     expect(hook.current.pendingUserText).toBeNull()
     expect(hook.current.streaming).toBeNull()
     expect(hook.current.streamPhase).toBeNull()
+  })
+  it("recovers an earlier User anchor after a control-only terminal already read the recent page", async () => {
+    const sessionId = "paged-control-only-terminal"
+    const finalText = "Final reply from a long durable turn"
+    const acknowledged = { id: "accepted-user", role: "user", content: "Inspect a long tool trace", createdAt: "2026-09-19T12:00:00Z" }
+    const savedFinal = { id: "persisted-final", role: "assistant", type: "text", phase: "final_answer",
+      content: finalText, createdAt: "2026-09-19T12:01:00Z", historyIndex: 105 }
+    let recentRead = false
+    let recoveryRead = false
+    mocks.appState.chats = [{ id: sessionId, isRunning: true, lastRunStatus: null, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId, message_id: acknowledged.id })
+    mocks.subscribeToEvents.mockImplementationOnce(async (_sessionId: string, handlers: SubscriptionHandlers) => {
+      handlers.onToken(finalText)
+    })
+    mocks.appState.refreshChatsNow.mockImplementation(async () => {
+      if (recentRead) {
+        const chat = mocks.appState.chats[0]!
+        chat.isRunning = false
+        chat.lastRunStatus = "completed"
+      }
+    })
+    mocks.appState.loadChatHistory.mockImplementation(async (_sessionId, options) => {
+      if (!options?.waitForAssistant) return
+      const chat = mocks.appState.chats[0]!
+      if (options.throwOnError) {
+        recentRead = true
+        chat.messages = [savedFinal]
+        chat.historyWindow = { startIndex: 105, messageIds: [savedFinal.id], beforeMessageId: "opaque/105" }
+      } else {
+        recoveryRead = true
+        chat.messages = [acknowledged, savedFinal]
+        chat.historyWindow = { startIndex: 0, messageIds: [acknowledged.id, savedFinal.id], beforeMessageId: null }
+      }
+    })
+    const props = { mode: "bound" as const, sessionId }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send(acknowledged.content) })
+    await flushMicrotasks()
+    await hook.rerender(props)
+    expect(recentRead).toBe(true)
+    expect(recoveryRead).toBe(true)
+    expect(hook.current.messages.filter((message) => message.id === savedFinal.id)).toHaveLength(1)
+    expect(hook.current.streaming).toBeNull()
+    expect(hook.current.sendFailure).toBeNull()
   })
   it.each(["refresh", "history"] as const)(
     "starts exact-session generation before resolving accepted when %s hydration fails",
@@ -3721,6 +3769,8 @@ describe("completed answer followed by another turn", () => {
     const { hook, first, props } = await completed(true)
     mocks.deleteSessionMessage.mockResolvedValueOnce(undefined)
     await act(async () => { await hook.current.deleteMessage("current-user") })
+    expect(mocks.appState.invalidateHistoryAfterMessageDelete).toHaveBeenCalledWith(hook.current.currentSessionId, "current-user")
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith(hook.current.currentSessionId, { resetHistoryWindow: true })
     expect(visibleAnswers(hook.current)).not.toContain(answer)
     await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete() })
     expect(visibleAnswers(hook.current)).not.toContain(answer)

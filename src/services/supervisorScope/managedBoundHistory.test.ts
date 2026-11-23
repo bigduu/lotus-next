@@ -30,6 +30,21 @@ it("reads the exact target through the bound endpoint and preserves its history"
   expect(apiClient.postOnce).toHaveBeenCalledExactlyOnceWith("supervisor/default/sessions/root-a/history", select(), { cache: "no-store" })
   expect(apiClient.get).not.toHaveBeenCalled()
 })
+it("sends a page query inside the bound target request", async () => {
+  const page = { limit: 100, before_message_id: "m2" }
+  const signal = new AbortController().signal
+  vi.mocked(apiClient.postOnce).mockResolvedValue(bound())
+  await managedSessionsClient.readBoundHistory(select(), { page, signal })
+  expect(apiClient.postOnce).toHaveBeenCalledExactlyOnceWith("supervisor/default/sessions/root-a/history",
+    { ...select(), query: page }, { cache: "no-store", signal })
+})
+it("keeps a forward delta inside the exact bound request", async () => {
+  vi.mocked(apiClient.postOnce).mockResolvedValue(bound())
+  await managedSessionsClient.readBoundHistory(select(), { sinceMessageId: "previous" })
+  expect(apiClient.postOnce).toHaveBeenCalledExactlyOnceWith("supervisor/default/sessions/root-a/history",
+    { ...select(), query: { since_message_id: "previous" } }, { cache: "no-store" })
+  expect(apiClient.get).not.toHaveBeenCalled()
+})
 it.each([
   { current_user_target: { ...select().target, authority_sha256: "f".repeat(64) } },
   { current_user_target: { ...select().target, ancestry_sha256: "f".repeat(64) } },

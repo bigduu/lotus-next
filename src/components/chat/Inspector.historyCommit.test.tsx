@@ -509,7 +509,7 @@ it("opens managed history through the bound reader without the generic history f
   const bound = vi.mocked(managedSessionsClient.readBoundHistory).mockResolvedValue(history("target", "bound"))
   const generic = vi.spyOn(agentClient, "getHistory")
   await act(async () => { expect(await managed.select!("target", selection(fixture, target))).toBe(true) })
-  expect(bound).toHaveBeenCalledExactlyOnceWith(selection(fixture, target))
+  expect(bound).toHaveBeenCalledExactlyOnceWith(selection(fixture, target), { page: { limit: 100 } })
   expect(generic).not.toHaveBeenCalled()
   expect(cached("target")?.messages[0]).toMatchObject({ content: "bound" })
 })

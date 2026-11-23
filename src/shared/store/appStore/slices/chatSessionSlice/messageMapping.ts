@@ -187,6 +187,7 @@ export const mapHistoryMessagesToUi = (
     correlation_id?: string;
     created_at: string;
   }>,
+  historyStartIndex?: number,
 ): Message[] => {
   const toolNameByCallId = new Map<string, string>();
   // Pre-build a map from tool_call_id -> metadata from tool result messages.
@@ -199,8 +200,14 @@ export const mapHistoryMessagesToUi = (
     }
   }
   const out: Message[] = [];
+  let historyIndex = (historyStartIndex ?? 0) - 1;
+  const append = (message: Message) => {
+    if (historyStartIndex !== undefined) message.historyIndex = historyIndex;
+    out.push(message);
+  };
 
   for (const msg of history) {
+    historyIndex++;
     const createdAt = msg.created_at || new Date().toISOString();
 
     if (msg.role === "system") {
@@ -212,7 +219,7 @@ export const mapHistoryMessagesToUi = (
         isCompressed: Boolean(msg.compressed),
         compressedEventId: msg.compressed_by_event_id,
       };
-      out.push(sys);
+      append(sys);
       continue;
     }
 
@@ -258,7 +265,7 @@ export const mapHistoryMessagesToUi = (
         compressedEventId: msg.compressed_by_event_id,
         ...mapMessageReferences(msg),
       };
-      out.push(user);
+      append(user);
       continue;
     }
 
@@ -282,7 +289,7 @@ export const mapHistoryMessagesToUi = (
             isCompressed: Boolean(msg.compressed),
             compressedEventId: msg.compressed_by_event_id,
           };
-          out.push(asst);
+          append(asst);
         }
 
         for (const call of toolCalls) {
@@ -317,7 +324,7 @@ export const mapHistoryMessagesToUi = (
           isCompressed: Boolean(msg.compressed),
           compressedEventId: msg.compressed_by_event_id,
         };
-        out.push(toolCallMsg);
+        append(toolCallMsg);
         continue;
       }
 
@@ -347,7 +354,7 @@ export const mapHistoryMessagesToUi = (
         isCompressed: Boolean(msg.compressed),
         compressedEventId: msg.compressed_by_event_id,
       };
-      out.push(asst);
+      append(asst);
       continue;
     }
 
@@ -398,7 +405,7 @@ export const mapHistoryMessagesToUi = (
         isCompressed: Boolean(msg.compressed),
         compressedEventId: msg.compressed_by_event_id,
       };
-      out.push(toolResult);
+      append(toolResult);
       continue;
     }
   }

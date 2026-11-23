@@ -216,6 +216,8 @@ function sessionListUpdate(
       if (!prev) {
         return c;
       }
+      // A paged transcript and its cursor belong to the original Session birth.
+      if (prev.historyWindow && prev.createdAtExact !== c.createdAtExact) return c;
 
       const prevUpdatedAtMs = parseTimestampMs(prev.updatedAt);
       const remoteUpdatedAtMs = parseTimestampMs(c.updatedAt);
@@ -294,6 +296,7 @@ function sessionListUpdate(
         pinned: preferLocalSessionFields ? prev.pinned : c.pinned,
         updatedAt: preferLocalSessionFields ? prev.updatedAt : c.updatedAt,
         messages: prev.messages,
+        historyWindow: prev.historyWindow,
         messageCount: effectiveMessageCount,
         planMode: c.planMode,
         config: mergedConfig,

@@ -1,13 +1,17 @@
 import { uiText } from "@shared/i18n/ui"
-import { invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers, reconcileCompletedAnswers } from "@/lib/completedAnswerHandoffRegistry";
+import { getCompletedAnswerHandoffs, invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers, reconcileCompletedAnswers } from "@/lib/completedAnswerHandoffRegistry";
+import { matchesCompletedAnswer } from "@/lib/completedAnswerHandoff";
 import { StateCreator } from "zustand";
 import { ChatItem, Message } from "@shared/types/chat";
+import { messageOccurrenceKey } from "@shared/types/chatMessages";
 import {
   AgentClient,
   parseSessionPermissionMode,
+  type HistoryPageRequest,
   type HistoryResponse,
 } from "@services/chat/AgentService";
 import { ApiError } from "@services/api";
+import { getApiErrorCode } from "@services/api/errors";
 import { ConversationClearError, readClearedConversation, requestConversationClear } from "@services/chat/conversationClear";
 import { isWorkChildSessionId, readSessionExecutionDetail } from "@services/chat/sessionExecutionCompatibility";
 import type { AppState } from "../";
@@ -50,6 +54,7 @@ export { mapHistoryMessagesToUi } from "./chatSessionSlice/messageMapping";
 
 import type { ChatSlice, ConversationClearState } from "./chatSessionSlice/types";
 import type { ManagedSessionSelection } from "@services/supervisorScope/managedSessions";
+import { extendHistoryWithDelta, historyMessageId, isEarlierHistoryPage, prependHistoryPage, readHistoryWindow, RECENT_HISTORY_PAGE, retainConfirmedHistory, type HistoryPage } from "./chatSessionSlice/historyWindow";
 
 const agentClient = AgentClient.getInstance();
 
@@ -80,10 +85,20 @@ const RECONCILE_DEBOUNCE_MS = 300;
 // Each store/session has one current reader; a settled newer read never revives
 // an older snapshot, even when that newer read failed or was abandoned.
 const historyReads = new WeakMap<() => AppState, Map<string, object>>();
+const managedHistoryBindingFailures = ["conflict", "missing", "unsupported", "forbidden", "authentication", "invalid"];
+const isHistoryCursorStale = (error: unknown) =>
+  error instanceof ApiError && error.status === 409 && getApiErrorCode(error) === "history_cursor_stale";
 
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
   const deferredClears = new Set<string>();
   const replacementRequired = new Set<string>();
+  const earlierHistoryReads = new Map<string, object>();
+  const historyPrefixReads = new Map<string, Set<AbortController>>();
+  const retireHistoryPrefixReads = (sessionId: string) => {
+    const reads = historyPrefixReads.get(sessionId);
+    historyPrefixReads.delete(sessionId);
+    for (const request of reads ?? []) request.abort();
+  };
   // Retain the pre-write revision until its clear-feed reconciliation arrives;
   // the account event can be delivered after the HTTP response.
   type ClearTokenFence = { revision: ReturnType<typeof tokenBudgetRevision>; selection: ManagedSessionSelection | undefined };
@@ -102,6 +117,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     // An event has no revision. Fence work known at notification time, not
     // newer work created while the replacement read is in flight.
     historyReads.get(get)?.delete(sessionId);
+    earlierHistoryReads.delete(sessionId);
+    retireHistoryPrefixReads(sessionId);
     if (newEvent) invalidateCompletedAnswers(sessionId);
     const timer = reconcileTimers.get(sessionId);
     if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
@@ -119,6 +136,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     void get().loadChatHistory(sessionId, { mode: "replace" });
   };
   const clearState = (sessionId: string, value: ConversationClearState) => {
+    if (value.busy) retireHistoryPrefixReads(sessionId);
     set((state) => ({ conversationClears: { ...state.conversationClears, [sessionId]: value } }));
     if (!value.busy && deferredClears.delete(sessionId)) reconcileClear(sessionId, false);
   };
@@ -220,6 +238,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     if (prev.currentSessionId === sessionId && prev.latestActiveSessionId === sessionId) {
       return;
     }
+    if (prev.currentSessionId && prev.currentSessionId !== sessionId) {
+      earlierHistoryReads.delete(prev.currentSessionId);
+      retireHistoryPrefixReads(prev.currentSessionId);
+    }
     set({ currentSessionId: sessionId, latestActiveSessionId: sessionId });
   },
 
@@ -235,12 +257,16 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     if (!sessionId) {
       navigationResetRevision = navigationRevision;
       sessionNavigationRevisions.clear();
+      earlierHistoryReads.clear();
+      for (const id of historyPrefixReads.keys()) retireHistoryPrefixReads(id);
       reads?.clear(); pendingClearRevisions.clear(); replacementRevisions.clear(); acknowledgedClears.clear();
       return;
     }
     const affected = new Set([sessionId, ...get().chats.filter((chat) => chat.rootSessionId === sessionId).map((chat) => chat.id)]);
     for (const id of affected) {
       sessionNavigationRevisions.set(id, navigationRevision);
+      earlierHistoryReads.delete(id);
+      retireHistoryPrefixReads(id);
       reads?.delete(id); pendingClearRevisions.delete(id); replacementRevisions.delete(id); acknowledgedClears.delete(id);
     }
   },
@@ -547,6 +573,18 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     get().updateSession(sessionId, { messages: updatedMessages });
   },
 
+  invalidateHistoryAfterMessageDelete: (sessionId, messageId) => {
+    const chat = get().chats.find((item) => item.id === sessionId);
+    if (!chat?.historyWindow) return;
+    historyReads.get(get)?.delete(sessionId);
+    earlierHistoryReads.delete(sessionId);
+    retireHistoryPrefixReads(sessionId);
+    get().updateSession(sessionId, {
+      historyWindow: { ...chat.historyWindow, invalidated: true },
+      messages: chat.messages.filter((message) => historyMessageId(message) !== messageId),
+    }, { skipBackendPatch: true });
+  },
+
   deleteMessage: async (sessionId, messageId) => {
     const chat = get().chats.find((c) => c.id === sessionId);
     if (!chat) {
@@ -615,17 +653,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
 
     invalidateCompletedAnswerForDeletedMessage(sessionId, messageId);
-    set((state) => ({
-      ...state,
-      chats: state.chats.map((existingChat) =>
-        existingChat.id === sessionId
-          ? {
-              ...existingChat,
-              messages: existingChat.messages.filter((msg) => msg.id !== messageId),
-            }
-          : existingChat,
-      ),
-    }));
+    const current = get().chats.find((item) => item.id === sessionId);
+    if (current?.historyWindow) get().invalidateHistoryAfterMessageDelete(sessionId, messageId);
+    else if (current) get().updateSession(sessionId, {
+      messages: current.messages.filter((message) => message.id !== messageId),
+    }, { skipBackendPatch: true });
 
     return {
       success: true,
@@ -873,6 +905,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     pendingClearRevisions.set(sessionId, { revision: tokenRevisionAtStart, selection: bindingAtStart?.selection });
     clearState(sessionId, { busy: true });
     historyReads.get(get)?.delete(sessionId);
+    earlierHistoryReads.delete(sessionId);
     try {
       await requestConversationClear(sessionId, agentClient);
       // The original C1 write is ID-only; if the view binding changed during
@@ -937,6 +970,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       const newerTruncation = latestTokenRevision.truncation !== tokenRevision.truncation;
       const update: Partial<ChatItem> = {
         messages: mapHistoryMessagesToUi(sessionId, history.messages),
+        historyWindow: undefined,
         messageCount: history.messages.length,
         ...(session ? { hasAttachments: session.has_attachments } : {}),
         config: { ...chat.config, tokenUsage: newerUsage ? latest.tokenUsages[sessionId] : undefined,
@@ -996,6 +1030,134 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   reconcileClearedConversation: (sessionId) => reconcileClear(sessionId, true),
 
+  readHistoryPrefix: async (sessionId, window, isOriginCurrent, originSignal) => {
+    const initial = get();
+    const chat = initial.chats.find((item) => item.id === sessionId);
+    const binding = initial.managedHistoryBindings[sessionId];
+    const clear = initial.conversationClears[sessionId];
+    const isCurrent = () => {
+      const state = get();
+      const target = state.chats.find((item) => item.id === sessionId);
+      return isOriginCurrent() && state.currentSessionId === sessionId && target && !target.historyWindow?.invalidated
+        && target.createdAt === chat?.createdAt && target.createdAtExact === chat?.createdAtExact
+        && state.managedHistoryBindings[sessionId] === binding && state.conversationClears[sessionId] === clear
+        && !replacementRequired.has(sessionId);
+    };
+    const changed = () => new DOMException("Earlier history changed before it could be read", "AbortError");
+    if (!chat || chat.historyWindow !== window || !isCurrent() || originSignal?.aborted || binding?.status === "stale"
+      || clear?.busy || clear?.error === "unknown" || clear?.error === "readback_failed") throw changed();
+
+    const request = new AbortController();
+    const reads = historyPrefixReads.get(sessionId) ?? new Set<AbortController>();
+    reads.add(request);
+    historyPrefixReads.set(sessionId, reads);
+    const cancel = () => request.abort();
+    originSignal?.addEventListener("abort", cancel, { once: true });
+    const { signal } = request;
+    const assertCurrent = () => { if (signal.aborted || !isCurrent()) throw changed(); };
+    try {
+      let readPage = (page: HistoryPageRequest) => agentClient.getHistory(sessionId, undefined, signal, page);
+      if (binding) {
+        const { managedSessionsClient } = await import("@services/supervisorScope/managedSessions");
+        readPage = (page) => managedSessionsClient.readBoundHistory(binding.selection, { page, signal });
+      }
+      // Keep separate page buffers so long transcripts are joined only once,
+      // outside the on-screen history store.
+      const pages: Message[][] = [];
+      let start = window.startIndex;
+      let cursor = window.beforeMessageId;
+      while (cursor) {
+        assertCurrent();
+        const response = await readPage({ ...RECENT_HISTORY_PAGE, before_message_id: cursor });
+        assertCurrent();
+        if (response.session_id !== sessionId) throw new Error("History session mismatch");
+        const earlier = readHistoryWindow(sessionId, response);
+        if (!earlier || !isEarlierHistoryPage(earlier.window, start)) throw changed();
+        pages.push(earlier.messages);
+        start = earlier.window.startIndex;
+        cursor = earlier.window.beforeMessageId;
+      }
+      return pages.reverse().flat();
+    } finally {
+      originSignal?.removeEventListener("abort", cancel);
+      reads.delete(request);
+      if (reads.size === 0 && historyPrefixReads.get(sessionId) === reads) historyPrefixReads.delete(sessionId);
+    }
+  },
+
+  loadEarlierChatHistory: async (sessionId, signal, beforePrepend) => {
+    const initial = get();
+    const chat = initial.chats.find((item) => item.id === sessionId);
+    const cursor = chat?.historyWindow?.beforeMessageId;
+    const binding = initial.managedHistoryBindings[sessionId];
+    if (initial.currentSessionId !== sessionId || !chat || !cursor || chat.historyWindow?.invalidated || binding?.status === "stale"
+      || initial.conversationClears[sessionId]?.busy || replacementRequired.has(sessionId)
+      || signal.aborted || earlierHistoryReads.has(sessionId)) return;
+    const request = {};
+    earlierHistoryReads.set(sessionId, request);
+    const currentChat = () => {
+      const state = get();
+      if (signal.aborted || earlierHistoryReads.get(sessionId) !== request || state.currentSessionId !== sessionId
+        || state.managedHistoryBindings[sessionId] !== binding || state.conversationClears[sessionId]?.busy
+        || replacementRequired.has(sessionId)) return undefined;
+      return state.chats.find((item) => item.id === sessionId && item.createdAt === chat.createdAt
+        && item.createdAtExact === chat.createdAtExact && !item.historyWindow?.invalidated && item.historyWindow?.beforeMessageId === cursor);
+    };
+    const reloadRecent = () => get().loadChatHistory(sessionId, {
+      resetHistoryWindow: true, throwOnError: true, signal, canApply: () => Boolean(currentChat()),
+    });
+    let managedModule: typeof import("@services/supervisorScope/managedSessions") | undefined;
+    try {
+      const page = { ...RECENT_HISTORY_PAGE, before_message_id: cursor };
+      let selection = binding?.selection;
+      let history: HistoryResponse;
+      if (selection) {
+        managedModule = await import("@services/supervisorScope/managedSessions");
+        if (!currentChat()) return;
+        const read = await managedModule.readBoundHistoryRefreshingMetadata(selection, () => Boolean(currentChat()), { page, signal });
+        history = read.history;
+        selection = read.selection;
+      } else {
+        history = await agentClient.getHistory(sessionId, undefined, signal, page);
+      }
+      const latest = currentChat();
+      if (!latest?.historyWindow) return;
+      if (history.session_id !== sessionId) throw new Error("History session mismatch");
+      const parsed = readHistoryWindow(sessionId, history);
+      if (!parsed) { await reloadRecent(); return; }
+      const joined = prependHistoryPage(parsed, {
+        window: latest.historyWindow, messages: latest.messages, total: latest.config.syncCursor?.messageCount ?? parsed.total,
+      });
+      if (!joined) {
+        await reloadRecent();
+        return;
+      }
+      beforePrepend();
+      set((state) => ({
+        chats: state.chats.map((item) => item === latest ? {
+          ...item,
+          messages: joined.messages,
+          historyWindow: joined.window,
+        } : item),
+        ...(selection && binding && selection !== binding.selection ? {
+          managedHistoryBindings: { ...state.managedHistoryBindings, [sessionId]: { selection, status: "active" } },
+        } : {}),
+      }));
+    } catch (error) {
+      if (!currentChat()) return;
+      if (isHistoryCursorStale(error)) {
+        await reloadRecent();
+        return;
+      }
+      if (binding && managedHistoryBindingFailures.includes(managedModule?.managedSessionsProblem(error).kind ?? "")) {
+        set((state) => ({ managedHistoryBindings: { ...state.managedHistoryBindings, [sessionId]: { ...binding, status: "stale" } } }));
+      }
+      throw error;
+    } finally {
+      if (earlierHistoryReads.get(sessionId) === request) earlierHistoryReads.delete(sessionId);
+    }
+  },
+
   loadChatHistory: async (sessionId, options) => {
     const stagedTarget = options?.stagedSessions?.find((item) => item.id === sessionId);
     if ((options?.stagedSessions && !stagedTarget) || (options?.readHistory && !options.selectOnApply)
@@ -1033,6 +1195,30 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     const mode = options?.mode ?? "replace";
     const retries = Math.max(0, options?.retries ?? 0);
     const retryDelayMs = Math.max(0, options?.retryDelayMs ?? 0);
+    const readBoundHistory = async (candidate: ManagedSessionSelection, page?: HistoryPageRequest, sinceMessageId?: string) => {
+      managedModule ??= await import("@services/supervisorScope/managedSessions");
+      const boundOptions = { ...(page ? { page } : {}), ...(sinceMessageId ? { sinceMessageId } : {}),
+        ...(options?.signal ? { signal: options.signal } : {}) };
+      if (!bindingAtStart || options?.managedSelection) return managedModule.managedSessionsClient.readBoundHistory(candidate, boundOptions);
+      const result = await managedModule.readBoundHistoryRefreshingMetadata(candidate,
+        () => !options?.signal?.aborted && isCurrentRead() && bindingIsCurrent(), boundOptions);
+      metadataRefreshed ||= result.selection !== candidate;
+      selection = result.selection;
+      return result.history;
+    };
+    const readCurrentHistory = (page?: HistoryPageRequest, sinceMessageId?: string) => selection
+      ? readBoundHistory(selection, page, sinceMessageId) : options?.readHistory ? options.readHistory()
+        : agentClient.getHistory(sessionId, sinceMessageId, options?.signal, page);
+    const auxiliaryReadIsCurrent = () => !options?.signal?.aborted && isCurrentRead() && bindingIsCurrent();
+    const readEarlierPage = async (recent: HistoryPage) => {
+      const cursor = recent.window.beforeMessageId;
+      if (!cursor || !auxiliaryReadIsCurrent()) return undefined;
+      const response = await readCurrentHistory({ ...RECENT_HISTORY_PAGE, before_message_id: cursor });
+      if (!auxiliaryReadIsCurrent()) return undefined;
+      if (response.session_id !== sessionId) throw new Error("History session mismatch");
+      const older = readHistoryWindow(sessionId, response);
+      return older ? prependHistoryPage(older, recent) : undefined;
+    };
 
     debugLog("[ChatSlice]", "loadChatHistory.start", {
       sessionId,
@@ -1055,18 +1241,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             return;
           }
 
-          if (selection) managedModule = await import("@services/supervisorScope/managedSessions");
-          let history: HistoryResponse;
-          if (selection && bindingAtStart && !options?.managedSelection) {
-            const result = await managedModule!.readBoundHistoryRefreshingMetadata(selection,
-              () => !options?.signal?.aborted && isCurrentRead() && bindingIsCurrent());
-            history = result.history;
-            metadataRefreshed ||= result.selection !== selection;
-            selection = result.selection;
-          } else {
-            history = selection ? await managedModule!.managedSessionsClient.readBoundHistory(selection)
-              : options?.readHistory ? await options.readHistory() : await agentClient.getHistory(sessionId);
-          }
+          const history = await readCurrentHistory(RECENT_HISTORY_PAGE);
           if (options?.signal?.aborted || selection && !bindingIsCurrent()) return discardRead();
           if (history.session_id !== sessionId) throw new Error("History session mismatch");
           if (!isCurrentRead()) return discardRead();
@@ -1101,7 +1276,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           });
 
           const terminalAssistantReady = hasTerminalAssistantTail(history.messages);
-          if (options?.waitForAssistant && !terminalAssistantReady && attempt < retries) {
+          const terminalTail = terminalAssistantReady ? history.messages.findLast((message) => message.role !== "system") : undefined;
+          const handoffs = options?.waitForAssistant ? getCompletedAnswerHandoffs().filter((entry) => entry.sessionId === sessionId) : [];
+          const savedAnswers = handoffs.length ? history.messages.flatMap((message) => message.role === "assistant"
+            && typeof message.content === "string" && (message.phase === "final_answer" || message === terminalTail) ? [message.content] : []) : [];
+          const matchedHandoffs = handoffs.filter((entry) => savedAnswers.some((text) => matchesCompletedAnswer(text, entry.text)));
+          if (options?.waitForAssistant && !terminalAssistantReady && !matchedHandoffs.length && attempt < retries) {
             // A live terminal event may precede the final history checkpoint. A
             // tool tail is just as incomplete as a user tail, so keep waiting for
             // the durable, non-tool assistant message before applying history.
@@ -1116,6 +1296,53 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             continue;
           }
 
+          let paged = readHistoryWindow(sessionId, history);
+          if (paged && paged.window.startIndex + paged.window.messageIds.length !== paged.total) {
+            throw new Error("Invalid recent history page");
+          }
+          const retainPrefix = !afterClear && !cachedChat.historyWindow?.invalidated && !options?.resetHistoryWindow && !options?.managedSelection;
+          if (paged && retainPrefix && !options?.readHistory) {
+            const previous = get().chats.find((item) => item.id === sessionId)?.historyWindow;
+            const previousEnd = previous ? previous.startIndex + previous.messageIds.length : 0;
+            const previousLastId = previous?.messageIds.at(-1);
+            if (previousLastId && paged.window.startIndex >= previousEnd && auxiliaryReadIsCurrent()) {
+              // Catch up a disjoint window in one request when the legacy
+              // forward cursor still identifies the exact preceding record.
+              const response = await readCurrentHistory(undefined, previousLastId);
+              if (!auxiliaryReadIsCurrent()) return discardRead();
+              if (response.session_id !== sessionId) throw new Error("History session mismatch");
+              const latest = get().chats.find((item) => item.id === sessionId);
+              const bridged = latest && extendHistoryWithDelta(latest, paged, response);
+              if (bridged) paged = bridged;
+              else {
+                // A reused legacy ID can make the forward cursor ambiguous.
+                // Opaque older cursors can still approach the earlier window.
+                while (paged.window.startIndex >= previousEnd) {
+                  const older = await readEarlierPage(paged);
+                  if (!older) break;
+                  paged = older;
+                }
+              }
+            }
+            const current = get().chats.find((item) => item.id === sessionId);
+            if (current) paged = retainConfirmedHistory(current, paged);
+          }
+          if (paged && matchedHandoffs.length && !options?.readHistory) {
+            // A terminal handoff still needs its own durable turn anchor.
+            // Keep the old unpaged read's reach for this targeted lookup.
+            while (paged.window.messageIds.length < 2000) {
+              const messages = paged.messages;
+              if (matchedHandoffs.every((entry) => {
+                const id = entry.acknowledgedMessageId ?? entry.baselineMessageId;
+                return id === null || messages.some((message) => message.id === id
+                  && (entry.acknowledgedMessageId === null || message.role === "user"));
+              })) break;
+              const older = await readEarlierPage(paged);
+              if (!older) break;
+              paged = older;
+            }
+          }
+
           // Keep the response staged while an opt-in target check is pending.
           // A newer read, clear, navigation, or abort retires this read even if
           // the asynchronous check later succeeds.
@@ -1124,15 +1351,34 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             || selection && !bindingIsCurrent()) return discardRead();
           const currentChat = get().chats.find((item) => item.id === sessionId) ?? stagedChat;
           if (!currentChat) return discardRead();
-          let nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
+          if (paged) {
+            if (currentChat.createdAt !== chat.createdAt || currentChat.createdAtExact !== chat.createdAtExact) return discardRead();
+            if (retainPrefix) {
+              paged = retainConfirmedHistory(currentChat, paged);
+            }
+          }
+          let nextMessages = paged?.messages ?? mapHistoryMessagesToUi(sessionId, history.messages);
+          const historyWindow = paged?.window;
+          const historyCount = paged?.total ?? history.messages.length;
           let retainedMessages = false;
 
-          if (mode === "monotonic" && !afterClear) {
+          if (mode === "monotonic" && !afterClear && !currentChat.historyWindow?.invalidated) {
             const prevMessages = currentChat.messages || [];
-            const previousById = new Map(prevMessages.map((message) => [message.id, message]));
+            const previousByOccurrence = new Map<string, Message>();
+            const unpositionedById = new Map<string, Message>();
+            for (const message of prevMessages) {
+              if (message.historyIndex === undefined) unpositionedById.set(message.id, message);
+              else previousByOccurrence.set(messageOccurrenceKey(message), message);
+            }
+            // A live record has no durable position yet. It can enrich the
+            // newest matching ID, while earlier duplicates use their own row.
+            const newestById = paged && unpositionedById.size
+              ? new Map(nextMessages.map((message) => [message.id, message])) : undefined;
             let assistantTextEnriched = false;
             nextMessages = nextMessages.map((next) => {
-              const previous = previousById.get(next.id);
+              const previousLive = next.historyIndex === undefined || newestById?.get(next.id) === next
+                ? unpositionedById.get(next.id) : undefined;
+              const previous = previousLive ?? previousByOccurrence.get(messageOccurrenceKey(next));
               if (previous?.role !== "assistant" || previous.type !== "text" || next.role !== "assistant" || next.type !== "text") return next;
               // Message identity/count may stay fixed while final persistence
               // fills an empty or partial body. Monotonic reads admit that
@@ -1166,6 +1412,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
                 typeof nextLastId === "string" &&
                 prevLastId !== nextLastId;
               shouldReplace = resolvedUserTail || terminalChanged || assistantTextEnriched;
+            }
+            if (historyWindow && currentChat.historyWindow && currentChat.config.syncCursor) {
+              const prior = currentChat.config.syncCursor;
+              if (historyCount < prior.messageCount) shouldReplace = false;
+              if (historyCount > prior.messageCount && historyMessageId(prevLastMessage) === prior.lastMessageId) shouldReplace = true;
             }
 
             debugLog("[ChatSlice]", "loadChatHistory.monotonicDecision", {
@@ -1207,7 +1458,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
               segmentsRemoved: event.segments_removed,
             })),
             syncCursor: {
-              messageCount: history.messages.length,
+              messageCount: historyCount,
               lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
               hasPendingQuestion: Boolean(
                 get().executionBySession?.[sessionId]?.interaction.pendingQuestion,
@@ -1223,7 +1474,9 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             segmentsRemoved: newerTruncation ? liveTokenState.segmentsRemoved[sessionId] : tokenConfig.segmentsRemoved,
           } : {}) : historyConfig;
           const historyUpdate: Partial<ChatItem> = {
-            messages: nextMessages, messageCount: retainedMessages ? Math.max(currentChat.messageCount ?? 0, history.messages.length) : history.messages.length,
+            messages: nextMessages,
+            historyWindow: retainedMessages ? currentChat.historyWindow : historyWindow,
+            messageCount: retainedMessages ? Math.max(currentChat.messageCount ?? 0, historyCount) : historyCount,
             config: { ...currentChat.config, ...resolvedHistoryConfig },
           };
           const selectedBinding = options?.managedSelection ?? (metadataRefreshed ? selection : undefined);
@@ -1283,9 +1536,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             if (options?.throwOnError) throw error;
             return;
           }
+          if (isHistoryCursorStale(error)) return discardRead();
           if (selection && bindingAtStart && bindingIsCurrent()) {
             const problem = managedModule?.managedSessionsProblem(error);
-            if (problem && ["conflict", "missing", "unsupported", "forbidden", "authentication", "invalid"].includes(problem.kind)) {
+            if (problem && managedHistoryBindingFailures.includes(problem.kind)) {
               set((state) => state.managedHistoryBindings[sessionId] !== bindingAtStart ? state : {
                 managedHistoryBindings: { ...state.managedHistoryBindings, [sessionId]: { ...bindingAtStart, status: "stale" } },
               });

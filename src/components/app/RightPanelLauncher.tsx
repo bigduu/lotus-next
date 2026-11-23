@@ -121,6 +121,8 @@ export function EnvironmentCard({
   addedLines,
   removedLines,
   sources,
+  historyStatus,
+  onLoadEarlierSources,
   onOpenReview,
   onPreviewImage,
 }: {
@@ -132,10 +134,13 @@ export function EnvironmentCard({
   addedLines: number
   removedLines: number
   sources: EnvironmentSource[]
+  historyStatus?: string
+  onLoadEarlierSources?: () => void
   onOpenReview: () => void
   onPreviewImage: (src: string) => void
 }) {
   useUiLocale()
+  const countsIncomplete = Boolean(historyStatus || onLoadEarlierSources)
   const workspaceLabel = workspace
     ? (workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace)
     : uiText("no_workspace_set_ed50070e")
@@ -157,8 +162,8 @@ export function EnvironmentCard({
       <EnvironmentRow
         icon={<FileDiff className="size-4" />}
         label="Changes"
-        detail={uiText("changed_files_b757f839", { v0: changedFiles , count: changedFiles })}
-        trailing={
+        detail={countsIncomplete ? undefined : uiText("changed_files_b757f839", { v0: changedFiles , count: changedFiles })}
+        trailing={countsIncomplete ? undefined :
           <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums">
             <span className="text-green-600 dark:text-green-400">+{addedLines}</span>
             <span className="text-red-600 dark:text-red-400">−{removedLines}</span>
@@ -189,8 +194,12 @@ export function EnvironmentCard({
       <div className="my-2 border-t" style={{ marginInline: "0.5rem" }} />
       <div className="flex items-center justify-between px-3 pb-1 text-sm text-muted-foreground">
         <span>Sources</span>
-        <span className="text-xs tabular-nums">{sources.length}</span>
+        {!countsIncomplete ? <span className="text-xs tabular-nums">{sources.length}</span> : null}
       </div>
+      {historyStatus ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{historyStatus}</p> : null}
+      {onLoadEarlierSources ? (
+        <Button variant="ghost" size="sm" onClick={onLoadEarlierSources}>{uiText("load_earlier_sources")}</Button>
+      ) : null}
       {sources.length > 0 ? (
         <div className="space-y-0.5">
           {sources.slice(0, 5).map((source) => {
@@ -221,9 +230,9 @@ export function EnvironmentCard({
             )
           })}
         </div>
-      ) : (
+      ) : !countsIncomplete ? (
         <div className="px-3 py-2 text-xs text-muted-foreground">{uiText("this_session_has_no_source_files_yet_b1b2a050")}</div>
-      )}
+      ) : null}
     </section>
   )
 }

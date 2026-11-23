@@ -1,6 +1,6 @@
 import { apiClient, isApiError } from "@services/api"
 import { NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
-import { agentClient, type HistoryResponse } from "@services/chat/AgentService"
+import { agentClient, type HistoryPageRequest, type HistoryResponse } from "@services/chat/AgentService"
 import { projectId, safeRevision, sameSupervisor, scopeProblem } from "./client"
 import type { ScopeProblem, SupervisorReference } from "./types"
 
@@ -208,13 +208,23 @@ function validBoundTokenUsage(value: unknown): boolean {
   return true
 }
 
+interface BoundHistoryOptions {
+  clearReadback?: boolean
+  page?: HistoryPageRequest
+  sinceMessageId?: string
+  signal?: AbortSignal
+}
+
 export const managedSessionsClient = {
   /** The producer binds identity and history under one canonical storage read. */
-  async readBoundHistory(selection: ManagedSessionSelection, options?: { clearReadback?: boolean }): Promise<HistoryResponse> {
+  async readBoundHistory(selection: ManagedSessionSelection, options?: BoundHistoryOptions): Promise<HistoryResponse> {
     if (!reference(selection.supervisor) || !sameTarget(selection.target, decodedTarget(selection.target))) return invalid()
-    const body = options?.clearReadback ? { ...selection, clear_readback: true } : selection
+    const body = options?.clearReadback ? { ...selection, clear_readback: true }
+      : options?.page ? { ...selection, query: options.page }
+        : options?.sinceMessageId ? { ...selection, query: { since_message_id: options.sinceMessageId } } : selection
     const result = record(await apiClient.postOnce<unknown>(
-      `supervisor/default/sessions/${encodeURIComponent(selection.target.session_id)}/history`, body, { cache: "no-store" },
+      `supervisor/default/sessions/${encodeURIComponent(selection.target.session_id)}/history`, body,
+      { cache: "no-store", ...(options?.signal ? { signal: options.signal } : {}) },
     ))
     if (!result || result.session_id !== selection.target.session_id || !reference(result.supervisor)
       || !sameSupervisor(result.supervisor, selection.supervisor) || !sameTarget(decodedTarget(result.current_user_target), selection.target)
@@ -303,8 +313,8 @@ export async function revalidateManagedSelection(selection: ManagedSessionSelect
 /** Retry one explicit target-stale response only for a newer metadata revision
  * of the identical Supervisor, lifetime, authority, ancestry and Project. */
 export async function readBoundHistoryRefreshingMetadata(selection: ManagedSessionSelection, current: () => boolean,
-  options?: { clearReadback?: boolean }): Promise<{ history: HistoryResponse; selection: ManagedSessionSelection }> {
-  const read = (candidate: ManagedSessionSelection) => options?.clearReadback
+  options?: BoundHistoryOptions): Promise<{ history: HistoryResponse; selection: ManagedSessionSelection }> {
+  const read = (candidate: ManagedSessionSelection) => options
     ? managedSessionsClient.readBoundHistory(candidate, options) : managedSessionsClient.readBoundHistory(candidate)
   try {
     return { history: await read(selection), selection }
