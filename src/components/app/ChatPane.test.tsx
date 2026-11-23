@@ -1879,24 +1879,6 @@ it("retains unread messages while settings hide the chat", async () => {
   expect(unread()).toBe("false")
 })
 
-it("shows an unreadable pending request with a working refresh control outside the dialog", async () => {
-  const container = document.body.appendChild(document.createElement("div"))
-  const root = createRoot(container); roots.push(root)
-  const refresh = vi.fn().mockResolvedValue("pending")
-  const chat = { ...createChat(vi.fn<Send>(), "approval-root"), pendingQuestion: null,
-    questionError: "暂时无法读取确认请求，请刷新后重试。", questionUnavailable: true,
-    questionLoading: false, questionSubmitting: false, refreshQuestion: refresh }
-  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
-  const alert = container.querySelector('[role="alert"]')
-  expect(alert?.textContent).toContain("无法读取确认请求")
-  const refreshButton = alert?.querySelector("button")
-  expect(refreshButton?.textContent).toBe("刷新请求")
-  act(() => refreshButton?.click())
-  expect(refresh).toHaveBeenCalledTimes(1)
-})
-
 it("routes a sub-agent card to the side-preview callback without replacing the main session", async () => {
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container); roots.push(root)
@@ -2319,70 +2301,6 @@ it("forwards every pending ACK to MessageList without another submission", async
   expect(send).not.toHaveBeenCalled()
 })
 
-
-describe("child approval compatibility", () => {
-  const view = (status: "compatible" | "legacy_compatible" | "conflict" | null): NonNullable<ChatPaneProps["chat"]["executionCompatibility"]> => ({
-    report: status ? { session_version: status === "conflict" ? 99 : null, current_session_version: 1, status,
-      history_readable: true, execution_allowed: status !== "conflict",
-      conflicts: status === "conflict" ? [{ code: "unsupported_session_version", message: "Child version is incompatible" }] : [] } : null,
-    blocked: status === "conflict", observed: true, legacy: status === null, loading: false, readError: false, refresh: vi.fn(async () => {}),
-  })
-  const pending = { childSessionId: "approval-child", requestId: "child-request-7", toolName: "Write", permission: "write" }
-  async function renderApproval(parent: ReturnType<typeof view>, child: ReturnType<typeof view>, respond: (approved: boolean) => Promise<void>,
-    question?: { pending: NonNullable<ChatPaneProps["chat"]["pendingQuestion"]>; answer: (text: string) => Promise<void> },
-    submission: { approvalSubmitting?: boolean; approvalError?: string | null } = {}) {
-    if (!roots.length) await mount(vi.fn<Send>(), "approval-parent")
-    await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(vi.fn<Send>(), "approval-parent"),
-      executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond, ...submission,
-      ...(question ? { pendingQuestion: question.pending, answerQuestion: question.answer } : {}) }} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
-  }
-  it.each(["compatible", "legacy_compatible", null] as const)("keeps %s Child approval actionable when only its parent conflicts", async (status) => {
-    const respond = vi.fn(async (_approved: boolean) => {})
-    await renderApproval(view("conflict"), view(status), respond)
-    expect(document.querySelector('[data-child-approval="approval-child"]')).not.toBeNull()
-    expect(composer().executionBlocked).toBe(true)
-    expect(respond).not.toHaveBeenCalled()
-    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Approve child")!.click())
-    expect(respond).toHaveBeenCalledExactlyOnceWith(true)
-  })
-  it("keeps the genuine parent question available while only the Child conflicts", async () => {
-    const respond = vi.fn(async (_approved: boolean) => {}), answer = vi.fn(async (_text: string) => {})
-    await renderApproval(view("compatible"), view("conflict"), respond, { answer,
-      pending: { has_pending_question: true, interaction_kind: "clarification", question: "Parent still needs Human input",
-        options: ["main answer"], allow_custom: false, tool_call_id: "parent-question" } })
-    expect(document.querySelector("[data-parent-question]")?.textContent).toContain("Parent still needs Human input")
-    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
-    expect(respond).not.toHaveBeenCalled(); expect(answer).not.toHaveBeenCalled()
-    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Answer parent")!.click())
-    expect(answer).toHaveBeenCalledExactlyOnceWith("main answer"); expect(respond).not.toHaveBeenCalled()
-  })
-  it("forwards retained Child approval submission and error to the dialog", async () => {
-    const respond = vi.fn(async (_approved: boolean) => {})
-    await renderApproval(view("compatible"), view("compatible"), respond, undefined, { approvalSubmitting: true })
-    const approve = [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Approve child")!
-    expect(approve.disabled).toBe(true)
-    act(() => approve.click())
-    expect(respond).not.toHaveBeenCalled()
-    await renderApproval(view("compatible"), view("compatible"), respond, undefined, { approvalError: "Child approval unconfirmed" })
-    expect(document.querySelector('[data-child-approval] [role="alert"]')?.textContent).toBe("Child approval unconfirmed")
-    expect(respond).not.toHaveBeenCalled()
-  })
-  it("blocks only the Child's explicit conflict and restores its dialog after a canonical recovery", async () => {
-    const respond = vi.fn(async (_approved: boolean) => {})
-    await renderApproval(view("compatible"), view("conflict"), respond)
-    expect(document.querySelector('[data-child-approval="approval-child"]')).toBeNull()
-    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
-    expect(composer().executionBlocked).toBe(false)
-    expect(respond).not.toHaveBeenCalled()
-    await renderApproval(view("compatible"), view("compatible"), respond)
-    expect(document.querySelector('[data-child-approval="approval-child"]')).not.toBeNull()
-    expect(respond).not.toHaveBeenCalled()
-    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Deny child")!.click())
-    expect(respond).toHaveBeenCalledExactlyOnceWith(false)
-  })
-})
 
 describe("run diagnostics entry and canonical error isolation", () => {
   const a = "11111111-1111-4111-8111-111111111111"

@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { appStore } from "@shared/store/appStore/state"
 import { sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
 import { applySessionsList } from "@shared/store/appStore/slices/chatSessionSlice/refreshChats"
-import { agentClient, type PendingQuestionResponse, type PermissionDecisionResult, type SessionSummary } from "@services/chat/AgentService"
+import { agentClient, type ChildApprovalResponse, type PendingQuestionResponse, type PermissionDecisionResult, type SessionSummary } from "@services/chat/AgentService"
+import { apiClient } from "@services/api"
 import { NetworkRequestError } from "@services/api/errors"
+import { clearSessionCompatibilityObservations, type SessionExecutionCompatibility } from "@services/chat/sessionExecutionCompatibility"
+import { uiText } from "@shared/i18n/text"
 import type { PendingQuestion } from "./createChat"
 import { renderChatPane, settleChat } from "./chatInteractionTestHarness"
 
@@ -14,6 +17,15 @@ vi.mock("@shared/store/appStore/state", async (original) => ({
   ...await original<typeof import("@shared/store/appStore/state")>(),
   initializeStore: vi.fn(async () => {}),
 }))
+// Vite compiles the package's JSX entry for production. Load the package's
+// compiled entry under the scoped Vitest transform so the real modal mounts.
+vi.mock("@kobalte/core/dialog", async () => {
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (name: string) => string }
+  }>("node:module")
+  const entry = createRequire(import.meta.url).resolve("@kobalte/core/dialog")
+  return vi.importActual(entry.replace(/\.jsx$/, ".js"))
+})
 
 const panes = new Map<string, ReturnType<typeof renderChatPane>>()
 let getPending: MockInstance<typeof agentClient.getPendingQuestion>
@@ -77,6 +89,7 @@ const expectNoExecution = () => {
 }
 
 beforeEach(() => {
+  clearSessionCompatibilityObservations()
   appStore.setState({ ...appStore.getInitialState(),
     currentSessionId: "session/a",
     chats: [sessionSummaryToChatItem(summary()), sessionSummaryToChatItem(summary("session/b"))],
@@ -94,6 +107,7 @@ afterEach(() => {
   panes.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()
+  clearSessionCompatibilityObservations()
 })
 
 describe("createChat recovered pending approval", () => {
@@ -475,6 +489,128 @@ describe("createChat recovered pending approval", () => {
     await click("刷新请求")
     expect(chat().questionUnavailable).toBe(false)
     expect(button("仅本次允许")?.disabled).toBe(false)
+    expect(submit).not.toHaveBeenCalled()
+    expectNoExecution()
+  })
+})
+
+describe("Solid approval and clarification presentation", () => {
+  const parentId = "session/a"
+  const childId = "approval-child"
+  const requestId = "child-request-7"
+  const childTitle = () => uiText("subagent_approval_request_4321e83b")
+  const approve = () => uiText("approve_8cbe697b")
+  const deny = () => uiText("deny_136de7a8")
+  const request = () => approvalCards().find((card) => card.getAttribute("aria-label") === childTitle())
+  const childConflict = () => [...document.querySelectorAll<HTMLElement>("[aria-label]")]
+    .find((region) => region.getAttribute("aria-label") === childTitle()
+      && region.querySelector('[data-session-execution-blocked="true"]'))
+
+  type Status = SessionExecutionCompatibility["status"]
+  function report(status: Status): SessionExecutionCompatibility {
+    return {
+      session_version: status === "conflict" ? 99 : status === "compatible" ? 1 : null,
+      current_session_version: 1, status, history_readable: true, execution_allowed: status !== "conflict",
+      conflicts: status === "conflict" ? [{ code: "unsupported_session_version", message: "Unsupported version" }] : [],
+    }
+  }
+
+  async function presentChild(parentStatus: Status, childStatus: Status | null) {
+    let childReport = childStatus
+    vi.spyOn(agentClient, "getSession").mockImplementation(async (id) => {
+      const status = id === childId ? childReport : parentStatus
+      return { session: { ...summary(id), ...(status ? { execution_compatibility: report(status) } : {}) } }
+    })
+    const decide = vi.spyOn(agentClient, "respondToChildApproval").mockResolvedValue({ delivered: true })
+    appStore.getState().markForceSubscribe(parentId)
+    await mount(parentId)
+    const notify = vi.mocked(agentClient.subscribeToEvents).mock.calls[0]?.[1].onChildApprovalRequested
+    if (!notify) throw new Error("Expected Child request listener")
+    await settleChat(() => notify(childId, requestId, { toolName: "Write", permission: "write" }))
+    return { decide, allow: () => { childReport = "compatible" } }
+  }
+
+  it.each(["compatible", "legacy_compatible", null] as const)("keeps %s Child approval actionable when only its parent conflicts", async (status) => {
+    const { decide } = await presentChild("conflict", status)
+    expect(request()).toBeDefined()
+    expect(chat().executionCompatibility.blocked).toBe(true)
+    expect(decide).not.toHaveBeenCalled()
+    await click(approve())
+    expect(decide).toHaveBeenCalledExactlyOnceWith(childId, requestId, true)
+    expectNoExecution()
+  })
+
+  it("keeps the genuine parent question available while only the Child conflicts", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+    getPending.mockResolvedValue({
+      has_pending_question: true, interaction_kind: "clarification", question: "Parent still needs Human input",
+      options: ["main answer"], allow_custom: false, tool_call_id: "parent-question",
+    })
+    const answer = vi.spyOn(apiClient, "post").mockResolvedValue({ success: true, auto_resume_status: "completed" })
+    const { decide } = await presentChild("compatible", "conflict")
+    expect(request()).toBeUndefined()
+    expect(childConflict()).toBeDefined()
+    expect(chat().executionCompatibility.blocked).toBe(false)
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Parent still needs Human input")
+    expect(decide).not.toHaveBeenCalled()
+    expect(answer).not.toHaveBeenCalled()
+    getPending.mockResolvedValue(absent)
+    await click("main answer")
+    expect(answer).toHaveBeenCalledExactlyOnceWith("respond/session%2Fa", {
+      response: "main answer", expected_tool_call_id: "parent-question",
+    })
+    expect(decide).not.toHaveBeenCalled()
+    expectNoExecution()
+  })
+
+  it("disables a submitting Child approval and shows an unconfirmed delivery error", async () => {
+    const { decide } = await presentChild("compatible", "compatible")
+    const pending = deferred<ChildApprovalResponse>()
+    decide.mockReturnValueOnce(pending.promise)
+    await click(approve())
+    expect(button(approve())?.disabled).toBe(true)
+    expect(button(deny())?.disabled).toBe(true)
+    await click(deny())
+    expect(decide).toHaveBeenCalledExactlyOnceWith(childId, requestId, true)
+    await settleChat(() => pending.reject(new NetworkRequestError()))
+    expect(request()?.querySelector('[role="alert"]')?.textContent).toContain(
+      uiText("submission_is_unconfirmed_refresh_or_retry_the_last_sub_f3127c94"),
+    )
+    expect(button(approve())?.disabled).toBe(false)
+    expect(decide).toHaveBeenCalledTimes(1)
+    expectNoExecution()
+  })
+
+  it("blocks only the Child's explicit conflict and restores its card after canonical recovery", async () => {
+    const { decide, allow } = await presentChild("compatible", "conflict")
+    expect(request()).toBeUndefined()
+    expect(childConflict()).toBeDefined()
+    expect(chat().executionCompatibility.blocked).toBe(false)
+    expect(decide).not.toHaveBeenCalled()
+    allow()
+    const refresh = childConflict()?.querySelector("button")
+    expect(refresh).toBeInstanceOf(HTMLButtonElement)
+    await settleChat(() => refresh?.click())
+    expect(request()).toBeDefined()
+    expect(decide).not.toHaveBeenCalled()
+    await click(deny())
+    expect(decide).toHaveBeenCalledExactlyOnceWith(childId, requestId, false)
+    expectNoExecution()
+  })
+
+  it("shows an unreadable request with a working refresh control outside the dialog", async () => {
+    getPending.mockRejectedValueOnce(new NetworkRequestError())
+    await mount(parentId)
+    const alert = document.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain("无法读取确认请求")
+    const refresh = alert?.querySelector("button")
+    expect(refresh?.textContent).toBe("刷新请求")
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(pendingCard()).toBeNull()
+    getPending.mockClear().mockResolvedValue(permission())
+    await settleChat(() => refresh?.click())
+    expect(getPending).toHaveBeenCalledExactlyOnceWith(parentId)
+    expect(pendingCard()).not.toBeNull()
     expect(submit).not.toHaveBeenCalled()
     expectNoExecution()
   })
