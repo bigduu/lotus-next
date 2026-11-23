@@ -1,9 +1,12 @@
 import path from "node:path"
 import { configDefaults, defineConfig } from "vitest/config"
 import react from "@vitejs/plugin-react"
+import solid from "@solidjs/vite-plugin"
+
+const solidSource = /[\\/]src[\\/]solid[\\/]/
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [solid({ include: solidSource, refresh: false }), react({ exclude: solidSource })],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
