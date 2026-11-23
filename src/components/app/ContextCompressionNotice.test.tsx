@@ -56,7 +56,9 @@ it.each(["en-US", "zh-CN"] as const)("announces distinct safe outcome messages i
     messages.push(notice.textContent!)
   }
   expect(new Set(messages).size).toBe(cases.length)
-  expect(uiText("context_compression_notice_empty_summary")).toContain(locale === "zh-CN" ? "推理强度" : "lower the reasoning effort")
+  expect(uiText("context_compression_notice_empty_summary")).toBe(locale === "zh-CN"
+    ? "本次未能压缩上下文。聊天记录已保留。"
+    : "Context compression could not finish. Your conversation history was preserved.")
   expect(uiText("context_compression_notice_failed_postcondition")).toContain(locale === "zh-CN" ? "未采用" : "not used")
   expect(uiText("context_compression_notice_completed_waiting")).toContain(locale === "zh-CN" ? "下一次提示词" : "next prompt")
   expect(uiText("context_compression_notice_completed")).toContain(locale === "zh-CN" ? "指令、工具和近期消息" : "instructions, tools, and recent messages")

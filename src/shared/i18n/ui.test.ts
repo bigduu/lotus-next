@@ -106,4 +106,15 @@ describe("English UI localization", () => {
     expect(WEEKDAY_OPTIONS[0].label).toBe("一")
     expect(TASK_TEMPLATES.find((item) => item.taskPrompt)?.taskPrompt).toBe(prompt)
   })
+
+  it.each([
+    "The model returned no summary. Lower the reasoning effort for the model used for context compression, then try again.",
+    "Context compression could not finish. Your conversation history was preserved.",
+  ])("localizes an interrupted reply after compression fails: %s", async (detail) => {
+    await changeLocale("zh-CN")
+    expect(describeRunFailure(`Turn 1 failed terminally: ${detail}`)).toEqual({
+      title: "回复因上下文压缩中断",
+      action: "你的消息和聊天记录已保留。",
+    })
+  })
 })
