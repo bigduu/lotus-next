@@ -341,14 +341,16 @@ test("started progress and completion wait for actual whole-prompt budget", asyn
   await verifyIsolation(f)
 })
 
-test("an empty summary tells the user to lower reasoning effort", async ({ page }, info) => {
+test("an empty summary confirms the conversation was kept", async ({ page }, info) => {
   const f = await prepare(page, info)
   f.status("started")
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_running"))
   f.status("failed_empty_summary")
-  await expect(f.notice).toHaveText(f.copy("context_compression_notice_empty_summary"))
+  await expect(f.notice).toHaveText(f.locale === "zh-CN"
+    ? "本次未能压缩上下文。聊天记录已保留。"
+    : "Context compression could not finish. Your conversation history was preserved.")
   await expect(f.notice.locator("svg")).toHaveCount(0)
-  await capture(f, "empty-summary-reasoning-guidance")
+  await capture(f, "empty-summary-history-preserved")
   await verifyIsolation(f)
 })
 
