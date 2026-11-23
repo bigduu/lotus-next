@@ -1,26 +1,21 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest"
-import { useAppStore } from "@shared/store/appStore"
+import { appStore } from "@shared/store/appStore/state"
 import { sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
 import { applySessionsList } from "@shared/store/appStore/slices/chatSessionSlice/refreshChats"
 import { agentClient, type PendingQuestionResponse, type PermissionDecisionResult, type SessionSummary } from "@services/chat/AgentService"
 import { NetworkRequestError } from "@services/api/errors"
-import { QuestionDialog } from "@/components/chat/Dialogs"
-import { useChat, type PendingQuestion } from "./useChat"
+import type { PendingQuestion } from "./createChat"
+import { renderChatPane, settleChat } from "./chatInteractionTestHarness"
 
 // Keep the real reactive store, recovery action and execution reducer. Only
-// app bootstrap and network boundaries are replaced; the rendered dialog uses
-// the same hook outputs and callbacks as ChatPane.
-vi.mock("@shared/store/appStore", async (original) => ({
-  ...await original<typeof import("@shared/store/appStore")>(),
+// app bootstrap and network boundaries are replaced; the fixture uses the real Solid
+// timeline, controller, and interaction surface.
+vi.mock("@shared/store/appStore/state", async (original) => ({
+  ...await original<typeof import("@shared/store/appStore/state")>(),
   initializeStore: vi.fn(async () => {}),
 }))
 
-type Chat = ReturnType<typeof useChat>
-const values = new Map<string, Chat>()
-let root: Root
-let container: HTMLDivElement
+const panes = new Map<string, ReturnType<typeof renderChatPane>>()
 let getPending: MockInstance<typeof agentClient.getPendingQuestion>
 let submit: MockInstance<typeof agentClient.submitPermissionDecision>
 const absent = { has_pending_question: false } as const
@@ -50,8 +45,8 @@ const optionalPendingSummary = (id: string, pending: boolean | undefined, status
 }
 // This is the actual summary refresh path, including both the unfiltered
 // ChatItem status and the execution reducer's terminal-only backend status.
-const publishSummary = (next: SessionSummary) => applySessionsList([next], useAppStore.setState, { kind: "upsert" })
-const recover = (id = "session/a", callId = "call/a") => useAppStore.getState().setPendingQuestion(id, {
+const publishSummary = (next: SessionSummary) => applySessionsList([next], appStore.setState, { kind: "upsert" })
+const recover = (id = "session/a", callId = "call/a") => appStore.getState().setPendingQuestion(id, {
   question: "Legacy notification must not become the dialog", options: ["Approve forever"],
   allowCustom: true, toolCallId: callId,
 })
@@ -61,27 +56,20 @@ function deferred<T>() {
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
   return { promise, resolve, reject }
 }
-function Pane({ bound, name = "pane" }: { bound?: string | null; name?: string }) {
-  const chat = useChat(bound)
-  values.set(name, chat)
-  return chat.pendingQuestion ? <QuestionDialog q={chat.pendingQuestion}
-    onAnswer={(choice) => { void chat.answerQuestion(choice) }}
-    loading={chat.questionLoading} submitting={chat.questionSubmitting}
-    unavailable={chat.questionUnavailable} error={chat.questionError}
-    canRetry={chat.questionCanRetry} onRefresh={() => { void chat.refreshQuestion() }}
-    onRetry={() => { void chat.retryQuestion() }} /> : null
-}
-const mount = async (bound?: string | null) => {
-  await act(async () => root.render(<Pane bound={bound} />))
-}
-const chat = () => values.get("pane")!
-const dialog = () => document.querySelector('[data-approval-presentation]')
+const mount = (bound?: string | null, name = "pane") => settleChat(() => {
+  const pane = panes.get(name)
+  if (!pane) panes.set(name, renderChatPane(bound))
+  else if (bound !== undefined) pane.rebind(bound)
+})
+const chat = () => panes.get("pane")!.chat
+const approvalCards = () => [...document.querySelectorAll<HTMLElement>("[data-approval-presentation]")]
+const pendingCard = () => document.querySelector('[data-approval-presentation][aria-label="需要操作授权"]')
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
   .find((element) => element.textContent?.trim() === label)
 const click = async (label: string) => {
   const control = button(label)
   expect(control).toBeDefined()
-  await act(async () => control!.click())
+  await settleChat(async () => control!.click())
 }
 const expectNoExecution = () => {
   expect(agentClient.execute).not.toHaveBeenCalled()
@@ -89,9 +77,7 @@ const expectNoExecution = () => {
 }
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
-  values.clear()
-  useAppStore.setState({ ...useAppStore.getInitialState(),
+  appStore.setState({ ...appStore.getInitialState(),
     currentSessionId: "session/a",
     chats: [sessionSummaryToChatItem(summary()), sessionSummaryToChatItem(summary("session/b"))],
     loadSubagentSessions: vi.fn(async () => {}), loadChatHistory: vi.fn(async () => {}),
@@ -102,18 +88,15 @@ beforeEach(() => {
   vi.spyOn(agentClient, "execute").mockRejectedValue(new Error("Recovery must not execute"))
   vi.spyOn(agentClient, "sendMessage").mockRejectedValue(new Error("Recovery must not send"))
   vi.spyOn(agentClient, "subscribeToEvents").mockImplementation(() => new Promise(() => {}))
-  container = document.body.appendChild(document.createElement("div"))
-  root = createRoot(container)
 })
 afterEach(() => {
-  act(() => root.unmount())
-  document.body.replaceChildren()
+  for (const pane of panes.values()) pane.dispose()
+  panes.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()
-  vi.unstubAllGlobals()
 })
 
-describe("useChat recovered pending approval dialog", () => {
+describe("createChat recovered pending approval", () => {
   describe("suspended summaries with an optional pending flag", () => {
     it.each([
       ["main", true], ["main", false], ["main", undefined],
@@ -123,17 +106,17 @@ describe("useChat recovered pending approval dialog", () => {
       const sessionId = mode === "main" ? "session/a" : "session/b"
       publishSummary(optionalPendingSummary(sessionId, flag))
       await mount(mode === "main" ? undefined : sessionId)
-      expect(dialog()).toBeNull()
+      expect(pendingCard()).toBeNull()
       getPending.mockClear().mockResolvedValue(permission(sessionId))
       const suspended = optionalPendingSummary(sessionId, flag, "suspended")
       if (flag === undefined) expect(suspended).not.toHaveProperty("has_pending_question")
-      await act(async () => {
+      await settleChat(async () => {
         await vi.advanceTimersByTimeAsync(1)
         publishSummary(suspended)
       })
-      expect(useAppStore.getState().executionBySession[sessionId].backend.lastRunStatus).toBeNull()
-      expect(useAppStore.getState().chats.find((item) => item.id === sessionId)?.lastRunStatus).toBe("suspended")
-      expect(dialog()).not.toBeNull()
+      expect(appStore.getState().executionBySession[sessionId].backend.lastRunStatus).toBeNull()
+      expect(appStore.getState().chats.find((item) => item.id === sessionId)?.lastRunStatus).toBe("suspended")
+      expect(pendingCard()).not.toBeNull()
       expect(chat().pendingQuestion).toEqual(permission(sessionId))
       expect(getPending).toHaveBeenCalledExactlyOnceWith(sessionId)
       expect(submit).not.toHaveBeenCalled()
@@ -144,25 +127,25 @@ describe("useChat recovered pending approval dialog", () => {
       vi.useFakeTimers()
       const suspended = optionalPendingSummary("session/b", flag, "suspended")
       publishSummary(suspended)
-      const firstSyncedAt = useAppStore.getState().executionBySession["session/b"].backend.syncedAt
+      const firstSyncedAt = appStore.getState().executionBySession["session/b"].backend.syncedAt
       await mount("session/b")
-      expect(dialog()).toBeNull()
+      expect(pendingCard()).toBeNull()
       getPending.mockClear()
       // No clock advance: every real summary must signal, even within one ms.
-      await act(async () => publishSummary(suspended))
+      await settleChat(async () => publishSummary(suspended))
       expect(getPending).toHaveBeenCalledExactlyOnceWith("session/b")
-      expect(dialog()).toBeNull() // Canonical absence overrides every summary hint.
+      expect(pendingCard()).toBeNull() // Canonical absence overrides every summary hint.
       getPending.mockClear().mockResolvedValue(permission("session/b"))
-      await act(async () => publishSummary(suspended))
-      expect(useAppStore.getState().executionBySession["session/b"].backend.syncedAt).toBe(firstSyncedAt)
-      expect(dialog()).not.toBeNull()
+      await settleChat(async () => publishSummary(suspended))
+      expect(appStore.getState().executionBySession["session/b"].backend.syncedAt).toBe(firstSyncedAt)
+      expect(pendingCard()).not.toBeNull()
       expect(chat().pendingQuestion).toEqual(permission("session/b"))
       expect(getPending).toHaveBeenCalledExactlyOnceWith("session/b")
       getPending.mockClear()
       await mount("session/b")
-      await act(async () => {
+      await settleChat(async () => {
         publishSummary(optionalPendingSummary("session/a", true, "suspended"))
-        useAppStore.getState().applyChildProgress("session/b", "child/b", { title: "Unrelated progress" })
+        appStore.getState().applyChildProgress("session/b", "child/b", { title: "Unrelated progress" })
       })
       expect(getPending).not.toHaveBeenCalled()
       expect(chat().pendingQuestion).toEqual(permission("session/b"))
@@ -175,18 +158,18 @@ describe("useChat recovered pending approval dialog", () => {
       await mount(bound ? "session/a" : undefined)
       const older = deferred<PendingQuestionResponse>()
       getPending.mockReturnValueOnce(older.promise)
-      await act(async () => publishSummary(optionalPendingSummary("session/a", undefined, "suspended")))
+      await settleChat(async () => publishSummary(optionalPendingSummary("session/a", undefined, "suspended")))
       expect(chat().questionLoading).toBe(true)
       getPending.mockResolvedValueOnce(absent).mockResolvedValue(permission("session/a", "generation/new"))
       if (bound) await mount("session/b")
-      else await act(async () => useAppStore.setState({ currentSessionId: "session/b" }))
+      else await settleChat(async () => appStore.setState({ currentSessionId: "session/b" }))
       const readsInB = getPending.mock.calls.length
-      await act(async () => publishSummary(optionalPendingSummary("session/a", undefined, "suspended")))
+      await settleChat(async () => publishSummary(optionalPendingSummary("session/a", undefined, "suspended")))
       expect(getPending).toHaveBeenCalledTimes(readsInB)
-      expect(dialog()).toBeNull()
+      expect(pendingCard()).toBeNull()
       if (bound) await mount("session/a")
-      else await act(async () => useAppStore.setState({ currentSessionId: "session/a" }))
-      await act(async () => { older.resolve(permission()); await older.promise })
+      else await settleChat(async () => appStore.setState({ currentSessionId: "session/a" }))
+      await settleChat(async () => { older.resolve(permission()); await older.promise })
       expect(chat().pendingQuestion).toEqual(permission("session/a", "generation/new"))
       expect(chat().questionLoading).toBe(false)
       expect(submit).not.toHaveBeenCalled()
@@ -197,14 +180,14 @@ describe("useChat recovered pending approval dialog", () => {
       await mount("session/b")
       const older = deferred<PendingQuestionResponse>()
       getPending.mockReturnValueOnce(older.promise)
-      await act(async () => publishSummary(optionalPendingSummary("session/b", undefined, "suspended")))
+      await settleChat(async () => publishSummary(optionalPendingSummary("session/b", undefined, "suspended")))
       expect(chat().questionLoading).toBe(true)
       getPending.mockResolvedValue(absent)
-      await act(async () => publishSummary(optionalPendingSummary("session/b", false, "completed")))
-      await act(async () => { older.resolve(permission("session/b")); await older.promise })
+      await settleChat(async () => publishSummary(optionalPendingSummary("session/b", false, "completed")))
+      await settleChat(async () => { older.resolve(permission("session/b")); await older.promise })
       expect(chat().pendingQuestion).toBeNull()
       expect(chat().questionLoading).toBe(false)
-      expect(dialog()).toBeNull()
+      expect(pendingCard()).toBeNull()
       expect(submit).not.toHaveBeenCalled()
       expectNoExecution()
     })
@@ -215,7 +198,7 @@ describe("useChat recovered pending approval dialog", () => {
       submit.mockRejectedValueOnce(new NetworkRequestError())
       await click("仅本次允许")
       getPending.mockClear().mockResolvedValue(absent)
-      await act(async () => publishSummary(optionalPendingSummary("session/b", false, "suspended")))
+      await settleChat(async () => publishSummary(optionalPendingSummary("session/b", false, "suspended")))
       expect(getPending).toHaveBeenCalledExactlyOnceWith("session/b")
       expect(chat().questionCanRetry).toBe(true)
       expect(button("仅本次允许")?.disabled).toBe(true)
@@ -228,34 +211,34 @@ describe("useChat recovered pending approval dialog", () => {
   it("reopens the active pane through the account-feed recovery action after its initial absent read", async () => {
     vi.useFakeTimers()
     await mount()
-    expect(dialog()).toBeNull()
+    expect(pendingCard()).toBeNull()
     expect(getPending).toHaveBeenCalledTimes(1)
     getPending.mockResolvedValue(permission())
-    await act(async () => {
-      useAppStore.getState().reconcileOpenSession("session/a", "ws_reconnected")
+    await settleChat(async () => {
+      appStore.getState().reconcileOpenSession("session/a", "ws_reconnected")
       await vi.advanceTimersByTimeAsync(300)
     })
-    expect(useAppStore.getState().executionBySession["session/a"].interaction.pendingQuestion).not.toBeNull()
-    expect(dialog()).not.toBeNull()
-    expect(getPending).toHaveBeenCalledTimes(3) // entry, feed snapshot, canonical hook read
-    expect(dialog()?.textContent).toContain("Canonical approval for session/a")
+    expect(appStore.getState().executionBySession["session/a"].interaction.pendingQuestion).not.toBeNull()
+    expect(pendingCard()).not.toBeNull()
+    expect(getPending).toHaveBeenCalledTimes(3) // entry, feed snapshot, canonical controller read
+    expect(pendingCard()?.textContent).toContain("Canonical approval for session/a")
     expect(button("仅本次允许")?.disabled).toBe(false)
     expect(button("仅本次拒绝")?.disabled).toBe(false)
-    expect(dialog()?.querySelector("textarea")).toBeNull()
+    expect(pendingCard()?.querySelector("textarea")).toBeNull()
     expect(submit).not.toHaveBeenCalled()
     expect(agentClient.subscribeToEvents).not.toHaveBeenCalled()
     expectNoExecution()
   })
 
   it.each([undefined, "session/a"])("reads typed authority from a recovered store notification in pane %s", async (bound) => {
-    if (bound) useAppStore.setState({ currentSessionId: "session/b" })
+    if (bound) appStore.setState({ currentSessionId: "session/b" })
     await mount(bound)
     getPending.mockResolvedValue(permission())
-    await act(async () => recover())
-    expect(dialog()).not.toBeNull()
-    expect(dialog()?.textContent).toContain("Canonical approval for session/a")
-    expect(dialog()?.textContent).not.toContain("Legacy notification")
-    expect(dialog()?.textContent).not.toContain("Approve forever")
+    await settleChat(async () => recover())
+    expect(pendingCard()).not.toBeNull()
+    expect(pendingCard()?.textContent).toContain("Canonical approval for session/a")
+    expect(pendingCard()?.textContent).not.toContain("Legacy notification")
+    expect(pendingCard()?.textContent).not.toContain("Approve forever")
     expect(getPending).toHaveBeenLastCalledWith("session/a")
     expect(submit).not.toHaveBeenCalled()
     getPending.mockResolvedValue(absent)
@@ -264,33 +247,35 @@ describe("useChat recovered pending approval dialog", () => {
     expect(submit).toHaveBeenCalledExactlyOnceWith("session/a", {
       request_id: "call/a", request_generation: "generation/a", expected_policy_revision: 7, decision: "deny_once",
     })
-    expect(dialog()).toBeNull()
+    expect(pendingCard()).toBeNull()
+    expect(approvalCards().map((card) => card.getAttribute("aria-label"))).toEqual(["已拒绝 · 会话已继续"])
     expectNoExecution()
   })
 
   it("recovers a bound pane from a summary without a legacy pending payload and leaves the main pane alone", async () => {
-    await act(async () => root.render(<><Pane name="main" /><Pane name="pane" bound="session/b" /></>))
+    await mount(undefined, "main")
+    await mount("session/b")
     getPending.mockClear().mockResolvedValue(permission("session/b"))
-    await act(async () => useAppStore.getState().applySessionSummary("session/b", summary("session/b", true)))
-    expect(values.get("main")?.pendingQuestion).toBeNull()
+    await settleChat(async () => appStore.getState().applySessionSummary("session/b", summary("session/b", true)))
+    expect(panes.get("main")?.chat.pendingQuestion).toBeNull()
     expect(chat().pendingQuestion).toEqual(permission("session/b"))
     expect(getPending).toHaveBeenCalledExactlyOnceWith("session/b")
-    expect(dialog()?.textContent).toContain("Canonical approval for session/b")
+    expect(pendingCard()?.textContent).toContain("Canonical approval for session/b")
     expect(submit).not.toHaveBeenCalled()
     expectNoExecution()
   })
 
   it("does not repeatedly read on unrelated store updates or unchanged no-pending summaries", async () => {
     await mount("session/a")
-    await act(async () => useAppStore.getState().applySessionSummary("session/a", summary()))
+    await settleChat(async () => appStore.getState().applySessionSummary("session/a", summary()))
     getPending.mockClear()
-    await act(async () => {
-      useAppStore.getState().applySessionSummary("session/a", summary())
+    await settleChat(async () => {
+      appStore.getState().applySessionSummary("session/a", summary())
       recover("session/b")
-      useAppStore.getState().applyChildProgress("session/a", "child/a", { title: "Child update" })
+      appStore.getState().applyChildProgress("session/a", "child/a", { title: "Child update" })
     })
     expect(getPending).not.toHaveBeenCalled()
-    expect(dialog()).toBeNull()
+    expect(pendingCard()).toBeNull()
     expectNoExecution()
   })
 
@@ -299,16 +284,16 @@ describe("useChat recovered pending approval dialog", () => {
     await mount(bound ? "session/a" : undefined)
     const older = deferred<PendingQuestionResponse>()
     getPending.mockReturnValueOnce(older.promise)
-    await act(async () => recover())
+    await settleChat(async () => recover())
     getPending.mockResolvedValueOnce(absent).mockResolvedValue(permission("session/a", "generation/new"))
     if (bound) {
       await mount("session/b")
       await mount("session/a")
     } else {
-      await act(async () => useAppStore.setState({ currentSessionId: "session/b" }))
-      await act(async () => useAppStore.setState({ currentSessionId: "session/a" }))
+      await settleChat(async () => appStore.setState({ currentSessionId: "session/b" }))
+      await settleChat(async () => appStore.setState({ currentSessionId: "session/a" }))
     }
-    await act(async () => { older.resolve(permission()); await older.promise })
+    await settleChat(async () => { older.resolve(permission()); await older.promise })
     expect(chat().pendingQuestion).toEqual(permission("session/a", "generation/new"))
     expect(chat().questionLoading).toBe(false)
     expect(submit).not.toHaveBeenCalled()
@@ -319,10 +304,10 @@ describe("useChat recovered pending approval dialog", () => {
     await mount("session/a")
     const older = deferred<PendingQuestionResponse>()
     getPending.mockReturnValueOnce(older.promise)
-    await act(async () => recover())
+    await settleChat(async () => recover())
     getPending.mockResolvedValue(permission("session/a", "generation/new"))
-    await act(async () => recover("session/a", "new-notification"))
-    await act(async () => { older.resolve(permission()); await older.promise })
+    await settleChat(async () => recover("session/a", "new-notification"))
+    await settleChat(async () => { older.resolve(permission()); await older.promise })
     expect(chat().pendingQuestion).toEqual(permission("session/a", "generation/new"))
     expect(submit).not.toHaveBeenCalled()
     expectNoExecution()
@@ -332,7 +317,7 @@ describe("useChat recovered pending approval dialog", () => {
     vi.useFakeTimers()
     getPending.mockResolvedValue(permission())
     await mount("session/a")
-    await act(async () => useAppStore.getState().applySessionSummary("session/a", summary("session/a", true)))
+    await settleChat(async () => appStore.getState().applySessionSummary("session/a", summary("session/a", true)))
     submit.mockRejectedValueOnce(new NetworkRequestError())
     await click("仅本次允许")
     expect(chat().questionCanRetry).toBe(true)
@@ -340,15 +325,15 @@ describe("useChat recovered pending approval dialog", () => {
     const next = permission("session/a", change === "generation" ? "generation/new" : "generation/a", change === "revision" ? 8 : 7)
     if (next.interaction_kind === "permission") next.permission_request.allowed_decisions = ["deny_once"]
     getPending.mockResolvedValue(next)
-    await act(async () => {
+    await settleChat(async () => {
       await vi.advanceTimersByTimeAsync(1)
-      useAppStore.getState().applySessionSummary("session/a", summary("session/a", true))
+      appStore.getState().applySessionSummary("session/a", summary("session/a", true))
     })
     expect(chat().pendingQuestion).toEqual(next)
     expect(chat().questionCanRetry).toBe(false)
     expect(button("仅本次允许")).toBeUndefined()
     expect(button("仅本次拒绝")?.disabled).toBe(false)
-    await act(async () => { await oldClick("allow_once"); await chat().retryQuestion() })
+    await settleChat(async () => { await oldClick("allow_once"); await chat().retryQuestion() })
     expect(submit).toHaveBeenCalledTimes(1)
     expectNoExecution()
   })
@@ -359,20 +344,20 @@ describe("useChat recovered pending approval dialog", () => {
     submit.mockRejectedValueOnce(new NetworkRequestError())
     await click("仅本次允许")
     const submitted = submit.mock.calls[0]
-    await act(async () => recover())
+    await settleChat(async () => recover())
     expect(chat().questionCanRetry).toBe(true)
     expect(button("仅本次允许")?.disabled).toBe(true)
     expect(button("仅本次拒绝")?.disabled).toBe(true)
     getPending.mockResolvedValue(absent)
-    await act(async () => useAppStore.getState().clearPendingQuestion("session/a"))
-    expect(dialog()).not.toBeNull()
+    await settleChat(async () => appStore.getState().clearPendingQuestion("session/a"))
+    expect(pendingCard()).not.toBeNull()
     expect(chat().questionCanRetry).toBe(true)
     await click("仅本次拒绝")
     expect(submit).toHaveBeenCalledTimes(1)
     submit.mockResolvedValueOnce({ replayed: true, autoResumeStatus: "completed", continuationConfirmed: true })
     await click("重试上次提交")
     expect(submit.mock.calls).toEqual([submitted, submitted])
-    expect(dialog()).toBeNull()
+    expect(pendingCard()).toBeNull()
     expectNoExecution()
   })
 
@@ -383,12 +368,12 @@ describe("useChat recovered pending approval dialog", () => {
     submit.mockReturnValue(response.promise)
     await click("仅本次允许")
     getPending.mockResolvedValue(absent)
-    await act(async () => useAppStore.getState().applySessionSummary("session/a", summary("session/a", false, true)))
+    await settleChat(async () => appStore.getState().applySessionSummary("session/a", summary("session/a", false, true)))
     expect(chat().questionSubmitting).toBe(true)
-    expect(dialog()).not.toBeNull()
+    expect(pendingCard()).not.toBeNull()
     expect(button("仅本次拒绝")?.disabled).toBe(true)
-    await act(async () => { response.resolve({ replayed: false, autoResumeStatus: "completed", continuationConfirmed: true }); await response.promise })
-    expect(dialog()).toBeNull()
+    await settleChat(async () => { response.resolve({ replayed: false, autoResumeStatus: "completed", continuationConfirmed: true }); await response.promise })
+    expect(pendingCard()).toBeNull()
     expect(chat().questionSubmitting).toBe(false)
     expect(submit).toHaveBeenCalledTimes(1)
     expectNoExecution()
@@ -399,11 +384,13 @@ describe("useChat recovered pending approval dialog", () => {
     await mount("session/a")
     submit.mockResolvedValue({ replayed: false, continuationConfirmed: false })
     await click("仅本次允许")
-    await act(async () => recover())
+    await settleChat(async () => recover())
     expect(chat().questionUnavailable).toBe(true)
     expect(chat().questionError).toContain("已记录")
-    expect(button("仅本次拒绝")?.disabled).toBe(true)
-    await click("仅本次拒绝")
+    expect(pendingCard()).toBeNull()
+    expect(button("仅本次拒绝")).toBeUndefined()
+    expect(approvalCards().map((card) => card.getAttribute("aria-label"))).toEqual(["已记录批准"])
+    await settleChat(() => chat().answerQuestion("deny_once"))
     expect(submit).toHaveBeenCalledTimes(1)
     expectNoExecution()
   })
@@ -416,15 +403,15 @@ describe("useChat recovered pending approval dialog", () => {
     submit.mockReturnValueOnce(oldResponse.promise).mockReturnValueOnce(newResponse.promise)
     await click("仅本次允许")
     getPending.mockResolvedValue(permission("session/a", "generation/new"))
-    await act(async () => recover())
+    await settleChat(async () => recover())
     await click("仅本次拒绝")
-    await act(async () => { oldResponse.resolve({ replayed: false, autoResumeStatus: "started", continuationConfirmed: true }); await oldResponse.promise })
+    await settleChat(async () => { oldResponse.resolve({ replayed: false, autoResumeStatus: "started", continuationConfirmed: true }); await oldResponse.promise })
     expect(chat().pendingQuestion).toEqual(permission("session/a", "generation/new"))
     expect(chat().questionSubmitting).toBe(true)
     expect(agentClient.subscribeToEvents).not.toHaveBeenCalled()
     getPending.mockResolvedValue(absent)
-    await act(async () => { newResponse.resolve({ replayed: false, autoResumeStatus: "completed", continuationConfirmed: true }); await newResponse.promise })
-    expect(dialog()).toBeNull()
+    await settleChat(async () => { newResponse.resolve({ replayed: false, autoResumeStatus: "completed", continuationConfirmed: true }); await newResponse.promise })
+    expect(pendingCard()).toBeNull()
     expect(chat().questionSubmitting).toBe(false)
     expect(submit).toHaveBeenLastCalledWith("session/a", {
       request_id: "call/a", request_generation: "generation/new", expected_policy_revision: 7, decision: "deny_once",
@@ -435,14 +422,14 @@ describe("useChat recovered pending approval dialog", () => {
   it.each(["clear", "terminal"])("closes a displayed approval only after canonical absence on %s", async (signal) => {
     getPending.mockResolvedValue(permission())
     await mount("session/a")
-    await act(async () => recover())
-    expect(dialog()).not.toBeNull()
+    await settleChat(async () => recover())
+    expect(pendingCard()).not.toBeNull()
     getPending.mockResolvedValue(absent)
-    await act(async () => {
-      if (signal === "clear") useAppStore.getState().clearPendingQuestion("session/a")
-      else useAppStore.getState().applySessionSummary("session/a", summary("session/a", false, true))
+    await settleChat(async () => {
+      if (signal === "clear") appStore.getState().clearPendingQuestion("session/a")
+      else appStore.getState().applySessionSummary("session/a", summary("session/a", false, true))
     })
-    expect(dialog()).toBeNull()
+    expect(pendingCard()).toBeNull()
     expect(chat().pendingQuestion).toBeNull()
     expect(submit).not.toHaveBeenCalled()
     expectNoExecution()
@@ -450,9 +437,9 @@ describe("useChat recovered pending approval dialog", () => {
 
   it("never displays the legacy notification when the canonical recovery read has no pending request", async () => {
     await mount("session/a")
-    await act(async () => recover())
+    await settleChat(async () => recover())
     expect(getPending).toHaveBeenCalledTimes(2)
-    expect(dialog()).toBeNull()
+    expect(pendingCard()).toBeNull()
     expect(chat().pendingQuestion).toBeNull()
     expect(submit).not.toHaveBeenCalled()
     expectNoExecution()
@@ -462,16 +449,16 @@ describe("useChat recovered pending approval dialog", () => {
     await mount("session/a")
     const older = deferred<PendingQuestionResponse>()
     getPending.mockReturnValueOnce(older.promise)
-    await act(async () => recover())
+    await settleChat(async () => recover())
     getPending.mockResolvedValue(absent)
-    await act(async () => {
-      if (signal === "clear") useAppStore.getState().clearPendingQuestion("session/a")
-      else useAppStore.getState().applySessionSummary("session/a", summary("session/a", false, true))
+    await settleChat(async () => {
+      if (signal === "clear") appStore.getState().clearPendingQuestion("session/a")
+      else appStore.getState().applySessionSummary("session/a", summary("session/a", false, true))
     })
-    await act(async () => { older.resolve(permission()); await older.promise })
+    await settleChat(async () => { older.resolve(permission()); await older.promise })
     expect(chat().pendingQuestion).toBeNull()
     expect(chat().questionLoading).toBe(false)
-    expect(dialog()).toBeNull()
+    expect(pendingCard()).toBeNull()
     expect(submit).not.toHaveBeenCalled()
     expectNoExecution()
   })
@@ -480,7 +467,7 @@ describe("useChat recovered pending approval dialog", () => {
     getPending.mockResolvedValue(permission())
     await mount("session/a")
     getPending.mockRejectedValueOnce(new NetworkRequestError())
-    await act(async () => recover())
+    await settleChat(async () => recover())
     expect(chat().questionUnavailable).toBe(true)
     expect(button("仅本次允许")?.disabled).toBe(true)
     expect(button("仅本次拒绝")?.disabled).toBe(true)

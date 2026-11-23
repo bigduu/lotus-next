@@ -1,36 +1,38 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { Show } from "solid-js"
+import type { JSX } from "@solidjs/web"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { useAppStore } from "@shared/store/appStore"
+import { appStore } from "@shared/store/appStore/state"
 import { mapHistoryMessagesToUi, sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
 import { agentClient, type SessionSummary } from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
 import { NetworkRequestError } from "@services/api/errors"
-import { QuestionDialog } from "@/components/chat/Dialogs"
 import { currentPermission, exhaustedHistory, exhaustedMarker, legacyProgressQuestion,
   legacyQuestionId, progressAt, progressSessionId as sid, unfinishedSummary } from "@/test/fixtures/observationProgress"
-import { useChat } from "./useChat"
+import { renderChatPane, settleChat } from "./chatInteractionTestHarness"
 
-vi.mock("@shared/store/appStore", async (original) => ({
-  ...await original<typeof import("@shared/store/appStore")>(), initializeStore: vi.fn(async () => {}),
+vi.mock("@shared/store/appStore/state", async (original) => ({
+  ...await original<typeof import("@shared/store/appStore/state")>(), initializeStore: vi.fn(async () => {}),
 }))
-let root: Root
-let chat: ReturnType<typeof useChat>
+// The package's uncompiled Kobalte JSX cannot supply its modal context in
+// jsdom. The desktop and mobile browser specs use the actual portaled dialog.
+vi.mock("../ui/responsive-dialog", () => ({
+  ResponsiveDialog: (props: { open: boolean; children: JSX.Element }) =>
+    <Show when={props.open}>{props.children}</Show>,
+  ResponsiveDialogContent: (props: { children: JSX.Element }) =>
+    <section role="dialog" aria-modal="true">{props.children}</section>,
+  ResponsiveDialogTitle: (props: { children: JSX.Element }) => <h2>{props.children}</h2>,
+  ResponsiveDialogDescription: (props: { children: JSX.Element }) => <p>{props.children}</p>,
+}))
+
+let pane: ReturnType<typeof renderChatPane> | undefined
+const chat = () => pane!.chat
 const summary = (): SessionSummary => ({
   id: sid, kind: "root", title: "Progress consumer", title_version: 1, pinned: false, root_session_id: sid,
   spawn_depth: 0, model: "fixture-model", created_at: progressAt, updated_at: progressAt,
   last_activity_at: progressAt, message_count: 0, has_attachments: false,
   is_running: false, last_run_status: "completed", has_pending_question: false,
 })
-function Pane() {
-  chat = useChat(sid)
-  return chat.pendingQuestion ? <QuestionDialog q={chat.pendingQuestion}
-    onAnswer={(value) => { void chat.answerQuestion(value) }} loading={chat.questionLoading}
-    submitting={chat.questionSubmitting} unavailable={chat.questionUnavailable}
-    error={chat.questionError} canRetry={chat.questionCanRetry}
-    onRefresh={() => { void chat.refreshQuestion() }} onRetry={() => { void chat.retryQuestion() }} /> : null
-}
-const mount = () => act(async () => root.render(<Pane />))
+const mount = () => settleChat(() => { pane = renderChatPane(sid) })
 const noWrites = () => {
   expect(apiClient.post).not.toHaveBeenCalled()
   expect(agentClient.submitPermissionDecision).not.toHaveBeenCalled()
@@ -38,8 +40,7 @@ const noWrites = () => {
   expect(agentClient.execute).not.toHaveBeenCalled()
 }
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
-  useAppStore.setState({ ...useAppStore.getInitialState(), currentSessionId: sid,
+  appStore.setState({ ...appStore.getInitialState(), currentSessionId: sid,
     chats: [sessionSummaryToChatItem(summary())], loadSubagentSessions: vi.fn(async () => {}),
     loadChatHistory: vi.fn(async () => {}), refreshChatsNow: vi.fn(async () => {}),
   }, true)
@@ -49,13 +50,11 @@ beforeEach(() => {
   vi.spyOn(agentClient, "execute").mockRejectedValue(new Error("No model or tool dispatch in consumer fixtures"))
   vi.spyOn(agentClient, "subscribeToEvents").mockImplementation(() => new Promise(() => {}))
   vi.spyOn(apiClient, "post").mockResolvedValue({ success: true, auto_resume_status: "completed" })
-  root = createRoot(document.body.appendChild(document.createElement("div")))
 })
 afterEach(() => {
-  act(() => root.unmount())
-  document.body.replaceChildren()
+  pane?.dispose()
+  pane = undefined
   vi.restoreAllMocks()
-  vi.unstubAllGlobals()
 })
 
 describe("#2016 progress feedback consumer contract", () => {
@@ -74,13 +73,13 @@ describe("#2016 progress feedback consumer contract", () => {
   })
   it("canonical none stays none across old replay hints and exhaustion metadata without inventing Continue", async () => {
     await mount()
-    await act(async () => {
-      useAppStore.getState().setPendingQuestion(sid, { question: "stale observation_progress notification",
+    await settleChat(async () => {
+      appStore.getState().setPendingQuestion(sid, { question: "stale observation_progress notification",
         options: ["Continue", "Stop"], allowCustom: true, toolCallId: legacyQuestionId })
     })
     const next = { ...summary(), metadata: { "runtime.completion_reason": exhaustedMarker } }
-    await act(async () => { useAppStore.getState().applySessionSummary(sid, next) })
-    expect(chat.pendingQuestion).toBeNull()
+    await settleChat(async () => { appStore.getState().applySessionSummary(sid, next) })
+    expect(chat().pendingQuestion).toBeNull()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     noWrites()
   })
@@ -90,9 +89,9 @@ describe("#2016 progress feedback consumer contract", () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
     noWrites()
     vi.mocked(agentClient.getPendingQuestion).mockResolvedValue({ has_pending_question: false })
-    await act(async () => { await chat.answerQuestion(answer) })
+    await settleChat(async () => { await chat().answerQuestion(answer) })
     expect(apiClient.post).toHaveBeenCalledExactlyOnceWith(`respond/${sid}`, { response: answer, expected_tool_call_id: legacyQuestionId })
-    expect(chat.pendingQuestion).toBeNull()
+    expect(chat().pendingQuestion).toBeNull()
     expect(agentClient.execute).not.toHaveBeenCalled()
     expect(agentClient.sendMessage).not.toHaveBeenCalled()
     expect(agentClient.submitPermissionDecision).not.toHaveBeenCalled()
@@ -101,28 +100,28 @@ describe("#2016 progress feedback consumer contract", () => {
     vi.mocked(agentClient.getPendingQuestion).mockResolvedValue(legacyProgressQuestion())
     await mount()
     vi.mocked(agentClient.getPendingQuestion).mockRejectedValueOnce(new NetworkRequestError())
-    await act(async () => { await chat.refreshQuestion() })
-    expect(chat.pendingQuestion).toEqual(legacyProgressQuestion())
-    expect(chat.questionUnavailable).toBe(true)
+    await settleChat(async () => { await chat().refreshQuestion() })
+    expect(chat().pendingQuestion).toEqual(legacyProgressQuestion())
+    expect(chat().questionUnavailable).toBe(true)
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
-    await act(async () => { await chat.answerQuestion("Continue") })
+    await settleChat(async () => { await chat().answerQuestion("Continue") })
     noWrites()
   })
   it("never treats completion metadata or an ordinary Continue label as a current typed approval", async () => {
     vi.mocked(agentClient.getPendingQuestion).mockResolvedValue(currentPermission())
     await mount()
     const next = { ...summary(), metadata: { "runtime.completion_reason": exhaustedMarker } }
-    await act(async () => {
-      useAppStore.setState((state) => ({ chats: state.chats.map((item) => item.id === sid
+    await settleChat(async () => {
+      appStore.setState((state) => ({ chats: state.chats.map((item) => item.id === sid
         ? { ...item, messages: mapHistoryMessagesToUi(sid, exhaustedHistory()) } : item) }))
-      useAppStore.getState().applySessionSummary(sid, next)
+      appStore.getState().applySessionSummary(sid, next)
     })
-    expect(chat.pendingQuestion).toEqual(currentPermission())
+    expect(chat().pendingQuestion).toEqual(currentPermission())
     expect(document.querySelector('[data-approval-presentation]')).not.toBeNull()
-    await act(async () => { await chat.answerQuestion("Continue") })
+    await settleChat(async () => { await chat().answerQuestion("Continue") })
     noWrites()
     vi.mocked(agentClient.getPendingQuestion).mockResolvedValue({ has_pending_question: false })
-    await act(async () => { await chat.answerQuestion("deny_once") })
+    await settleChat(async () => { await chat().answerQuestion("deny_once") })
     expect(agentClient.submitPermissionDecision).toHaveBeenCalledExactlyOnceWith(sid, {
       request_id: "fixture-permission-2", request_generation: "opaque-generation-2", expected_policy_revision: 9, decision: "deny_once",
     })

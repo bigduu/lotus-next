@@ -189,7 +189,7 @@ export function ChatViewport(props: {
                   onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} sideChat={sideChat} messageActions={messageActions} afterProcess={afterProcess} />
               </div>
             )}</Show>
-          }>{(card) => card().render()}</Show>
+          }>{(card) => <>{card().render()}</>}</Show>
         }}
         after={
           <div class="w-full">
@@ -205,7 +205,7 @@ export function ChatViewport(props: {
             )}</For>
             <Show when={timeline().tail.length}>
               <div class="flex flex-col gap-2">
-                <For each={timeline().tail} keyed={(attachment) => attachment.key}>{(attachment) => attachment().render()}</For>
+                <For each={timeline().tail} keyed={(attachment) => attachment.key}>{(attachment) => <>{attachment().render()}</>}</For>
               </div>
             </Show>
             <Show when={showCommandWait()}>
