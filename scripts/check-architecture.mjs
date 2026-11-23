@@ -87,7 +87,7 @@ const providerEndpointDebt = new Map([
       "https://api.moonshot.cn/v1",
     ]),
   ],
-  ["src/shared/i18n/index.ts", new Set(["https://api.openai.com/v1"])],
+  ["src/shared/i18n/runtime.ts", new Set(["https://api.openai.com/v1"])],
   [
     "src/shared/i18n/resources/en-US.ts",
     new Set(["https://api.openai.com/v1", "https://api.anthropic.com/v1"]),
@@ -188,7 +188,7 @@ const expectedInventory = {
   "provider-endpoint-debt": {
     "src/components/chat/settings/providers/InstanceEditor.tsx": 1,
     "src/lib/providerPresets.ts": 4,
-    "src/shared/i18n/index.ts": 1,
+    "src/shared/i18n/runtime.ts": 1,
     "src/shared/i18n/resources/en-US.ts": 2,
     "src/shared/i18n/resources/zh-CN.ts": 2,
   },
