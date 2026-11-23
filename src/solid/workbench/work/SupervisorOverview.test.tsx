@@ -1,23 +1,55 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createContext, Show, useContext } from "solid-js"
+import { render, type JSX } from "@solidjs/web"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { SupervisorOverview } from "./SupervisorOverview"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { applyTicketSnapshot } from "@services/tickets/state"
 import type { TicketSnapshot } from "@services/tickets/types"
 
-let root: Root
-beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); root = createRoot(document.body.appendChild(document.createElement("div"))) })
-afterEach(() => { act(() => root.unmount()); document.body.replaceChildren() })
+import { settleWorkTest } from "./workTestHarness"
+
+vi.mock("@lucide/solid", () => {
+  const Icon = () => <svg aria-hidden="true" />
+  return { ChevronRight: Icon, CircleDot: Icon, FileText: Icon, MessageCircle: Icon }
+})
+
+// The Work browser spec exercises the actual controlled Popover, focus and
+// placement. This fixture isolates how the native overview presents data.
+vi.mock("../../ui/popover", () => {
+  const Context = createContext<{ open: () => boolean; toggle: () => void }>()
+  type Content = { children: JSX.Element; "data-testid": string }
+  return {
+    Popover: (props: { open: boolean; onOpenChange: (open: boolean) => void; children: JSX.Element }) =>
+      <Context value={{ open: () => props.open, toggle: () => props.onOpenChange(!props.open) }}>{props.children}</Context>,
+    PopoverTrigger: (props: Content) => {
+      const context = useContext(Context)!
+      return <button type="button" data-testid={props["data-testid"]} onClick={context.toggle}>{props.children}</button>
+    },
+    PopoverContent: (props: Content) => {
+      const context = useContext(Context)!
+      return <Show when={context.open()}><div data-testid={props["data-testid"]}>{props.children}</div></Show>
+    },
+  }
+})
+
+let host: HTMLDivElement
+let dispose: () => void
+beforeEach(() => { host = document.body.appendChild(document.createElement("div")) })
+afterEach(() => { dispose(); host.remove() })
 
 async function open(snapshot: TicketSnapshot, connected = true, running = false) {
   const onSelectWork = vi.fn()
-  await act(async () => root.render(<SupervisorOverview running={running} onSelectWork={onSelectWork} controller={{
-    state: applyTicketSnapshot(null, snapshot), connected, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false, error: null, busy: {}, uncertain: {},
-    respond: async () => false, refresh: async () => {}, canRespond: false, canSendIngress: false,
-  }} />))
-  await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
-  return { panel: document.querySelector<HTMLElement>('[data-testid="supervisor-overview"]')!, onSelectWork }
+  await settleWorkTest(() => {
+    dispose = render(() => <SupervisorOverview running={running} onSelectWork={onSelectWork} controller={{
+      state: applyTicketSnapshot(null, snapshot), connected, negotiated: true, availability: { kind: "ready" },
+      refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false,
+      initialize: async () => false, error: null, busy: {}, uncertain: {}, respond: async () => false,
+      refresh: async () => {}, canRespond: false, canSendIngress: false,
+      answerDraft: () => "", setAnswerDraft: () => {},
+    }} />, host)
+  })
+  await settleWorkTest(() => host.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
+  return { panel: host.querySelector<HTMLElement>('[data-testid="supervisor-overview"]')!, onSelectWork }
 }
 
 it.each([true, false])("does not infer physical dispatch from an active Work, Supervisor running=%s", async (running) => {
@@ -45,7 +77,7 @@ it.each([true, false])("does not claim absence from an unloaded nonempty scope, 
   expect(panel.textContent).not.toContain("还没有工作")
   expect(panel.textContent).not.toContain("还没有交付成果")
   const all = [...panel.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("查看全部工作"))!
-  act(() => all.click())
+  await settleWorkTest(() => all.click())
   expect(onSelectWork).toHaveBeenCalledExactlyOnceWith(null)
 })
 

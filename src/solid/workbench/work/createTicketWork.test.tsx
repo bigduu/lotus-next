@@ -1,34 +1,49 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createRoot, createSignal, Show } from "solid-js"
+import { render } from "@solidjs/web"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { useTicketWork } from "./useTicketWork"
-import { OwnerAccessContext } from "./ownerAccessContext"
-import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
-import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import { createTicketWork, type TicketWorkController } from "./createTicketWork"
+import { TicketWorkAvailability } from "./TicketWorkAvailability"
+import { TicketWorkPanel } from "./TicketWorkPanel"
+import { flushWorkTest, settleWorkTest } from "./workTestHarness"
 import { scopeAvailability, TicketScopeUnavailableError } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
 import { initializableTicketScope, readyTicketScopeV1, ticketSnapshot } from "@services/tickets/testFixtures"
 import type { Assignment, ResponseCommand, TicketSnapshot } from "@services/tickets/types"
 import { ApiError } from "@services/api"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 
 vi.mock("@services/tickets/client", () => ({ ticketClient: {
   load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), initialize: vi.fn(), artifact: vi.fn(),
   inspectIngress: vi.fn(), dismissIngress: vi.fn(),
 } }))
-let root: Root, container: HTMLDivElement, controller: ReturnType<typeof useTicketWork>
+type WorkOwner = { session: string; ownerAccess: boolean; authorityKey: string; authorityBlocked: boolean; deferRead: boolean }
+let container: HTMLDivElement
+let controller: TicketWorkController
+let dispose: (() => void) | undefined
+let updateOwner: (next: WorkOwner) => void
+let showReference: (show: boolean) => void
 let snapshot = ticketSnapshot()
 let loseAck = false
 const receipts = new Map<string, ResponseCommand>()
-function Harness({ session = "root", authorityKey = "", authorityBlocked = false, deferRead = false }: { session?: string; authorityKey?: string; authorityBlocked?: boolean; deferRead?: boolean }) {
-  controller = useTicketWork(session, authorityKey, authorityBlocked, deferRead)
-  return controller.state ? <TicketWorkPanel controller={controller} onReference={() => {}} />
-    : <TicketWorkAvailability availability={controller.availability} refreshing={controller.refreshing} canRefresh={controller.canRefresh}
+function Harness(props: { owner: WorkOwner; reference: boolean }) {
+  controller = createTicketWork({
+    sessionId: () => props.owner.session, ownerAccess: () => props.owner.ownerAccess,
+    authorityKey: () => props.owner.authorityKey, authorityBlocked: () => props.owner.authorityBlocked,
+    deferRead: () => props.owner.deferRead,
+  })
+  return <Show when={controller.state} fallback={
+    <TicketWorkAvailability availability={controller.availability} refreshing={controller.refreshing} canRefresh={controller.canRefresh}
       onRefresh={() => void controller.refresh()} canInitialize={controller.canInitialize} initializing={controller.initializing}
       initializationError={controller.initializationError} onInitialize={() => void controller.initialize()} />
+  }>
+    <TicketWorkPanel controller={controller} onReference={props.reference ? () => {} : undefined} />
+  </Show>
+}
+function unmount() {
+  dispose?.()
+  dispose = undefined
 }
 beforeEach(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   snapshot = ticketSnapshot(); loseAck = false; receipts.clear(); sessionStorage.clear()
   vi.mocked(ticketClient.load).mockImplementation(async () => structuredClone(snapshot))
   vi.mocked(ticketClient.scope).mockImplementation(async () => structuredClone(snapshot.scope))
@@ -52,12 +67,22 @@ beforeEach(() => {
     if (loseAck) { loseAck = false; throw new Error("connection lost after commit") }
     return { operation_id: command.operation_id, committed_seq: snapshot.snapshot.seq }
   })
-  container = document.createElement("div"); document.body.append(container); root = createRoot(container)
+  container = document.body.appendChild(document.createElement("div"))
 })
-afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMocks(); vi.useRealTimers() })
-const mount = async (session = "root", ownerAccess = true, authorityKey = "", authorityBlocked = false, deferRead = false) => {
-  await act(async () => root.render(<OwnerAccessContext value={ownerAccess}><Harness session={session} authorityKey={authorityKey} authorityBlocked={authorityBlocked} deferRead={deferRead} /></OwnerAccessContext>))
-}
+afterEach(() => { unmount(); container.remove(); vi.resetAllMocks(); vi.useRealTimers() })
+const mount = (session = "root", ownerAccess = true, authorityKey = "", authorityBlocked = false, deferRead = false) =>
+  settleWorkTest(() => {
+    const next = { session, ownerAccess, authorityKey, authorityBlocked, deferRead }
+    if (dispose) {
+      updateOwner(next)
+      return
+    }
+    const [owner, setOwner] = createSignal(next)
+    const [reference, setReference] = createSignal(true)
+    updateOwner = setOwner
+    showReference = setReference
+    dispose = render(() => <Harness owner={owner()} reference={reference()} />, container)
+  })
 
 it.each(["read-only", "saved proposal"])("allows reviewing the oldest pending message with a %s but keeps it intact", async (reason) => {
   await changeLocale("zh-CN")
@@ -69,7 +94,7 @@ it.each(["read-only", "saved proposal"])("allows reviewing the oldest pending me
   const button = (text: string) => [...container.querySelectorAll("button")].find((node) => node.textContent === text)
   expect(container.textContent).toContain("2 条消息等待工作处理")
   expect(ticketClient.inspectIngress).not.toHaveBeenCalled()
-  await act(async () => button("查看最早的消息")!.click())
+  await settleWorkTest(async () => button("查看最早的消息")!.click())
   expect(ticketClient.inspectIngress).toHaveBeenCalledExactlyOnceWith("old-chat")
   expect(container.textContent).toContain("Hello there")
   if (reason === "read-only") expect(button("标记为聊天")?.disabled).toBe(true)
@@ -129,7 +154,7 @@ it("uses the configured English locale for a pending Work badge", async () => {
     const title = [...container.querySelectorAll("strong")].find((node) => node.textContent === view.ticket.contract.title)!
     expect(title.parentElement!.querySelector("span")?.textContent).toBe("Waiting for dispatch confirmation")
   } finally {
-    await act(async () => changeLocale("zh-CN"))
+    await settleWorkTest(async () => changeLocale("zh-CN"))
   }
 })
 
@@ -138,7 +163,7 @@ it("rebases one known pre-commit question conflict only while its exact identity
   const q = controller.state!.requests["q-E"]
   snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
   vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
-  await act(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(true) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(true) })
   const calls = vi.mocked(ticketClient.respond).mock.calls
   expect(calls).toHaveLength(2)
   expect(calls[0][0].target).toEqual(calls[1][0].target)
@@ -159,7 +184,7 @@ it.each<[string, (value: TicketSnapshot) => void]>([
   snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
   change(snapshot)
   vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
-  await act(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
   expect(ticketClient.respond).toHaveBeenCalledTimes(1)
 })
 
@@ -168,11 +193,11 @@ it("does not rebase from a newer cached snapshot when the conflict refresh loses
   let reject!: (failure: Error) => void
   vi.mocked(ticketClient.respond).mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail }))
   let pending!: Promise<boolean>
-  act(() => { pending = controller.respond(controller.state!.requests["q-E"], { kind: "question", answer: "答案 E" }) })
+  flushWorkTest(() => { pending = controller.respond(controller.state!.requests["q-E"], { kind: "question", answer: "答案 E" }) })
   snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("offline during conflict refresh"))
-  await act(async () => { reject(new ApiError("revision_conflict", 409, "Conflict")); expect(await pending).toBe(false) })
+  await settleWorkTest(async () => { reject(new ApiError("revision_conflict", 409, "Conflict")); expect(await pending).toBe(false) })
   expect(ticketClient.respond).toHaveBeenCalledTimes(1)
 })
 
@@ -182,7 +207,7 @@ it("keeps negotiation pending until loading establishes an available or absent s
   await mount()
   expect(controller.negotiated).toBe(false)
   expect(controller.canSendIngress).toBe(false)
-  await act(async () => finish(null))
+  await settleWorkTest(async () => finish(null))
   expect(controller.negotiated).toBe(true)
   expect(controller.state).toBeNull()
 })
@@ -192,7 +217,7 @@ it("resynchronizes a fixed snapshot after the server expires its changes waterma
   snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
   snapshot.scope.overview.snapshot = snapshot.snapshot; snapshot.scope.overview.index_seq = 11
   vi.mocked(ticketClient.changes).mockRejectedValueOnce(new ApiError("resync_required", 410, "Gone"))
-  await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+  await settleWorkTest(async () => { await vi.advanceTimersByTimeAsync(2500) })
   expect(ticketClient.load).toHaveBeenCalledTimes(2)
   expect(controller.state!.current.snapshot.seq).toBe(11)
   expect(controller.canRespond).toBe(true)
@@ -203,12 +228,12 @@ it("never rebases an approval conflict or an ordinary answer after its generatio
   snapshot.views[0].requests[0].kind = { kind: "approval", fingerprint: "a", action: { kind: "payment", target: "A", data_hash: "a", amount: "100", permissions: [], risk: "test" } }
   await mount()
   vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
-  await act(async () => { expect(await controller.respond(controller.state!.requests["q-A"], { kind: "approval", fingerprint: "a", approve: true })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(controller.state!.requests["q-A"], { kind: "approval", fingerprint: "a", approve: true })).toBe(false) })
   expect(ticketClient.respond).toHaveBeenCalledTimes(1)
   const q = controller.state!.requests["q-E"]
   snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"; snapshot.views[4].ticket.generation = 2
   vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
-  await act(async () => { expect(await controller.respond(q, { kind: "question", answer: "old" })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, { kind: "question", answer: "old" })).toBe(false) })
   expect(ticketClient.respond).toHaveBeenCalledTimes(2)
 })
 
@@ -219,12 +244,12 @@ it("keeps a known answer conflict visible through polling and allows a fresh exp
   vi.mocked(ticketClient.respond)
     .mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
     .mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
-  await act(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
   expect(controller.uncertain["q-E"]).toBeUndefined()
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(controller.error).toBe("工作已更新，请核对当前问题后再次提交。")
   expect(controller.state!.requests["q-E"].status).toBe("open")
-  await act(async () => { expect(await controller.respond(controller.state!.requests["q-E"], { kind: "question", answer: "答案 E" })).toBe(true) })
+  await settleWorkTest(async () => { expect(await controller.respond(controller.state!.requests["q-E"], { kind: "question", answer: "答案 E" })).toBe(true) })
   expect(ticketClient.respond).toHaveBeenCalledTimes(3)
   expect(controller.error).toBeNull()
   expect(receipts.size).toBe(1)
@@ -235,11 +260,11 @@ it("renders five concurrent cards and answers E/B/D/A/C without removing unresol
   expect(container.querySelectorAll('input[aria-label^="回答"]')).toHaveLength(5)
   for (const [index, id] of ["E", "B", "D", "A", "C"].entries()) {
     const input = container.querySelector<HTMLInputElement>(`input[aria-label="回答 报告${id}"]`)!
-    await act(async () => {
+    await settleWorkTest(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "答案 " + id)
       input.dispatchEvent(new Event("input", { bubbles: true }))
     })
-    await act(async () => input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    await settleWorkTest(async () => input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     expect(controller.state?.requests["q-" + id].answer).toBe("答案 " + id)
     expect(container.querySelectorAll('input[aria-label^="回答"]')).toHaveLength(4 - index)
   }
@@ -250,12 +275,12 @@ it("renders five concurrent cards and answers E/B/D/A/C without removing unresol
 it("recovers an unknown decision acknowledgement using the identical operation and does not revive the closed card", async () => {
   await mount(); loseAck = true
   const q = controller.state!.requests["q-E"]
-  await act(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
   const first = vi.mocked(ticketClient.respond).mock.calls[0][0]
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(controller.state?.requests["q-E"].status).toBe("answered")
   const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "确认同一请求的发送结果")!
-  await act(async () => retry.click())
+  await settleWorkTest(async () => retry.click())
   expect(vi.mocked(ticketClient.respond).mock.calls[1][0]).toEqual(first)
   expect(controller.uncertain["q-E"]).toBeUndefined()
   expect(container.querySelectorAll('input[aria-label^="回答"]')).toHaveLength(4)
@@ -267,12 +292,12 @@ it("disables decisions while disconnected and ignores an old scope response afte
   let release!: () => void
   vi.mocked(ticketClient.respond).mockReturnValueOnce(new Promise((resolve) => { release = () => resolve({ operation_id: "old", committed_seq: 11 }) }))
   let pending!: Promise<boolean>
-  act(() => { pending = controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "old" }) })
+  flushWorkTest(() => { pending = controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "old" }) })
   await mount("other"); await mount("root")
   release()
-  await act(async () => { expect(await pending).toBe(false) })
+  await settleWorkTest(async () => { expect(await pending).toBe(false) })
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("offline"))
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(controller.canRespond).toBe(false)
   expect(container.textContent).toContain("连接未确认")
   expect([...container.querySelectorAll('button[type="submit"]')].every((button) => (button as HTMLButtonElement).disabled)).toBe(true)
@@ -284,16 +309,16 @@ it("keeps an ambiguous approval identity across navigation, reload, and rejected
   await mount()
   vi.mocked(ticketClient.respond).mockRejectedValueOnce(new Error("unknown outcome"))
   const decision = { kind: "approval" as const, fingerprint: "a", approve: true }
-  await act(async () => { expect(await controller.respond(q, decision)).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, decision)).toBe(false) })
   const original = vi.mocked(ticketClient.respond).mock.calls[0][0]
   await mount("other"); await mount("root")
   expect(controller.uncertain[q.id]).toEqual(original)
-  await act(async () => { expect(await controller.respond(q, { ...decision, approve: false })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, { ...decision, approve: false })).toBe(false) })
   vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("unauthorized", 401, "Unauthorized"))
-  await act(async () => { expect(await controller.respond(q, decision)).toBe(false) })
-  await act(async () => root.render(null)); await mount()
+  await settleWorkTest(async () => { expect(await controller.respond(q, decision)).toBe(false) })
+  unmount(); await mount()
   expect(controller.uncertain[q.id]).toEqual(original)
-  await act(async () => { expect(await controller.respond(q, decision)).toBe(true) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, decision)).toBe(true) })
   expect(vi.mocked(ticketClient.respond).mock.calls.map(([value]) => value)).toEqual([original, original, original])
   expect(controller.uncertain[q.id]).toBeUndefined()
 })
@@ -303,9 +328,9 @@ it("blocks mutations on an incomplete snapshot and hides unsupported reference a
   await mount()
   expect(controller.canRespond).toBe(false)
   expect(controller.canSendIngress).toBe(true)
-  await act(async () => { expect(await controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "partial" })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "partial" })).toBe(false) })
   expect(ticketClient.respond).not.toHaveBeenCalled()
-  await act(async () => root.render(<TicketWorkPanel controller={controller} />))
+  await settleWorkTest(() => showReference(false))
   expect(container.textContent).not.toContain("在普通输入中引用此请求")
 })
 
@@ -315,11 +340,11 @@ it("refreshes negotiated write capabilities without a ticket content commit", as
   expect(controller.canSendIngress).toBe(true)
   expect(controller.canRespond).toBe(true)
   snapshot.scope.mutation_enabled = false
-  await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+  await settleWorkTest(async () => { await vi.advanceTimersByTimeAsync(2500) })
   expect(controller.canSendIngress).toBe(false)
   expect(controller.canRespond).toBe(false)
   snapshot.scope.mutation_enabled = true
-  await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+  await settleWorkTest(async () => { await vi.advanceTimersByTimeAsync(2500) })
   expect(controller.canSendIngress).toBe(true)
   expect(controller.canRespond).toBe(true)
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
@@ -334,14 +359,14 @@ it.each(["operation", "negative", "fractional", "unsafe", "not-advanced"])("pres
     committed_seq: kind === "negative" ? -1 : kind === "fractional" ? 10.5 : kind === "unsafe" ? Number.MAX_SAFE_INTEGER + 1 : kind === "not-advanced" ? command.expected_seq : command.expected_seq + 1,
   }))
   const decision = { kind: "approval" as const, fingerprint: "a", approve: true }
-  await act(async () => { expect(await controller.respond(q, decision)).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, decision)).toBe(false) })
   const original = vi.mocked(ticketClient.respond).mock.calls[0][0]
   expect(controller.uncertain[q.id]).toEqual(original)
   await mount("other"); await mount("root")
   expect(controller.uncertain[q.id]).toEqual(original)
-  await act(async () => { expect(await controller.respond(q, { ...decision, approve: false })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, { ...decision, approve: false })).toBe(false) })
   expect(ticketClient.respond).toHaveBeenCalledTimes(1)
-  await act(async () => { expect(await controller.respond(q, decision)).toBe(true) })
+  await settleWorkTest(async () => { expect(await controller.respond(q, decision)).toBe(true) })
   expect(vi.mocked(ticketClient.respond).mock.calls[1][0]).toEqual(original)
   expect(controller.uncertain[q.id]).toBeUndefined()
 })
@@ -369,10 +394,10 @@ it.each(["generation", "prompt_revision", "assignment_id"])("clears a definitely
   else if (field === "prompt_revision") revised.prompt_revision = 2
   else revised.assignment_id = "replacement-assignment"
   vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
-  await act(async () => { expect(await controller.respond(old, { kind: "question", answer: "old answer" })).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.respond(old, { kind: "question", answer: "old answer" })).toBe(false) })
   expect(controller.uncertain[old.id]).toBeUndefined()
   expect(sessionStorage.getItem("lotus-next.ticket-decision.root.q-E")).toBeNull()
-  await act(async () => { expect(await controller.respond(controller.state!.requests[old.id], { kind: "question", answer: "revised answer" })).toBe(true) })
+  await settleWorkTest(async () => { expect(await controller.respond(controller.state!.requests[old.id], { kind: "question", answer: "revised answer" })).toBe(true) })
   expect(vi.mocked(ticketClient.respond).mock.calls[1][0].target).toEqual(expect.objectContaining({ generation: revised.generation, prompt_revision: revised.prompt_revision, assignment_id: revised.assignment_id }))
 })
 
@@ -380,13 +405,13 @@ it("switches ticket labels and plural counts without changing request data or th
   await mount()
   const input = container.querySelector("input")!
   const rawPrompt = controller.state!.requests["q-E"].prompt
-  await act(async () => { await changeLocale("en-US") })
+  await settleWorkTest(async () => { await changeLocale("en-US") })
   expect(container.querySelector('[data-testid="ticket-work-overview"]')?.getAttribute("aria-label")).toBe("Work overview")
   expect(container.textContent).toContain("unanswered question")
   expect(input.getAttribute("aria-label")).toBe("Answer 报告A")
   expect(container.textContent).toContain(rawPrompt)
   expect(container.querySelector("input")).toBe(input)
-  await act(async () => { await changeLocale("zh-CN") })
+  await settleWorkTest(async () => { await changeLocale("zh-CN") })
   expect(container.querySelector('[data-testid="ticket-work-overview"]')?.getAttribute("aria-label")).toBe("工作总览")
   expect(container.textContent).toContain(rawPrompt)
   expect(container.querySelector("input")).toBe(input)
@@ -415,11 +440,11 @@ it("shows the objective while keeping generated evidence and execution paths in 
 
 
 it("denies owner-only requests when Root access is absent or explicitly denied", async () => {
-  await act(async () => root.render(<Harness />))
+  await mount("root", false)
   expect(controller.negotiated).toBe(true)
   expect(controller.state).toBeNull()
   await mount("root", false)
-  await act(async () => {
+  await settleWorkTest(async () => {
     window.dispatchEvent(new Event("focus"))
     window.dispatchEvent(new Event("online"))
     await controller.refresh()
@@ -441,10 +466,10 @@ it("revokes pending owner reads and reloads only after fresh access admission", 
   const signal = vi.mocked(ticketClient.load).mock.calls[0][1]!
   await mount("root", false)
   expect(signal.aborted).toBe(true)
-  await act(async () => { finish(structuredClone(snapshot)) })
+  await settleWorkTest(async () => { finish(structuredClone(snapshot)) })
   expect(controller.state).toBeNull()
   expect(controller.canRespond).toBe(false)
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
   await mount("root", true)
   expect(ticketClient.load).toHaveBeenCalledTimes(2)
@@ -460,13 +485,13 @@ it.each(["acknowledged", "conflict", "unknown"] as const)("ignores a late %s dec
       : reject(outcome === "conflict" ? new ApiError("revision_conflict", 409, "Conflict") : new Error("unknown outcome"))
   }))
   let pending!: Promise<boolean>
-  act(() => { pending = controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "before revocation" }) })
+  flushWorkTest(() => { pending = controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "before revocation" }) })
   await mount("root", false)
   expect(controller.state).toBeNull()
   expect(controller.negotiated).toBe(true)
   expect(controller.canRespond).toBe(false)
   expect(controller.canSendIngress).toBe(false)
-  await act(async () => {
+  await settleWorkTest(async () => {
     window.dispatchEvent(new Event("focus"))
     window.dispatchEvent(new Event("online"))
     await controller.refresh()
@@ -474,7 +499,7 @@ it.each(["acknowledged", "conflict", "unknown"] as const)("ignores a late %s dec
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
   await mount("root", true)
   const readmittedState = controller.state
-  await act(async () => { finish(); expect(await pending).toBe(false) })
+  await settleWorkTest(async () => { finish(); expect(await pending).toBe(false) })
   expect(controller.state).toEqual(readmittedState)
   expect(controller.state?.requests["q-A"].status).toBe("open")
   expect(controller.error).toBeNull()
@@ -492,7 +517,7 @@ it.each(["disabled", "uninitialized", "unbound", "unsupported", "error"] as cons
   expect(controller.negotiated).toBe(true)
   expect(controller.canRespond).toBe(false)
   expect(controller.canSendIngress).toBe(false)
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(controller.availability.kind).toBe("ready")
   expect(controller.state).not.toBeNull()
 })
@@ -503,7 +528,7 @@ it.each([401, 403, 503])("exposes initial HTTP %s instead of indefinite loading"
   expect(controller.availability.kind).toBe(status === 503 ? "error" : "forbidden")
   expect(controller.state).toBeNull()
   expect(controller.canRespond).toBe(false)
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(controller.availability.kind).toBe("ready")
 })
 
@@ -519,12 +544,12 @@ it("shows ready empty Work and does not infer missing access from zero records",
 it("clears revoked scope data but retains disconnected data through transient read failures", async () => {
   await mount()
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("network failure"))
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(controller.availability).toEqual({ kind: "error", detail: "network failure" })
   expect(controller.state).not.toBeNull()
   expect(controller.canRespond).toBe(false)
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new ApiError("owner revoked", 403, "Forbidden"))
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(controller.availability.kind).toBe("forbidden")
   expect(controller.state).toBeNull()
 })
@@ -534,12 +559,12 @@ it("does not start duplicate refreshes or accept a late status after navigation"
   let finish!: (value: TicketSnapshot) => void
   vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
   let pending!: Promise<void>
-  act(() => { pending = controller.refresh() })
+  flushWorkTest(() => { pending = controller.refresh() })
   expect(controller.refreshing).toBe(true)
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(ticketClient.load).toHaveBeenCalledTimes(2)
   await mount("other")
-  await act(async () => { finish(structuredClone(snapshot)); await pending })
+  await settleWorkTest(async () => { finish(structuredClone(snapshot)); await pending })
   expect(controller.availability.kind).toBe("ready")
   expect(controller.refreshing).toBe(false)
 })
@@ -553,7 +578,7 @@ it.each(["resolve", "reject"] as const)("ignores a late Work read after a mode c
     finish = () => outcome === "resolve" ? resolve(old) : reject(new Error("stale mode read failed"))
   }))
   let pending!: Promise<void>
-  act(() => { pending = controller.refresh() })
+  flushWorkTest(() => { pending = controller.refresh() })
   const oldSignal = vi.mocked(ticketClient.load).mock.calls[1][1]!
   const fresh = structuredClone(snapshot)
   fresh.snapshot.seq += 3
@@ -564,7 +589,7 @@ it.each(["resolve", "reject"] as const)("ignores a late Work read after a mode c
   await mount("root", true, "ultra:2")
   expect(oldSignal.aborted).toBe(true)
   expect(controller.state?.current.snapshot.commit).toBe("new-mode-snapshot")
-  await act(async () => { finish(); await pending })
+  await settleWorkTest(async () => { finish(); await pending })
   expect(controller.state?.current.snapshot.commit).toBe("new-mode-snapshot")
   expect(controller.availability.kind).toBe("ready")
   expect(controller.error).toBeNull()
@@ -589,9 +614,9 @@ it.each([true, false])("initializes once, waits for a canonical read and accepts
     acknowledge = () => resolve({ created, scope: readyTicketScopeV1() })
   }))
   let pending!: Promise<boolean>
-  act(() => { pending = controller.initialize() })
+  flushWorkTest(() => { pending = controller.initialize() })
   expect(controller.initializing).toBe(true)
-  await act(async () => {
+  await settleWorkTest(async () => {
     expect(await controller.initialize()).toBe(false)
     await controller.refresh(); window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online"))
   })
@@ -599,11 +624,11 @@ it.each([true, false])("initializes once, waits for a canonical read and accepts
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
   let read!: () => void
   vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve) => { read = () => resolve(structuredClone(snapshot)) }))
-  await act(async () => acknowledge())
+  await settleWorkTest(async () => acknowledge())
   expect(controller.state).toBeNull()
   expect(controller.initializing).toBe(true)
   expect(controller.canInitialize).toBe(false)
-  await act(async () => { read(); expect(await pending).toBe(true) })
+  await settleWorkTest(async () => { read(); expect(await pending).toBe(true) })
   expect(controller.state).not.toBeNull()
   expect(controller.availability.kind).toBe("ready")
   expect(controller.initializationError).toBeNull()
@@ -614,7 +639,7 @@ it.each(["initialization_conflict", "scope_requires_recovery", "scope_binding_mi
   offerInitialization(); await mount()
   snapshot.scope.mutation_enabled = false; snapshot.scope.dispatch_enabled = false
   vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("known refusal", 409, "Conflict", JSON.stringify({ error: "known refusal", code, scope: snapshot.scope })))
-  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
   expect(controller.state).not.toBeNull()
   expect(controller.availability.kind).toBe("ready")
   expect(controller.error).toContain("known refusal")
@@ -629,7 +654,7 @@ it.each(["initialization_conflict", "scope_requires_recovery", "scope_binding_mi
 it.each([new Error("lost acknowledgement"), new ApiError("unexpected server failure", 503, "Unavailable"), new Error("malformed acknowledgement")])("does not claim or replay an unconfirmed initialization: %s", async (failure) => {
   offerInitialization(); await mount()
   vi.mocked(ticketClient.initialize).mockRejectedValueOnce(failure)
-  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
   expect(controller.state).not.toBeNull()
   expect(controller.initializationError).toContain("无法确认初始化响应")
   expect(ticketClient.initialize).toHaveBeenCalledTimes(1)
@@ -639,7 +664,7 @@ it.each([new Error("lost acknowledgement"), new ApiError("unexpected server fail
 it.each([401, 403])("revokes the initialization offer after owner denial HTTP %s", async (status) => {
   offerInitialization(); await mount()
   vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("denied", status, "Denied"))
-  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
   expect(controller.availability.kind).toBe("forbidden")
   expect(controller.state).toBeNull()
   expect(controller.canInitialize).toBe(false)
@@ -654,7 +679,7 @@ it.each((["navigation", "mode", "owner"] as const).flatMap((change) => (["ack", 
     finish = () => outcome === "ack" ? resolve({ created: true, scope: readyTicketScopeV1() }) : reject(new Error("late unconfirmed response"))
   }))
   let pending!: Promise<boolean>
-  act(() => { pending = controller.initialize() })
+  flushWorkTest(() => { pending = controller.initialize() })
   if (change === "navigation") {
     const other = ticketSnapshot(); other.scope.binding.supervisor_session_id = "other"
     vi.mocked(ticketClient.load).mockResolvedValueOnce(other)
@@ -663,7 +688,7 @@ it.each((["navigation", "mode", "owner"] as const).flatMap((change) => (["ack", 
   const nextState = controller.state, nextAvailability = controller.availability
   const readsBeforeReceipt = vi.mocked(ticketClient.load).mock.calls.length
   expect(controller.canInitialize).toBe(false)
-  await act(async () => { finish(); expect(await pending).toBe(false) })
+  await settleWorkTest(async () => { finish(); expect(await pending).toBe(false) })
   expect(controller.state).toEqual(nextState)
   expect(controller.availability).toEqual(nextAvailability)
   expect(controller.initializationError).toBeNull()
@@ -676,7 +701,7 @@ it("keeps initialization unconfirmed when the matching success is followed by a 
   offerInitialization(); await mount()
   vi.mocked(ticketClient.initialize).mockResolvedValueOnce({ created: true, scope: readyTicketScopeV1() })
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("canonical read failed"))
-  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
   expect(controller.state).toBeNull()
   expect(controller.availability.kind).toBe("error")
   expect(controller.initializationError).toContain("无法确认初始化响应")
@@ -694,7 +719,7 @@ it("gets a fresh offer after a completed mode change and never substitutes its e
   await mount("root", true, "ultra:3")
   expect(controller.canInitialize).toBe(true)
   vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("conflict", 409, "Conflict"))
-  await act(async () => controller.initialize())
+  await settleWorkTest(async () => controller.initialize())
   expect(ticketClient.initialize).toHaveBeenCalledExactlyOnceWith({ ...confirmation, binding_revision: 91 })
 })
 
@@ -728,25 +753,25 @@ it.each((["ack", "error"] as const).flatMap((outcome) => (["A-first", "B-first"]
   }))
   await mount(a)
   let pendingA!: Promise<boolean>, pendingB: Promise<boolean> | undefined
-  act(() => { pendingA = controller.initialize() })
+  flushWorkTest(() => { pendingA = controller.initialize() })
   try {
     await mount(b)
     expect(controller.canInitialize).toBe(true)
-    act(() => { pendingB = controller.initialize() })
+    flushWorkTest(() => { pendingB = controller.initialize() })
     expect(ticketClient.initialize).toHaveBeenCalledTimes(2)
     expect(vi.mocked(ticketClient.initialize).mock.calls.map(([command]) => command)).toEqual([offer(a).initialization, offer(b).initialization])
     expect(controller.initializing).toBe(true)
-    await act(async () => { expect(await controller.initialize()).toBe(false) })
+    await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
     if (order === "A-first") {
-      await act(async () => { finishA(); expect(await pendingA).toBe(false) })
+      await settleWorkTest(async () => { finishA(); expect(await pendingA).toBe(false) })
       expect(controller.initializing).toBe(true)
       expect(controller.initializationError).toBeNull()
-      await act(async () => { expect(await controller.initialize()).toBe(false) })
-      await act(async () => { finishB(); expect(await pendingB).toBe(true) })
+      await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
+      await settleWorkTest(async () => { finishB(); expect(await pendingB).toBe(true) })
     } else {
-      await act(async () => { finishB(); expect(await pendingB).toBe(true) })
+      await settleWorkTest(async () => { finishB(); expect(await pendingB).toBe(true) })
       const stateB = controller.state
-      await act(async () => { finishA(); expect(await pendingA).toBe(false) })
+      await settleWorkTest(async () => { finishA(); expect(await pendingA).toBe(false) })
       expect(controller.state).toEqual(stateB)
     }
     expect(controller.state?.current.scope.binding.supervisor_session_id).toBe(b)
@@ -757,7 +782,7 @@ it.each((["ack", "error"] as const).flatMap((outcome) => (["A-first", "B-first"]
     expect(controller.canInitialize).toBe(outcome === "error")
     expect(ticketClient.initialize).toHaveBeenCalledTimes(2)
   } finally {
-    await act(async () => { finishA(); finishB(); await Promise.allSettled([pendingA, pendingB]) })
+    await settleWorkTest(async () => { finishA(); finishB(); await Promise.allSettled([pendingA, pendingB]) })
   }
 })
 
@@ -766,20 +791,23 @@ it("admits only one initialization across two panels showing the same Supervisor
   const scope = initializableTicketScope()
   const presentation = scopeAvailability(scope, "root")!
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError("uninitialized", "", presentation))
-  const panels: Record<string, ReturnType<typeof useTicketWork>> = {}
-  function SharedHarness({ name }: { name: string }) { panels[name] = useTicketWork("root"); return null }
-  await act(async () => root.render(<OwnerAccessContext value={true}><SharedHarness name="a" /><SharedHarness name="b" /></OwnerAccessContext>))
+  const panels = createRoot((cleanup) => {
+    dispose = cleanup
+    const options = { sessionId: () => "root", ownerAccess: () => true }
+    return { a: createTicketWork(options), b: createTicketWork(options) }
+  })
+  await settleWorkTest()
   expect(panels.a.canInitialize).toBe(true); expect(panels.b.canInitialize).toBe(true)
   let finish!: () => void
   vi.mocked(ticketClient.initialize).mockReturnValueOnce(new Promise((resolve) => { finish = () => resolve({ created: true, scope: readyTicketScopeV1() }) }))
   let pending!: Promise<boolean>
-  act(() => { pending = panels.a.initialize() })
+  flushWorkTest(() => { pending = panels.a.initialize() })
   expect(panels.b.initializing).toBe(true)
   expect(panels.b.canInitialize).toBe(false)
-  await act(async () => { expect(await panels.b.initialize()).toBe(false); await panels.b.refresh() })
+  await settleWorkTest(async () => { expect(await panels.b.initialize()).toBe(false); await panels.b.refresh() })
   expect(ticketClient.initialize).toHaveBeenCalledTimes(1)
   expect(ticketClient.load).toHaveBeenCalledTimes(2)
-  await act(async () => { finish(); expect(await pending).toBe(true) })
+  await settleWorkTest(async () => { finish(); expect(await pending).toBe(true) })
   expect(panels.a.initializing).toBe(false); expect(panels.b.initializing).toBe(false)
 })
 
@@ -788,7 +816,7 @@ it("keeps scope reads separate from a pending Root mode while denying initializa
   expect(controller.availability.kind).toBe("uninitialized")
   expect(controller.canRefresh).toBe(true)
   expect(controller.canInitialize).toBe(false)
-  await act(async () => { expect(await controller.initialize()).toBe(false); await controller.refresh() })
+  await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false); await controller.refresh() })
   expect(controller.state).not.toBeNull()
   expect(controller.availability.kind).toBe("ready")
   expect(controller.canRespond).toBe(false)
@@ -835,7 +863,7 @@ it("shows the scoped execution session, objective and recorded status without cr
   expect(container.textContent).toContain("跨会话长程控制暂不可用")
   expect([...container.querySelectorAll("button")].some((button) => /启动循环|修改循环|停止循环/.test(button.textContent ?? ""))).toBe(false)
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError("forbidden"))
-  await act(async () => controller.refresh())
+  await settleWorkTest(async () => controller.refresh())
   expect(container.textContent).not.toContain("worker-session-A")
 })
 
@@ -874,7 +902,7 @@ it.each(["supervisor_mode_required", "supervisor_identity_mismatch"] as const)("
     reason: "Canonical scope refusal", can_initialize: false, initialization: null }
   vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("Scope refusal", 403, "Forbidden",
     JSON.stringify({ error: { type: "api_error", message: "Scope refusal" }, code, scope })))
-  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
   expect(controller.availability.reasonCode).toBe(code)
   expect(controller.initializationError).toBe("Canonical scope refusal")
   expect(controller.state).toBeNull()
@@ -886,7 +914,7 @@ it("never promotes an HTTP 403 with a readable or contradictory scope", async ()
   offerInitialization(); await mount()
   vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("Denied", 403, "Forbidden",
     JSON.stringify({ error: { message: "Denied" }, code: "supervisor_mode_required", scope: readyTicketScopeV1() })))
-  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  await settleWorkTest(async () => { expect(await controller.initialize()).toBe(false) })
   expect(controller.availability).toMatchObject({ kind: "forbidden" })
   expect(controller.availability.reasonCode).toBeUndefined()
   expect(controller.state).toBeNull()
@@ -899,12 +927,12 @@ it.each([
   { health: "read_only", mutation: false, expected: "Work storage is read-only.", disabled: true },
   { health: "future-health", mutation: true, expected: "Work storage health is unconfirmed.", disabled: false },
 ])("describes storage health independently of the mutation gate: $health/$mutation", async ({ health, mutation, expected, disabled }) => {
-  await act(async () => { await changeLocale("en-US") })
+  await settleWorkTest(async () => { await changeLocale("en-US") })
   try {
     snapshot.scope.health = health; snapshot.scope.mutation_enabled = mutation
     await mount()
     expect(container.textContent).toContain(expected)
     expect(container.textContent?.includes("Work changes are disabled on this service.")).toBe(disabled)
     expect(controller.canRespond).toBe(false)
-  } finally { await act(async () => { await changeLocale("zh-CN") }) }
+  } finally { await settleWorkTest(async () => { await changeLocale("zh-CN") }) }
 })
