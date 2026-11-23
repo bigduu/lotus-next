@@ -1,4 +1,5 @@
 import { ChatItem, Message } from "@shared/types/chat";
+import type { ChatHistoryWindow } from "@shared/types/chatMessages";
 import type { HistoryResponse, ReasoningEffort, SessionSummary } from "@services/chat/AgentService";
 import type { ConversationClearFailure } from "@services/chat/conversationClear";
 import type { ManagedSessionSelection } from "@services/supervisorScope/managedSessions";
@@ -87,6 +88,7 @@ export interface ChatSlice {
   setMessages: (sessionId: string, messages: Message[]) => void;
   updateMessage: (sessionId: string, messageId: string, updates: Partial<Message>) => void;
   deleteMessage: (sessionId: string, messageId: string) => Promise<DeleteMessageResult>;
+  invalidateHistoryAfterMessageDelete: (sessionId: string, messageId: string) => void;
 
   loadChats: () => Promise<void>;
   refreshChats: () => Promise<void>;
@@ -107,6 +109,8 @@ export interface ChatSlice {
   /** Read a cold target's root tree without changing the session cache. */
   stageSessionForNavigation: (target: SessionSummary) => Promise<SessionSummary[] | null>;
   loadEarlierChatHistory: (sessionId: string, signal: AbortSignal, beforePrepend: () => void) => Promise<void>;
+  /** Read a missing history prefix for the caller without hydrating the viewport. */
+  readHistoryPrefix: (sessionId: string, window: ChatHistoryWindow, isOriginCurrent: () => boolean, signal?: AbortSignal) => Promise<Message[]>;
   loadChatHistory: (
     sessionId: string,
     options?: {

@@ -2711,8 +2711,14 @@ export function useChat(
     async (messageId: string) => {
       if (!sid) return
       const deleted = await agentClient.deleteSessionMessage(sid, messageId).then(() => true, () => false)
-      if (deleted) invalidateCompletedAnswerForDeletedMessage(sid, messageId)
-      await useAppStore.getState().loadChatHistory(sid)
+      if (deleted) {
+        invalidateCompletedAnswerForDeletedMessage(sid, messageId)
+        const store = useAppStore.getState()
+        store.invalidateHistoryAfterMessageDelete(sid, messageId)
+        await store.loadChatHistory(sid, { resetHistoryWindow: true })
+      } else {
+        await useAppStore.getState().loadChatHistory(sid)
+      }
     },
     [sid],
   )

@@ -35,6 +35,7 @@ import {
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import type { HistoryReadingAnchor } from "@/components/app/MessageList"
+import type { Message } from "@shared/types/chatMessages"
 import { ChatPane } from "@/components/app/ChatPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
@@ -53,6 +54,7 @@ import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/Right
 const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
 
 const SubagentsPane = lazy(() => import("@/components/app/SubagentsPane").then((module) => ({ default: module.SubagentsPane })))
+const EMPTY_HISTORY_PREFIX: readonly Message[] = []
 
 const WorktreeManager = lazy(() => import("@/components/app/WorktreeManager").then((module) => ({ default: module.WorktreeManager })))
 
@@ -394,11 +396,54 @@ function App() {
 
   const workspacePath = currentChat?.config?.workspacePath
   const displayWorkspace = workspacePath ?? pickedWorkspace
-  const [environmentSession, setEnvironmentSession] = useState<string | null>(null)
+  const [environmentView, setEnvironmentView] = useState<{ sessionId: string | null; requestedHistory: boolean }>({
+    sessionId: null, requestedHistory: false,
+  })
+  const onEnvironmentVisible = useCallback((sessionId: string | null, requestedHistory: boolean) => {
+    setEnvironmentView({ sessionId, requestedHistory })
+  }, [])
   const reviewing = workbenchOpen && selectedWorkbenchTab === "review"
-  const subagentChanges = useSubagentFileChanges(currentChat, workbenchScope, !settingsOpen &&
-    (reviewing || (currentSessionId !== null && environmentSession === currentSessionId)))
-  const ownFileChanges = useMemo(() => collectSessionFileChanges(chat.messages), [chat.messages])
+  const viewingEnvironment = currentSessionId !== null && environmentView.sessionId === currentSessionId
+  const viewingInspector = workbenchOpen && selectedWorkbenchTab === "inspector"
+  const subagentChanges = useSubagentFileChanges(currentChat, workbenchScope, !settingsOpen && (reviewing || viewingEnvironment))
+  const wantPrefix = !settingsOpen && (reviewing || viewingInspector || (viewingEnvironment && environmentView.requestedHistory))
+  const beforeMessageId = currentChat?.historyWindow?.beforeMessageId
+  const historyInvalidated = currentChat?.historyWindow?.invalidated
+  const createdAt = currentChat?.createdAtExact
+  const historyBinding = useAppStore((state) => currentSessionId ? state.managedHistoryBindings?.[currentSessionId] : undefined)
+  const historyClear = useAppStore((state) => currentSessionId ? state.conversationClears?.[currentSessionId] : undefined)
+  const prefixRequest = useMemo(() => wantPrefix && currentSessionId && beforeMessageId && !historyInvalidated
+    ? { sessionId: currentSessionId, beforeMessageId, createdAt, historyBinding, historyClear } : null,
+  [wantPrefix, currentSessionId, beforeMessageId, createdAt, historyBinding, historyClear, historyInvalidated])
+  const prefixRequestRef = useRef(prefixRequest)
+  prefixRequestRef.current = prefixRequest
+  const [prefixResult, setPrefixResult] = useState<{ request: NonNullable<typeof prefixRequest>; messages?: Message[] } | null>(null)
+  useEffect(() => {
+    setPrefixResult(null)
+    if (!prefixRequest) return
+    const { sessionId, beforeMessageId, createdAt } = prefixRequest
+    const controller = new AbortController()
+    const current = () => !controller.signal.aborted && prefixRequestRef.current === prefixRequest
+    const state = useAppStore.getState()
+    const target = state.chats.find((item) => item.id === sessionId)
+    const window = target?.historyWindow
+    if (!window || window.beforeMessageId !== beforeMessageId || target?.createdAtExact !== createdAt) {
+      setPrefixResult({ request: prefixRequest })
+      return
+    }
+    void state.readHistoryPrefix(sessionId, window, current, controller.signal).then((messages) => {
+      if (current()) setPrefixResult({ request: prefixRequest, messages })
+    }, () => {
+      if (current()) setPrefixResult({ request: prefixRequest })
+    })
+    return () => controller.abort()
+  }, [prefixRequest])
+  const prefix = prefixResult?.request === prefixRequest ? prefixResult : null
+  const earlierHistory = prefix?.messages ?? EMPTY_HISTORY_PREFIX
+  const historyStatus = historyInvalidated ? uiText("history_prefix_unavailable")
+    : prefixRequest && !prefix?.messages ? uiText(prefix ? "history_prefix_unavailable" : "history_prefix_loading") : undefined
+  const ownFileChanges = useMemo(() => collectSessionFileChanges(earlierHistory.length
+    ? [...earlierHistory, ...chat.messages] : chat.messages), [earlierHistory, chat.messages])
   const persistedFileChanges = useMemo(() => subagentChanges.changes.length > 0
     ? orderPersistedFileChanges([...ownFileChanges, ...subagentChanges.changes])
     : ownFileChanges,
@@ -630,6 +675,7 @@ function App() {
                     onClose={() => setWorkbenchOpen(false)}
                     workspace={displayWorkspace}
                     fileChangeGroups={fileChangeGroups}
+                    historyStatus={historyStatus}
                     onEditWorkspace={() => setWsPickerOpen(true)}
                     onOpenReview={openReview}
                     onCopySessionId={copySessionId}
@@ -648,6 +694,7 @@ function App() {
                     key={workbenchScope}
                     sessionId={currentSessionId}
                     groups={fileChangeGroups}
+                    historyStatus={historyStatus}
                     summary={fileChangeSummary}
                     subagentChanges={subagentChanges}
                     workspace={displayWorkspace}
@@ -702,7 +749,9 @@ function App() {
         <ChatPane
           chat={{ ...chat, select, newChat }}
           fileChangeSummary={fileChangeSummary}
-          onEnvironmentVisible={setEnvironmentSession}
+          earlierHistory={earlierHistory}
+          historyStatus={historyStatus}
+          onEnvironmentVisible={onEnvironmentVisible}
           pageVisible={!settingsOpen}
           onOpenRecordedSession={openSessionLink}
           pickedWorkspace={pickedWorkspace}

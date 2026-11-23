@@ -106,6 +106,45 @@ it("retains a completed older page while the latest page advances during and aft
   expect(chat().historyWindow?.beforeMessageId).toBeNull();
 });
 
+it("retires stale reads and replaces a deleted prefix even when a normal refresh wins the race", async () => {
+  const { actions, chat, loadEarlier } = harness();
+  const removed = { ...message("duplicate"), content: "Deleted original" };
+  const kept = { ...message("duplicate"), content: "Retained original" };
+  const recent = { ...message("duplicate"), content: "Recent original" };
+  const tail = message("tail");
+  const previous = [message("older-a"), message("older-b")];
+  const before = [removed, ...previous, kept, recent, tail];
+  const after = [...previous, kept, recent, tail];
+  const reply = (messages: WireMessage[], total: number, start: number) =>
+    ({ ...page(messages.map((item) => item.id), total, start), messages });
+  const contents = () => chat().messages.map((item) => "content" in item ? item.content : undefined);
+  const staleRead = deferredHistory();
+  const deletionRead = deferredHistory();
+  vi.spyOn(agentClient, "getHistory")
+    .mockResolvedValueOnce(reply(before, before.length, 0))
+    .mockImplementationOnce(() => staleRead.promise)
+    .mockImplementationOnce(() => deletionRead.promise)
+    .mockResolvedValueOnce(reply(after.slice(3), after.length, 3))
+    .mockResolvedValueOnce(reply(after.slice(0, 3), after.length, 0));
+  await actions.loadChatHistory(id, { throwOnError: true });
+  expect(contents()).toContain(removed.content);
+  const stale = expect(actions.loadChatHistory(id, { throwOnError: true })).rejects.toMatchObject({ name: "AbortError" });
+  actions.invalidateHistoryAfterMessageDelete(id, removed.id);
+  expect(chat().historyWindow?.invalidated).toBe(true);
+  expect(contents()).not.toContain(removed.content);
+  staleRead.resolve(reply(before, before.length, 0));
+  await stale;
+  const superseded = expect(actions.loadChatHistory(id, { resetHistoryWindow: true, throwOnError: true }))
+    .rejects.toMatchObject({ name: "AbortError" });
+  await actions.loadChatHistory(id, { mode: "monotonic", throwOnError: true });
+  expect(chat().historyWindow?.invalidated).toBeUndefined();
+  expect(contents()).toEqual([recent.content, tail.content]);
+  deletionRead.resolve(reply(after.slice(3), after.length, 3));
+  await superseded;
+  await loadEarlier();
+  expect(contents()).toEqual(after.map((item) => item.content));
+});
+
 it("bridges a disjoint append burst with the verified forward delta and retains already loaded earlier pages", async () => {
   const { actions, chat, loadEarlier } = harness();
   const ids = Array.from({ length: 212 }, (_, index) => `m${index}`);
@@ -201,6 +240,45 @@ it("retires a pending earlier page before cross-client clear reconciliation", as
   await vi.waitFor(() => expect(chat().messages).toEqual([]));
   expect(chat().historyWindow?.beforeMessageId).toBeNull();
   expect(chat().config.syncCursor).toMatchObject({ messageCount: 0, lastMessageId: null });
+});
+
+it("refuses a bound prefix read when the retained Supervisor authority is no longer accepted", async () => {
+  const fixture = currentUserManagedSessionsFixture();
+  const selection = { supervisor: fixture.scope.supervisor, target: fixture.sessions[0]!.current_user_target! };
+  const sessionId = selection.target.session_id;
+  const { store, actions, chat } = harness(sessionId);
+  const binding = { selection, status: "active" as const };
+  store.setState({ managedHistoryBindings: { [sessionId]: binding } });
+  const refusal = new ApiError("Target changed", 409, "Conflict", '{"code":"target_observation_stale"}');
+  const readBound = vi.spyOn(managedSessionsClient, "readBoundHistory")
+    .mockResolvedValueOnce({ ...page(["m2"], 2, 1, sessionId), bound_token_usage: null })
+    .mockRejectedValueOnce(refusal);
+  const unbound = vi.spyOn(agentClient, "getHistory");
+  await actions.loadChatHistory(sessionId, { throwOnError: true });
+  const displayed = chat();
+  await expect(actions.readHistoryPrefix(sessionId, displayed.historyWindow!, () => true)).rejects.toBe(refusal);
+  expect(readBound).toHaveBeenLastCalledWith(selection, {
+    page: { limit: 100, before_message_id: cursorAt(1) }, signal: expect.any(AbortSignal),
+  });
+  expect(unbound).not.toHaveBeenCalled();
+  expect(chat()).toBe(displayed);
+});
+
+it("retires a read-only prefix across clear without republishing the old history", async () => {
+  const { actions, chat } = harness();
+  const older = deferredHistory();
+  const reader = vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(page(["m2"], 2, 1))
+    .mockReturnValueOnce(older.promise).mockResolvedValueOnce(page([], 0, 0));
+  vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: summary(id) });
+  await actions.loadChatHistory(id);
+  const exportRead = actions.readHistoryPrefix(id, chat().historyWindow!, () => true);
+  const outcome = expect(exportRead).rejects.toMatchObject({ name: "AbortError" });
+  actions.reconcileClearedConversation(id);
+  expect(reader.mock.calls[1][2]?.aborted).toBe(true);
+  older.resolve(page(["m1"], 2, 0));
+  await outcome;
+  await vi.waitFor(() => expect(chat().messages).toEqual([]));
+  expect(chat().historyWindow?.beforeMessageId).toBeNull();
 });
 
 it("re-establishes a stale cursor using the latest page", async () => {

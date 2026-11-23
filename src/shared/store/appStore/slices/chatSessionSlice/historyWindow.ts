@@ -35,8 +35,12 @@ export function historyMessageId(message: Message | undefined): string | null {
   return message?.id ?? null;
 }
 
+export function isEarlierHistoryPage(older: ChatHistoryWindow, nextStartIndex: number): boolean {
+  return older.messageIds.length > 0 && older.startIndex + older.messageIds.length === nextStartIndex;
+}
+
 export function prependHistoryPage(older: HistoryPage, newer: HistoryPage): HistoryPage | undefined {
-  if (!older.window.messageIds.length || older.window.startIndex + older.window.messageIds.length !== newer.window.startIndex) return undefined;
+  if (!isEarlierHistoryPage(older.window, newer.window.startIndex)) return undefined;
   return {
     ...newer,
     window: { ...older.window, messageIds: [...older.window.messageIds, ...newer.window.messageIds] },

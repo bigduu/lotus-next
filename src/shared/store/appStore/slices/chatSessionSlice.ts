@@ -54,7 +54,7 @@ export { mapHistoryMessagesToUi } from "./chatSessionSlice/messageMapping";
 
 import type { ChatSlice, ConversationClearState } from "./chatSessionSlice/types";
 import type { ManagedSessionSelection } from "@services/supervisorScope/managedSessions";
-import { extendHistoryWithDelta, historyMessageId, prependHistoryPage, readHistoryWindow, RECENT_HISTORY_PAGE, retainConfirmedHistory, type HistoryPage } from "./chatSessionSlice/historyWindow";
+import { extendHistoryWithDelta, historyMessageId, isEarlierHistoryPage, prependHistoryPage, readHistoryWindow, RECENT_HISTORY_PAGE, retainConfirmedHistory, type HistoryPage } from "./chatSessionSlice/historyWindow";
 
 const agentClient = AgentClient.getInstance();
 
@@ -93,6 +93,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   const deferredClears = new Set<string>();
   const replacementRequired = new Set<string>();
   const earlierHistoryReads = new Map<string, object>();
+  const historyPrefixReads = new Map<string, Set<AbortController>>();
+  const retireHistoryPrefixReads = (sessionId: string) => {
+    const reads = historyPrefixReads.get(sessionId);
+    historyPrefixReads.delete(sessionId);
+    for (const request of reads ?? []) request.abort();
+  };
   // Retain the pre-write revision until its clear-feed reconciliation arrives;
   // the account event can be delivered after the HTTP response.
   type ClearTokenFence = { revision: ReturnType<typeof tokenBudgetRevision>; selection: ManagedSessionSelection | undefined };
@@ -112,6 +118,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     // newer work created while the replacement read is in flight.
     historyReads.get(get)?.delete(sessionId);
     earlierHistoryReads.delete(sessionId);
+    retireHistoryPrefixReads(sessionId);
     if (newEvent) invalidateCompletedAnswers(sessionId);
     const timer = reconcileTimers.get(sessionId);
     if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
@@ -129,6 +136,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     void get().loadChatHistory(sessionId, { mode: "replace" });
   };
   const clearState = (sessionId: string, value: ConversationClearState) => {
+    if (value.busy) retireHistoryPrefixReads(sessionId);
     set((state) => ({ conversationClears: { ...state.conversationClears, [sessionId]: value } }));
     if (!value.busy && deferredClears.delete(sessionId)) reconcileClear(sessionId, false);
   };
@@ -230,7 +238,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     if (prev.currentSessionId === sessionId && prev.latestActiveSessionId === sessionId) {
       return;
     }
-    if (prev.currentSessionId && prev.currentSessionId !== sessionId) earlierHistoryReads.delete(prev.currentSessionId);
+    if (prev.currentSessionId && prev.currentSessionId !== sessionId) {
+      earlierHistoryReads.delete(prev.currentSessionId);
+      retireHistoryPrefixReads(prev.currentSessionId);
+    }
     set({ currentSessionId: sessionId, latestActiveSessionId: sessionId });
   },
 
@@ -247,6 +258,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       navigationResetRevision = navigationRevision;
       sessionNavigationRevisions.clear();
       earlierHistoryReads.clear();
+      for (const id of historyPrefixReads.keys()) retireHistoryPrefixReads(id);
       reads?.clear(); pendingClearRevisions.clear(); replacementRevisions.clear(); acknowledgedClears.clear();
       return;
     }
@@ -254,6 +266,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     for (const id of affected) {
       sessionNavigationRevisions.set(id, navigationRevision);
       earlierHistoryReads.delete(id);
+      retireHistoryPrefixReads(id);
       reads?.delete(id); pendingClearRevisions.delete(id); replacementRevisions.delete(id); acknowledgedClears.delete(id);
     }
   },
@@ -560,6 +573,18 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     get().updateSession(sessionId, { messages: updatedMessages });
   },
 
+  invalidateHistoryAfterMessageDelete: (sessionId, messageId) => {
+    const chat = get().chats.find((item) => item.id === sessionId);
+    if (!chat?.historyWindow) return;
+    historyReads.get(get)?.delete(sessionId);
+    earlierHistoryReads.delete(sessionId);
+    retireHistoryPrefixReads(sessionId);
+    get().updateSession(sessionId, {
+      historyWindow: { ...chat.historyWindow, invalidated: true },
+      messages: chat.messages.filter((message) => historyMessageId(message) !== messageId),
+    }, { skipBackendPatch: true });
+  },
+
   deleteMessage: async (sessionId, messageId) => {
     const chat = get().chats.find((c) => c.id === sessionId);
     if (!chat) {
@@ -628,17 +653,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
 
     invalidateCompletedAnswerForDeletedMessage(sessionId, messageId);
-    set((state) => ({
-      ...state,
-      chats: state.chats.map((existingChat) =>
-        existingChat.id === sessionId
-          ? {
-              ...existingChat,
-              messages: existingChat.messages.filter((msg) => msg.id !== messageId),
-            }
-          : existingChat,
-      ),
-    }));
+    const current = get().chats.find((item) => item.id === sessionId);
+    if (current?.historyWindow) get().invalidateHistoryAfterMessageDelete(sessionId, messageId);
+    else if (current) get().updateSession(sessionId, {
+      messages: current.messages.filter((message) => message.id !== messageId),
+    }, { skipBackendPatch: true });
 
     return {
       success: true,
@@ -1011,12 +1030,67 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   reconcileClearedConversation: (sessionId) => reconcileClear(sessionId, true),
 
+  readHistoryPrefix: async (sessionId, window, isOriginCurrent, originSignal) => {
+    const initial = get();
+    const chat = initial.chats.find((item) => item.id === sessionId);
+    const binding = initial.managedHistoryBindings[sessionId];
+    const clear = initial.conversationClears[sessionId];
+    const isCurrent = () => {
+      const state = get();
+      const target = state.chats.find((item) => item.id === sessionId);
+      return isOriginCurrent() && state.currentSessionId === sessionId && target && !target.historyWindow?.invalidated
+        && target.createdAt === chat?.createdAt && target.createdAtExact === chat?.createdAtExact
+        && state.managedHistoryBindings[sessionId] === binding && state.conversationClears[sessionId] === clear
+        && !replacementRequired.has(sessionId);
+    };
+    const changed = () => new DOMException("Earlier history changed before it could be read", "AbortError");
+    if (!chat || chat.historyWindow !== window || !isCurrent() || originSignal?.aborted || binding?.status === "stale"
+      || clear?.busy || clear?.error === "unknown" || clear?.error === "readback_failed") throw changed();
+
+    const request = new AbortController();
+    const reads = historyPrefixReads.get(sessionId) ?? new Set<AbortController>();
+    reads.add(request);
+    historyPrefixReads.set(sessionId, reads);
+    const cancel = () => request.abort();
+    originSignal?.addEventListener("abort", cancel, { once: true });
+    const { signal } = request;
+    const assertCurrent = () => { if (signal.aborted || !isCurrent()) throw changed(); };
+    try {
+      let readPage = (page: HistoryPageRequest) => agentClient.getHistory(sessionId, undefined, signal, page);
+      if (binding) {
+        const { managedSessionsClient } = await import("@services/supervisorScope/managedSessions");
+        readPage = (page) => managedSessionsClient.readBoundHistory(binding.selection, { page, signal });
+      }
+      // Keep separate page buffers so long transcripts are joined only once,
+      // outside the on-screen history store.
+      const pages: Message[][] = [];
+      let start = window.startIndex;
+      let cursor = window.beforeMessageId;
+      while (cursor) {
+        assertCurrent();
+        const response = await readPage({ ...RECENT_HISTORY_PAGE, before_message_id: cursor });
+        assertCurrent();
+        if (response.session_id !== sessionId) throw new Error("History session mismatch");
+        const earlier = readHistoryWindow(sessionId, response);
+        if (!earlier || !isEarlierHistoryPage(earlier.window, start)) throw changed();
+        pages.push(earlier.messages);
+        start = earlier.window.startIndex;
+        cursor = earlier.window.beforeMessageId;
+      }
+      return pages.reverse().flat();
+    } finally {
+      originSignal?.removeEventListener("abort", cancel);
+      reads.delete(request);
+      if (reads.size === 0 && historyPrefixReads.get(sessionId) === reads) historyPrefixReads.delete(sessionId);
+    }
+  },
+
   loadEarlierChatHistory: async (sessionId, signal, beforePrepend) => {
     const initial = get();
     const chat = initial.chats.find((item) => item.id === sessionId);
     const cursor = chat?.historyWindow?.beforeMessageId;
     const binding = initial.managedHistoryBindings[sessionId];
-    if (initial.currentSessionId !== sessionId || !chat || !cursor || binding?.status === "stale"
+    if (initial.currentSessionId !== sessionId || !chat || !cursor || chat.historyWindow?.invalidated || binding?.status === "stale"
       || initial.conversationClears[sessionId]?.busy || replacementRequired.has(sessionId)
       || signal.aborted || earlierHistoryReads.has(sessionId)) return;
     const request = {};
@@ -1027,7 +1101,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
         || state.managedHistoryBindings[sessionId] !== binding || state.conversationClears[sessionId]?.busy
         || replacementRequired.has(sessionId)) return undefined;
       return state.chats.find((item) => item.id === sessionId && item.createdAt === chat.createdAt
-        && item.createdAtExact === chat.createdAtExact && item.historyWindow?.beforeMessageId === cursor);
+        && item.createdAtExact === chat.createdAtExact && !item.historyWindow?.invalidated && item.historyWindow?.beforeMessageId === cursor);
     };
     const reloadRecent = () => get().loadChatHistory(sessionId, {
       resetHistoryWindow: true, throwOnError: true, signal, canApply: () => Boolean(currentChat()),
@@ -1226,7 +1300,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           if (paged && paged.window.startIndex + paged.window.messageIds.length !== paged.total) {
             throw new Error("Invalid recent history page");
           }
-          const retainPrefix = !afterClear && !options?.resetHistoryWindow && !options?.managedSelection;
+          const retainPrefix = !afterClear && !cachedChat.historyWindow?.invalidated && !options?.resetHistoryWindow && !options?.managedSelection;
           if (paged && retainPrefix && !options?.readHistory) {
             const previous = get().chats.find((item) => item.id === sessionId)?.historyWindow;
             const previousEnd = previous ? previous.startIndex + previous.messageIds.length : 0;
@@ -1288,7 +1362,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           const historyCount = paged?.total ?? history.messages.length;
           let retainedMessages = false;
 
-          if (mode === "monotonic" && !afterClear) {
+          if (mode === "monotonic" && !afterClear && !currentChat.historyWindow?.invalidated) {
             const prevMessages = currentChat.messages || [];
             const previousByOccurrence = new Map<string, Message>();
             const unpositionedById = new Map<string, Message>();

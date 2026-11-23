@@ -201,6 +201,8 @@ export interface ChatHistoryWindow {
   /** Stable Bamboo IDs, before mapping tool calls to transcript rows. */
   messageIds: string[];
   beforeMessageId: string | null;
+  /** A confirmed deletion moved visible positions. Wait for a fresh window. */
+  invalidated?: true;
 }
 
 export interface ChatItem {

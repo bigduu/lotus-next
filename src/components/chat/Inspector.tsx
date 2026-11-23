@@ -274,6 +274,7 @@ export function Inspector({
   onClose,
   workspace,
   fileChangeGroups: reviewGroups,
+  historyStatus,
   onEditWorkspace,
   onOpenReview,
   onCopySessionId,
@@ -288,6 +289,7 @@ export function Inspector({
   onClose: () => void
   workspace?: string | null
   fileChangeGroups?: readonly SessionFileChangeGroup[]
+  historyStatus?: string
   onEditWorkspace?: () => void
   onOpenReview?: (fileId?: string) => void
   onCopySessionId: (sessionId: string) => void
@@ -544,7 +546,7 @@ export function Inspector({
             )}
           </section>
 
-          {fileChangeGroups.length > 0 || canReviewSubagents ? (
+          {historyStatus || fileChangeGroups.length > 0 || canReviewSubagents ? (
             <section className="rounded-lg border p-3">
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <span className="text-xs font-medium text-muted-foreground">{uiText("file_changes_4d016b2f")}</span>
@@ -559,6 +561,7 @@ export function Inspector({
                   </button>
                 ) : null}
               </div>
+              {historyStatus ? <p role="status" className="text-xs text-muted-foreground">{historyStatus}</p> : null}
               {fileChangeGroups.length > 0 ? (
                 <>
                   <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">

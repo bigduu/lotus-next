@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => {
     loadSubagentSessions: vi.fn(),
     restoreSession: vi.fn(),
     loadChatHistory: vi.fn(),
+    invalidateHistoryAfterMessageDelete: vi.fn(),
     refreshChatsNow: vi.fn(),
     reconcileOpenSession: vi.fn(),
     markCancel: vi.fn(),
@@ -312,6 +313,7 @@ beforeEach(() => {
     mocks.appState.loadSubagentSessions,
     mocks.appState.restoreSession,
     mocks.appState.loadChatHistory,
+    mocks.appState.invalidateHistoryAfterMessageDelete,
     mocks.appState.refreshChatsNow,
     mocks.appState.reconcileOpenSession,
     mocks.appState.markCancel,
@@ -3767,6 +3769,8 @@ describe("completed answer followed by another turn", () => {
     const { hook, first, props } = await completed(true)
     mocks.deleteSessionMessage.mockResolvedValueOnce(undefined)
     await act(async () => { await hook.current.deleteMessage("current-user") })
+    expect(mocks.appState.invalidateHistoryAfterMessageDelete).toHaveBeenCalledWith(hook.current.currentSessionId, "current-user")
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith(hook.current.currentSessionId, { resetHistoryWindow: true })
     expect(visibleAnswers(hook.current)).not.toContain(answer)
     await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete() })
     expect(visibleAnswers(hook.current)).not.toContain(answer)

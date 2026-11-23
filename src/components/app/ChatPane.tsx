@@ -42,6 +42,7 @@ import { useSubAgentView } from "@/hooks/useSubAgentView"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getRuntimeModelIds, resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
+import type { Message } from "@shared/types/chatMessages"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
@@ -194,6 +195,8 @@ const EMPTY_PENDING_USER_IMAGES = [] as const
 export function ChatPane({
   chat,
   fileChangeSummary,
+  earlierHistory,
+  historyStatus,
   onEnvironmentVisible,
   pickedWorkspace,
   worktreePath,
@@ -219,7 +222,9 @@ export function ChatPane({
 }: {
   chat: ChatState
   fileChangeSummary?: SessionFileChangeSummary
-  onEnvironmentVisible?: (sessionId: string | null) => void
+  earlierHistory?: readonly Message[]
+  historyStatus?: string
+  onEnvironmentVisible?: (sessionId: string | null, requestedHistory: boolean) => void
   pickedWorkspace: string | null
   /** Explicit checkout selected in the worktree manager for this Project. */
   worktreePath?: string | null
@@ -433,20 +438,22 @@ export function ChatPane({
   const [chatLayoutRef, chatLayoutWidth] = useContainerWidth<HTMLDivElement>()
   const environmentHasRoom = chatLayoutWidth >= ENVIRONMENT_AUTO_SHOW_MIN_WIDTH
   useMarkSessionRead(pageVisible ? currentChat : null)
-  const [environmentPreference, setEnvironmentPreference] =
-    useState<EnvironmentPreference>("auto")
+  const [environmentOverride, setEnvironmentOverride] =
+    useState<{ sessionId: string | null; preference: EnvironmentPreference } | null>(null)
+  const environmentPreference = environmentOverride?.sessionId === currentSessionId ? environmentOverride.preference : "auto"
+  const setEnvironmentPreference = (preference: EnvironmentPreference) => setEnvironmentOverride({ sessionId: currentSessionId, preference })
   const environmentId = useId()
 
   useEffect(() => {
-    setEnvironmentPreference("auto")
+    setEnvironmentOverride(null)
   }, [currentSessionId])
 
   const environmentOpen = environmentPreference === "open"
     || (environmentPreference === "auto" && environmentHasRoom)
   const environmentVisible = environmentOpen && !(sidePaneOpen ?? false)
   useEffect(() => {
-    onEnvironmentVisible?.(pageVisible && environmentVisible ? currentSessionId : null)
-  }, [currentSessionId, environmentVisible, onEnvironmentVisible, pageVisible])
+    onEnvironmentVisible?.(pageVisible && environmentVisible ? currentSessionId : null, environmentPreference === "open")
+  }, [currentSessionId, environmentPreference, environmentVisible, onEnvironmentVisible, pageVisible])
   const environmentReservedWidth = environmentVisible && environmentHasRoom
     ? ENVIRONMENT_OCCUPIED_WIDTH
     : 0
@@ -687,7 +694,7 @@ export function ChatPane({
       sources.set(`file:${path}`, { id: `file:${path}`, name, kind: "file" })
     }
 
-    for (const message of messages) {
+    for (const message of earlierHistory?.length ? [...earlierHistory, ...messages] : messages) {
       if ("images" in message) {
         for (const image of message.images ?? []) {
           const previewUrl = image.url
@@ -718,7 +725,7 @@ export function ChatPane({
     }
 
     return [...sources.values()]
-  }, [attachments, messages])
+  }, [attachments, earlierHistory, messages])
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
@@ -1185,6 +1192,29 @@ export function ChatPane({
     action()
   }
   const selectSubAgentInPane = onSelectSubAgent ?? select
+  const exportConversation = (download: typeof downloadMarkdown | typeof downloadPdf) => {
+    const title = currentChat?.title || "chat"
+    const window = currentChat?.historyWindow
+    const displayed = messages
+    if (window?.invalidated) {
+      showToast(uiText("conversation_export_failed"), "error")
+      return
+    }
+    if (!currentSessionId || !window?.beforeMessageId) {
+      void download(displayed, title)
+      return
+    }
+    const navigation = getNavigationVersion?.()
+    const current = () => mountedRef.current && toastScopeRef.current === toastScope && getNavigationVersion?.() === navigation
+    void (async () => {
+      try {
+        const earlier = await useAppStore.getState().readHistoryPrefix(currentSessionId, window, current)
+        if (current()) await download([...earlier, ...displayed], title)
+      } catch {
+        if (current()) showToast(uiText("conversation_export_failed"), "error")
+      }
+    })()
+  }
   const overflowItems = [
     ...(currentSessionId ? [{ label: uiText("conversation_clear_action"), icon: <RotateCcw className="size-4" />,
       onClick: () => setClearTarget({ id: currentSessionId, title: currentChat?.title || currentSessionId }) }] : []),
@@ -1195,12 +1225,12 @@ export function ChatPane({
           {
             label: uiText("export_as_markdown_ac8b027c"),
             icon: <Download className="size-4" />,
-            onClick: () => downloadMarkdown(messages, currentChat?.title || "chat"),
+            onClick: () => exportConversation(downloadMarkdown),
           },
           {
             label: uiText("export_as_pdf_e42c8735"),
             icon: <FileDown className="size-4" />,
-            onClick: () => void downloadPdf(messages, currentChat?.title || "chat"),
+            onClick: () => exportConversation(downloadPdf),
           },
         ]
       : []),
@@ -1215,6 +1245,9 @@ export function ChatPane({
       addedLines={environmentChanges.addedLines}
       removedLines={environmentChanges.removedLines}
       sources={environmentSources}
+      historyStatus={historyStatus}
+      onLoadEarlierSources={environmentPreference === "auto" && currentChat?.historyWindow?.beforeMessageId && !historyStatus
+        ? () => setEnvironmentPreference("open") : undefined}
       onOpenReview={() => launchWorkbench(onOpenReview ?? onOpenInspector)}
       onPreviewImage={setPreview}
     />
@@ -1317,7 +1350,7 @@ export function ChatPane({
           scrollRef={scrollRef}
           contentRef={contentRef}
           onScroll={handleScroll}
-          historyBeforeMessageId={managedHistoryStale ? undefined : currentChat?.historyWindow?.beforeMessageId}
+          historyBeforeMessageId={managedHistoryStale || currentChat?.historyWindow?.invalidated ? undefined : currentChat?.historyWindow?.beforeMessageId}
           onLoadEarlierHistory={loadEarlierHistory}
           messages={messages}
           timelineAttachments={timelineAttachments}
