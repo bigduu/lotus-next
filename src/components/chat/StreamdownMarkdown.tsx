@@ -10,9 +10,9 @@ import {
   type PluginConfig,
 } from "streamdown"
 import "streamdown/styles.css"
-import "./StreamdownLayout.css"
+import "@/lib/markdown/layout.css"
 
-import { markdownTheme } from "./markdownTheme"
+import { markdownTheme } from "@/lib/markdown/theme"
 import { cn } from "@/lib/utils"
 import { InlineImage } from "./InlineImage"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"

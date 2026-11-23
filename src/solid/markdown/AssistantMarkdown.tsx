@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createUniqueId, For, Show, untrack } from "solid-js"
 import { Dynamic, type JSX } from "@solidjs/web"
 import type { Element, RootContent } from "hast"
-import { markdownTheme } from "../../components/chat/markdownTheme"
-import { createRevealPlugin } from "../../components/chat/streamdownReveal"
+import { markdownTheme } from "@/lib/markdown/theme"
+import { createRevealPlugin } from "@/lib/markdown/proseReveal"
 import { cn } from "../../lib/utils"
 import { CodeBlock } from "./CodeBlock"
 import { InlineImage } from "./InlineImage"
@@ -11,7 +11,7 @@ import type { MermaidTheme } from "../../lib/mermaid/strictConfig"
 import { attribute, contentText, parseAssistantMarkdown } from "./markdownTree"
 import { englishMarkdownText, type MarkdownText } from "./text"
 import { ProviderMarkdown } from "./ProviderMarkdown"
-import "../../components/chat/StreamdownLayout.css"
+import "@/lib/markdown/layout.css"
 import "./markdown.css"
 
 export interface AssistantMarkdownProps {
@@ -299,7 +299,7 @@ export function MarkdownProse(props: AssistantMarkdownProps) {
       "prose-a:text-primary prose-li:my-0.5",
       props.isStreaming && "assistant-streamdown-streaming",
       props.class,
-    )} style={markdownTheme as JSX.CSSProperties}>
+    )} style={markdownTheme}>
       <div ref={(element) => { revealHost = element }} data-assistant-reveal-block="true" style={{ display: "contents" }}>
         <MarkdownChildren nodes={nodes()} actions={actions} />
       </div>

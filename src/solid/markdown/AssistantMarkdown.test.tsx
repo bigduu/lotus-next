@@ -2,7 +2,7 @@ import { render } from "@solidjs/web"
 import { createSignal, flush } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { themeStore } from "@shared/store/themeState"
-import { markdownTheme } from "../../components/chat/markdownTheme"
+import { markdownTheme } from "@/lib/markdown/theme"
 import { AssistantMarkdown } from "./AssistantMarkdown"
 import { englishMarkdownText } from "./text"
 

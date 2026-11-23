@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { createRevealPlugin, MAX_REVEAL_CHUNKS, REVEAL_CHUNK_SIZE } from "./streamdownReveal"
+import { createRevealPlugin, MAX_REVEAL_CHUNKS, REVEAL_CHUNK_SIZE } from "./proseReveal"
 
 const prose = (value: string) => ({
   type: "root", children: [{ type: "element", tagName: "p", children: [{ type: "text", value }] }],

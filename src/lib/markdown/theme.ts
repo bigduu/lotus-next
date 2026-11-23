@@ -1,5 +1,3 @@
-import type { CSSProperties } from "react"
-
 /** Bind typography to the app palette, including live light/dark/accent changes.
  * Tailwind's default gray prose palette is independent of our theme tokens. */
 export const markdownTheme = {
@@ -19,4 +17,4 @@ export const markdownTheme = {
   "--tw-prose-pre-bg": "var(--card)",
   "--tw-prose-th-borders": "var(--border)",
   "--tw-prose-td-borders": "var(--border)",
-} as CSSProperties
+} as const

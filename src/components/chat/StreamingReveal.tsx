@@ -3,7 +3,7 @@ import {
 } from "react"
 import { Block, type BlockProps } from "streamdown"
 
-import { createRevealPlugin } from "./streamdownReveal"
+import { createRevealPlugin } from "@/lib/markdown/proseReveal"
 
 const MAX_ENTERING_BLOCKS = 12
 const PROSE_BLOCK = "p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote"

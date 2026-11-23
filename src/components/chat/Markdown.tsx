@@ -1,9 +1,9 @@
-import { lazy, memo, Suspense } from "react"
+import { lazy, memo, Suspense, type CSSProperties } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeSanitize from "rehype-sanitize"
 
-import { markdownTheme } from "./markdownTheme"
+import { markdownTheme } from "@/lib/markdown/theme"
 import { cn } from "@/lib/utils"
 
 // Heavy deps — loaded only when the relevant block renders.
@@ -73,7 +73,7 @@ const components: Components = {
 function MarkdownImpl({ children, className }: { children: string; className?: string }) {
   return (
     <div
-      style={markdownTheme}
+      style={markdownTheme as CSSProperties}
       className={cn(
         "prose prose-sm max-w-none [overflow-wrap:anywhere]",
         "prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
