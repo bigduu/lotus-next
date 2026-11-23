@@ -1,7 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Terminal, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { RuntimeNoticeInfo } from "./runtimeNotices"
+import type { RuntimeNoticeInfo } from "@/lib/chat/runtimeNotices"
 
 export function RuntimeNoticeCard({ notice }: { notice: RuntimeNoticeInfo }) {
   useUiLocale()

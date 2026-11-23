@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import { sessionMessagePresentation as present } from "./sessionMessagePresentation"
 
 afterEach(async () => { await changeLocale("zh-CN") })

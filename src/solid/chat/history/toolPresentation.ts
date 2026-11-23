@@ -2,8 +2,8 @@ import { FileText, Globe, Image, MessageSquare, Pencil, Search, Terminal, Wrench
 import { uiText } from "@shared/i18n/text"
 import type { Message, MessageImage } from "@shared/types/chatMessages"
 
-import { sessionMessagePresentation } from "@/components/chat/sessionMessagePresentation"
-import { isViewImageTool } from "@/components/chat/viewImageSources"
+import { sessionMessagePresentation } from "@/lib/chat/sessionMessagePresentation"
+import { isViewImageTool } from "@/lib/chat/viewImageSources"
 
 export type Entry = {
   id: string

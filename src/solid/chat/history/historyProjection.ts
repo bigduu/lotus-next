@@ -1,4 +1,4 @@
-import { runtimeNoticeFromMetadata } from "@/components/chat/runtimeNotices"
+import { runtimeNoticeFromMetadata } from "@/lib/chat/runtimeNotices"
 import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import { messageOccurrenceKey, type Message } from "@shared/types/chatMessages"
 

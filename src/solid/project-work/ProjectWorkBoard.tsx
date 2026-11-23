@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 
 import "@/components/app/project-work/ProjectWorkBoard.css"
 import type { WorkCommandContext } from "@/components/app/project-work/projectWorkControls"
-import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
+import { ticketWorkLabels } from "@services/tickets/ticketWorkLabels"
 import type { ProjectManifest } from "@services/project"
 import { boardCountsKnown, type BoardStage, type ProjectBoardRow } from "@services/tickets/projectBoard"
 import type { SprintFilter } from "@services/tickets/sprints"

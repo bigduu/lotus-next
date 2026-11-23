@@ -6,7 +6,7 @@ import { artifactDownloadName } from "@services/tickets/artifactDownload"
 import { effectiveStatus, type TicketState } from "@services/tickets/state"
 import type { AssignmentState, IngressPreview, PendingIngressMessage, PendingRequest, ScopeBinding, WorkView } from "@services/tickets/types"
 import type { useTicketWork } from "@/hooks/useTicketWork"
-import { ticketWorkStatusLabel, workExecutionRecord } from "./ticketWorkLabels"
+import { ticketWorkStatusLabel, workExecutionRecord } from "@services/tickets/ticketWorkLabels"
 
 const requestLabels = { get open() { return uiText("ticket_pending_999a459c") }, get answered() { return uiText("ticket_answered_474c9878") }, get approved() { return uiText("ticket_approved_b42cb548") }, get denied() { return uiText("ticket_denied_f098218a") }, get superseded() { return uiText("ticket_superseded_30474a79") }, get expired() { return uiText("ticket_expired_2fe0e333") }, get consumed() { return uiText("ticket_authorization_used_c8eb44e4") } }
 type Controller = ReturnType<typeof useTicketWork>

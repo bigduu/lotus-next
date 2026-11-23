@@ -1,6 +1,6 @@
 import { RotateCcw } from "@lucide/solid"
 import { createMemo, Show } from "solid-js"
-import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
+import { backgroundExecWaitActive } from "@/lib/chat/runtimeNotices"
 import { extractDiagnosticId, type RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
 import { appStore } from "@shared/store/appStore/state"

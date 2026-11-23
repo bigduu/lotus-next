@@ -13,7 +13,7 @@ import { readPatrolStatus, type PatrolStatusRead } from "@services/tickets/patro
 import { readRuntimeObservation, type RuntimeObservationRead } from "@services/tickets/runtimeObservation"
 import { useProjectWorkBoard } from "@/hooks/useProjectWorkBoard"
 import { useAssignmentSessions } from "@/hooks/useAssignmentSessions"
-import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
+import { ticketWorkLabels } from "@services/tickets/ticketWorkLabels"
 import { Button } from "@/components/ui/button"
 
 import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"

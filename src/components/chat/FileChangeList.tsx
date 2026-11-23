@@ -8,7 +8,7 @@ import {
 import {
   displayFileChangePath,
   type FileChangePathMode,
-} from "./fileChangePresentation"
+} from "@/lib/chat/fileChangePresentation"
 
 export interface FileChangeListProps {
   groups: readonly SessionFileChangeGroup[]

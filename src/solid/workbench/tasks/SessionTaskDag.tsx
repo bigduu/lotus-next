@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, createUniqueId, For, Show } fro
 import type { JSX } from "@solidjs/web"
 import { uiList } from "@shared/i18n/text"
 import type { TaskItem } from "@services/chat/AgentService"
-import { layoutSessionTaskDag, taskNodeHeight, taskNodeWidth } from "@/components/chat/sessionTaskDagLayout"
+import { layoutSessionTaskDag, taskNodeHeight, taskNodeWidth } from "@/lib/chat/sessionTaskDagLayout"
 import { cn } from "@/lib/utils"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"

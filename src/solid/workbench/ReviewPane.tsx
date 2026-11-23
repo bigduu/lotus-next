@@ -1,7 +1,7 @@
 import { Columns2, FileDiff, Rows3, WrapText } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js"
 import type { JSX } from "@solidjs/web"
-import { displayFileChangePath } from "@/components/chat/fileChangePresentation"
+import { displayFileChangePath } from "@/lib/chat/fileChangePresentation"
 import { summarizeSessionFileChangeGroups, type SessionFileChangeGroup } from "@/lib/sessionFileChanges"
 import {
   parseUnifiedDiffLines, parseUnifiedDiffSideBySideRows, type DiffLineKind,

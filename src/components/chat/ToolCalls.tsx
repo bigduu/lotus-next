@@ -20,8 +20,8 @@ import { useBackgroundBash } from "@shared/store/appStore"
 import i18n from "@shared/i18n"
 import { parseFileChangeResultPayload } from "@shared/utils/resultFormatters"
 import { FileChangeView } from "./FileChangeView"
-import { sessionMessagePresentation } from "./sessionMessagePresentation"
-import { isViewImageTool, safeViewImageSource } from "./viewImageSources"
+import { sessionMessagePresentation } from "@/lib/chat/sessionMessagePresentation"
+import { isViewImageTool, safeViewImageSource } from "@/lib/chat/viewImageSources"
 
 type Entry = {
   id: string

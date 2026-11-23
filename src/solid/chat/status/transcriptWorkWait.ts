@@ -1,4 +1,4 @@
-import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
+import { backgroundExecWaitActive } from "@/lib/chat/runtimeNotices"
 import { isTerminalRunStatus } from "@shared/store/appStore/slices/executionStateSlice/reducer"
 import type { createChat } from "../createChat"
 

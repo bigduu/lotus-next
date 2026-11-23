@@ -1,6 +1,6 @@
 import { fileToAttachment } from "@/lib/chatImageAttachments"
 import { LiveBootstrapRetryNotice } from "@/components/chat/LiveBootstrapRetryNotice"
-import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
+import { backgroundExecWaitActive } from "@/lib/chat/runtimeNotices"
 import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"

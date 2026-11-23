@@ -1,6 +1,4 @@
-/** Runtime-notice detection helpers shared by the message renderer and the
- * chat pane. Kept out of the component file so React fast refresh stays valid.
- */
+/** Runtime-notice detection shared by the transcript and composer. */
 
 /** Metadata shape attached by the Bamboo runtime to authored notices. */
 export interface RuntimeNoticeInfo {

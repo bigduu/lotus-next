@@ -5,7 +5,7 @@ import { providerStore } from "@shared/store/appStore/slices/providerState"
 import { cn } from "@/lib/utils"
 import { isDefaultSupervisor } from "@/lib/supervisor"
 import { collectSessionFileChanges, groupSessionFileChanges, summarizeSessionFileChangeGroups, type SessionFileChangeGroup } from "@/lib/sessionFileChanges"
-import { displayFileChangePath } from "@/components/chat/fileChangePresentation"
+import { displayFileChangePath } from "@/lib/chat/fileChangePresentation"
 
 import { createUiText } from "../../shell/uiText"
 import { createStoreSelector } from "../../state/createStoreSelector"

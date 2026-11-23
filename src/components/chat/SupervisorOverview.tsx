@@ -3,7 +3,7 @@ import { CircleDot, ChevronRight, FileText, MessageCircle } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { ticketWorkStatusLabel } from "./ticketWorkLabels"
+import { ticketWorkStatusLabel } from "@services/tickets/ticketWorkLabels"
 import type { useTicketWork } from "@/hooks/useTicketWork"
 
 export function SupervisorOverview({ controller, running, onSelectWork }: {

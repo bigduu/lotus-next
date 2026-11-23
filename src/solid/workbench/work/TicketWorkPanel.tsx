@@ -4,7 +4,7 @@ import { ticketClient } from "@services/tickets/client"
 import { artifactDownloadName } from "@services/tickets/artifactDownload"
 import { effectiveStatus, type TicketState } from "@services/tickets/state"
 import type { AssignmentState, IngressPreview, PendingIngressMessage, PendingRequest, ScopeBinding, WorkView } from "@services/tickets/types"
-import { ticketWorkStatusLabel, workExecutionRecord } from "@/components/chat/ticketWorkLabels"
+import { ticketWorkStatusLabel, workExecutionRecord } from "@services/tickets/ticketWorkLabels"
 import { createUiLocale, createUiText } from "../../shell/uiText"
 import type { TicketWorkController } from "./createTicketWork"
 

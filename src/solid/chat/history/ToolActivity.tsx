@@ -2,8 +2,8 @@ import { ChevronRight, Columns2, FileDiff, LoaderCircle, Rows3, WrapText } from 
 import { Dynamic } from "@solidjs/web"
 import { createMemo, createSignal, For, onSettled, Show } from "solid-js"
 
-import { safeViewImageSource } from "@/components/chat/viewImageSources"
-import { sessionMessagePresentation } from "@/components/chat/sessionMessagePresentation"
+import { safeViewImageSource } from "@/lib/chat/viewImageSources"
+import { sessionMessagePresentation } from "@/lib/chat/sessionMessagePresentation"
 import { cn } from "@/lib/utils"
 import i18n from "@shared/i18n/runtime"
 import { appStore } from "@shared/store/appStore/state"

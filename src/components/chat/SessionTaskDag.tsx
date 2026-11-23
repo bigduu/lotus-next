@@ -5,7 +5,7 @@ import { useAppStore } from "@shared/store/appStore"
 import type { TaskItem } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { layoutSessionTaskDag, taskNodeHeight, taskNodeWidth } from "./sessionTaskDagLayout"
+import { layoutSessionTaskDag, taskNodeHeight, taskNodeWidth } from "@/lib/chat/sessionTaskDagLayout"
 
 const emptyTasks: readonly TaskItem[] = []
 const minZoom = 0.125

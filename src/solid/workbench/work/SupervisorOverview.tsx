@@ -1,6 +1,6 @@
 import { ChevronRight, CircleDot, FileText, MessageCircle } from "@lucide/solid"
 import { createMemo, createSignal, For, Show } from "solid-js"
-import { ticketWorkStatusLabel } from "@/components/chat/ticketWorkLabels"
+import { ticketWorkStatusLabel } from "@services/tickets/ticketWorkLabels"
 import { createUiLocale, createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover"

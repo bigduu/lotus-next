@@ -8,7 +8,7 @@ import type { SessionFileChangeGroup } from "@/lib/sessionFileChanges"
 import {
   displayFileChangePath,
   type FileChangePathMode,
-} from "./fileChangePresentation"
+} from "@/lib/chat/fileChangePresentation"
 import { FileChangeView, type FileChangeViewMode } from "./FileChangeView"
 
 const SPLIT_DIFF_MIN_WIDTH = 720
