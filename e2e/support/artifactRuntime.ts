@@ -45,6 +45,7 @@ export interface ArtifactRuntimeOptions {
   readonly bootstrapRequestState?: "local_bypass" | "authenticated" | "unauthenticated"
   readonly sessionId?: string
   readonly sessionFeatures?: readonly string[]
+  readonly serveStaticFromLocalServer?: boolean
 }
 
 export const standaloneScenario: ArtifactScenario = {
@@ -546,6 +547,12 @@ export const installArtifactRuntime = async (
         contentType: "text/html; charset=utf-8",
         body: embeddedHost(scenario.appPath),
       })
+      return
+    }
+
+    if (options.serveStaticFromLocalServer) {
+      observation.staticUrls.push(url.href)
+      await route.fallback()
       return
     }
 

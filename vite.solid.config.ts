@@ -4,6 +4,7 @@ import { defineConfig, loadEnv, type Plugin, type PreviewServer, type ViteDevSer
 import { assertSafePublicBuildEnvironment, portableArtifactBase, sourceAliases } from "./vite.config.ts"
 
 const previewEntry = "solid-preview.html"
+const candidateEntry = "solid-candidate.html"
 
 function servePreviewIndex(): Plugin {
   const configure = (server: ViteDevServer | PreviewServer) => {
@@ -41,13 +42,13 @@ export default defineConfig(({ mode }) => {
     appType: "mpa",
     base: portableArtifactBase,
     cacheDir: "node_modules/.vite-solid-preview",
-    optimizeDeps: { entries: [previewEntry] },
+    optimizeDeps: { entries: [previewEntry, candidateEntry] },
     plugins: [solid(), tailwindcss(), servePreviewIndex(), assertSolidRuntime()],
     resolve: { alias: sourceAliases },
     server: { host: "127.0.0.1", port: 9573, strictPort: true },
     build: {
       outDir: "dist-solid-preview",
-      rollupOptions: { input: previewEntry },
+      rollupOptions: { input: [previewEntry, candidateEntry] },
     },
   }
 })
