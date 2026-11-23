@@ -40,14 +40,14 @@ const initialHistory = [
   { id: "final1", role: "assistant", content: reportBody(2), created_at: at(4) },
 ]
 
-async function setup(page: Page) {
+async function setup(page: Page, messages: typeof initialHistory = initialHistory) {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", "all-surface-session")
   })
   const session = makeSession()
-  const observation = await installArtifactRuntime(page, standaloneScenario, initialHistory)
-  const history = [...initialHistory]
+  const observation = await installArtifactRuntime(page, standaloneScenario, messages)
+  const history = [...messages]
   let socket: WebSocketRoute | undefined
   let sequence = 0
   let subscriptions = 0
@@ -132,6 +132,74 @@ test("a folded turn never lets later rows overlap the long final report", async 
   await page.waitForTimeout(1_500)
   await expectNoOverlap()
 
+  expect(state.observation.pageErrors).toEqual([])
+  expect(state.observation.consoleErrors).toEqual([])
+})
+
+test("history keeps a live tail and remembers an expanded activity across virtual row remounts", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  const thought = "Read the result before preparing the report."
+  const historyMessages = [
+    ...initialHistory.map((message) => message.id === "m1" ? { ...message, reasoning: thought } : message),
+    ...Array.from({ length: 200 }, (_, index) => ({
+      id: `later-${index}`, role: index % 2 === 0 ? "user" : "assistant",
+      content: `Later message ${index}`, created_at: at(100 + index),
+    })),
+  ]
+  const state = await setup(page, historyMessages)
+  const viewport = page.locator("[data-history-viewport]").first()
+  const history = viewport.locator("[data-virtual-history]")
+  const first = history.locator('[data-history-entry-key^="message-u1"]')
+  const last = history.locator('[data-history-entry-key^="message-later-199"]')
+  const rows = history.locator("[data-history-entry-key]")
+  await expect(last).toBeVisible()
+  await expect(first).toHaveCount(0)
+  expect(await rows.count()).toBeGreaterThan(0)
+  expect(await rows.count()).toBeLessThan(40)
+
+  await page.getByRole("textbox", { name: "消息", exact: true }).fill("Keep the live answer while I read")
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => state.subscriptions).toBe(1)
+  const liveText = "A running answer outside the virtual rows."
+  state.emit({ type: "token", content: liveText })
+  const live = viewport.getByText(liveText, { exact: true })
+  await expect(live).toBeVisible()
+  await expect(history.getByText(liveText, { exact: true })).toHaveCount(0)
+
+  const readEarlier = async () => {
+    await viewport.hover()
+    await page.mouse.wheel(0, -100_000)
+    await expect(first).toBeVisible()
+    await expect(last).toHaveCount(0)
+    await expect(live).toHaveCount(1)
+    expect(await rows.count()).toBeLessThan(40)
+  }
+  await readEarlier()
+
+  const fold = history.locator('[data-history-entry-key^="collapsed-turn-final1"]')
+  const turn = fold.locator("[data-turn-toggle]")
+  const process = fold.locator("[data-process-toggle]")
+  const reasoning = fold.locator("[data-reasoning-toggle]")
+  await expect(turn).toHaveAttribute("aria-expanded", "false")
+  await turn.click()
+  await expect(process).toHaveAttribute("aria-expanded", "false")
+  await process.click()
+  await expect(process).toHaveAttribute("aria-expanded", "true")
+  await expect(fold.getByText("Read complete.", { exact: true })).toBeVisible()
+  await reasoning.click()
+  await expect(fold.getByRole("region", { name: "思考过程", exact: true })).toHaveText(thought)
+
+  await page.getByRole("button", { name: "滚动到底部", exact: true }).click()
+  await expect(last).toBeVisible()
+  await expect(fold).toHaveCount(0)
+  await expect(live).toBeVisible()
+  await readEarlier()
+
+  await expect(turn).toHaveAttribute("aria-expanded", "true")
+  await expect(process).toHaveAttribute("aria-expanded", "true")
+  await expect(fold.getByText("Read complete.", { exact: true })).toBeVisible()
+  await expect(reasoning).toHaveAttribute("aria-expanded", "true")
+  await expect(fold.getByRole("region", { name: "思考过程", exact: true })).toHaveText(thought)
   expect(state.observation.pageErrors).toEqual([])
   expect(state.observation.consoleErrors).toEqual([])
 })
