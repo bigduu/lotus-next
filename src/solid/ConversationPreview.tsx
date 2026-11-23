@@ -3,23 +3,33 @@ import { createSignal } from "solid-js"
 import { uiText } from "@shared/i18n/text"
 import { ComposerEditor } from "./composer/ComposerEditor"
 import { Button } from "./ui/button"
+import { VirtualHistory } from "./history/VirtualHistory"
 import { AssistantMarkdown } from "./markdown/AssistantMarkdown"
 
 export function ConversationPreview(props: { theme: "light" | "dark" }) {
   const [draft, setDraft] = createSignal("")
-  const [content, setContent] = createSignal("**Lotus Next**")
+  const [history, setHistory] = createSignal([{ key: "intro", content: "**Lotus Next**" }])
+  let nextMessage = 0
   const submit = () => {
     const value = draft().trim()
     if (!value) return
-    setContent(value)
+    const key = String(++nextMessage)
+    setHistory((entries) => [...entries, { key, content: value }])
     setDraft("")
   }
 
   return (
     <section class="grid min-w-0 gap-3">
-      <div class="min-w-0 rounded-2xl border bg-card p-3">
-        <AssistantMarkdown theme={props.theme} text={uiText}>{content()}</AssistantMarkdown>
-      </div>
+      <VirtualHistory
+        class="h-48 rounded-2xl border bg-card"
+        entries={history()}
+        estimateSize={() => 56}
+        renderEntry={(entry) => (
+          <div class="min-w-0 px-2 py-1">
+            <AssistantMarkdown theme={props.theme} text={uiText}>{entry().content}</AssistantMarkdown>
+          </div>
+        )}
+      />
       <div class="grid min-w-0 gap-2 rounded-3xl border bg-background p-2">
         <ComposerEditor
           id="solid-preview-draft"

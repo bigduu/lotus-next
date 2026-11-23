@@ -36,8 +36,9 @@ test("submits Markdown using the Solid Tiptap editor", async ({ page }) => {
   await composer.fill("**从输入框渲染**\n\n- 使用全角中文");
   await composer.press("Enter");
 
-  await expect(page.locator("strong", { hasText: "从输入框渲染" })).toBeVisible();
-  await expect(page.locator("li", { hasText: "使用全角中文" })).toBeVisible();
+  const history = page.locator("[data-virtual-history]");
+  await expect(history.locator("strong", { hasText: "从输入框渲染" })).toBeVisible();
+  await expect(history.locator("li", { hasText: "使用全角中文" })).toBeVisible();
   await expect(composer).not.toContainText("从输入框渲染");
 });
 
