@@ -16,19 +16,49 @@ type ConfirmedOpen = (row: Row, observation: ManagedSessionsResponse, current?: 
 function createPagingFocus(controller: Controller) {
   let more: HTMLButtonElement | null = null
   let fallback: HTMLButtonElement | null = null
-  let pending: HTMLButtonElement | null = null
-  createEffect(() => [controller.view().loadingMore, controller.view().nextAfter ?? controller.view().nextOffset] as const,
-    ([loading]) => {
-      if (loading || !pending) return
-      const previous = pending
-      pending = null
-      if (!previous.isConnected && document.activeElement === document.body) fallback?.focus()
+  let pending: { button: HTMLButtonElement; listener: AbortController } | null = null
+  const cancel = () => {
+    pending?.listener.abort()
+    pending = null
+  }
+  const restore = () => { fallback?.focus({ preventScroll: true }) }
+  onCleanup(cancel)
+  createEffect(() => {
+    const view = controller.view()
+    return view.loadingMore ? "loading" : view.nextAfter !== null || view.nextOffset !== null ? "more" : "done"
+  }, (state) => {
+    const request = pending
+    if (state === "loading" || !request) return
+    if (state === "more") { cancel(); return }
+
+    // The final page can settle before Solid has detached the focused button.
+    const frame = requestAnimationFrame(() => {
+      if (pending !== request) return
+      cancel()
+      const document = request.button.ownerDocument
+      if (!request.button.isConnected && document.activeElement === document.body && fallback?.isConnected) restore()
     })
+    return () => cancelAnimationFrame(frame)
+  })
   return {
     more: (element: HTMLButtonElement) => { more = element },
     fallback: (element: HTMLButtonElement) => { fallback = element },
-    restore: () => { fallback?.focus({ preventScroll: true }) },
-    remember: () => { pending = document.activeElement === more ? more : null },
+    restore,
+    loadMore: () => {
+      const view = controller.view()
+      if (view.loadingMore || view.loading || view.submitting) return
+      cancel()
+      const button = more
+      if (button && button.ownerDocument.activeElement === button) {
+        const document = button.ownerDocument
+        const listener = new AbortController()
+        pending = { button, listener }
+        document.addEventListener("focusin", (event) => {
+          if (event.target !== button && event.target !== document.body) cancel()
+        }, { signal: listener.signal })
+      }
+      void controller.loadMore()
+    },
   }
 }
 
@@ -99,6 +129,10 @@ export function SupervisorManagedSessionsDialog(props: {
       {/* The force-mounted Workbench can register above this portal in Kobalte's layer stack. */}
       <DialogContent class={`z-[60] max-h-[90dvh] overflow-y-auto ${scopeOpen() ? "pointer-events-none!" : "pointer-events-auto!"}`}
         dismissable={!view().submitting && !scopeOpen()}
+        onOpenAutoFocus={(event: Event) => {
+          const content = event.currentTarget
+          if (content instanceof HTMLElement && content.contains(content.ownerDocument.activeElement)) event.preventDefault()
+        }}
         onEscapeKeyDown={(event: KeyboardEvent) => { if (closingTimer !== undefined) event.preventDefault() }}
         onCloseAutoFocus={(event: Event) => { if (props.returnFocus) { event.preventDefault(); props.returnFocus() } }}>
         <DialogHeader>
@@ -138,8 +172,9 @@ export function SupervisorManagedSessionsDialog(props: {
               </div></Show>
             </li>}</For></ul>
             <Show when={view().nextOffset !== null || view().nextAfter !== null}>
-              <Button ref={paging.more} size="sm" variant="outline" disabled={view().loadingMore || view().loading || view().submitting}
-                onClick={() => { paging.remember(); void controller.loadMore() }}>{text("supervisor_sessions_more")}</Button>
+              <Button ref={paging.more} size="sm" variant="outline" disabled={view().loading || view().submitting}
+                aria-disabled={view().loadingMore ? "true" : undefined} class="aria-disabled:opacity-50"
+                onClick={paging.loadMore}>{text("supervisor_sessions_more")}</Button>
             </Show>
           </>}>{(intent) => <section class="space-y-3 rounded-lg border p-3" data-testid="managed-session-review">
             <p class="text-sm">{text(intent().enabled ? "supervisor_sessions_review_attach" : "supervisor_sessions_review_detach", { title: reviewed()?.summary?.title || intent().target_session_id })}</p>
@@ -212,8 +247,9 @@ export function SupervisorManagedSessionsPanel(props: {
       }}>{text("supervisor_sessions_open")}</Button>
     </li>}</For></ul>
     <Show when={controller.currentUser() && view().nextAfter !== null}>
-      <Button ref={paging.more} size="sm" variant="outline" disabled={view().loadingMore || view().loading}
-        onClick={() => { paging.remember(); void controller.loadMore() }}>{text("supervisor_sessions_more")}</Button>
+      <Button ref={paging.more} size="sm" variant="outline" disabled={view().loading}
+        aria-disabled={view().loadingMore ? "true" : undefined} class="aria-disabled:opacity-50"
+        onClick={paging.loadMore}>{text("supervisor_sessions_more")}</Button>
     </Show>
     <Button ref={paging.fallback} variant="outline" size="sm" class="mt-3" onClick={() => setManaging(true)}>
       {text(controller.currentUser() ? "supervisor_sessions_browse" : "supervisor_sessions_manage")}
