@@ -1,4 +1,4 @@
-import { uiLanguage } from "@shared/i18n/ui"
+import { uiLanguage } from "@shared/i18n/text"
 
 export function formatCompact(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "0"
