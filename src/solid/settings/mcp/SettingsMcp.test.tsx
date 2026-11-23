@@ -1,14 +1,31 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { flush } from "solid-js"
+import { render } from "@solidjs/web"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
 import { McpService, mcpService } from "@services/mcp"
 import { SettingsMcp } from "./SettingsMcp"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 
-const roots: Root[] = []
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-environment.IS_REACT_ACT_ENVIRONMENT = true
+vi.mock("../../ui/responsive-dialog", () => import("./mcpTestDialog"))
+vi.mock("@lucide/solid", () => {
+  const Icon = () => <svg aria-hidden="true" />
+  return { ChevronRight: Icon, Pencil: Icon, Plus: Icon, RefreshCw: Icon, Trash2: Icon, Upload: Icon, X: Icon }
+})
+vi.mock("../../ui/switch", () => ({
+  Switch: (props: {
+    checked: boolean; disabled?: boolean; "aria-label"?: string; onCheckedChange: (checked: boolean) => void;
+  }) => <button type="button" role="switch" aria-checked={props.checked ? "true" : "false"}
+    aria-label={props["aria-label"]} disabled={props.disabled} onClick={() => props.onCheckedChange(!props.checked)} />,
+}))
+
+const disposers: Array<() => void> = []
+const schedule = setTimeout
+
+async function settle(action: () => unknown = () => undefined) {
+  await action()
+  await new Promise<void>((resolve) => schedule(resolve, 0))
+  flush()
+}
 const record = (id: string, type = "stdio", status = "stopped") => ({
   id, name: id, enabled: false, status, config: { id, enabled: false,
     transport: type === "stdio" ? { type, command: "fixture", args: [], env: {} }
@@ -24,18 +41,19 @@ const deferred = <T,>() => {
   return { promise, resolve }
 }
 const button = (name: string) => [...document.querySelectorAll("button")].find((element) => element.textContent?.trim() === name)!
-const click = async (name: string) => act(async () => { button(name).click() })
-const fill = async (value = source) => act(async () => {
+const click = async (name: string) => settle(() => { button(name).click() })
+const fill = async (value = source) => settle(() => {
   const input = document.querySelector("textarea")!
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value)
   input.dispatchEvent(new Event("input", { bubbles: true }))
 })
-const replace = async () => act(async () => { document.querySelector<HTMLInputElement>('input[type="radio"][value="replace"]')!.click() })
-const confirm = async () => act(async () => { document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click() })
+const replace = async () => settle(() => { document.querySelector<HTMLInputElement>('input[type="radio"][value="replace"]')!.click() })
+const confirm = async () => settle(() => { document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click() })
 async function mount() {
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => { root.render(<SettingsMcp />) })
-  return root
+  const container = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <SettingsMcp />, container)
+  disposers.push(() => { dispose(); container.remove() })
+  await settle()
 }
 beforeEach(() => {
   get.mockReset().mockResolvedValue({ servers: [record("existing")] })
@@ -48,8 +66,7 @@ beforeEach(() => {
   vi.spyOn(mcpService, "importServers").mockImplementation(service.importServers.bind(service))
 })
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+  for (const dispose of disposers.splice(0)) dispose()
 })
 
 describe("SettingsMcp JSON import integration", () => {
@@ -67,17 +84,17 @@ describe("SettingsMcp JSON import integration", () => {
     const initial = deferred<unknown>(); const next = deferred<unknown>()
     get.mockReturnValueOnce(initial.promise).mockReturnValueOnce(next.promise)
     await mount()
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(get).toHaveBeenCalledTimes(1)
     expect(button("导入 JSON").disabled).toBe(true)
-    await act(async () => { vi.advanceTimersByTime(5_000); initial.resolve({ servers: [record("existing")] }) })
+    await settle(() => { vi.advanceTimersByTime(5_000); initial.resolve({ servers: [record("existing")] }) })
     expect(button("导入 JSON").disabled).toBe(false)
     expect(document.body.textContent).toContain("existing")
-    await act(async () => { vi.advanceTimersByTime(5_000) })
+    await settle(() => { vi.advanceTimersByTime(5_000) })
     expect(get).toHaveBeenCalledTimes(2)
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(get).toHaveBeenCalledTimes(2)
-    await act(async () => { vi.advanceTimersByTime(5_000); next.resolve({ servers: [record("existing", "streamablehttp", "ready")] }) })
+    await settle(() => { vi.advanceTimersByTime(5_000); next.resolve({ servers: [record("existing", "streamablehttp", "ready")] }) })
     expect(document.body.textContent).toContain("Streamable HTTP")
     expect(document.body.textContent).toContain("已连接 · 1 工具")
     expect(button("导入 JSON").disabled).toBe(false)
@@ -88,13 +105,13 @@ describe("SettingsMcp JSON import integration", () => {
     const stale = deferred<unknown>(); const fresh = deferred<unknown>()
     get.mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
     await mount()
-    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="刷新 MCP 列表"]')!.click() })
+    await settle(() => { document.querySelector<HTMLButtonElement>('button[aria-label="刷新 MCP 列表"]')!.click() })
     expect(get).toHaveBeenCalledTimes(2)
-    await act(async () => { stale.resolve({ servers: [] }) })
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { stale.resolve({ servers: [] }) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(get).toHaveBeenCalledTimes(2)
     expect(button("导入 JSON").disabled).toBe(true)
-    await act(async () => { fresh.resolve({ servers: [record("fresh")] }) })
+    await settle(() => { fresh.resolve({ servers: [record("fresh")] }) })
     expect(document.body.textContent).toContain("fresh")
     expect(button("导入 JSON").disabled).toBe(false)
   })
@@ -104,14 +121,14 @@ describe("SettingsMcp JSON import integration", () => {
     const stale = deferred<unknown>(); const mutation = deferred<unknown>()
     await mount()
     get.mockReturnValueOnce(stale.promise).mockResolvedValueOnce({ servers: [record("existing"), record("incoming", "streamablehttp", "ready")] })
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     post.mockReturnValueOnce(mutation.promise)
     await click("导入 JSON"); await fill(); await click("导入")
-    await act(async () => { vi.advanceTimersByTime(20_000) })
+    await settle(() => { vi.advanceTimersByTime(20_000) })
     expect(get).toHaveBeenCalledTimes(2); expect(post).toHaveBeenCalledTimes(1)
-    await act(async () => { mutation.resolve(success()) })
+    await settle(() => { mutation.resolve(success()) })
     expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("实际服务器列表与运行状态已刷新")
-    await act(async () => { stale.resolve({ servers: [record("existing")] }) })
+    await settle(() => { stale.resolve({ servers: [record("existing")] }) })
     await click("完成")
     expect(document.body.textContent).toContain("incoming")
     expect(document.body.textContent).toContain("Streamable HTTP")
@@ -124,7 +141,7 @@ describe("SettingsMcp JSON import integration", () => {
     const stale = deferred<unknown>()
     await mount()
     get.mockReturnValueOnce(stale.promise)
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     await click("导入 JSON"); await fill(); await replace(); await confirm()
     get.mockResolvedValueOnce({ servers: [record("existing"), record("newly-discovered")] })
     await click("导入")
@@ -133,7 +150,7 @@ describe("SettingsMcp JSON import integration", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("列表已变化")
     expect(document.querySelector('[aria-label="将删除的服务器"]')?.textContent).toContain("newly-discovered")
     expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false)
-    await act(async () => { stale.resolve({ servers: [record("existing")] }) })
+    await settle(() => { stale.resolve({ servers: [record("existing")] }) })
     expect(document.querySelector('[aria-label="将删除的服务器"]')?.textContent).toContain("newly-discovered")
     await confirm()
     get.mockResolvedValueOnce({ servers: [record("existing"), record("newly-discovered")] })
@@ -149,10 +166,10 @@ describe("SettingsMcp JSON import integration", () => {
     await mount(); await click("导入 JSON"); await fill(); await replace(); await confirm()
     expect(button("导入").disabled).toBe(false)
     get.mockResolvedValueOnce({ servers: [record("existing"), record("temporary")] })
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false)
     get.mockResolvedValueOnce({ servers: [record("existing")] })
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[aria-label="将删除的服务器"]')?.textContent).not.toContain("temporary")
     expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false)
     expect(button("导入").disabled).toBe(true)
@@ -211,7 +228,7 @@ describe("SettingsMcp JSON import integration", () => {
   it("restores focus to the scoped import trigger after keyboard cancellation and reopens a clean draft", async () => {
     await mount(); const trigger = button("导入 JSON")
     trigger.focus(); await click("导入 JSON"); await fill()
-    await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })) })
+    await settle(() => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })) })
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger))
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     await click("导入 JSON")
@@ -231,7 +248,7 @@ describe("SettingsMcp JSON import integration", () => {
   it("keeps an imported Streamable HTTP server editable without changing its transport, headers or timeout", async () => {
     get.mockResolvedValue({ servers: [record("remote", "streamablehttp")] })
     await mount()
-    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="编辑"]')!.click() })
+    await settle(() => { document.querySelector<HTMLButtonElement>('button[aria-label="编辑"]')!.click() })
     expect(button("Streamable HTTP(远程)").getAttribute("aria-pressed")).toBe("true")
     expect([...document.querySelectorAll<HTMLInputElement>("input")].some((input) => input.value === "https://example.test/mcp")).toBe(true)
     await click("保存")
@@ -243,7 +260,7 @@ describe("SettingsMcp JSON import integration", () => {
 
 it("announces the Enable action for a disabled MCP switch in English", async () => {
   await mount()
-  await act(async () => { await changeLocale("en-US") })
+  await settle(() => changeLocale("en-US"))
   const toggle = document.querySelector('[role="switch"][aria-label="Enable"]')!
   expect(toggle).not.toBeNull()
   expect(toggle.getAttribute("aria-checked")).toBe("false")

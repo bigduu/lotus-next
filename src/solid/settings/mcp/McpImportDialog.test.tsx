@@ -1,12 +1,19 @@
-import { act, type ComponentProps } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createSignal, flush, Show } from "solid-js"
+import { render as renderSolid, type ComponentProps } from "@solidjs/web"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { McpImportFailure } from "@services/mcp/importConfig"
 import { McpImportDialog, type McpImportCompletion } from "./McpImportDialog"
 
-const roots: Root[] = []
-const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-environment.IS_REACT_ACT_ENVIRONMENT = true
+vi.mock("../../ui/responsive-dialog", () => import("./mcpTestDialog"))
+
+const disposers: Array<() => void> = []
+const schedule = setTimeout
+
+async function settle(action: () => unknown = () => undefined) {
+  await action()
+  await new Promise<void>((resolve) => schedule(resolve, 0))
+  flush()
+}
 const source = JSON.stringify({ mcpServers: { incoming: { command: "fixture", disabled: true, env: { TOKEN: "PRIVATE_IMPORT_MARKER" } } } })
 const result: McpImportCompletion = { result: { mode: "merge", added: 1, updated: 0, removed: 0, server_ids: ["incoming"] }, refreshed: true }
 const deferred = <T,>() => {
@@ -15,15 +22,15 @@ const deferred = <T,>() => {
   return { promise, resolve }
 }
 const button = (text: string) => [...document.querySelectorAll("button")].find((element) => element.textContent?.trim() === text)!
-const click = async (text: string) => act(async () => { button(text).click() })
-const check = async () => act(async () => { document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click() })
-const mode = async (value: "merge" | "replace") => act(async () => { document.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!.click() })
-const fill = async (value = source) => act(async () => {
+const click = async (text: string) => settle(() => { button(text).click() })
+const check = async () => settle(() => { document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click() })
+const mode = async (value: "merge" | "replace") => settle(() => { document.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!.click() })
+const fill = async (value = source) => settle(() => {
   const input = document.querySelector("textarea")!
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value)
   input.dispatchEvent(new Event("input", { bubbles: true }))
 })
-const file = async (pending: Promise<string>, name = "import.json", contents = "fixture") => act(async () => {
+const file = async (pending: Promise<string>, name = "import.json", contents = "fixture") => settle(() => {
   const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
   const selected = new File([contents], name, { type: "application/json" })
   Object.defineProperty(selected, "text", { value: () => pending })
@@ -31,21 +38,27 @@ const file = async (pending: Promise<string>, name = "import.json", contents = "
   input.dispatchEvent(new Event("change", { bubbles: true }))
 })
 async function mount(overrides: Partial<ComponentProps<typeof McpImportDialog>> = {}) {
-  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  const container = document.body.appendChild(document.createElement("div"))
+  const [open, setOpen] = createSignal(true)
   const props = {
     existingIds: ["existing", "keep"], listConfirmed: true, listRevision: 1,
-    onClose: vi.fn(() => root.render(null)), onReturnFocus: vi.fn(),
+    onClose: vi.fn(() => setOpen(false)), onReturnFocus: vi.fn(),
     onImport: vi.fn().mockResolvedValue(result),
     onReconcile: vi.fn().mockResolvedValue({ ...result, reconciled: true }),
     onReload: vi.fn().mockResolvedValue(true), ...overrides,
   }
-  const render = async (next = props) => act(async () => { root.render(<McpImportDialog {...next} />) })
-  await render()
-  return { props, render, root }
+  const [currentProps, setProps] = createSignal<ComponentProps<typeof McpImportDialog>>(props)
+  const dispose = renderSolid(() => <Show when={open()}><McpImportDialog {...currentProps()} /></Show>, container)
+  disposers.push(() => { dispose(); container.remove() })
+  await settle()
+  return {
+    props,
+    render: (next = props) => settle(() => { setProps(next); setOpen(true) }),
+    closeOwner: () => settle(() => setOpen(false)),
+  }
 }
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+  for (const dispose of disposers.splice(0)) dispose()
 })
 
 describe("McpImportDialog", () => {
@@ -100,12 +113,12 @@ describe("McpImportDialog", () => {
     const onImport = vi.fn().mockReturnValue(pending.promise)
     const { props } = await mount({ onImport })
     await fill()
-    await act(async () => { button("导入").click(); button("导入").click() })
+    await settle(() => { button("导入").click(); button("导入").click() })
     await fill('{"mcpServers":{"other":{"command":"other"}}}')
-    await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })) })
+    await settle(() => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })) })
     expect(onImport).toHaveBeenCalledTimes(1); expect(props.onClose).not.toHaveBeenCalled()
     expect(button("取消").disabled).toBe(true)
-    await act(async () => { pending.resolve(result) })
+    await settle(() => { pending.resolve(result) })
     expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("incoming")
   })
 
@@ -114,11 +127,11 @@ describe("McpImportDialog", () => {
     const oldFile = deferred<string>(); await file(oldFile.promise)
     expect(button("导入").disabled).toBe(true)
     await fill()
-    await act(async () => { oldFile.resolve('{"mcpServers":{"old":{"command":"old"}}}') })
+    await settle(() => { oldFile.resolve('{"mcpServers":{"old":{"command":"old"}}}') })
     expect(document.querySelector("textarea")?.value).toBe(source)
     const closingFile = deferred<string>(); await file(closingFile.promise)
     await click("取消"); await render()
-    await act(async () => { closingFile.resolve(source) })
+    await settle(() => { closingFile.resolve(source) })
     expect(document.querySelector("textarea")?.value).toBe("")
     expect(props.onImport).not.toHaveBeenCalled()
   })
@@ -127,8 +140,8 @@ describe("McpImportDialog", () => {
     await mount(); await fill(); await mode("replace"); await check()
     const first = deferred<string>(); const second = deferred<string>()
     await file(first.promise); await file(second.promise, "newer.json")
-    await act(async () => { second.resolve(source) })
-    await act(async () => { first.resolve('{"mcpServers":{"old":{"command":"old"}}}') })
+    await settle(() => { second.resolve(source) })
+    await settle(() => { first.resolve('{"mcpServers":{"old":{"command":"old"}}}') })
     expect(document.querySelector("textarea")?.value).toBe(source)
     expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false)
     expect(button("导入").disabled).toBe(true)
@@ -156,7 +169,7 @@ describe("McpImportDialog", () => {
     await file(pending.promise, "empty.json", contents)
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(button("导入").disabled).toBe(true)
-    await act(async () => { pending.resolve(contents) })
+    await settle(() => { pending.resolve(contents) })
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("完整 JSON 配置")
     expect(button("导入").disabled).toBe(true)
     await click("导入")
@@ -214,10 +227,10 @@ describe("McpImportDialog", () => {
 
   it("discards a late completed import after unmount rather than applying it to a new dialog", async () => {
     const pending = deferred<McpImportCompletion>()
-    const { root, render } = await mount({ onImport: vi.fn().mockReturnValue(pending.promise) })
+    const { closeOwner, render } = await mount({ onImport: vi.fn().mockReturnValue(pending.promise) })
     await fill(); await click("导入")
-    await act(async () => { root.render(null) }); await render()
-    await act(async () => { pending.resolve(result) })
+    await closeOwner(); await render()
+    await settle(() => { pending.resolve(result) })
     expect(document.querySelector("textarea")?.value).toBe("")
     expect(document.querySelector('[aria-label="导入结果"]')).toBeNull()
   })
