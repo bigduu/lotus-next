@@ -8,15 +8,17 @@ const rowSpacing = taskNodeHeight + 14
 const laneSpacing = 14
 const padding = 12
 
+type TaskEdge = { from: string; to: string; kind: "dependency" | "step" }
+
 export function layoutSessionTaskDag(items: readonly TaskItem[]) {
   const dependencyCounts = new Map(items.map((item) => [item.id, 0]))
   const dependents = new Map<string, string[]>()
-  const edges: { from: string; to: string }[] = []
+  const edges: TaskEdge[] = []
 
   for (const item of items) {
     for (const from of new Set(item.depends_on)) {
       if (!dependencyCounts.has(from)) continue
-      edges.push({ from, to: item.id })
+      edges.push({ from, to: item.id, kind: "dependency" })
       dependencyCounts.set(item.id, dependencyCounts.get(item.id)! + 1)
       const targets = dependents.get(from) ?? []
       targets.push(item.id)
@@ -38,16 +40,26 @@ export function layoutSessionTaskDag(items: readonly TaskItem[]) {
   }
   if (ready.length !== items.length) return null
 
+  // Parent IDs describe grouping and do not affect prerequisite ordering.
+  // A pair already connected by an arrow can share that single visible line.
+  for (const { id, parent_id: parentId, depends_on: prerequisites } of items) {
+    if (!parentId || parentId === id || !dependencyCounts.has(parentId)) continue
+    if (prerequisites?.includes(parentId) || dependents.get(id)?.includes(parentId)) continue
+    edges.push({ from: parentId, to: id, kind: "step" })
+  }
+
   const rankOf = (id: string) => ranks.get(id) ?? 0
-  // Route dependencies that skip columns above the node boxes.
-  const longEdges = edges.filter(({ from, to }) => rankOf(to) > rankOf(from) + 1)
-  longEdges.sort((left, right) => rankOf(left.from) - rankOf(right.from))
+  const firstRank = ({ from, to }: TaskEdge) => Math.min(rankOf(from), rankOf(to))
+  const lastRank = ({ from, to }: TaskEdge) => Math.max(rankOf(from), rankOf(to))
+  // Route lines that skip columns above the node boxes.
+  const longEdges = edges.filter((edge) => lastRank(edge) > firstRank(edge) + 1)
+  longEdges.sort((left, right) => firstRank(left) - firstRank(right))
   const laneEnds: number[] = []
   const edgeLanes = new Map<(typeof edges)[number], number>()
   for (const edge of longEdges) {
-    const reusable = laneEnds.findIndex((end) => end < rankOf(edge.from))
+    const reusable = laneEnds.findIndex((end) => end < firstRank(edge))
     const lane = reusable === -1 ? laneEnds.length : reusable
-    laneEnds[lane] = rankOf(edge.to)
+    laneEnds[lane] = lastRank(edge)
     edgeLanes.set(edge, lane)
   }
   const lanesHeight = laneEnds.length * laneSpacing
@@ -70,21 +82,29 @@ export function layoutSessionTaskDag(items: readonly TaskItem[]) {
   return {
     positions,
     edges: edges.map((edge) => {
-      const start = positions.get(edge.from)!
-      const end = positions.get(edge.to)!
+      // Step lines have no arrow, so orient their path left to right even
+      // when prerequisites have placed the parent in a later column.
+      const leftToRight = rankOf(edge.from) <= rankOf(edge.to)
+      const start = positions.get(leftToRight ? edge.from : edge.to)!
+      const end = positions.get(leftToRight ? edge.to : edge.from)!
+      if (start.x === end.x) {
+        const gutter = start.x - padding / 2
+        const y1 = start.y + taskNodeHeight * 0.75
+        const y2 = end.y + taskNodeHeight * 0.75
+        return { ...edge, path: `M ${start.x} ${y1} H ${gutter} V ${y2} H ${end.x}` }
+      }
       const x1 = start.x + taskNodeWidth
-      const x2 = end.x - 3
+      const x2 = end.x - (edge.kind === "dependency" ? 3 : 0)
       const lane = edgeLanes.get(edge)
+      const port = taskNodeHeight * (edge.kind === "step" ? 0.75 : lane === undefined ? 0.5 : 0.25)
+      const y1 = start.y + port
+      const y2 = end.y + port
       if (lane !== undefined) {
-        const y1 = start.y + taskNodeHeight / 4
-        const y2 = end.y + taskNodeHeight / 4
         const laneY = padding + lane * laneSpacing
         const startGutter = x1 + columnGap / 2
         const endGutter = end.x - columnGap / 2
         return { ...edge, path: `M ${x1} ${y1} H ${startGutter} V ${laneY} H ${endGutter} V ${y2} H ${x2}` }
       }
-      const y1 = start.y + taskNodeHeight / 2
-      const y2 = end.y + taskNodeHeight / 2
       const bend = (x1 + x2) / 2
       return { ...edge, path: `M ${x1} ${y1} C ${bend} ${y1}, ${bend} ${y2}, ${x2} ${y2}` }
     }),

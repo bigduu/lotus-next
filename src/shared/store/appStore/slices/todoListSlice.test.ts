@@ -34,6 +34,32 @@ describe("Task snapshots and live progress", () => {
     expect(store.getState().getTaskListVersion("work-child")).toBe(48)
   })
 
+  it("recovers a missing task and applies its live delta after the snapshot arrives", async () => {
+    const store = createStore<TaskListSlice>()(createTaskListSlice)
+    const sessionId = "root"
+    const baseline = taskList(sessionId, "pending", 3)
+    const report = { ...baseline.items[0], id: "report", depends_on: ["read"] }
+    store.getState().setTaskList(sessionId, baseline)
+    let respond!: (value: TaskList) => void
+    api.get.mockReturnValueOnce(new Promise<TaskList>((resolve) => { respond = resolve }))
+
+    store.getState().updateTaskListDelta(sessionId, {
+      session_id: sessionId, item_id: report.id, status: "in_progress", tool_calls_count: 2, version: 5,
+    })
+    expect(store.getState().getTaskListVersion(sessionId)).toBe(3)
+    store.getState().updateTaskListDelta(sessionId, {
+      session_id: sessionId, item_id: "read", status: "completed", tool_calls_count: 1, version: 4,
+    })
+    respond({ ...taskList(sessionId, "completed", 4), items: [...store.getState().taskLists[sessionId].items, report] })
+
+    await vi.waitFor(() => expect(store.getState().getTaskListVersion(sessionId)).toBe(5))
+    expect(store.getState().taskLists[sessionId].items).toMatchObject([
+      { id: "read", status: "completed" },
+      { id: "report", status: "in_progress", depends_on: ["read"], tool_calls_count: 2 },
+    ])
+    expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
   it("keeps a newer Worker update when an older HTTP response or full event arrives", async () => {
     const store = createStore<TaskListSlice>()(createTaskListSlice)
     const root = taskList("supervisor", "blocked", 1491)

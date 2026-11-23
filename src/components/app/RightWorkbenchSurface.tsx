@@ -31,7 +31,7 @@ function workbenchSurfaces(panel: HTMLElement): HTMLElement[] {
   return [...surfaces]
 }
 
-export function RightWorkbenchSurface({ children, visible = true, pageVisible = true, docked = false, width,
+export function RightWorkbenchSurface({ children, visible = true, pageVisible = true, docked = false, expanded = false, width,
   onClose, focusScopeKey, getCurrentFocusScope, interactionSuspended = false, tabDragRef,
 }: {
   children: ReactNode
@@ -40,6 +40,7 @@ export function RightWorkbenchSurface({ children, visible = true, pageVisible = 
   interactionSuspended?: boolean
   tabDragRef?: RefObject<WorkbenchTabDrag | null>
   docked?: boolean
+  expanded?: boolean
   width?: number | string
   onClose: () => void
   focusScopeKey?: string | null
@@ -141,7 +142,7 @@ export function RightWorkbenchSurface({ children, visible = true, pageVisible = 
               "fixed inset-y-0 right-0 z-50 shadow-lg md:border-l")}
             style={{
               width: docked ? width ?? 520 : "100%",
-              maxWidth: docked ? undefined : "min(56rem, max(calc(100vw - 3rem), 48rem))",
+              maxWidth: docked || expanded ? undefined : "min(56rem, max(calc(100vw - 3rem), 48rem))",
               display: visible ? undefined : "none",
             }}>
             {children}

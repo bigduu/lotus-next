@@ -1,8 +1,8 @@
 import { StateCreator } from "zustand";
 
-import { AgentClient, type TaskItem as SessionTaskItem, type TaskItemStatus } from "@services/chat/AgentService";
+import { AgentClient, type TaskItem as SessionTaskItem, type TaskListDelta } from "@services/chat/AgentService";
 
-export type { TaskItemStatus } from "@services/chat/AgentService";
+export type { TaskItemStatus, TaskListDelta } from "@services/chat/AgentService";
 
 // Task item
 export interface TaskItem extends SessionTaskItem {
@@ -25,15 +25,6 @@ export interface TaskProgress {
   completed: number;
   total: number;
   percentage: number;
-}
-
-// Delta update for real-time progress
-export interface TaskListDelta {
-  session_id: string;
-  item_id: string;
-  status: TaskItemStatus;
-  tool_calls_count: number;
-  version: number;
 }
 
 export interface TaskListState {
@@ -141,38 +132,22 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
   },
 
   // Update from delta (from TaskListItemProgress event)
-  updateTaskListDelta: (sessionId, delta) =>
-    set((state) => {
-      const currentVersion = state.taskListVersions[sessionId] || 0;
-
-      // Ignore outdated updates
-      if (delta.version <= currentVersion) {
-        return state;
-      }
-
-      const currentList = state.taskLists[sessionId];
-      if (!currentList) {
-        // No existing list, ignore delta
-        return state;
-      }
-
-      // Update specific item
-      const updatedItems = currentList.items.map((item) =>
-        item.id === delta.item_id
-          ? {
-              ...item,
-              status: delta.status,
-              tool_calls_count: delta.tool_calls_count,
-            }
-          : item,
-      );
-
+  updateTaskListDelta: (sessionId, delta) => {
+    const current = get();
+    if (delta.session_id !== sessionId || delta.version <= current.getTaskListVersion(sessionId)) return;
+    const apply = (state: TaskListSlice) => {
+      const list = state.taskLists[sessionId];
+      if (!list || delta.version <= state.getTaskListVersion(sessionId)) return state;
+      const itemIndex = list.items.findIndex((item) => item.id === delta.item_id);
+      if (itemIndex < 0) return state;
+      const items = [...list.items];
+      items[itemIndex] = { ...items[itemIndex]!, status: delta.status, tool_calls_count: delta.tool_calls_count };
       return {
         taskLists: {
           ...state.taskLists,
           [sessionId]: {
-            ...currentList,
-            items: updatedItems,
+            ...list,
+            items,
             updated_at: new Date().toISOString(),
           },
         },
@@ -185,7 +160,15 @@ export const createTaskListSlice: StateCreator<TaskListSlice, [], [], TaskListSl
           [sessionId]: delta.status === "in_progress" ? delta.item_id : null,
         },
       };
-    }),
+    };
+    if (current.taskLists[sessionId]?.items.some((item) => item.id === delta.item_id)) {
+      set(apply);
+    } else {
+      // A new viewer may see progress before its snapshot, or may have missed
+      // a committed plan introducing this item. Recheck after the snapshot read.
+      void current.loadTaskList(sessionId).then(() => set(apply), () => {});
+    }
+  },
 
   // Clear task list for a session
   clearTaskList: (sessionId) =>

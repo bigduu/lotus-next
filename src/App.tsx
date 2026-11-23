@@ -62,6 +62,8 @@ function App() {
   // The main pane follows the global current session.
   const chat = useChat(undefined, undefined, { pageVisible: !settingsOpen })
   const { booted, chats, currentSessionId, currentChat, select: selectSession, newChat: createChat } = chat
+  const taskDagSessionId = currentSessionId && currentChat?.id === currentSessionId
+    && currentChat.kind !== "child" && !currentChat.parentSessionId ? currentSessionId : null
   const mainNavigationVersion = useRef(0)
   const [newChatEpoch, setNewChatEpoch] = useState(0)
   const getNavigationVersion = useCallback(() => mainNavigationVersion.current, [])
@@ -175,7 +177,8 @@ function App() {
   const workbenchSelectionVersionRef = useRef(0)
   const [workPanelTarget, setWorkPanelTarget] = useState<HTMLDivElement | null>(null)
   const workEnabled = !!currentChat && isDefaultSupervisor(currentChat)
-  const visibleToolTabs = openToolTabs.filter((tab) => tab !== "work" || workEnabled)
+  const visibleToolTabs = openToolTabs.filter((tab) =>
+    (tab !== "work" || workEnabled) && (tab !== "task-dag" || taskDagSessionId !== null))
 
   const [browserEntry, setBrowserEntry] = useState({ scope: workbenchScope, open: false, draft: "", touched: false })
   if (browserEntry.scope !== workbenchScope) {
@@ -201,7 +204,12 @@ function App() {
   )
   const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab, hasPendingDialog, activateTab } = browser
   const browserTabsForWorkbench = browserReadySessionId === currentSessionId ? browserState?.tabs : null
-  const selectedWorkbenchTab = (!browserEnabled && workbenchTab === "browser") || (!workEnabled && workbenchTab === "work") ? null : workbenchTab
+  const selectedWorkbenchTab = (workbenchTab === "browser" ? browserEnabled : workbenchTab && visibleToolTabs.includes(workbenchTab))
+    ? workbenchTab : null
+  const activeTaskDagScope = workbenchOpen && selectedWorkbenchTab === "task-dag" ? workbenchScope : null
+  const [expandedTaskDagScope, setExpandedTaskDagScope] = useState<string | null>(null)
+  if (expandedTaskDagScope !== null && expandedTaskDagScope !== activeTaskDagScope) setExpandedTaskDagScope(null)
+  const taskDagExpanded = activeTaskDagScope !== null && activeTaskDagScope === expandedTaskDagScope
 
   useEffect(() => {
     if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
@@ -287,7 +295,7 @@ function App() {
     workbenchState.dockWidth,
     saveWorkbenchWidth,
   )
-  const dockWorkbench = workbenchResize.canDock
+  const dockWorkbench = workbenchResize.canDock && !taskDagExpanded
   const settingsReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
   const openSettings = () => {
     if (!settingsOpen) {
@@ -582,8 +590,9 @@ function App() {
             visible={workbenchOpen}
             pageVisible={!settingsOpen}
             docked={dockWorkbench}
+            expanded={taskDagExpanded}
             width="100%"
-            onClose={() => setWorkbenchOpen(false)}
+            onClose={() => taskDagExpanded ? setExpandedTaskDagScope(null) : setWorkbenchOpen(false)}
           >
             {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
               <Suspense fallback={null}>
@@ -622,6 +631,13 @@ function App() {
                   openWorkbench(tab)
                 }}
                 onClose={() => setWorkbenchOpen(false)}
+                taskDag={taskDagSessionId ? {
+                  sessionId: taskDagSessionId,
+                  expanded: taskDagExpanded,
+                  onToggleExpanded: taskDagExpanded || workbenchResize.containerWidth >= 768
+                    ? () => setExpandedTaskDagScope(taskDagExpanded ? null : activeTaskDagScope)
+                    : undefined,
+                } : undefined}
                 inspector={
                   <Inspector
                     embedded
@@ -742,6 +758,7 @@ function App() {
           sidePaneOpen={workbenchOpen}
           onToggleSidePane={toggleWorkbench}
           onOpenSubagents={openSubagentTree}
+          onOpenTaskDag={taskDagSessionId ? () => openWorkbench("task-dag") : undefined}
           onSelectSubAgent={openSubagentPreview}
           onOpenSidebar={() => {
             setSidebarOpen(true)

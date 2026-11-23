@@ -459,6 +459,16 @@ export interface ChangeEvent {
   event: AgentEvent;
 }
 
+export function readTaskListDelta(event: AgentEvent): TaskListDelta | null {
+  const { session_id, item_id, status, tool_calls_count, version } = event;
+  if (event.type !== "task_list_item_progress" || !session_id || !item_id ||
+    typeof tool_calls_count !== "number" || typeof version !== "number" ||
+    (status !== "pending" && status !== "in_progress" && status !== "completed" && status !== "blocked")) {
+    return null;
+  }
+  return { session_id, item_id, status, tool_calls_count, version };
+}
+
 /** Callbacks for {@link AgentClient.subscribeToAccountStream}. */
 export interface AccountStreamHandlers {
   onChange: (change: ChangeEvent) => void;
@@ -2052,32 +2062,11 @@ export class AgentClient {
           );
         }
         break;
-      case "task_list_item_progress":
-        if (
-          event.session_id &&
-          event.item_id &&
-          event.status &&
-          event.tool_calls_count !== undefined &&
-          event.version !== undefined
-        ) {
-          const status = event.status;
-          const isTaskStatus =
-            status === "pending" ||
-            status === "in_progress" ||
-            status === "completed" ||
-            status === "blocked";
-          if (!isTaskStatus) {
-            break;
-          }
-          handlers.onTaskListItemProgress?.({
-            session_id: event.session_id,
-            item_id: event.item_id,
-            status,
-            tool_calls_count: event.tool_calls_count,
-            version: event.version,
-          });
-        }
+      case "task_list_item_progress": {
+        const delta = readTaskListDelta(event);
+        if (delta) handlers.onTaskListItemProgress?.(delta);
         break;
+      }
       case "task_list_completed":
         if (
           event.session_id &&

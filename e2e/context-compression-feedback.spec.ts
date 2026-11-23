@@ -142,51 +142,109 @@ async function prepare(page: Page, info: TestInfo, { multipleSessions = false, r
 
 type Fixture = Awaited<ReturnType<typeof prepare>>
 
-test("Session DAG draws a live fork and join and expands the grouped task steps", async ({ page }, info) => {
+test("Session DAG opens in the workbench, fits a large graph and shows live task details", async ({ page }, info) => {
   const f = await prepare(page, info)
+  const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
   const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
-  await expect(card).toHaveCount(0)
+  await expect(shortcut).toHaveCount(0)
   const task = { notes: "", status: "completed", depends_on: [] }
   const items = [
     { ...task, id: "prepare", description: "Prepare the evidence" },
     { ...task, id: "review", description: "Review each component", depends_on: ["prepare"] },
     { ...task, id: "bamboo", description: "Check Bamboo source", parent_id: "review", depends_on: ["review"] },
     { ...task, id: "lotus", description: "Check Lotus source", status: "in_progress", parent_id: "review", depends_on: ["review"] },
+    { ...task, id: "notes", description: "Review the notes", status: "pending", parent_id: "review" },
     { ...task, id: "report", description: "Combine the findings", status: "pending", depends_on: ["bamboo", "lotus"] },
+    { ...task, id: "verify", description: "Verify the findings", status: "pending", depends_on: ["report"] },
+    { ...task, id: "send", description: "Send the report", status: "pending", depends_on: ["verify"] },
+    { ...task, id: "archive", description: "Archive the report", status: "pending", depends_on: ["send"] },
   ]
   f.emit({ type: "task_list_updated", task_list: { session_id: primary, title: "Evidence review", items, created_at: at, updated_at: at }, version: 3 })
+  await expect(shortcut).toBeVisible()
+  await expect(card).toHaveCount(0)
+  await shortcut.click()
+  const workbench = page.locator("#right-workbench")
+  const tab = workbench.getByRole("tab", { name: f.copy("session_task_dag_title"), exact: true })
+  await expect(tab).toHaveAttribute("aria-selected", "true")
   await expect(card).toBeVisible()
-  await expect(card.getByRole("button").first()).toContainText(f.phone ? "已完成 3 / 5" : "3 of 5 complete")
-  await card.getByRole("button").first().click()
+  await expect(card.getByText(f.phone ? "已完成 3 / 9" : "3 of 9 complete", { exact: true })).toBeVisible()
   const graph = card.getByRole("region", { name: f.copy("session_task_dag_dependencies"), exact: true })
-  await expect(graph.locator("path[marker-end]")).toHaveCount(5)
+  await expect(graph.locator("path[marker-end]")).toHaveCount(8)
+  await expect(graph.locator("path[stroke-dasharray]")).toHaveCount(1)
+  const zoom = (key: "session_task_dag_zoom_in" | "session_task_dag_zoom_out" | "session_task_dag_fit") =>
+    card.getByRole("button", { name: f.copy(key), exact: true }).click()
+  await zoom("session_task_dag_zoom_in")
+  await expect(card.getByText("125%", { exact: true })).toBeVisible()
+  await zoom("session_task_dag_zoom_out")
+  await expect(card.getByText("100%", { exact: true })).toBeVisible()
+
+  if (info.project.name === "desktop-chromium") {
+    const separator = page.getByRole("separator", { name: f.copy("resize_workbench"), exact: true })
+    const before = (await workbench.boundingBox())!
+    const handle = (await separator.boundingBox())!
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(handle.x - 115, handle.y + handle.height / 2, { steps: 6 })
+    await page.mouse.up()
+    await expect.poll(async () => (await workbench.boundingBox())!.width).toBeGreaterThan(before.width + 95)
+
+    const viewport = (await graph.boundingBox())!
+    expect(viewport.height).toBeGreaterThan(400)
+    await page.mouse.move(viewport.x + viewport.width - 25, viewport.y + viewport.height - 25)
+    await page.mouse.down()
+    await page.mouse.move(viewport.x + viewport.width - 125, viewport.y + viewport.height - 25, { steps: 6 })
+    await page.mouse.up()
+    await expect.poll(() => graph.evaluate((element) => element.scrollLeft)).toBeGreaterThan(50)
+
+    await card.getByRole("button", { name: f.copy("session_task_dag_expand") }).click()
+    const expanded = page.getByRole("dialog", { name: f.copy("workbench_c2730bc7"), exact: true })
+    await expect(expanded).toBeVisible()
+    await expect.poll(async () => (await expanded.boundingBox())!.width).toBe(page.viewportSize()!.width)
+  }
+
+  await zoom("session_task_dag_fit")
+  await expect.poll(() => graph.evaluate((element) =>
+    element.scrollWidth - element.clientWidth <= 1 && element.scrollHeight - element.clientHeight <= 1,
+  )).toBe(true)
   await graph.getByRole("button", { name: /Review each component/ }).click()
   const steps = card.getByRole("list", { name: f.copy("session_task_dag_steps"), exact: true })
-  await expect(steps.getByRole("listitem")).toHaveCount(2)
+  await expect(steps.getByRole("listitem")).toHaveCount(3)
   const lotus = steps.getByRole("listitem").filter({ hasText: "Check Lotus source" })
   await expect(lotus).toContainText(f.copy("ticket_in_progress_5026a63b"))
   f.emit({ type: "task_list_item_progress", session_id: primary, item_id: "lotus",
     status: "completed", tool_calls_count: 1, version: 4 })
   await expect(lotus).toContainText(f.copy("completed_f28461bb"))
-  await expect(card.getByRole("button").first()).toContainText(f.phone ? "已完成 4 / 5" : "4 of 5 complete")
+  await expect(card.getByText(f.phone ? "已完成 4 / 9" : "4 of 9 complete", { exact: true })).toBeVisible()
   await capture(f, "session-task-dag")
+  if (info.project.name === "desktop-chromium") {
+    await card.getByRole("button", { name: f.copy("session_task_dag_restore") }).click()
+    await expect(workbench).not.toHaveAttribute("aria-modal", "true")
+    await expect(steps).toBeVisible()
+  }
   await verifyIsolation(f)
 })
 
 test("Session DAG catches up from the durable feed while the viewer is idle", async ({ page }, info) => {
   const f = await prepare(page, info, { running: false })
   const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
-  await expect(card).toHaveCount(0)
-  const task = { id: "review", description: "Review the saved evidence", status: "completed", notes: "", depends_on: [] }
+  const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
+  await expect(shortcut).toHaveCount(0)
+  await page.getByRole("button", { name: f.copy("open_side_panel_732ea38b"), exact: true }).click()
+  await page.getByRole("button", { name: `${f.copy("session_task_dag_title")} ${f.copy("session_task_dag_description")}`, exact: true }).click()
+  await expect(card.getByText(f.copy("session_task_dag_empty"))).toBeVisible()
+
+  const task = { id: "review", description: "Review the saved evidence", status: "pending", notes: "", depends_on: [] }
   const saved = { session_id: primary, title: "Remote plan", items: [task], created_at: at, updated_at: at }
   await f.emitChange({ type: "task_list_updated", task_list: saved, version: 5 })
-  await expect(card).toBeVisible()
+  const review = card.getByRole("button", { name: /Review the saved evidence/ })
+  await expect(review).toContainText(f.copy("session_task_dag_pending"))
   const completed = f.phone ? "已完成 1 / 1" : "1 of 1 complete"
-  await expect(card.getByRole("button").first()).toContainText(completed)
-
-  const older = { ...saved, items: [{ ...task, status: "pending" }] }
-  await f.emitChange({ type: "task_list_updated", task_list: older, version: 4 })
-  await expect(card.getByRole("button").first()).toContainText(completed)
+  const progress = { type: "task_list_item_progress", session_id: primary, item_id: task.id, tool_calls_count: 1 }
+  await f.emitChange({ ...progress, status: "completed", version: 6 })
+  await expect(review).toContainText(f.copy("completed_f28461bb"))
+  await f.emitChange({ type: "task_list_updated", task_list: saved, version: 4 })
+  await f.emitChange({ ...progress, status: "in_progress", version: 5 })
+  await expect(card.getByText(completed, { exact: true })).toBeVisible()
   expect(f.clientFrames).not.toContainEqual(expect.objectContaining({ type: "subscribe", ch: `agent.${primary}` }))
   await verifyIsolation(f)
 })

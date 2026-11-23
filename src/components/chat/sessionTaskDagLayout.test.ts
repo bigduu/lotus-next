@@ -36,6 +36,33 @@ describe("session task DAG layout", () => {
     expect(Number(lane![1])).toBeLessThan(layout.positions.get("read")!.y)
   })
 
+  it("connects parent-only steps in the same column without duplicating prerequisite arrows", () => {
+    const layout = layoutSessionTaskDag([
+      task("review"), { ...task("check"), parent_id: "review" },
+      { ...task("report", ["review"]), parent_id: "review" },
+      task("independent"), { ...task("missing-parent"), parent_id: "outside" },
+    ])!
+    expect(layout.edges).toMatchObject([
+      { from: "review", to: "report", kind: "dependency" },
+      { from: "review", to: "check", kind: "step" },
+    ])
+    expect(layout.positions.get("check")?.x).toBe(layout.positions.get("review")?.x)
+    expect(layout.positions.get("report")!.x).toBeGreaterThan(layout.positions.get("review")!.x)
+  })
+
+  it("keeps drawing prerequisite arrows when parent grouping points back across columns", () => {
+    const layout = layoutSessionTaskDag([
+      { ...task("draft"), parent_id: "report" },
+      task("review", ["draft"]), task("report", ["review"]),
+    ])!
+    expect(layout.edges).toMatchObject([
+      { from: "draft", to: "review", kind: "dependency" },
+      { from: "review", to: "report", kind: "dependency" },
+      { from: "report", to: "draft", kind: "step" },
+    ])
+    expect(layout.positions.get("draft")!.x).toBeLessThan(layout.positions.get("report")!.x)
+  })
+
   it("leaves cyclic dependencies for the task-list fallback", () => {
     expect(layoutSessionTaskDag([task("read", ["report"]), task("report", ["read"])])).toBeNull()
   })

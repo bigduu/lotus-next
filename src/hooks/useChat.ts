@@ -1655,12 +1655,7 @@ export function useChat(
             }
           },
           onTaskListItemProgress: (delta) => {
-            if (!delta.session_id) return
-            const store = useAppStore.getState()
-            // No local baseline (fresh open mid-run): fetch the full list once
-            // instead of applying a delta onto nothing.
-            if (!store.taskLists[delta.session_id]) void store.loadTaskList(delta.session_id)
-            else store.updateTaskListDelta(delta.session_id, delta)
+            useAppStore.getState().updateTaskListDelta(delta.session_id, delta)
           },
           onTaskEvaluationStarted: (evalSid) => {
             useAppStore.getState().setEvaluationState(evalSid, {
