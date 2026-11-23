@@ -1,15 +1,20 @@
-import { act } from "react"
-import { createRoot } from "react-dom/client"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { createRoot, createSignal, flush } from "solid-js"
+import { afterEach, expect, it, vi } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
+import { appStore } from "@shared/store/appStore/state"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { actorSnapshotFixture, actorSnapshotV2Fixture } from "@/test/fixtures/actorSnapshot"
-import { mergeSubAgentView, useSubAgentView } from "./useSubAgentView"
+import { mergeSubAgentView } from "@services/chat/actorInlineStatus"
 import type { ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
+import { createInlineActorStatus } from "./createInlineActorStatus"
 
-const read = vi.hoisted(() => ({ snapshot: null as ActorSubtreeSnapshot | null, error: null as string | null,
-  gapReason: null as string | null, refresh: vi.fn() }))
-vi.mock("./useActorSnapshot", () => ({ useActorSnapshot: vi.fn(() => read) }))
+type Observation = { snapshot: ActorSubtreeSnapshot | null; error: string | null; gapReason: string | null }
+const fixture = vi.hoisted(() => ({
+  state: () => ({ snapshot: null, error: null, gapReason: null }) as Observation,
+  refresh: vi.fn(),
+}))
+vi.mock("../../workbench/subagents/createActorSnapshot", () => ({ createActorSnapshot: () => fixture }))
+
 const chat = (id: string, createdAt = 1): ChatItem => ({ id, title: id, createdAt, messages: [], config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null }, parentSessionId: "root" })
 const make = (status: "succeeded" | "failed" | "cancelled" | "running" | "reserved", attempt = 1) => {
   const snapshot = actorSnapshotFixture("root", 1)
@@ -17,9 +22,6 @@ const make = (status: "succeeded" | "failed" | "cancelled" | "running" | "reserv
     activation: { activation_id: `${String(attempt).repeat(8)}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, attempt, status } })
   return snapshot
 }
-beforeEach(() => { read.snapshot = null; read.error = null; read.gapReason = null; read.refresh.mockClear() })
-afterEach(() => vi.clearAllMocks())
-
 it.each([["succeeded", "completed"], ["failed", "failed"], ["cancelled", "cancelled"], ["reserved", "queued"]] as const)(
   "uses the current saved %s activation over stale Running", (outcome, status) => {
     const agents = mergeSubAgentView("root", [{ ...chat("actor-0"), isRunning: true }],
@@ -92,59 +94,69 @@ it("rebuilds a card when its placement changes but not when the host is repeated
   expect((moved["actor-0"] as { placement?: { host: string } }).placement?.host).toBe("box-2")
 })
 
-it("does not hand out a fresh view when a poll returns the identical cards", async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  const host = document.createElement("div"), root = createRoot(host)
-  const current = { ...chat("root"), parentSessionId: null, rootSessionId: "root", subagentCount: 1 }
-  let view!: ReturnType<typeof useSubAgentView>
-  function Harness({ live }: { live: Record<string, ChildProgress> }) {
-    view = useSubAgentView(current, [current, chat("actor-0")], live, true)
-    return null
-  }
-  const render = async (live: Record<string, ChildProgress>) => { await act(async () => root.render(<Harness live={live} />)) }
-  try {
-    read.snapshot = make("succeeded")
-    await render({ "actor-0": { status: "running" } })
-    const settled = view.agents
-    // The lease-driven refresh returns an equal but distinct snapshot object.
-    read.snapshot = make("succeeded")
-    await render({ "actor-0": { status: "running" } })
-    expect(view.agents).toBe(settled)
-    // Token-level detail alone is invisible to the card and must not reallocate.
-    await render({ "actor-0": { status: "running", outputPreview: "more output" } })
-    expect(view.agents).toBe(settled)
-    // A real lifecycle change still lands.
-    read.snapshot = make("cancelled", 2)
-    await render({ "actor-0": { status: "cancelled" } })
-    expect(view.agents).not.toBe(settled)
-    expect(view.agents["actor-0"].status).toBe("cancelled")
-  } finally { act(() => root.unmount()) }
+const close = new Set<() => void>()
+afterEach(() => {
+  for (const dispose of close) dispose()
+  close.clear()
+  appStore.getState().clearChildProgress("root", "actor-0")
+  fixture.refresh.mockReset()
 })
 
-it("re-reads on legacy lifecycle changes without letting unordered or duplicate hints overwrite a snapshot", async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  const host = document.createElement("div"), root = createRoot(host)
-  const current = { ...chat("root"), parentSessionId: null, rootSessionId: "root", subagentCount: 1 }
-  let view!: ReturnType<typeof useSubAgentView>
-  function Harness({ live }: { live: Record<string, ChildProgress> }) {
-    view = useSubAgentView(current, [current, chat("actor-0")], live, true)
-    return null
-  }
-  const render = async (status: string) => { await act(async () => root.render(<Harness live={{ "actor-0": { status } }} />)) }
-  try {
-    read.snapshot = make("succeeded")
-    await render("running")
-    expect(view.agents["actor-0"].status).toBe("completed")
-    await render("completed"); await render("completed")
-    expect(read.refresh).toHaveBeenCalledTimes(1)
-    read.snapshot = make("running", 2)
-    await render("running"); await render("cancelled"); await render("completed")
-    expect(view.agents["actor-0"].status).toBe("running")
-    read.gapReason = "transport_gap"
-    await render("completed")
-    expect(view.agents["actor-0"].status).toBe("unknown")
-    read.gapReason = null; read.snapshot = make("cancelled", 2)
-    await render("running")
-    expect(view.agents["actor-0"].status).toBe("cancelled")
-  } finally { act(() => root.unmount()) }
+function mount(initial: ActorSubtreeSnapshot) {
+  appStore.getState().applyChildProgress("root", "actor-0", { status: "running" })
+  return createRoot((dispose) => {
+    close.add(dispose)
+    const root = { ...chat("root"), parentSessionId: null, rootSessionId: "root", subagentCount: 1 }
+    const chats = [root, chat("actor-0")]
+    const [observation, setObservation] = createSignal<Observation>({ snapshot: initial, error: null, gapReason: null })
+    fixture.state = observation
+    const view = createInlineActorStatus({
+      session: () => root,
+      chats: () => chats,
+      active: () => true,
+      history: () => [],
+      live: () => [],
+      messages: () => [],
+    })
+    return {
+      agents: () => view.groups().folded,
+      update(progress: ChildProgress, next?: Partial<Observation>) {
+        if (next) setObservation((previous) => ({ ...previous, ...next }))
+        appStore.getState().applyChildProgress("root", "actor-0", progress)
+        flush()
+      },
+    }
+  })
+}
+
+it("does not hand out a fresh view when a poll returns the identical cards", () => {
+  const view = mount(make("succeeded"))
+  view.update({ status: "running" })
+  const settled = view.agents()
+  // The lease-driven refresh returns an equal but distinct snapshot object.
+  view.update({ status: "running" }, { snapshot: make("succeeded") })
+  expect(view.agents()).toBe(settled)
+  // Token detail alone is invisible to the collapsed card.
+  view.update({ status: "running", outputPreview: "more output" })
+  expect(view.agents()).toBe(settled)
+  view.update({ status: "cancelled" }, { snapshot: make("cancelled", 2) })
+  expect(view.agents()).not.toBe(settled)
+  expect(view.agents()["actor-0"].status).toBe("cancelled")
+})
+
+it("re-reads on legacy lifecycle changes without letting unordered or duplicate hints overwrite a snapshot", () => {
+  const view = mount(make("succeeded"))
+  view.update({ status: "running" })
+  expect(view.agents()["actor-0"].status).toBe("completed")
+  view.update({ status: "completed" })
+  view.update({ status: "completed" })
+  expect(fixture.refresh).toHaveBeenCalledTimes(1)
+  view.update({ status: "running" }, { snapshot: make("running", 2) })
+  view.update({ status: "cancelled" })
+  view.update({ status: "completed" })
+  expect(view.agents()["actor-0"].status).toBe("running")
+  view.update({ status: "completed" }, { gapReason: "transport_gap" })
+  expect(view.agents()["actor-0"].status).toBe("unknown")
+  view.update({ status: "running" }, { gapReason: null, snapshot: make("cancelled", 2) })
+  expect(view.agents()["actor-0"].status).toBe("cancelled")
 })

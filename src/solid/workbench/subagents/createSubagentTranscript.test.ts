@@ -1,5 +1,4 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createRoot, createSignal, flush } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { MessageHistoryResponse } from "@services/chat/AgentService"
@@ -34,7 +33,7 @@ vi.mock("@services/chat/v2Stream", () => ({
   },
 }))
 
-import { useSubagentTranscript, type SubagentTranscript } from "./useSubagentTranscript"
+import { createSubagentTranscript, type SubagentTranscript } from "./createSubagentTranscript"
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -62,48 +61,42 @@ const history = (
 })
 
 const createdAt = "2026-09-22T00:00:00Z"
-let root: Root | null = null
-let container: HTMLDivElement | null = null
-let current: SubagentTranscript | null = null
-let renderSession: (sessionId: string | null) => void = () => {}
+let dispose: () => void
+let current: SubagentTranscript
+let renderSession: (sessionId: string | null) => void
+
+const flushUpdate = (update: () => void) => {
+  update()
+  flush()
+}
 
 async function flushMicrotasks() {
-  await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-  })
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  flush()
 }
 
 beforeEach(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   mocks.order.length = 0
   mocks.getMessageHistory.mockReset()
   mocks.subscriptions.clear()
   mocks.reconnectListeners.clear()
-  current = null
-  container = document.createElement("div")
-  document.body.appendChild(container)
-  root = createRoot(container)
-
-  function Harness({ sessionId }: { sessionId: string | null }) {
-    current = useSubagentTranscript(sessionId)
-    return null
-  }
-  renderSession = (sessionId) => {
-    act(() => root?.render(<Harness sessionId={sessionId} />))
-  }
+  createRoot((cleanup) => {
+    const [id, setId] = createSignal<string | null>(null)
+    dispose = cleanup
+    current = createSubagentTranscript(id)
+    renderSession = (sessionId) => flushUpdate(() => setId(sessionId))
+  })
+  flush()
 })
 
 afterEach(() => {
-  act(() => root?.unmount())
-  container?.remove()
-  root = null
-  container = null
+  dispose()
   vi.unstubAllGlobals()
 })
 
-describe("useSubagentTranscript", () => {
+describe("createSubagentTranscript", () => {
   it("scopes the truncation notice to the selected child", async () => {
     mocks.getMessageHistory
       .mockResolvedValueOnce({ ...history("child-1", []), truncated: true })
@@ -111,12 +104,12 @@ describe("useSubagentTranscript", () => {
 
     renderSession("child-1")
     await flushMicrotasks()
-    expect(current?.truncated).toBe(true)
+    expect(current.truncated).toBe(true)
 
     renderSession("child-2")
-    expect(current?.truncated).toBe(false)
+    expect(current.truncated).toBe(false)
     await flushMicrotasks()
-    expect(current?.truncated).toBe(false)
+    expect(current.truncated).toBe(false)
   })
 
   it("subscribes to the safe live channel before requesting projected history", async () => {
@@ -143,7 +136,7 @@ describe("useSubagentTranscript", () => {
 
     renderSession("child-1")
     const handlers = mocks.subscriptions.get("child-1")!.handlers
-    act(() => {
+    flushUpdate(() => {
       handlers.onEvent({
         type: "snapshot",
         version: 2,
@@ -160,10 +153,10 @@ describe("useSubagentTranscript", () => {
       })
     })
 
-    expect(current?.messages).toMatchObject([
+    expect(current.messages).toMatchObject([
       { id: "assistant-1", content: "before after" },
     ])
-    expect(current?.loading).toBe(true)
+    expect(current.loading).toBe(true)
 
     initial.resolve(history("child-1", [
       { id: "user-1", role: "user", content: "question", created_at: createdAt },
@@ -172,7 +165,7 @@ describe("useSubagentTranscript", () => {
     await flushMicrotasks()
 
     expect(mocks.getMessageHistory).toHaveBeenCalledTimes(2)
-    expect(current?.messages).toMatchObject([
+    expect(current.messages).toMatchObject([
       { id: "user-1", content: "question" },
       { id: "assistant-1", content: "before after" },
     ])
@@ -187,7 +180,7 @@ describe("useSubagentTranscript", () => {
 
     renderSession("child-1")
     const handlers = mocks.subscriptions.get("child-1")!.handlers
-    act(() => {
+    flushUpdate(() => {
       handlers.onEvent({
         type: "snapshot",
         version: 2,
@@ -204,15 +197,15 @@ describe("useSubagentTranscript", () => {
     await flushMicrotasks()
 
     expect(mocks.getMessageHistory).toHaveBeenCalledTimes(2)
-    expect(current?.messages).toMatchObject([{ id: "assistant-1", content: "final" }])
+    expect(current.messages).toMatchObject([{ id: "assistant-1", content: "final" }])
 
     afterCommit.resolve(history("child-1", [
       { id: "assistant-1", role: "assistant", content: "final", created_at: createdAt },
     ]))
     await flushMicrotasks()
 
-    expect(current?.messages).toMatchObject([{ id: "assistant-1", content: "final" }])
-    expect(current?.loading).toBe(false)
+    expect(current.messages).toMatchObject([{ id: "assistant-1", content: "final" }])
+    expect(current.loading).toBe(false)
   })
 
   it("does not retry projected history for every token after a request failure", async () => {
@@ -223,7 +216,7 @@ describe("useSubagentTranscript", () => {
     expect(mocks.getMessageHistory).toHaveBeenCalledTimes(1)
 
     const handlers = mocks.subscriptions.get("child-1")!.handlers
-    act(() => {
+    flushUpdate(() => {
       handlers.onEvent({
         type: "started",
         version: 1,
@@ -234,7 +227,7 @@ describe("useSubagentTranscript", () => {
     await flushMicrotasks()
     expect(mocks.getMessageHistory).toHaveBeenCalledTimes(2)
 
-    act(() => {
+    flushUpdate(() => {
       handlers.onEvent({
         type: "delta",
         version: 2,
@@ -255,10 +248,10 @@ describe("useSubagentTranscript", () => {
     await flushMicrotasks()
 
     expect(mocks.getMessageHistory).toHaveBeenCalledTimes(2)
-    expect(current?.messages).toMatchObject([
+    expect(current.messages).toMatchObject([
       { id: "assistant-1", content: "streaming" },
     ])
-    expect(current?.error).not.toBeNull()
+    expect(current.error).not.toBeNull()
   })
 
   it("closes the old channel and rejects stale responses and events after a rapid switch", async () => {
@@ -277,9 +270,9 @@ describe("useSubagentTranscript", () => {
     await flushMicrotasks()
 
     expect(oldSubscription.close).toHaveBeenCalledTimes(1)
-    expect(current?.messages).toMatchObject([{ id: "child-2-user", content: "new child" }])
+    expect(current.messages).toMatchObject([{ id: "child-2-user", content: "new child" }])
 
-    act(() => {
+    flushUpdate(() => {
       oldSubscription.handlers.onEvent({
         type: "snapshot",
         version: 9,
@@ -292,6 +285,6 @@ describe("useSubagentTranscript", () => {
     ]))
     await flushMicrotasks()
 
-    expect(current?.messages).toMatchObject([{ id: "child-2-user", content: "new child" }])
+    expect(current.messages).toMatchObject([{ id: "child-2-user", content: "new child" }])
   })
 })
