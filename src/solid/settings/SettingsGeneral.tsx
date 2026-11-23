@@ -149,6 +149,7 @@ export function SettingsGeneral() {
               type="color"
               value={theme().customGlobalAccentColor}
               onInput={(event) => themeStore.getState().setCustomGlobalAccentColor(event.currentTarget.value)}
+              onChange={(event) => themeStore.getState().setCustomGlobalAccentColor(event.currentTarget.value)}
             />
             <span>{theme().customGlobalAccentColor.toUpperCase()}</span>
           </div>
@@ -207,6 +208,7 @@ export function SettingsGeneral() {
               type="color"
               value={theme().customUserMessageColor}
               onInput={(event) => themeStore.getState().setCustomUserMessageColor(event.currentTarget.value)}
+              onChange={(event) => themeStore.getState().setCustomUserMessageColor(event.currentTarget.value)}
             />
             <span>{theme().customUserMessageColor.toUpperCase()}</span>
           </div>

@@ -44,6 +44,7 @@ for (const outcome of ["slow", "failed"] as const) {
       release();
       if (outcome === "failed") {
         await expect(settings.getByRole("alert")).toContainText("设置加载失败");
+        await expect(settings.getByRole("alert")).not.toContainText(settingsAsset.file);
         await closeSettings(settings);
         await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
       } else {
