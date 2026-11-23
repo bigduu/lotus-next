@@ -1,19 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const chromium = { browserName: "chromium" as const };
-const solidCases = "**/solid/*.e2e.ts";
-const testIgnore = ["real-bamboo*.spec.ts", "ticket-runtime.spec.ts", "actor-native-runtime.spec.ts", "**/solid/preview.e2e.ts"];
-const port = 9576;
-const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["**/*.spec.ts", solidCases],
-  testIgnore,
-  webServer: {
-    command: `vite preview --host 127.0.0.1 --port ${port} --strictPort`,
-    url: baseURL,
-  },
+  testIgnore: ["real-bamboo*.spec.ts", "ticket-runtime.spec.ts", "actor-native-runtime.spec.ts"],
   outputDir: "test-results",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
@@ -26,7 +17,6 @@ export default defineConfig({
     ["html", { open: "never", outputFolder: "playwright-report" }],
   ],
   use: {
-    baseURL,
     colorScheme: "dark",
     locale: "zh-CN",
     screenshot: "only-on-failure",
@@ -46,7 +36,6 @@ export default defineConfig({
     },
     {
       name: "tablet-chromium",
-      testIgnore: [...testIgnore, solidCases],
       use: {
         ...devices["Desktop Chrome"],
         ...chromium,

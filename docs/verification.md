@@ -22,6 +22,10 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
+The feature command uses `playwright.feature.config.ts` for the Solid cases and
+the original browser projects. Historical publication verification uses its
+pinned `playwright.config.ts`.
+
 CI runs the Unit suite once on Node 22 and builds its canonical test artifact
 once on Node 24. Four independently rerunnable shards consume that artifact
 across the complete all-surface inventory. See

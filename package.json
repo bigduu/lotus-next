@@ -32,7 +32,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "npm run build && npm run test:e2e:built",
-    "test:e2e:built": "playwright test",
+    "test:e2e:built": "playwright test --config=playwright.feature.config.ts",
     "test:e2e:solid": "npm run build:solid && playwright test --config=playwright.solid.config.ts",
     "test:e2e:real-bamboo": "npm run build && npm run test:e2e:real-bamboo:built",
     "test:e2e:real-bamboo:built": "playwright test --config=playwright.real-bamboo.config.ts",
