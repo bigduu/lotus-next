@@ -17,7 +17,7 @@
 import { AgentClient, readTaskListDelta, type ChangeEvent, type FeedSubscription } from "./AgentService";
 import { isFeedOpen, onReconnected } from "./v2Stream";
 import { stopAllBackgroundShellObservations, stopObservingBackgroundShells } from "./backgroundShellObservation";
-import { useAppStore, selectShouldObserve } from "@shared/store/appStore";
+import { appStore, selectShouldObserve } from "@shared/store/appStore/state";
 import { notify } from "@/lib/notify";
 
 const CURSOR_STORAGE_KEY = "lotus_account_feed_cursor_v1";
@@ -42,7 +42,7 @@ export const observeSessionTaskList = (sessionId: string): (() => void) => {
 };
 
 const refreshTaskSnapshot = (sessionId: string): void => {
-  void useAppStore.getState().loadTaskList(sessionId).catch(() => {});
+  void appStore.getState().loadTaskList(sessionId).catch(() => {});
 };
 
 /**
@@ -100,7 +100,7 @@ const cancelScheduledRefresh = (): void => {
 
 const refreshSessionsNowAfterReset = (): void => {
   try {
-    void useAppStore
+    void appStore
       .getState()
       .refreshChatsNow()
       .catch((error) =>
@@ -118,7 +118,7 @@ const scheduleRefresh = (): void => {
   if (refreshTimer) return;
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
-    void useAppStore.getState().refreshSessionsIndex();
+    void appStore.getState().refreshSessionsIndex();
   }, REFRESH_DEBOUNCE_MS);
 };
 
@@ -142,7 +142,7 @@ const OPEN_SESSION_RECONCILE_TYPES = new Set<string>([
 
 const applyChange = (change: ChangeEvent): void => {
   const { event } = change;
-  const store = useAppStore.getState();
+  const store = appStore.getState();
   const sessionId = change.session_id ?? event.session_id;
 
   if (sessionId && (event.type === "session_cleared" || event.type === "session_deleted")) {
@@ -257,7 +257,7 @@ export const startAccountFeed = (): void => {
   // critical state only) — on reconnect, refresh summaries and reconcile the
   // open conversation immediately instead of waiting for the terminal frame.
   offReconnected = onReconnected(() => {
-    const store = useAppStore.getState();
+    const store = appStore.getState();
     void store.refreshChatsNow();
     const cur = store.currentSessionId;
     if (cur) store.reconcileOpenSession(cur, "ws_reconnected");
@@ -267,12 +267,12 @@ export const startAccountFeed = (): void => {
   feedSubscription = client.subscribeToAccountStream(
     {
       onOpen: () => {
-        useAppStore.getState().setAgentAvailability(true);
+        appStore.getState().setAgentAvailability(true);
       },
       onError: () => {
         // Transient: the WS client auto-reconnects (resubscribing with the
         // latest cursor).
-        useAppStore.getState().setAgentAvailability(false);
+        appStore.getState().setAgentAvailability(false);
       },
       onReset: () => {
         // Cursor predated the retained window. Clear durable progress first,
@@ -284,7 +284,7 @@ export const startAccountFeed = (): void => {
         for (const sessionId of taskListViewers.keys()) refreshTaskSnapshot(sessionId);
       },
       onChange: (change) => {
-        useAppStore.getState().setAgentAvailability(true);
+        appStore.getState().setAgentAvailability(true);
         applyChange(change);
         writeCursor(change.seq);
       },
