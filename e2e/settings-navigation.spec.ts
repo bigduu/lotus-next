@@ -33,7 +33,7 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   await expect(settings.getByRole("heading", { name: "提供方", exact: true })).toBeVisible();
   await expect(settings.getByRole("combobox", { name: "对话(必填)模型", exact: true })).toHaveValue("fixture-model");
   await settings.getByRole("button", { name: "新增", exact: true }).click();
-  const providerType = settings.getByRole("button", { name: /^提供方类型/ });
+  const providerType = settings.getByRole("combobox", { name: "提供方类型", exact: true });
   await providerType.click();
   const selectContent = page.locator('[data-slot="select-content"]');
   await expect(selectContent).toBeVisible();

@@ -17,6 +17,7 @@ async function openPanels(page: Page) {
   })
   const observation = await installArtifactRuntime(page, standaloneScenario)
   await page.goto(standaloneScenario.entryUrl)
+  await expect(page.locator(`[data-sidebar-session="${defaultSession}"] [aria-current="page"]`)).toHaveCount(1)
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   await expect(page.locator("#right-workbench")).toBeVisible()
   return observation
