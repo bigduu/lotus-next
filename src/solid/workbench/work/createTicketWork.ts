@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onSettled, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, onSettled, untrack, type Accessor } from "solid-js"
 import { uiText } from "@shared/i18n/text"
 import { getErrorMessage, isApiError } from "@services/api"
 import {
@@ -124,7 +124,10 @@ export function createTicketWork(options: TicketWorkOptions) {
     catch (failure) { setDecisionError(getErrorMessage(failure)) }
 
     const controller = new AbortController()
-    const stillCurrent = () => !controller.signal.aborted && identity() === context
+    const stillCurrent = () => !controller.signal.aborted && untrack(identity) === context
+    // Reset writes settle after this effect. Incremental polling may reuse only
+    // a snapshot admitted by this exact authority, including on its first tick.
+    const cachedSnapshot = () => untrack(() => settled() === context ? state() : null)
     let timer: ReturnType<typeof setTimeout> | undefined
     let reading = false
 
@@ -153,7 +156,7 @@ export function createTicketWork(options: TicketWorkOptions) {
       reading = true
       setRefreshing(true)
       try {
-        const cached = state()
+        const cached = cachedSnapshot()
         if (!full && cached) {
           try {
             const previous = cached.current
@@ -179,7 +182,7 @@ export function createTicketWork(options: TicketWorkOptions) {
         if (!stillCurrent()) return
         const result = await ticketClient.load(sessionId, controller.signal)
         if (!stillCurrent()) return
-        const next = result ? applyTicketSnapshot(state(), result) : null
+        const next = result ? applyTicketSnapshot(cachedSnapshot(), result) : null
         setUncertain(readDecisionReceipts(sessionId))
         return accept(next)
       } catch (failure) {
