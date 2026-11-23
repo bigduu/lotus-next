@@ -50,6 +50,29 @@ const CONTENT_TAGS = new Set([
   "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
   "li", "ol", "p", "section", "strong", "sup", "table", "tbody", "td", "th", "thead", "tr", "ul",
 ])
+const MAX_ENTERING_PROSE_BLOCKS = 12
+const PROSE_BLOCK = "p,h1,h2,h3,h4,h5,h6,ul,ol,blockquote"
+
+function revealEnteringProse(host: HTMLElement, seen: WeakSet<globalThis.Element>) {
+  const children = Array.from(host.children)
+  const document = host.ownerDocument
+  const animate = children.length > 1 && !document.hidden && document.body.dataset.vdiSafe !== "true"
+    && !host.closest("[inert]") && !document.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches
+  for (const [index, block] of children.entries()) {
+    if (seen.has(block)) continue
+    seen.add(block)
+    // Newly placed blocks reveal as a unit. Only appends to an existing block use inline motion.
+    for (const chunk of block.querySelectorAll<HTMLElement>('[data-assistant-reveal="true"]')) {
+      chunk.style.animationName = "none"
+    }
+    if (!animate || index < children.length - MAX_ENTERING_PROSE_BLOCKS) continue
+    if (!block.matches(PROSE_BLOCK)) continue
+    const firstChunk = block.querySelector("[data-assistant-reveal-chunk]")
+    if (!firstChunk) continue
+    const target = block.querySelector("a,button,code,img,pre,table") ? firstChunk : block
+    target.animate([{ opacity: 0.55 }, { opacity: 1 }], { duration: 140, easing: "ease-out" })
+  }
+}
 
 function MarkdownChildren(props: {
   nodes: readonly RootContent[]
@@ -114,6 +137,9 @@ function RevealChunk(props: { node: () => Element }) {
   let text: Text | undefined
   const value = () => contentText(props.node())
   const revealOnMount = untrack(() => props.node().properties["data-assistant-reveal"] === "true")
+  const finishReveal = (event: AnimationEvent) => {
+    if (event.animationName === "assistant-prose-reveal") host.style.animationName = "none"
+  }
   createEffect(value, (next) => {
     if (!text) {
       text = host.ownerDocument.createTextNode(next)
@@ -128,9 +154,8 @@ function RevealChunk(props: { node: () => Element }) {
       ref={(element) => { host = element }}
       data-assistant-reveal-chunk="true"
       data-assistant-reveal={revealOnMount ? "true" : undefined}
-      onAnimationEnd={(event) => {
-        if (event.animationName === "assistant-prose-reveal") host.style.animationName = "none"
-      }}
+      onAnimationEnd={finishReveal}
+      onAnimationCancel={finishReveal}
     >
       <Show when={props.node().properties["data-assistant-reveal-tail"] === "true"}>
         <span aria-hidden="true" data-assistant-streaming-caret="" />
@@ -245,12 +270,17 @@ function ContentElement(props: ElementProps) {
 export function AssistantMarkdown(props: AssistantMarkdownProps) {
   const idPrefix = `markdown-${createUniqueId()}-`
   const reveal = createRevealPlugin(idPrefix)
+  const seen = new WeakSet<globalThis.Element>()
+  let revealHost!: HTMLDivElement
   const nodes = createMemo(() => {
     const tree = parseAssistantMarkdown(props.children, !!props.isStreaming)
     if (props.isStreaming) reveal.plugin()(tree)
     return tree.children
   })
-  createEffect(nodes, () => { reveal.commit() })
+  createEffect(nodes, () => {
+    reveal.commit()
+    if (untrack(() => props.isStreaming)) revealEnteringProse(revealHost, seen)
+  })
 
   const actions: MarkdownActions = {
     get openLink() { return props.onOpenLink },
@@ -269,7 +299,7 @@ export function AssistantMarkdown(props: AssistantMarkdownProps) {
       props.isStreaming && "assistant-streamdown-streaming",
       props.class,
     )} style={markdownTheme as JSX.CSSProperties}>
-      <div data-assistant-reveal-block="true" style={{ display: "contents" }}>
+      <div ref={(element) => { revealHost = element }} data-assistant-reveal-block="true" style={{ display: "contents" }}>
         <MarkdownChildren nodes={nodes()} actions={actions} />
       </div>
     </div>

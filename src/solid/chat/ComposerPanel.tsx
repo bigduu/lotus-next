@@ -5,7 +5,6 @@ import { newSessionPermissionStore } from "@shared/store/newSessionPermissionSta
 import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
 import { getDraftCompletionEnabled, subscribeDraftCompletionEnabled } from "@shared/store/draftCompletionPreferenceState"
 import type { SideChatIntent } from "../workbench/side-chat/SideChatPane"
-import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { fileToAttachment, type ChatImageAttachment } from "@/lib/chatImageAttachments"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
@@ -29,6 +28,7 @@ import { NewChatWorktreeControl } from "../workspace/NewChatWorktreeControl"
 import { ContextCompressionNotice } from "./compact/ContextCompressionNotice"
 import { ContextUsageRing } from "./compact/ContextUsageRing"
 import { ChatRunStatus } from "./status/ChatRunStatus"
+import { transcriptWorkWait } from "./status/transcriptWorkWait"
 import { createLiveBootstrapRetry } from "./status/live-retry/createLiveBootstrapRetry"
 import { LiveBootstrapRetryNotice } from "./status/live-retry/LiveBootstrapRetryNotice"
 
@@ -74,17 +74,8 @@ export function ComposerPanel(props: {
     return id ? state.tokenUsages[id] ?? props.chat.currentChat?.config?.tokenUsage : undefined
   })
   const value = () => inputs()[draftKey()]?.content ?? ""
-  const running = () => {
-    const chat = props.chat.currentChat
-    if (chat?.isRunning === true || (props.chat.sending && props.chat.streaming !== null)) return true
-    if (!chat || chat.lastRunStatus !== "suspended" || props.chat.pendingQuestion || props.chat.pendingApproval ||
-      (chat.activity !== undefined && chat.activity !== "waiting_bash")) return false
-    const last = chat.messages.at(-1)
-    return Boolean(last && backgroundExecWaitActive([{
-      metadata: (last as { metadata?: { runtime_kind?: unknown } }).metadata,
-      content: "content" in last ? last.content : undefined,
-    }]))
-  }
+  const running = () => props.chat.currentChat?.isRunning === true
+    || (props.chat.sending && props.chat.streaming !== null) || transcriptWorkWait(props.chat).monitoredCommand
   const liveRetry = createLiveBootstrapRetry({
     sessionId: () => props.chat.currentSessionId,
     running,

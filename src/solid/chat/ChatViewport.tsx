@@ -18,6 +18,7 @@ import type { createChat } from "./createChat"
 import { createMessageActions, type MessageNotice } from "./message-actions/createMessageActions"
 import type { createRootModeAuthority } from "./model/createRootModeAuthority"
 import { placeTimelineAttachments, type TimelineAttachment, type TimelineHistoryEntry } from "./interactions/timelineAttachments"
+import { transcriptWorkWait } from "./status/transcriptWorkWait"
 
 type Chat = ReturnType<typeof createChat>
 
@@ -56,9 +57,12 @@ export function ChatViewport(props: {
   let loadRequest: { controller: AbortController; sessionId: string; done: Promise<void> } | undefined
 
   const rendering = createMemo(() => buildRenderItems(props.chat.messages))
+  const wait = createMemo(() => transcriptWorkWait(props.chat))
+  const showCommandWait = () => !props.chat.streaming && wait().command
   const live = createMemo(() => buildLiveItems(
     props.chat.liveSegments, props.chat.streaming, props.chat.streamingReasoning,
-    props.chat.sending || props.chat.streamPhase === "streaming", props.chat.streamStatus, text,
+    !showCommandWait() && (props.chat.sending || props.chat.streamPhase === "streaming" || wait().yielded),
+    wait().delegationHint ? text("process_waiting_for_subagents") : props.chat.streamStatus, text,
   ))
   const actorStatus = createInlineActorStatus({
     session: () => props.chat.currentChat, chats: () => props.chat.chats, active: () => props.pageVisible !== false,
@@ -66,10 +70,11 @@ export function ChatViewport(props: {
   })
   const afterProcess = (key: string) => <InlineActorGroup agents={actorStatus.groups().byOrigin.get(key)}
     status={actorStatus} onOpen={props.onOpenActor} />
-  const tailCanFold = createMemo(() => !props.chat.sending && live().length === 0)
+  const tailCanFold = createMemo(() => !props.chat.sending && !wait().yielded && live().length === 0)
   const entries = createMemo(() => buildHistoryEntries(buildDisplayItems(rendering(), tailCanFold())))
   const timeline = createMemo(() => placeTimelineAttachments(entries(), props.attachments))
-  const sourceKeys = createMemo(() => props.onAskSideChat ? collectSideChatSourceKeys(entries(), !props.chat.sending) : new Set<string>())
+  const sourceKeys = createMemo(() => props.onAskSideChat
+    ? collectSideChatSourceKeys(entries(), !props.chat.sending && !wait().yielded) : new Set<string>())
   const sideChat = createSideChatSources(() => viewport, sourceKeys, () => props.onAskSideChat)
   const messageActions = createMessageActions({
     chat: props.chat, entries, viewport: () => viewport,
@@ -198,7 +203,13 @@ export function ChatViewport(props: {
                 <For each={timeline().tail} keyed={(attachment) => attachment.key}>{(attachment) => attachment().render()}</For>
               </div>
             </Show>
-            <Show when={!props.chat.sending && props.chat.streamPhase !== "streaming" && props.chat.streamStatus}>
+            <Show when={showCommandWait()}>
+              <p role="status" class="flex items-center gap-2 px-1 py-1 text-sm text-muted-foreground">
+                <LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
+                {text("runtime_notice_background_exec_running_93d0e2c1")}
+              </p>
+            </Show>
+            <Show when={!wait().yielded && !props.chat.sending && props.chat.streamPhase !== "streaming" && props.chat.streamStatus}>
               <p class="py-1 text-xs text-muted-foreground" role="status">{props.chat.streamStatus}</p>
             </Show>
           </div>
