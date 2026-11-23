@@ -11,13 +11,18 @@ import { DialogLayerMount } from "./layer-scope"
 interface MenuDisclosure {
   open: Accessor<boolean>
   changeOpen: (open: boolean) => void
+  trigger: Accessor<HTMLElement | undefined>
+  setTrigger: (node: HTMLElement) => void
 }
 
 const MenuState = createContext<MenuDisclosure>()
 
 function createDisclosure(props: Pick<ComponentProps<typeof DropdownMenuPrimitive.Root>, "open" | "defaultOpen" | "onOpenChange">): MenuDisclosure {
   const [open, setOpen] = createSignal(untrack(() => props.defaultOpen ?? false))
+  const [trigger, setTrigger] = createSignal<HTMLElement | undefined>(undefined, { ownedWrite: true })
   return {
+    trigger,
+    setTrigger,
     open: () => props.open ?? open(),
     changeOpen: (next) => {
       if (props.open === undefined) setOpen(next)
@@ -28,7 +33,7 @@ function createDisclosure(props: Pick<ComponentProps<typeof DropdownMenuPrimitiv
 
 type MenuContentProps = ComponentProps<typeof DropdownMenuPrimitive.Content>
 
-function menuEscapeHandler(menu: MenuDisclosure, props: MenuContentProps): JSX.EventHandler<HTMLDivElement, KeyboardEvent> {
+function menuEscapeHandler(menu: MenuDisclosure, props: MenuContentProps, restoreFocus = false): JSX.EventHandler<HTMLDivElement, KeyboardEvent> {
   return (event) => {
     const handler = props.onKeyDown
     if (typeof handler === "function") handler(event)
@@ -40,7 +45,9 @@ function menuEscapeHandler(menu: MenuDisclosure, props: MenuContentProps): JSX.E
     props.onEscapeKeyDown?.(event)
     if (event.defaultPrevented) return
     event.preventDefault()
+    event.stopPropagation()
     menu.changeOpen(false)
+    if (restoreFocus) menu.trigger()?.focus({ preventScroll: true })
   }
 }
 
@@ -234,6 +241,7 @@ function DropdownMenuSubTrigger(props: ComponentProps<typeof DropdownMenuPrimiti
   const menu = useContext(MenuState)!
   return (
     <DropdownMenuPrimitive.SubTrigger
+      ref={[menu.setTrigger, props.ref]}
       data-slot="dropdown-menu-sub-trigger"
       data-state={menu.open() ? "open" : "closed"}
       data-inset={props.inset ? "" : undefined}
@@ -241,7 +249,7 @@ function DropdownMenuSubTrigger(props: ComponentProps<typeof DropdownMenuPrimiti
         "focus:bg-accent focus:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground flex cursor-default items-center rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[inset]:pl-8",
         props.class
       )}
-      {...omit(props, "class", "inset", "children")}
+      {...omit(props, "ref", "class", "inset", "children")}
     >
       {props.children}
       <ChevronRight class="ml-auto size-4" />
@@ -257,12 +265,12 @@ function DropdownMenuSubContent(props: ComponentProps<typeof DropdownMenuPrimiti
       <DropdownMenuPrimitive.SubContent
         data-slot="dropdown-menu-sub-content"
         data-state={menu.open() ? "open" : "closed"}
-        onKeyDown={menuEscapeHandler(menu, props)}
-      class={cn(
-        "bg-popover text-popover-foreground z-50 min-w-[8rem] origin-(--kb-menu-content-transform-origin) overflow-hidden rounded-md border p-1 shadow-lg",
+        onKeyDown={menuEscapeHandler(menu, props, true)}
+        class={cn(
+          "bg-popover text-popover-foreground z-50 min-w-[8rem] origin-(--kb-menu-content-transform-origin) overflow-hidden rounded-md border p-1 shadow-lg",
           surfaceMotion,
-        props.class
-      )}
+          props.class,
+        )}
         {...omit(props, "class", "onKeyDown", "onEscapeKeyDown")}
       />
     </DropdownMenuPrimitive.Portal>
