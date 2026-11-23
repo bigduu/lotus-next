@@ -14,6 +14,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu"
+import { createSidebarContextMenu } from "./createSidebarContextMenu"
 import { createUiText } from "./uiText"
 import { WorktreeStateBadge } from "./WorktreeStateBadge"
 
@@ -41,10 +42,8 @@ export function SessionRow(props: {
   const failureId = createUniqueId()
   const [editing, setEditing] = createSignal(false)
   const [draft, setDraft] = createSignal("")
-  const [menuOpen, setMenuOpen] = createSignal(false)
+  const context = createSidebarContextMenu()
   let dragged = false
-  let menuTrigger: HTMLButtonElement | undefined
-  let contextOrigin: HTMLElement | undefined
 
   const runFailed = () => !props.running && props.chat.lastRunStatus === "error"
   const failureDetail = () => runFailed()
@@ -63,26 +62,6 @@ export function SessionRow(props: {
     const title = draft().trim()
     setEditing(false)
     if (title && title !== props.chat.title) props.onRename(title)
-  }
-  const openContextMenu = (event: (MouseEvent | KeyboardEvent) & { currentTarget: HTMLDivElement }) => {
-    const target = event.target
-    if (!(target instanceof Element) || !event.currentTarget.contains(target) ||
-      target.closest('input, textarea, [contenteditable="true"], [role="menu"]')) return
-    event.preventDefault()
-    event.stopPropagation()
-    contextOrigin = target.closest<HTMLElement>("button:not(:disabled), [tabindex]")
-      ?? event.currentTarget.querySelector<HTMLElement>("button:not(:disabled), [tabindex]") ?? undefined
-    setMenuOpen(true)
-  }
-  const restoreContextFocus = () => {
-    const origin = contextOrigin
-    contextOrigin = undefined
-    queueMicrotask(() => {
-      const active = document.activeElement
-      if (origin?.isConnected && (active === menuTrigger || active === document.body)) {
-        origin.focus({ preventScroll: true })
-      }
-    })
   }
 
   return (
@@ -121,12 +100,7 @@ export function SessionRow(props: {
           }))
           if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove"
         }}
-        onContextMenu={openContextMenu}
-        onKeyDown={(event) => {
-          if (!event.isComposing && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
-            openContextMenu(event)
-          }
-        }}
+        onContextMenu={context.onContextMenu} onKeyDown={context.onKeyDown}
         style={props.active ? { "box-shadow": "inset 0 0 0 1px var(--border)" } : undefined}
         class={cn(
           "group/row relative mb-0.5 flex select-none items-center rounded-md feedback-motion switch-feedback hover:bg-sidebar-accent",
@@ -172,9 +146,9 @@ export function SessionRow(props: {
           </span>
         )}</Show>
         {props.dragHandle}
-        <DropdownMenu open={menuOpen()} onOpenChange={setMenuOpen}>
+        <DropdownMenu open={context.open()} onOpenChange={context.setOpen}>
           <DropdownMenuTrigger
-            ref={(element: HTMLButtonElement) => { menuTrigger = element }}
+            ref={context.triggerRef}
             aria-haspopup="menu"
             aria-label={text("session_actions_e6f6d875")}
             style={props.active ? { opacity: "1" } : undefined}
@@ -182,7 +156,7 @@ export function SessionRow(props: {
           >
             <MoreHorizontal class="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent class="min-w-32 rounded-xl" onCloseAutoFocus={restoreContextFocus}>
+          <DropdownMenuContent class="min-w-32 rounded-xl" onCloseAutoFocus={context.restoreFocus}>
             <Show when={props.projectId && props.onMoveToSection}>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger><List />{text("sidebar_move_to_section")}</DropdownMenuSubTrigger>

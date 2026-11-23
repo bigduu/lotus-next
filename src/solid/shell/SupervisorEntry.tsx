@@ -147,7 +147,7 @@ export function SupervisorEntry(props: Props) {
         </Button>
         <DropdownMenu modal={false} open={menuOpen()} onOpenChange={changeMenu} placement="bottom-end">
           <DropdownMenuTrigger ref={(node: HTMLButtonElement) => { menuTrigger = node }}
-            aria-label={text("session_actions_e6f6d875")} disabled={props.disabled}
+            aria-haspopup="menu" aria-label={text("session_actions_e6f6d875")} disabled={props.disabled}
             class="mr-1 rounded p-1 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
             <MoreHorizontal class="size-4" aria-hidden="true" />
           </DropdownMenuTrigger>

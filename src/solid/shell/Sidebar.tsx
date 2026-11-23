@@ -17,11 +17,14 @@ import { isSessionUnread, sessionReadMarkersSnapshot, subscribeSessionReadMarker
 import { sessionOrderSnapshot, subscribeSessionOrder } from "@/lib/sidebarSessionOrderState"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { cn } from "@/lib/utils"
+import { mergeStateFor } from "@/lib/worktreeMergeState"
 import { BrandMark } from "../ui/brand-mark"
 import { Button } from "../ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { Input } from "../ui/input"
 import { ConfirmActionDialog } from "../ui/confirm-action-dialog"
+import { createSidebarContextMenu } from "./createSidebarContextMenu"
+import { createWorktreeMergeStates } from "./createWorktreeMergeStates"
 import type { createProjectSections } from "./createProjectSections"
 import { ProjectSectionDialog, sectionWriteErrorText } from "./ProjectSectionDialog"
 import { createSidebarProjectDragMoves } from "./project-drag/createSidebarProjectDragMoves"
@@ -84,11 +87,13 @@ function Disclosure(props: {
   sectionHeader?: boolean
   projectId?: string
   projectBusy?: boolean
+  contextMenu?: ReturnType<typeof createSidebarContextMenu>
   children: JSX.Element
 }) {
   const id = createUniqueId()
   const header = () => (
-      <div class="flex items-center pt-3 pb-1">
+      <div class="flex items-center pt-3 pb-1" onContextMenu={props.contextMenu?.onContextMenu}
+        onKeyDown={props.contextMenu?.onKeyDown}>
         <button type="button" aria-expanded={props.expanded ? "true" : "false"} aria-controls={id}
           data-sidebar-section-header={props.sectionHeader ? "" : undefined}
           disabled={props.disabled} onClick={props.onToggle}
@@ -164,6 +169,7 @@ export function Sidebar(props: Props) {
   const query = createMemo(() => search().trim().toLowerCase())
   const projectMode = () => grouping() === "project"
   const rootChats = createMemo(() => props.chats.filter((chat) => !chat.parentSessionId && !isDefaultSupervisor(chat)))
+  const mergeStates = createWorktreeMergeStates(rootChats)
   const supervisor = createMemo(() => props.chats.find(isDefaultSupervisor))
   const groups = createMemo(() => {
     locale()
@@ -305,6 +311,7 @@ export function Sidebar(props: Props) {
           return (
           <SessionRow
             chat={entry()}
+            mergeState={mergeStateFor(mergeStates(), entry().config?.workspacePath)}
             active={props.currentSessionId === entry().id}
             unread={props.currentSessionId !== entry().id && isSessionUnread(entry(), readMarkers())}
             running={props.isRunning(entry())}
@@ -344,6 +351,7 @@ export function Sidebar(props: Props) {
   const renderGroup = (group: () => ChatGroup, drag?: SidebarDragParts) => {
     const project = () => projectMode() ? props.projects[group().key] : undefined
     const DropTarget = drag?.Target ?? StaticDropTarget
+    const context = createSidebarContextMenu(() => Boolean(project()))
     const expanded = () => !!query() || (projectMode()
       ? disclosures().get(projectKey(group().key)) ?? true
       : !closedDates().has(group().key))
@@ -361,7 +369,7 @@ export function Sidebar(props: Props) {
     }
     return (
       <Disclosure label={group().label} expanded={expanded()} disabled={!!query()} onToggle={toggle}
-        projectId={project()?.id} projectBusy={props.sections.busy().has(group().key)}
+        projectId={project()?.id} projectBusy={props.sections.busy().has(group().key)} contextMenu={context}
         detail={text("project_sessions", { count: groups().find((item) => item.key === group().key)?.chats.length ?? group().chats.length })}
         wrapHeader={project() ? (header) => <DropTarget target={{ projectId: group().key, sectionId: null }}
           disabled={dragDisabled(group().key)} data-project-drop={group().key} title={text("sidebar_project_drop_hint")}
@@ -372,12 +380,13 @@ export function Sidebar(props: Props) {
             class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default">
             <SquarePen class="size-3.5" />
           </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger aria-label={text("project_actions_4bc7fa27", { v0: current().name })}
+          <DropdownMenu open={context.open()} onOpenChange={context.setOpen}>
+            <DropdownMenuTrigger ref={context.triggerRef} aria-haspopup="menu"
+              aria-label={text("project_actions_4bc7fa27", { v0: current().name })}
               class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
               <MoreHorizontal class="size-3.5" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent class="min-w-40 rounded-xl">
+            <DropdownMenuContent class="min-w-40 rounded-xl" onCloseAutoFocus={context.restoreFocus}>
               <DropdownMenuItem disabled={current().status === "archived"} onSelect={() => openNew(current().id)}>
                 <Plus />{text("new_session_58e21b87")}
               </DropdownMenuItem>
@@ -431,6 +440,7 @@ export function Sidebar(props: Props) {
               </DropTarget>}>
                 <For each={[...sections(), { id: null, name: text("sidebar_no_section") }]} keyed={(section) => section.id}>
                   {(section) => {
+                    const context = createSidebarContextMenu(() => props.ownerAccess)
                     const groupId = () => sectionKey(current().id, section().id)
                     const selected = () => group().chats.filter((chat) =>
                       getSessionSection(props.sections.preferences(), current().id, chat.id, current().section) === section().id,
@@ -439,7 +449,7 @@ export function Sidebar(props: Props) {
                       <DropTarget target={{ projectId: current().id, sectionId: section().id }} disabled={dragDisabled(current().id)}
                         data-project-section={section().name} data-section-id={section().id ?? "none"} data-section-project={current().id}
                         aria-disabled={sectionUnavailable(current().id) ? "true" : "false"} class="mb-1 ms-3 rounded-md feedback-motion switch-feedback">
-                        <Disclosure label={section().name} sectionHeader disabled={!!query()}
+                        <Disclosure label={section().name} sectionHeader contextMenu={context} disabled={!!query()}
                           detail={text("project_sessions", { count: selected().length })}
                           expanded={!!query() || (disclosures().get(groupId()) ?? true)}
                           actions={<>
@@ -455,12 +465,12 @@ export function Sidebar(props: Props) {
                               </button>
                             </Show>
                             <Show when={props.ownerAccess}>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger aria-label={text("sidebar_manage_sections")}
+                              <DropdownMenu open={context.open()} onOpenChange={context.setOpen}>
+                                <DropdownMenuTrigger ref={context.triggerRef} aria-haspopup="menu" aria-label={text("sidebar_manage_sections")}
                                   class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
                                   <MoreHorizontal class="size-3.5" />
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent>
+                                <DropdownMenuContent onCloseAutoFocus={context.restoreFocus}>
                                   <Show when={!dragDisabled(current().id)}>
                                     <DropdownMenuItem onSelect={() => openNew(current().id, section().id)}>
                                       <Plus />{text("sidebar_section_new_session", { v0: section().name })}
