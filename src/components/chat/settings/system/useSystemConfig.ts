@@ -35,6 +35,7 @@ export interface ContextManagementConfig {
 export interface WorkFeatureFlags {
   ticket_mutation: boolean
   ticket_dispatch: boolean
+  work_ultra_by_default?: boolean
   work_execution?: WorkExecutionSettings
 }
 
