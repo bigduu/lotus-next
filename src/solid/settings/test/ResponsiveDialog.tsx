@@ -4,7 +4,7 @@ import type { JSX } from "@solidjs/web"
 const ChangeOpen = createContext<(open: boolean) => void>()
 
 // JSDOM cannot share the bundled Kobalte Dialog owner with the installed Solid
-// JSX runtime. The built browser fixture exercises the real dialog and focus.
+// JSX runtime. The built browser suites exercise the real dialog and focus.
 export function ResponsiveDialog(props: { open?: boolean; onOpenChange: (open: boolean) => void; children: JSX.Element }) {
   return <Show when={props.open}><ChangeOpen value={props.onOpenChange}>{props.children}</ChangeOpen></Show>
 }

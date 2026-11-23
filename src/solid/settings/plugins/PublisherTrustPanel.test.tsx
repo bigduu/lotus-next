@@ -1,23 +1,32 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { flush } from "solid-js"
+import { render } from "@solidjs/web"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
 import { type PublisherPolicy, type PublisherPolicyChange } from "@services/plugin"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import { PublisherTrustPanel } from "./PublisherTrustPanel"
 
-;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-let root: Root | undefined
+vi.mock("../../ui/responsive-dialog", () => import("../test/ResponsiveDialog"))
+
+let unmount: (() => void) | undefined
+const schedule = setTimeout
+async function settle(action: () => unknown = () => undefined) {
+  await action()
+  await new Promise<void>((resolve) => schedule(resolve, 0))
+  flush()
+}
 let policy: PublisherPolicy
 const get = vi.fn()
 const post = vi.fn()
 const end = vi.fn()
 const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === name)!
-const click = async (name: string) => act(async () => { button(name).click() })
-const namedClick = async (name: string) => act(async () => { document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!.click() })
+const click = async (name: string) => settle(() => { button(name).click() })
+const namedClick = async (name: string) => settle(() => { document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!.click() })
 async function mount() {
-  root = createRoot(document.body.appendChild(document.createElement("div")))
-  await act(async () => { root!.render(<PublisherTrustPanel disabled={false} onBegin={() => true} onEnd={end} />) })
+  const container = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <PublisherTrustPanel disabled={false} onBegin={() => true} onEnd={end} />, container)
+  unmount = () => { dispose(); container.remove() }
+  await settle()
   if (button("发布者信任")) await click("发布者信任")
 }
 const apply = (change: PublisherPolicyChange) => {
@@ -41,9 +50,8 @@ beforeEach(async () => {
   vi.spyOn(apiClient, "post").mockImplementation(post)
 })
 afterEach(() => {
-  if (root) act(() => root!.unmount())
-  root = undefined
-  document.body.replaceChildren()
+  unmount?.()
+  unmount = undefined
   vi.restoreAllMocks()
 })
 

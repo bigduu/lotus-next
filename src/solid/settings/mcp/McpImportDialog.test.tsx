@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { McpImportFailure } from "@services/mcp/importConfig"
 import { McpImportDialog, type McpImportCompletion } from "./McpImportDialog"
 
-vi.mock("../../ui/responsive-dialog", () => import("./mcpTestDialog"))
+vi.mock("../../ui/responsive-dialog", () => import("../test/ResponsiveDialog"))
 
 const disposers: Array<() => void> = []
 const schedule = setTimeout

@@ -6,7 +6,7 @@ import { McpService, mcpService } from "@services/mcp"
 import { SettingsMcp } from "./SettingsMcp"
 import { changeLocale } from "@shared/i18n/runtime"
 
-vi.mock("../../ui/responsive-dialog", () => import("./mcpTestDialog"))
+vi.mock("../../ui/responsive-dialog", () => import("../test/ResponsiveDialog"))
 vi.mock("@lucide/solid", () => {
   const Icon = () => <svg aria-hidden="true" />
   return { ChevronRight: Icon, Pencil: Icon, Plus: Icon, RefreshCw: Icon, Trash2: Icon, Upload: Icon, X: Icon }

@@ -1,14 +1,51 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createContext, flush, Show, useContext } from "solid-js"
+import { render, type JSX } from "@solidjs/web"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
 import type { InstalledPluginView, JianduSetupReport, NovaAppSetupReport } from "@services/plugin"
-import { changeLocale } from "@shared/i18n"
+import { changeLocale } from "@shared/i18n/runtime"
 import { SettingsPlugins } from "./SettingsPlugins"
 import { NOVA_PLUGIN } from "@/lib/settings/officialPlugins"
 
-const roots: Root[] = []
-;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+vi.mock("../../ui/responsive-dialog", () => import("../test/ResponsiveDialog"))
+vi.mock("@lucide/solid", () => {
+  const Icon = () => <svg aria-hidden="true" />
+  const icons = ["AlertTriangle", "Blocks", "Copy", "Database", "Download", "ExternalLink", "Monitor",
+    "PackageCheck", "Play", "Plus", "RefreshCw", "RotateCw", "ShieldCheck", "Trash2"]
+  return Object.fromEntries(icons.map((name) => [name, Icon]))
+})
+vi.mock("../../ui/tabs", () => {
+  const SelectedTab = createContext<{ value: () => string; select: (value: string) => void }>()
+  type Children = { children: JSX.Element }
+  type Tab = Children & { value: string }
+  return {
+    Tabs: (props: Tab & { onValueChange: (value: string) => void }) =>
+      <SelectedTab value={{ value: () => props.value, select: props.onValueChange }}>{props.children}</SelectedTab>,
+    TabsList: (props: Children) => <div role="tablist">{props.children}</div>,
+    TabsTrigger: (props: Tab) => {
+      const selected = useContext(SelectedTab)
+      return <button type="button" role="tab" aria-selected={selected.value() === props.value ? "true" : "false"}
+        onClick={() => selected.select(props.value)}>{props.children}</button>
+    },
+    TabsContent: (props: Tab) => <Show when={useContext(SelectedTab).value() === props.value}>
+      <div role="tabpanel">{props.children}</div>
+    </Show>,
+  }
+})
+vi.mock("../../ui/switch", () => ({
+  Switch: (props: {
+    checked: boolean; disabled?: boolean; "aria-label"?: string; onCheckedChange: (checked: boolean) => void;
+  }) => <button type="button" role="switch" aria-checked={props.checked ? "true" : "false"}
+    aria-label={props["aria-label"]} disabled={props.disabled} onClick={() => props.onCheckedChange(!props.checked)} />,
+}))
+
+const disposers: Array<() => void> = []
+const schedule = setTimeout
+async function settle(action: () => unknown = () => undefined) {
+  await action()
+  await new Promise<void>((resolve) => schedule(resolve, 0))
+  flush()
+}
 const nova = (): InstalledPluginView => ({
   id: "nova", name: "Nova Desktop Automation", version: "0.3.0", status: "installed",
   source: NOVA_PLUGIN.source, registered: { mcp_server_ids: ["nova"], skill_dirs: ["nova-grounding"] },
@@ -59,20 +96,23 @@ const deferred = <T,>() => {
 }
 const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
   .find((element) => element.textContent?.trim() === name)!
-const clickElement = async (element: HTMLElement) => act(async () => {
+const clickElement = async (element: HTMLElement) => settle(() => {
   element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
   element.click()
 })
 const click = (name: string) => clickElement(button(name))
-const installed = () => clickElement(document.querySelector<HTMLElement>('[role="tab"][id$="trigger-installed"]')!)
-const fill = async (input: HTMLInputElement, value: string) => act(async () => {
+const tab = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="tab"]')]
+  .find((element) => element.textContent?.trim().startsWith(name))!
+const installed = () => clickElement(tab("已安装"))
+const fill = async (input: HTMLInputElement, value: string) => settle(() => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value)
   input.dispatchEvent(new Event("input", { bubbles: true }))
 })
 async function mount() {
-  const root = createRoot(document.body.appendChild(document.createElement("div")))
-  roots.push(root)
-  await act(async () => { root.render(<SettingsPlugins />) })
+  const container = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => <SettingsPlugins />, container)
+  disposers.push(() => { dispose(); container.remove() })
+  await settle()
 }
 beforeEach(() => {
   inventory = []; servers = []
@@ -101,8 +141,7 @@ beforeEach(() => {
   vi.spyOn(apiClient, "delete").mockImplementation(remove)
 })
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+  for (const dispose of disposers.splice(0)) dispose()
   vi.useRealTimers()
 })
 
@@ -161,7 +200,7 @@ describe("official plugin center", () => {
     get.mockRejectedValueOnce(new Error("setup temporarily unavailable"))
     await click("确认信任发布者")
     expect(button("安装 Jiandu 连接器").disabled).toBe(true)
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(button("安装 Jiandu 连接器").disabled).toBe(false)
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(post).toHaveBeenCalledTimes(1)
@@ -214,7 +253,7 @@ describe("official plugin center", () => {
     expect(button("高级安装").disabled).toBe(true)
     await click("安装中…")
     expect(post).toHaveBeenCalledExactlyOnceWith("plugins/install", { source: NOVA_PLUGIN.source })
-    await act(async () => { inventory = [nova()]; pending.resolve(nova()) })
+    await settle(() => { inventory = [nova()]; pending.resolve(nova()) })
     expect(button("管理已安装插件").disabled).toBe(false)
     expect(document.querySelector('[role="alert"]')).toBeNull()
     await click("管理已安装插件")
@@ -249,7 +288,7 @@ describe("official plugin center", () => {
     await click("安装 Nova 插件")
     expect(document.body.textContent).toContain("安装结果尚未确认")
     expect(button("安装 Nova 插件").disabled).toBe(true)
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(button("管理已安装插件")).toBeDefined()
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(post).toHaveBeenCalledTimes(1)
@@ -263,10 +302,10 @@ describe("official plugin center", () => {
     })
     await mount(); await click("安装 Nova 插件")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("安装结果尚未确认")
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("安装结果尚未确认")
     inventory = [nova()]
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(post).toHaveBeenCalledTimes(1)
   })
@@ -366,7 +405,7 @@ describe("official plugin center", () => {
     })
     await clickElement(document.querySelector<HTMLElement>('[role="switch"]')!)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("无法确认连接变更结果")
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true")
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(post).toHaveBeenCalledTimes(1)
@@ -396,7 +435,7 @@ describe("official plugin center", () => {
     await clickElement(document.querySelector<HTMLElement>('[role="switch"]')!)
     inventory = []
     await click("刷新")
-    await clickElement(document.querySelector<HTMLElement>('[role="tab"][id$="trigger-discover"]')!)
+    await clickElement(tab("发现"))
     post.mockRejectedValueOnce(new Error("installation failed"))
     await click("安装 Nova 插件")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("安装结果尚未确认")
@@ -479,7 +518,7 @@ describe("official plugin center", () => {
     await clickElement([...dialog.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "删除")!)
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("response lost")
     expect(document.body.textContent).not.toContain("暂无插件")
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(document.body.textContent).toContain("暂无插件")
     expect(document.body.textContent).not.toContain("response lost")
@@ -497,7 +536,7 @@ describe("official plugin center", () => {
     await click("取消")
     await clickElement(document.querySelector<HTMLButtonElement>('li[aria-label="Other Plugin"] button:last-child')!)
     inventory = [other]
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Other Plugin")
     expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("response lost")
     expect(remove).toHaveBeenCalledExactlyOnceWith("plugins/nova")
@@ -513,10 +552,10 @@ describe("official plugin center", () => {
       return reads === 2 ? stale.promise : { plugins: inventory }
     })
     await mount()
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     await click("安装 Nova 插件")
     expect(button("管理已安装插件")).toBeDefined()
-    await act(async () => { stale.resolve({ plugins: [] }) })
+    await settle(() => { stale.resolve({ plugins: [] }) })
     expect(button("管理已安装插件")).toBeDefined()
     expect(button("安装 Nova 插件")).toBeUndefined()
   })
@@ -529,7 +568,7 @@ describe("official plugin center", () => {
     expect(button("安装中…").disabled).toBe(true)
     expect(post).toHaveBeenCalledExactlyOnceWith("plugins/official/jiandu/install", {})
     expect(copy).not.toHaveBeenCalled()
-    await act(async () => { jianduSetup = jianduReport(true); pending.resolve(nova()) })
+    await settle(() => { jianduSetup = jianduReport(true); pending.resolve(nova()) })
     expect(button("复制 MCP 配置").disabled).toBe(false)
     expect(document.body.textContent).toContain("基础记忆已内置")
     expect(document.body.textContent).toContain("同一台电脑")
@@ -609,7 +648,7 @@ describe("official plugin center", () => {
     await click("安装 Jiandu 连接器")
     expect(button("安装 Jiandu 连接器").disabled).toBe(true)
     expect(document.body.textContent).toContain("尚未确认 Jiandu")
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(button("复制 MCP 配置").disabled).toBe(false)
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(post).toHaveBeenCalledTimes(1)
@@ -645,7 +684,7 @@ describe("official plugin center", () => {
     await click("安装 Jiandu 连接器")
     await click("安装 Nova 插件")
     jianduSetup = jianduReport(true)
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("若 Nova 仍未出现")
     expect(button("复制 MCP 配置").disabled).toBe(false)
     expect(post).toHaveBeenCalledTimes(2)
@@ -671,7 +710,7 @@ describe("official plugin center", () => {
     await mount(); await click("安装 Nova.app（本地 ad-hoc）")
     expect(post).toHaveBeenCalledExactlyOnceWith("plugins/nova/app/install", { artifact_id: "fixture-reviewed-app" })
     expect(button("安装中…").disabled).toBe(true)
-    await act(async () => { novaAppSetup = novaAppReport(true); pending.resolve(novaAppSetup) })
+    await settle(() => { novaAppSetup = novaAppReport(true); pending.resolve(novaAppSetup) })
     expect(document.body.textContent).toContain("已检测到 Nova.app")
     expect(document.body.textContent).toContain("尚未验证桌面权限")
     expect(document.querySelector('[role="alert"]')).toBeNull()
@@ -721,7 +760,7 @@ describe("official plugin center", () => {
     expect(button("安装 Nova.app（本地 ad-hoc）").disabled).toBe(true)
     expect(document.body.textContent).toContain("尚未确认 Nova.app 安装结果")
     unavailable = false; novaAppSetup = novaAppReport(true)
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(post).toHaveBeenCalledTimes(1)
   })
@@ -760,7 +799,7 @@ describe("official plugin center", () => {
     await click("安装 Nova.app（本地 ad-hoc）")
     await click("安装 Nova 插件")
     novaAppSetup = novaAppReport(true)
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await settle(() => { vi.advanceTimersByTime(10_000) })
     expect(document.body.textContent).toContain("若 Nova 仍未出现")
     expect(post).toHaveBeenCalledTimes(2)
   })
@@ -785,7 +824,7 @@ describe("official plugin center", () => {
     await mount(); await click("重连 Nova 桌面连接")
     expect(button("重连中…").disabled).toBe(true)
     expect(post).toHaveBeenCalledExactlyOnceWith("mcp/servers/nova/connect")
-    await act(async () => { pending.resolve({ server_id: "nova" }) })
+    await settle(() => { pending.resolve({ server_id: "nova" }) })
     expect(document.body.textContent).toContain("重连请求已发送，请查看实际连接状态")
     expect(document.body.textContent).toContain("尚未验证桌面权限")
     expect(servers.find((s) => s.id === "nova-chrome-devtools")?.enabled).toBe(false)
@@ -972,8 +1011,8 @@ describe("explicit Nova App startup", () => {
     const original = get.getMockImplementation()!
     get.mockImplementation(async (path) => path === "plugins/nova/app" ? pending.promise : original(path))
     await click("启动 Nova.app")
-    act(() => roots.pop()!.unmount())
-    await act(async () => { pending.resolve(startableNovaApp()) })
+    await settle(disposers.pop()!)
+    await settle(() => { pending.resolve(startableNovaApp()) })
     expect(post).not.toHaveBeenCalled()
   })
 
