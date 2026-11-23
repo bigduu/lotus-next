@@ -91,7 +91,7 @@ for (const mode of ["idle", "running", "monitoring"] as const) {
     await expect(workbench).toBeHidden();
     await composer.fill("从 Solid 发送");
     if (queued) {
-      await expect(page.getByRole("button", { name: "停止", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeVisible();
       await page.getByRole("combobox", { name: "发送时机" }).selectOption("after_run");
     } else {
       await page.locator('input[type="file"]').setInputFiles({

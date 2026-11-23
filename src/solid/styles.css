@@ -1,2 +1,4 @@
-@import "tailwindcss" source("../");
+@import "tailwindcss" source(none);
 @import "../app-styles.css";
+@source "./";
+@source "../components/ui/motion.ts";

@@ -2,12 +2,10 @@ import type { SideChatIntent } from "../../workbench/side-chat/SideChatPane"
 import { createEffect, createMemo, createSignal, onSettled, untrack, type Accessor } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import type { InputState } from "@shared/store/appStore/slices/inputStateSlice"
-import { tokenBudgetRevision } from "@shared/store/appStore/slices/tokenBudgetSlice"
-import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import type { SkillDefinition } from "@shared/types/skill"
 import { uiLanguage, uiText } from "@shared/i18n/text"
 import { agentClient } from "@services/chat/AgentService"
-import { getApiErrorCode, getErrorMessage, isApiError } from "@services/api/errors"
+import { getErrorMessage, isApiError } from "@services/api/errors"
 import type { SessionLoopCommand, SessionLoopStatus } from "@services/chat/sessionLoop"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { workspaceService } from "@services/workspace/WorkspaceService"
@@ -19,6 +17,7 @@ import type { ComposerInputHandle, FileSuggestion } from "../../composer/Compose
 import { createStoreSelector } from "../../state/createStoreSelector"
 import type { createChat } from "../createChat"
 import { createExternalSnapshot } from "../snapshots"
+import { createManualCompaction } from "../compact/createManualCompaction"
 import { parseComposerCommand } from "./parseComposerCommand"
 
 type Draft = Pick<InputState, "content" | "contentRevision">
@@ -36,6 +35,7 @@ export interface ComposerCommandsOptions {
   hasAttachments: Accessor<boolean>
   queueBusy: Accessor<boolean>
   queuePending: Accessor<boolean>
+  compactionWait?: Accessor<boolean>
   thinkingMode: Accessor<"ultra" | "standard" | null>
   extraSessionRestricted?: Accessor<boolean>
   openGoal?: (sessionId: string) => void
@@ -125,11 +125,12 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     if (mounted && scope() === origin) setNotice({ scope: origin, value: { message, error, detail } })
   }
   const dismiss = () => setDismissed({ scope: scope(), revision: appStore.getState().getInputState(draftKey()).contentRevision })
-  const busy = () => {
+  const commandBusy = () => {
     const id = chat.currentSessionId
     version()
     return localBusy() || Boolean(id && operations.has(id))
   }
+  const busy = () => commandBusy() || compaction.pending()
   const run = async <T,>(id: string, request: () => Promise<T>): Promise<T> => {
     operations.add(id)
     setLocalBusy(true)
@@ -154,17 +155,8 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
   const needsIdle = () => options.running() || chat.currentChat?.lastRunStatus === "suspended"
     || chat.currentChat?.activity === "waiting_bash" || chat.currentChat?.activity === "waiting_children"
     || chat.pendingApproval || chat.pendingQuestion || chat.questionLoading || chat.questionSubmitting
-    || options.queueBusy() || busy()
+    || options.queueBusy() || commandBusy()
   const hasExtras = () => options.hasAttachments() || Boolean(chosenSkill())
-  const compactUnavailable = () => {
-    const id = chat.currentSessionId
-    if (!id) return uiText("compact_open_session")
-    if (restricted(id)) return uiText("compact_root_only")
-    if (blocked(id)) return uiText("compact_session_unavailable")
-    if (needsIdle() || options.queuePending()) return uiText("compact_wait_for_session")
-    if (hasExtras()) return uiText("compact_send_alone")
-    return null
-  }
   const liveDraft = (draft: Draft, origin = scope()) => {
     const current = appStore.getState().getInputState(origin.key)
     return mounted && scope() === origin && current.content === draft.content && current.contentRevision === draft.contentRevision
@@ -172,46 +164,15 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
   const clear = (key: string, revision: number) => appStore.getState().setInputContentIfRevision(key, revision, "")
   const focus = () => inputHandle?.focus()
 
-  const compact = (draft: Draft, fromMenu = false) => {
-    const origin = scope()
-    const id = origin.sessionId
-    const reason = compactUnavailable()
-    if (!id || reason) {
-      if (reason) report(reason)
-      return
-    }
-    if (!liveDraft(draft, origin)) return
-    let revision = draft.contentRevision
-    if (fromMenu) {
-      if (!appStore.getState().setInputContentIfRevision(origin.key, revision, "/compact")) return
-      revision = appStore.getState().getInputState(origin.key).contentRevision
-    }
-    const prior = tokenBudgetRevision(appStore.getState, id)
-    dismiss()
-    focus()
-    void run(id, () => agentClient.compactSessionContext(id)).then((receipt) => {
-      clear(origin.key, revision)
-      if (receipt.status === "unchanged") {
-        report(uiText("compact_context_unchanged"), false, undefined, origin)
-        return
-      }
-      const store = appStore.getState()
-      const latest = tokenBudgetRevision(appStore.getState, id)
-      const usage = mapTokenBudgetUsage(receipt.token_usage)
-      if (usage && prior.usage === latest.usage) store.updateTokenUsage(id, usage, { fromSnapshot: true })
-      if (prior.truncation === latest.truncation) {
-        store.setTruncationInfo(id, receipt.token_usage.truncation_occurred, receipt.token_usage.segments_removed, { fromSnapshot: true })
-      }
-      const percent = new Intl.NumberFormat(uiLanguage(), { maximumFractionDigits: 1 })
-      report(uiText("compact_context_applied", { before: percent.format(receipt.usage_before_percent), after: percent.format(receipt.usage_after_percent) }), false, undefined, origin)
-      void store.loadChatHistory(id, { mode: "monotonic" }).catch(() => {})
-    }).catch((error) => {
-      observeSessionExecutionConflict(id, error)
-      const label = isApiError(error) && error.status === 422 && getApiErrorCode(error) === "context_summary_empty"
-        ? "context_compression_notice_empty_summary"
-        : isApiError(error) && error.status === 404 ? "compact_context_not_found" : "compact_context_unconfirmed"
-      report(uiText(label), true, getErrorMessage(error), origin)
-    })
+  const compaction = createManualCompaction({
+    chat, draftKey, restricted, blocked, hasExtras, dismiss, focus, onNotice: report,
+    waiting: () => Boolean(needsIdle() || options.queuePending() || options.compactionWait?.()),
+  })
+  const handleCompact = (draft: Draft) => {
+    if (parseComposerCommand(draft.content)?.kind !== "compact") return false
+    setNotice(null)
+    void compaction.request(draft)
+    return true
   }
 
   const loopUnavailable = (id: string, action: SessionLoopCommand | "natural") => {
@@ -369,8 +330,8 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     setNotice(null)
     if (command.kind === "loop") return executeLoop(draft, command.action)
     if (command.kind === "goal") return executeGoal(draft, command)
-    if (command.kind === "compact") compact(draft)
-    else workflow()
+    if (command.kind === "compact") return "handled"
+    workflow()
     return "handled"
   }
 
@@ -389,7 +350,9 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
       const next = notice()
       return next?.scope === scope() ? next.value : null
     },
-    get compactUnavailable() { return compactUnavailable() },
+    get compactUnavailable() { return compaction.unavailable() },
+    get compactPending() { return compaction.pending() },
+    handleCompact,
     get canOpenGoal() { return Boolean(chat.currentSessionId && options.openGoal) },
     get canOpenWorkflowRuns() { return Boolean(chat.currentSessionId && options.openWorkflowRuns) },
     get canOpenSideChat() { return Boolean(options.openSideChat?.()) },
@@ -411,7 +374,7 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
       if (appStore.getState().setInputContentIfRevision(origin.key, draft.contentRevision, "")) setSkill({ scope: origin, value: { ...next, tool_refs: [...next.tool_refs] } })
       focus()
     },
-    pickCompact() { compact(appStore.getState().getInputState(draftKey()), true) },
+    pickCompact() { setNotice(null); void compaction.request(appStore.getState().getInputState(draftKey()), true) },
     openGoal() {
       const origin = scope()
       if (!origin.sessionId || !options.openGoal) return

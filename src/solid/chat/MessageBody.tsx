@@ -1,7 +1,7 @@
 import { For, Show } from "solid-js"
 import type { Message, MessageImage } from "@shared/types/chatMessages"
 import { readLocalImage } from "@shared/services/FileOperationsService"
-import { AssistantMarkdown } from "../markdown/AssistantMarkdown"
+import { LazyAssistantMarkdown } from "../markdown/LazyAssistantMarkdown"
 import { createUiText } from "../shell/uiText"
 
 function Images(props: { images?: MessageImage[]; onPreview: (src: string) => void }) {
@@ -79,10 +79,10 @@ export function MessageBody(props: {
       }}</Show>
       <Show when={assistantText()}>
         {(content) => (
-          <AssistantMarkdown theme={props.theme} text={text} onOpenLink={props.onOpenLink}
+          <LazyAssistantMarkdown theme={props.theme} text={text} onOpenLink={props.onOpenLink}
             onPreviewImage={props.onPreviewImage} readImage={readLocalImage}>
             {content()}
-          </AssistantMarkdown>
+          </LazyAssistantMarkdown>
         )}
       </Show>
       <For each={toolCalls()} keyed={(call) => call.toolCallId}>{(call) => (

@@ -1,5 +1,5 @@
 import { ArrowUp, ImagePlus, Square, X } from "@lucide/solid"
-import { createMemo, createSignal, For, onSettled, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, lazy, Loading, onSettled, Show } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
 import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
@@ -7,9 +7,11 @@ import { getDraftCompletionEnabled, subscribeDraftCompletionEnabled } from "@sha
 import type { SideChatIntent } from "../workbench/side-chat/SideChatPane"
 import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { fileToAttachment, type ChatImageAttachment } from "@/lib/chatImageAttachments"
+import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
+import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { Button } from "../ui/button"
 import { createStoreSelector } from "../state/createStoreSelector"
-import { ComposerEditor, type ComposerFocusSnapshot } from "../composer/ComposerEditor"
+import type { ComposerFocusSnapshot } from "../composer/ComposerEditor"
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
 import { createGuidanceQueue } from "./guidance/createGuidanceQueue"
 import { GuidanceQueueControls, GuidanceTimingControl } from "./guidance/GuidanceQueueControls"
@@ -24,8 +26,14 @@ import { ComposerCommandMenus } from "./commands/ComposerCommandMenus"
 import { NewSessionPermissionControl, PermissionModeControl } from "./permissions/PermissionModeControl"
 import { createNewChatWorktree } from "../workspace/createNewChatWorktree"
 import { NewChatWorktreeControl } from "../workspace/NewChatWorktreeControl"
+import { ContextCompressionNotice } from "./compact/ContextCompressionNotice"
+import { ContextUsageRing } from "./compact/ContextUsageRing"
+import { ChatRunStatus } from "./status/ChatRunStatus"
+import { createLiveBootstrapRetry } from "./status/live-retry/createLiveBootstrapRetry"
+import { LiveBootstrapRetryNotice } from "./status/live-retry/LiveBootstrapRetryNotice"
 
 type Chat = ReturnType<typeof createChat>
+const ComposerEditor = lazy(() => import("../composer/ComposerEditor"), { export: "ComposerEditor" })
 
 export function ComposerPanel(props: {
   chat: Chat
@@ -45,10 +53,16 @@ export function ComposerPanel(props: {
   canSendIngress: boolean
   captureSessionCreated: () => (sessionId: string) => void
   onPreviewImage: (url: string) => void
+  onAttachmentsChange?: (attachments: readonly ChatImageAttachment[]) => void
+  pageVisible?: boolean
 }) {
   const text = createUiText()
   const draftKey = () => props.chat.currentSessionId ?? ""
   const inputs = createStoreSelector(appStore, (state) => state.inputStates)
+  const usage = createStoreSelector(appStore, (state) => {
+    const id = props.chat.currentSessionId
+    return id ? state.tokenUsages[id] ?? props.chat.currentChat?.config?.tokenUsage : undefined
+  })
   const value = () => inputs()[draftKey()]?.content ?? ""
   const running = () => {
     const chat = props.chat.currentChat
@@ -60,6 +74,15 @@ export function ComposerPanel(props: {
       metadata: (last as { metadata?: { runtime_kind?: unknown } }).metadata,
       content: "content" in last ? last.content : undefined,
     }]))
+  }
+  const liveRetry = createLiveBootstrapRetry({
+    sessionId: () => props.chat.currentSessionId,
+    running,
+    root: () => props.rootAuthority.isRoot,
+  })
+  const rootControlsBlocked = () => {
+    const id = props.chat.currentSessionId
+    return props.rootAuthority.unsafe || Boolean(id && getRootModeFenceState(id) !== "clear")
   }
   const worktree = createNewChatWorktree({
     sessionId: () => props.chat.currentSessionId,
@@ -75,7 +98,9 @@ export function ComposerPanel(props: {
     isSessionExecutionBlocked(props.chat.currentSessionId))
   const [predict, setPredict] = createSignal(getDraftCompletionEnabled())
   const [submitting, setSubmitting] = createSignal(false)
+  let active = false
   const [attachments, setAttachments] = createSignal<ChatImageAttachment[]>([])
+  createEffect(attachments, (current) => { props.onAttachmentsChange?.(current) })
   const [commandNotice, setCommandNotice] = createSignal<{ key: string; message: string } | null>(null)
   let attachmentRevision = 0
   const models = createComposerModelControls({
@@ -99,6 +124,7 @@ export function ComposerPanel(props: {
     hasAttachments: () => attachments().length > 0,
     queueBusy: () => queue.busy || queue.hasUnconfirmed,
     queuePending: () => queue.pending.length > 0,
+    compactionWait: () => active || submitting() || models.busy || props.ingress.busy || props.ingress.pending,
     thinkingMode: () => models.thinkingMode,
     extraSessionRestricted: () => models.root.child || props.semantic,
     openGoal: props.onOpenGoal,
@@ -107,7 +133,6 @@ export function ComposerPanel(props: {
   })
   const sideChatCommand = () => commands.isSideChatCommand(value())
   let filePicker!: HTMLInputElement
-  let active = false
   const changeAttachments = (change: (current: ChatImageAttachment[]) => ChatImageAttachment[]) => {
     attachmentRevision += 1
     setAttachments(change)
@@ -137,7 +162,7 @@ export function ComposerPanel(props: {
   const send = async () => {
     const key = draftKey()
     const draft = appStore.getState().getInputState(key)
-    if (commands.handleSideChat(draft)) return
+    if (commands.handleSideChat(draft) || commands.handleCompact(draft)) return
     const images = attachments()
     const submittedAttachmentRevision = attachmentRevision
     const useQueue = queuedSend()
@@ -155,6 +180,7 @@ export function ComposerPanel(props: {
       projectId: props.projectId,
       workspacePath: props.workspacePath,
       images: payload,
+      templatePrompt: key === "" ? peekPendingTemplatePrompt() : null,
       permissionMode: key === "" ? newSessionPermissionStore.getState().mode : undefined,
       rootOrchestrationOnly: key === ""
         ? (draft.thinkingMode !== undefined ? draft.thinkingMode === "ultra" : models.requestValue)
@@ -179,6 +205,17 @@ export function ComposerPanel(props: {
         catch { return }
         if (!origin.isCurrent()) return
       }
+      let liveBootstrapResume = false
+      if (!(semantic && key) && !useQueue) {
+        const negotiated = liveRetry.prepareInitial()
+        if (typeof negotiated === "boolean") liveBootstrapResume = negotiated
+        else {
+          liveBootstrapResume = await negotiated
+          if (!origin.isCurrent() || blocked() || semantic !== props.semantic || useQueue !== queuedSend() ||
+            draft.contentRevision !== appStore.getState().getInputState(key).contentRevision ||
+            attachmentRevision !== submittedAttachmentRevision) return
+        }
+      }
       const result = semantic && key
         ? await props.ingress.send({
             session_id: key,
@@ -192,6 +229,7 @@ export function ComposerPanel(props: {
         ...submission,
         skillIds: selectedSkill ? [selectedSkill.id] : undefined,
         isOriginCurrent: origin.prepare ? origin.isCurrent : undefined,
+        ...(liveBootstrapResume ? { liveBootstrapResume: true } : {}),
       })
       if (result.kind !== "accepted") return
       if (!key && submission.projectId) sessionCreated(result.sessionId)
@@ -218,10 +256,20 @@ export function ComposerPanel(props: {
 
   return (
     <div data-composer-column="" class="mx-auto w-full max-w-4xl px-3 pb-3 sm:px-6">
-      <Show when={props.chat.sendFailure}>
-        {(failure) => <div role="alert" class="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {failure().message || text("submission_is_unconfirmed_refresh_or_retry_the_last_sub_f3127c94")}
-        </div>}
+      <ContextCompressionNotice feedback={props.pageVisible === false ? null : props.chat.contextCompression}
+        sessionId={props.pageVisible !== false && props.chat.currentChat?.kind === "root" ? props.chat.currentSessionId : null}
+        manualPending={commands.compactPending} runActive={running()} />
+      <Show when={props.pageVisible !== false}>
+        <ChatRunStatus chat={props.chat} rootUnsafe={props.rootAuthority.unsafe}
+          retryDisabled={models.busy || submitting() || queue.busy || commands.busy || props.ingress.busy}
+          onContinueEditing={() => document.getElementById(inputId)?.focus()} />
+        <LiveBootstrapRetryNotice offer={liveRetry.offer}
+          disabled={props.chat.executionCompatibility.blocked || props.rootAuthority.unsafe || models.busy}
+          onConfirm={() => {
+            if (!rootControlsBlocked() && !models.busy && !isSessionExecutionBlocked(props.chat.currentSessionId)) void liveRetry.confirm()
+          }}
+          onStop={() => { void liveRetry.stop() }}
+          onRefresh={() => { if (!rootControlsBlocked()) void liveRetry.refresh() }} />
       </Show>
       <Show when={!props.semantic}>
         <GuidanceQueueControls sessionId={props.chat.currentSessionId} queue={queue} onPreview={props.onPreviewImage} />
@@ -277,6 +325,7 @@ export function ComposerPanel(props: {
           </div>
         </Show>
         <ComposerCommandMenus commands={commands} />
+        <Loading fallback={<div data-composer-editor="" aria-hidden="true" class="min-h-11 w-full px-2 py-2 text-base" />}>
         <Show when={draftIdentity()} keyed>
           {(entry) => {
             const previous = focusSnapshots.get(entry.key) ?? { current: null }
@@ -300,6 +349,7 @@ export function ComposerPanel(props: {
             />
           }}
         </Show>
+        </Loading>
         <div data-composer-toolbar="" class="flex flex-wrap items-center gap-1">
           <input ref={(element) => { filePicker = element }} type="file" multiple accept="image/*" hidden onChange={(event) => {
             if (event.currentTarget.files) void addFiles(event.currentTarget.files)
@@ -322,11 +372,18 @@ export function ComposerPanel(props: {
             {(id) => <PermissionModeControl sessionId={id} title={props.chat.currentChat?.title || id} />}
           </Show>
           <ComposerModelControls controls={models} />
+          <ContextUsageRing usage={usage()} onClick={() => {
+            const id = props.chat.currentSessionId
+            if (id) props.onOpenGoal(id)
+          }} />
           <div class="flex-1" />
           <Show when={queuedSend()}><GuidanceTimingControl queue={queue} disabled={blocked() || submitting()} /></Show>
           <Show when={running() || props.chat.sending}>
             <Button size="icon" class="rounded-full" type="button"
-              aria-label={text("stop_ca4d973c")} onClick={() => { void props.chat.stop() }}>
+              aria-label={text("stop_generation_9ad0aac3")} onClick={() => {
+                liveRetry.cancelForStop()
+                void props.chat.stop()
+              }}>
               <Square class="size-3.5" />
             </Button>
           </Show>

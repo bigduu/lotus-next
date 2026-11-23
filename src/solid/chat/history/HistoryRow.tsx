@@ -6,7 +6,7 @@ import "@/components/chat/ProcessActivity.css"
 import { cn } from "@/lib/utils"
 import { readLocalImage } from "@shared/services/FileOperationsService"
 
-import { AssistantMarkdown } from "../../markdown/AssistantMarkdown"
+import { LazyAssistantMarkdown } from "../../markdown/LazyAssistantMarkdown"
 import { createUiText } from "../../shell/uiText"
 import { MessageBody } from "../MessageBody"
 import type { SideChatSources } from "./SideChatSourceActions"
@@ -299,10 +299,10 @@ function MessageRow(props: RowActions & { item: Extract<RenderItem, { kind: "msg
               )}</Match>
               <Match when={streamed()}>{(content) => (
                 <div data-message-role="assistant" class="min-w-0 py-2">
-                  <AssistantMarkdown theme={props.theme} text={text} isStreaming
+                  <LazyAssistantMarkdown theme={props.theme} text={text} isStreaming
                     onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} readImage={readLocalImage}>
                     {content()}
-                  </AssistantMarkdown>
+                  </LazyAssistantMarkdown>
                 </div>
               )}</Match>
             </Switch>
