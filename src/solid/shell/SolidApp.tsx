@@ -59,6 +59,7 @@ import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/wor
 import { collectLiveSessionFileChanges, collectSessionFileChanges, groupSessionFileChanges, mergeSessionFileChanges, orderPersistedFileChanges, summarizeSessionFileChangeGroups } from "@/lib/sessionFileChanges"
 import { isPhoneDevice } from "@/lib/browserAvailability"
 import { createBrowserSession } from "../workbench/browser/createBrowserSession"
+import { LazyBrowserPaneView } from "../workbench/browser/LazyBrowserPaneView"
 import { createWorkbenchState } from "../workbench/createWorkbenchState"
 import { createWorkbenchWidth } from "../workbench/createWorkbenchWidth"
 import { createWorkbenchBrowserSelection } from "../workbench/createWorkbenchBrowserSelection"
@@ -79,7 +80,6 @@ const SubagentsPane = lazy(() => import("../workbench/subagents/SubagentsPane"),
 const SessionTaskDag = lazy(() => import("../workbench/tasks/SessionTaskDag"), { export: "SessionTaskDag" })
 const SideChatPane = lazy(() => import("../workbench/side-chat/SideChatPane"), { export: "SideChatPane" })
 const RightWorkbench = lazy(() => import("../workbench/RightWorkbench"), { export: "RightWorkbench" })
-const BrowserPaneView = lazy(() => import("../workbench/browser/BrowserPane"), { export: "BrowserPaneView" })
 const ReviewPane = lazy(() => import("../workbench/ReviewPane"), { export: "ReviewPane" })
 const ProjectEditDialog = lazy(() => import("../workspace/project-edit/ProjectEditDialog"), { export: "ProjectEditDialog" })
 const CommandPalette = lazy(() => import("./CommandPalette"), { export: "CommandPalette" })
@@ -760,7 +760,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               }}
               onBrowserClose={closeWorkbenchBrowser}
               browser={<Show when={browserEnabled()}>
-                <BrowserPaneView sessionId={currentSession()} browser={browser}
+                <LazyBrowserPaneView sessionId={currentSession()} browser={browser}
                   active={!settingsOpen() && workbenchState().open && workbenchState().tab === "browser"}
                   newTabEntry={browserEntryOpen()} entryDraft={browserEntryOpen() ? browserEntry().draft : ""}
                   onEntryDraftChange={(draft) => setBrowserEntry({ scope: workbench.key(), open: true, draft, resumeUntouched: false })}
