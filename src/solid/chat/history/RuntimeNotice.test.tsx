@@ -72,6 +72,30 @@ it("presents the monitored command wait when the producer marks the session susp
   expect(commandWait(savedNotice(), "suspended")).toMatchObject({ monitoredCommand: true, command: true, yielded: true })
 })
 
+it.each([
+  ["suspended", 1, false, undefined, true, false],
+  ["suspended", 0, false, undefined, false, false],
+  ["suspended", 1, true, undefined, false, false],
+  [undefined, 1, false, undefined, false, false],
+  ["completed", 1, false, undefined, false, false],
+  ["cancelled", 1, false, undefined, false, false],
+  ["error", 1, false, undefined, false, false],
+  ["suspended", 0, false, "waiting_children", true, false],
+  [undefined, 0, false, "waiting_children", true, false],
+  ["suspended", 1, false, "waiting_bash", false, true],
+  ["suspended", 1, false, "waiting_user", false, false],
+  ["completed", 1, false, "terminal", false, false],
+] as const)("presents the right wait for status=%s, children=%s, running=%s, activity=%s", (
+  lastRunStatus, runningChildCount, isRunning, activity, delegationHint, command,
+) => {
+  const currentChat: ChatItem = {
+    id: sessionId, title: "Parent wait", createdAt: 0, messages: [], lastRunStatus, runningChildCount, isRunning, activity,
+    config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null },
+  }
+  expect(transcriptWorkWait({ currentChat, pendingQuestion: null, pendingApproval: null }))
+    .toMatchObject({ delegationHint, command, monitoredCommand: false })
+})
+
 it.each(["completed", "failed", "cancelled"])("suppresses a stale notice spinner after %s", (status) => {
   expect(commandWait(savedNotice(), status)).toMatchObject({ monitoredCommand: false, command: false, yielded: false })
 })

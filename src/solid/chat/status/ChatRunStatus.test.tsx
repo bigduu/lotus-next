@@ -1,7 +1,9 @@
 import { render } from "@solidjs/web"
 import { createSignal, flush, For } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
+import { currentUserManagedSessionsFixture } from "@services/supervisorScope/testFixtures"
 import { uiText } from "@shared/i18n/text"
+import { appStore } from "@shared/store/appStore/state"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { createRunInteractionTimeline, RunInteractions } from "../RunInteractions"
 import type { createChat, GenerationFailure } from "../createChat"
@@ -42,7 +44,7 @@ function session(id: string, status: string, error?: string): ChatItem {
 }
 
 const cleanups: (() => void)[] = []
-afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup() })
+afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup() })
 
 function mount(currentChat: ChatItem, pending: Partial<Inputs> = {}) {
   const [inputs, setInputs] = createSignal<Inputs>({
@@ -93,6 +95,24 @@ async function openDiagnostic(host: HTMLElement) {
   flush()
   return vi.waitFor(() => JSON.parse(openDialog()!.querySelector("pre")!.textContent!))
 }
+
+it("asks for refresh and reselect only when the currently managed session goes stale", () => {
+  const fixture = currentUserManagedSessionsFixture()
+  const selection = { supervisor: fixture.scope.supervisor, target: fixture.sessions[0]!.current_user_target! }
+  const managed = selection.target.session_id
+  const previous = appStore.getState().managedHistoryBindings
+  cleanups.push(() => appStore.setState({ managedHistoryBindings: previous }))
+  appStore.setState({ managedHistoryBindings: { [managed]: { selection, status: "active" } } })
+  const view = mount(session(managed, "completed"))
+  expect(alert(view.host)).toBeNull()
+  appStore.setState({ managedHistoryBindings: { [managed]: { selection, status: "stale" } } })
+  flush()
+  expect(alert(view.host)?.textContent).toBe(uiText("supervisor_managed_history_stale"))
+  expect(alert(view.host)?.classList.contains("text-destructive")).toBe(true)
+  view.update({ currentChat: session(to, "completed") })
+  expect(alert(view.host)).toBeNull()
+  expect(view.fetch).not.toHaveBeenCalled()
+})
 
 it("keeps legacy technical details while exporting no invented retry limit or raw error", async () => {
   const view = mount(session(from, "error", "legacy upstream error after 1 request(s)."))
