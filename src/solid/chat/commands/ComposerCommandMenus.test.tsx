@@ -1,5 +1,5 @@
 import { render } from "@solidjs/web"
-import { createUniqueId, flush } from "solid-js"
+import { createSignal, createUniqueId, flush } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
 import type { Editor } from "@tiptap/core"
 import { agentClient } from "@services/chat/AgentService"
@@ -7,6 +7,7 @@ import { appStore } from "@shared/store/appStore/state"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { uiText } from "@shared/i18n/text"
 import { workspaceService } from "@services/workspace/WorkspaceService"
+import type { WorkspaceFileEntry } from "@services/workspace/types"
 import { ComposerEditor } from "../../composer/ComposerEditor"
 import { settleChat } from "../chatInteractionTestHarness"
 import { ComposerCommandMenus } from "./ComposerCommandMenus"
@@ -114,6 +115,7 @@ it("shows the disabled exact compact command with its reason while running", () 
 })
 
 function scopedEditor(suffix: string, content: string, workspace?: string) {
+  const [path, setWorkspace] = createSignal(workspace)
   const { chats, inputStates } = appStore.getState()
   const currentChat = { ...session, id: `test-session-${suffix}` }
   appStore.setState({ chats: [...chats, currentChat] })
@@ -127,13 +129,13 @@ function scopedEditor(suffix: string, content: string, workspace?: string) {
       currentChat, currentSessionId: currentChat.id, executionCompatibility: { blocked: false }, submissionPending: false,
     } as ComposerCommandsOptions["chat"]
     const commands = createComposerCommands({
-      chat, inputId, draftKey: () => currentChat.id, workspacePath: () => workspace,
+      chat, inputId, draftKey: () => currentChat.id, workspacePath: path,
       running: () => false, blocked: () => false, hasAttachments: () => false, queueBusy: () => false,
       queuePending: () => false, thinkingMode: () => "standard", openGoal,
     })
     return <><ComposerCommandMenus commands={commands} /><ComposerEditor id={inputId} value={content}
       label="Messages" title="Enter" placeholder="Message" busy={false}
-      mentionsEnabled={Boolean(workspace)} mentionScope={workspace}
+      mentionsEnabled={Boolean(path())} mentionScope={path()}
       onChange={(value) => appStore.getState().setInputContent(currentChat.id, value)}
       onSubmit={send} onAddFiles={vi.fn()} onSuggestionChange={commands.setFileSuggestion} /></>
   }, host)
@@ -144,7 +146,7 @@ function scopedEditor(suffix: string, content: string, workspace?: string) {
   })
   flush()
   const input = host.querySelector<HTMLDivElement & { editor: Editor }>("[data-composer-editor]")!
-  return { host, input, openGoal, send, id: currentChat.id }
+  return { host, input, openGoal, send, setWorkspace, id: currentChat.id }
 }
 
 function pressEnter(element: HTMLElement, options: KeyboardEventInit = {}) {
@@ -202,4 +204,29 @@ it("picks a workspace file only in the focused split editor without sending", as
   expect(second.host.querySelector('[data-type="mention"]')?.textContent).toBe("@README.md")
   expect(first.send).not.toHaveBeenCalled()
   expect(second.send).not.toHaveBeenCalled()
+})
+
+it("dismisses the previous workspace menu and ignores its late files when the editor opens the new one", async () => {
+  let resolveFirst!: (files: WorkspaceFileEntry[]) => void
+  let resolveSecond!: (files: WorkspaceFileEntry[]) => void
+  const first = new Promise<WorkspaceFileEntry[]>((resolve) => { resolveFirst = resolve })
+  const second = new Promise<WorkspaceFileEntry[]>((resolve) => { resolveSecond = resolve })
+  const current = { name: "read-current.ts", path: "read-current.ts", is_directory: false }
+  const stale = { name: "read-stale.ts", path: "read-stale.ts", is_directory: false }
+  const list = vi.spyOn(workspaceService, "listWorkspaceFiles").mockReturnValueOnce(first).mockReturnValueOnce(second)
+  const pane = scopedEditor("changes-workspace", "@read", "/previous")
+  const search = () => pane.input.editor.commands.setTextSelection(6)
+  const entries = () => [...pane.host.querySelectorAll('[role="option"]')].map((node) => node.textContent?.trim())
+  await settleChat(() => { pane.input.editor.view.focus(); search() })
+  expect(list.mock.calls).toEqual([["/previous"]])
+  await settleChat(() => pane.setWorkspace("/current"))
+  expect(entries()).toEqual([])
+  await settleChat(() => pane.input.editor.commands.insertContent("-"))
+  expect(list.mock.calls).toEqual([["/previous"], ["/current"]])
+  await settleChat(() => resolveSecond([current]))
+  expect(entries()).toEqual(["read-current.ts"])
+  await settleChat(() => resolveFirst([stale]))
+  expect(entries()).toEqual(["read-current.ts"])
+
+  expect(pane.send).not.toHaveBeenCalled()
 })

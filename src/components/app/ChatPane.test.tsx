@@ -192,8 +192,6 @@ vi.mock("@/components/app/Composer", () => ({
       {props.runtimeControls}
     </div>),
 }))
-import { workspaceService } from "@services/workspace"
-import type { WorkspaceFileEntry } from "@services/workspace/types"
 import { agentClient } from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
@@ -1130,86 +1128,6 @@ describe("ChatPane composer acknowledgement", () => {
   })
 })
 
-it("queues text and images from the normal composer while a run is active", async () => {
-  const send = vi.fn<Send>()
-  const input = await mount(send, "queue-chat", true)
-  await addImage("queue.png")
-  change(input, "请结合图片继续")
-  act(() => composer().onSubmit())
-  await flush()
-  expect(runtime.queueSend).toHaveBeenCalledWith("请结合图片继续", [expect.objectContaining({ name: "queue.png", type: "image/png", base64: btoa("queue.png") })])
-  expect(send).not.toHaveBeenCalled()
-  expect(input.value).toBe("")
-  expect(composer().attachments).toHaveLength(0)
-})
-
-it("keeps queued text and images in the composer until admission is confirmed", async () => {
-  runtime.queueSend.mockResolvedValueOnce({ kind: "unconfirmed", operationId: 0 })
-  const input = await mount(vi.fn<Send>(), "queue-chat", true)
-  await addImage("retry.png")
-  change(input, "保留图片")
-  act(() => composer().onSubmit())
-  await flush()
-  expect(input.value).toBe("保留图片")
-  expect(composer().attachments).toHaveLength(1)
-})
-
-it("honors goal control responses that must not start a new execution", async () => {
-  vi.mocked(agentClient.execute).mockClear()
-  vi.mocked(agentClient.sendMessage).mockResolvedValueOnce({ session_id: "goal-chat", status: "accepted", goal_command: { action: "off", should_execute: false } })
-  const input = await mount(vi.fn<Send>(), "goal-chat")
-  change(input, "/goal off")
-  act(() => composer().onSubmit())
-  await flush()
-  expect(agentClient.execute).not.toHaveBeenCalled()
-  expect(input.value).toBe("")
-})
-
-
-it("admits an acknowledged Goal even when submitted during a running session", async () => {
-  vi.mocked(agentClient.execute).mockClear()
-  const acknowledgement = deferred<Awaited<ReturnType<typeof agentClient.sendMessage>>>()
-  vi.mocked(agentClient.sendMessage).mockReturnValueOnce(acknowledgement.promise)
-  const input = await mount(vi.fn<Send>(), "goal-race", true)
-  change(input, "/goal 完成新的目标")
-  act(() => composer().onSubmit())
-  expect(agentClient.execute).not.toHaveBeenCalled()
-  await act(async () => acknowledgement.resolve({ session_id: "goal-race", status: "accepted", goal_command: { action: "set_prompt", should_execute: true } }))
-  await flush()
-  expect(agentClient.execute).toHaveBeenCalledTimes(1)
-  expect(agentClient.execute).toHaveBeenCalledWith("goal-race", undefined)
-  expect(input.value).toBe("")
-})
-
-describe("caret-driven workspace file lookup", () => {
-  it("ignores delayed results from the previous workspace and retries after a failed open", async () => {
-    const first = deferred<WorkspaceFileEntry[]>()
-    const second = deferred<WorkspaceFileEntry[]>()
-    const list = vi.mocked(workspaceService.listWorkspaceFiles)
-    list.mockReset().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
-    await mount(vi.fn<Send>(), null)
-    act(() => composer().onMentionQueryChange("read"))
-    expect(list).toHaveBeenLastCalledWith("/picked")
-    const render = (workspace: string) => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace={workspace}
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-      onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
-    await act(async () => render("/different"))
-    expect(list).toHaveBeenLastCalledWith("/different")
-    const selected = { path: "current.ts", name: "current.ts", is_directory: false }
-    await act(async () => second.resolve([selected]))
-    await act(async () => first.resolve([{ path: "stale.ts", name: "stale.ts", is_directory: false }]))
-    expect(composer().workspaceFiles).toEqual([selected])
-    list.mockRejectedValueOnce(new Error("temporary")).mockResolvedValueOnce([selected])
-    await act(async () => render("/retry"))
-    expect(composer().workspaceFiles).toEqual([])
-    act(() => composer().onMentionQueryChange(null))
-    await act(async () => composer().onMentionQueryChange("again"))
-    expect(composer().workspaceFiles).toEqual([selected])
-    list.mockReset().mockResolvedValue([])
-  })
-})
-
-
 it("uses an explicitly selected existing worktree even when the Project defaults to a new one", async () => {
   Object.assign(runtime.state, { projects: { "project-a": { project_path: "/repo/primary", new_chat_worktree: true } } })
   const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
@@ -1282,35 +1200,6 @@ it.each([false, true])("handles intentional fork navigation without replacing a 
   expect(runtime.toastProps?.forking).toBe(false)
   expect(runtime.toastProps?.toast?.kind).toBe(raiseDestinationError ? "error" : "info")
   if (raiseDestinationError) expect(runtime.toastProps?.toast?.details).toBe("destination diagnostic")
-})
-
-
-describe("session compatibility presentation and submit guard", () => {
-  const compatibility = (conflict: boolean): ChatPaneProps["chat"]["executionCompatibility"] => ({
-    report: { session_version: null, current_session_version: 1, status: conflict ? "conflict" : "legacy_compatible",
-      history_readable: true, execution_allowed: !conflict,
-      conflicts: conflict ? [{ code: "unsupported_runtime_state_version", message: "Unsupported runtime format" }] : [] },
-    blocked: conflict, observed: true, legacy: false, loading: false, readError: false, refresh: vi.fn(async () => {}),
-  })
-  it("keeps the composer draft and report visible while refusing a conflict callback", async () => {
-    const send = vi.fn<Send>(), id = "compatibility-pane-blocked"
-    const textarea = await mount(send, id, false, "", null, compatibility(true))
-    change(textarea, "keep my original draft")
-    await act(async () => composer().onSubmit()); await flush()
-    expect(send).not.toHaveBeenCalled(); expect(composer().executionBlocked).toBe(true)
-    expect(textarea.value).toBe("keep my original draft")
-    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
-    expect(document.querySelector('[data-testid="composer-shell"]')).not.toBeNull()
-  })
-  it("lets a compatible legacy session continue without creating a replacement", async () => {
-    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "compatibility-pane-open", navigated: false })
-    const textarea = await mount(send, "compatibility-pane-open", false, "", null, compatibility(false))
-    change(textarea, "continue old work")
-    await act(async () => composer().onSubmit()); await flush()
-    expect(send).toHaveBeenCalledTimes(1); expect(composer().executionBlocked).toBe(false)
-    expect(document.querySelector('[data-session-execution-blocked="true"]')).toBeNull()
-  })
-
 })
 
 

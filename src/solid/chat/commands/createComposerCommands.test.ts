@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { agentClient, type ChatResponse, type SessionCompactionReceipt } from "@services/chat/AgentService"
 import { ApiError } from "@services/api/errors"
 import type { SessionLoopStatus } from "@services/chat/sessionLoop"
+import { workspaceService } from "@services/workspace/WorkspaceService"
+import type { WorkspaceFileEntry } from "@services/workspace/types"
 import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { currentUserManagedSessionsFixture } from "@services/supervisorScope/testFixtures"
 import { appStore } from "@shared/store/appStore/state"
@@ -43,6 +45,7 @@ async function mount(options: {
   const initial = options.newChat ? null : options.sessionId ?? mainId
   const [id, setId] = createSignal<string | null>(initial)
   const [running, setRunning] = createSignal(options.running ?? false)
+  const [workspacePath, setWorkspacePath] = createSignal<string | null>(null)
   appStore.setState({ currentSessionId: initial })
   const key = () => id() ?? ""
   const draft = () => appStore.getState().getInputState(key())
@@ -57,7 +60,7 @@ async function mount(options: {
       executionCompatibility: { blocked: false }, submissionPending: false,
     } as ComposerCommandsOptions["chat"]
     const model = createComposerCommands({
-      chat, draftKey: key, inputId: "command-editor", workspacePath: () => null,
+      chat, draftKey: key, inputId: "command-editor", workspacePath,
       running, blocked: () => false, hasAttachments: () => options.attachments === true,
       queueBusy: () => false, queuePending: () => false, thinkingMode: () => options.thinkingMode ?? "standard", openGoal, openWorkflowRuns,
     })
@@ -68,6 +71,7 @@ async function mount(options: {
   return {
     commands, draft, openGoal, openWorkflowRuns, observedMenus,
     setRunning: (next: boolean) => settleChat(() => setRunning(next)),
+    setWorkspace: (path: string) => settleChat(() => setWorkspacePath(path)),
     write: (content: string, target = key()) => settleChat(() => appStore.getState().setInputContent(target, content)),
     rebind: (target: string) => settleChat(() => { setId(target); appStore.setState({ currentSessionId: target }) }),
     submit: async () => {
@@ -529,4 +533,35 @@ describe("Solid manual compaction command", () => {
     expect(pane.draft().content).toBe("draft in other session")
     expect(pane.commands.notice).toBeNull()
   })
+})
+
+it("fences workspace file lookups to each open and retries after a failed read", async () => {
+  const first = deferred<WorkspaceFileEntry[]>()
+  const second = deferred<WorkspaceFileEntry[]>()
+  const active = { path: "active.ts", name: "active.ts", is_directory: false }
+  const stale = { path: "stale.ts", name: "stale.ts", is_directory: false }
+  const list = vi.spyOn(workspaceService, "listWorkspaceFiles")
+    .mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    .mockRejectedValueOnce(new Error("temporary")).mockResolvedValueOnce([active])
+  const pane = await mount({ newChat: true })
+  const mention = { query: "read", pick: vi.fn(), dismiss: vi.fn() }
+  await pane.setWorkspace("/previous")
+  await settleChat(() => pane.commands.setFileSuggestion(mention))
+  expect(list.mock.calls).toEqual([["/previous"]])
+  await pane.setWorkspace("/current")
+  expect(pane.commands.fileSuggestion).toBeNull()
+  await settleChat(() => pane.commands.setFileSuggestion(mention))
+  expect(list.mock.calls).toEqual([["/previous"], ["/current"]])
+  await settleChat(() => second.resolve([active]))
+  await settleChat(() => first.resolve([stale]))
+  expect(pane.commands.files).toEqual([active])
+  await pane.setWorkspace("/retry")
+  await settleChat(() => pane.commands.setFileSuggestion(mention))
+  expect(list).toHaveBeenCalledTimes(3)
+  expect(pane.commands.files).toEqual([])
+  await settleChat(() => pane.commands.setFileSuggestion(null))
+  expect(list).toHaveBeenCalledTimes(3)
+  await settleChat(() => pane.commands.setFileSuggestion({ ...mention, query: "again" }))
+  expect(list.mock.calls).toEqual([["/previous"], ["/current"], ["/retry"], ["/retry"]])
+  expect(pane.commands.files).toEqual([active])
 })

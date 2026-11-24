@@ -106,7 +106,7 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     return closed?.scope === draft.scope && closed.content === draft.content
   }
   createEffect(menuDraft, (draft) => {
-    if (dismissed() && !isDismissed(draft)) setDismissed(null)
+    if (untrack(() => dismissed() && !isDismissed(draft))) setDismissed(null)
   })
   const slashQuery = createMemo(() => {
     const draft = menuDraft()
