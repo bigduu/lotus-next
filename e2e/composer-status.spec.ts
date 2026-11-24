@@ -40,3 +40,50 @@ for (const locale of ["en-US", "zh-CN"]) {
     expect(observation.pageErrors).toEqual([])
   })
 }
+
+test("keeps a pending submission distinct from a running generation", async ({ page }) => {
+  const id = "all-surface-session"
+  await page.addInitScript((sessionId) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "en-US")
+    localStorage.setItem("lotus_next_last_session", sessionId)
+  }, id)
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  let release!: () => void
+  const receipt = new Promise<void>((resolve) => { release = resolve })
+  const operations: string[] = []
+  await page.route("**/api/v1/chat", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({ session_id: id, message: "An unacknowledged draft" })
+    operations.push("submit")
+    await receipt
+    return route.fulfill({ json: { session_id: id, message_id: "pending-message", status: "success" } })
+  })
+  await page.route(`**/api/v1/execute/${id}`, (route) => {
+    operations.push("execute")
+    return route.fulfill({ json: { session_id: id, status: "started", run_id: "accepted-run", events_url: "/v2/stream" } })
+  })
+
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
+  const editor = page.getByRole("textbox", { name: "Messages", exact: true })
+  const send = page.getByRole("button", { name: "Send message", exact: true })
+  const stop = page.getByRole("button", { name: "Stop generation", exact: true })
+  const pending = page.getByRole("button", { name: "Sending", exact: true })
+  await editor.fill("An unacknowledged draft")
+  await send.click()
+  try {
+    await expect(pending).toBeDisabled()
+    await expect(send).toHaveCount(0)
+    await expect(stop).toHaveCount(0)
+    await expect(editor).toHaveAttribute("aria-busy", "true")
+    await editor.press("Enter")
+    await expect.poll(() => operations).toEqual(["submit"])
+  } finally {
+    release()
+  }
+  await expect.poll(() => operations).toEqual(["submit", "execute"])
+  await expect(pending).toHaveCount(0)
+  await expect(stop).toBeEnabled()
+  expect(observation.errorResponses).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+})

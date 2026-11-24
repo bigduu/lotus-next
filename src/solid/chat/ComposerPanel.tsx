@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, Paperclip, Square, X } from "@lucide/solid"
+import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, LoaderCircle, Paperclip, Square, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, For, lazy, Loading, onSettled, Show } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
@@ -170,6 +170,8 @@ export function ComposerPanel(props: {
   })
   const sideChatCommand = () => commands.isSideChatCommand(value())
   const loopDraft = () => isSessionLoopCommand(value())
+  const submissionPending = () => submitting() || props.chat.submissionPending || queue.busy || commands.busy
+    || models.busy || (props.semantic && props.ingress.busy)
   let filePicker!: HTMLInputElement
   const changeAttachments = (change: (current: ChatImageAttachment[]) => ChatImageAttachment[]) => {
     attachmentRevision += 1
@@ -415,7 +417,7 @@ export function ComposerPanel(props: {
             return <ComposerEditor
               id={inputId}
               value={value()}
-              busy={submitting() || props.chat.submissionPending || queue.busy || commands.busy || (props.semantic && props.ingress.busy)}
+              busy={submissionPending()}
               label={text("messages_4da199fa")}
               title={text("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
               placeholder={text(queuedSend() ? "type_a_message_to_add_to_the_queue_38c6f67b" : "send_a_message_ae2f86f0")}
@@ -467,7 +469,7 @@ export function ComposerPanel(props: {
             }} />
             <ComposerModelControls controls={models} onRestoreFocus={focusEditor} />
             <Show when={queuedSend() && !loopDraft()}><GuidanceTimingControl queue={queue} compact={compactToolbar()} disabled={blocked() || submitting()} /></Show>
-            <Show when={running() || props.chat.sending}>
+            <Show when={running() || (props.chat.sending && !props.chat.submissionPending)}>
               <Button size="icon" class="size-8 rounded-full" type="button"
                 aria-label={text("stop_generation_9ad0aac3")} onClick={() => {
                   liveRetry.cancelForStop()
@@ -476,14 +478,21 @@ export function ComposerPanel(props: {
                 <Square class="size-4" fill="currentColor" />
               </Button>
             </Show>
-            <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand() || loopDraft()}>
-              <Button size="icon" class="size-8 rounded-full" type="button"
-                aria-label={text(queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
-                disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
-                  (!sideChatCommand() && (submissionUnavailable() || submitting() || props.chat.submissionPending || queue.busy || commands.busy))}
-                onClick={() => { void send() }}>
-                <ArrowUp />
+            <Show when={!submissionPending()} fallback={
+              <Button size="icon" class="size-8 rounded-full" type="button" disabled
+                aria-label={text("sending_2d88d503")}>
+                <LoaderCircle class="size-4 motion-safe:animate-spin" aria-hidden="true" />
               </Button>
+            }>
+              <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand() || loopDraft()}>
+                <Button size="icon" class="size-8 rounded-full" type="button"
+                  aria-label={text(queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
+                  disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
+                    (!sideChatCommand() && submissionUnavailable())}
+                  onClick={() => { void send() }}>
+                  <ArrowUp />
+                </Button>
+              </Show>
             </Show>
           </div>
         </div>

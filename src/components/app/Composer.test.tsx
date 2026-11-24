@@ -250,25 +250,6 @@ describe("Composer submission controls", () => {
     expect(first.props.onPickGoal).toHaveBeenCalledOnce()
   })
 
-  it("shows a disabled pending control without exposing the generation stop action", async () => {
-    const onStop = vi.fn()
-    const { container, inputRef, textarea } = await mountComposer({
-      onStop,
-      sending: true,
-      submissionPending: true,
-    })
-
-    const pendingButton = container.querySelector<HTMLButtonElement>('button[aria-label="正在发送"]')
-    expect(pendingButton?.disabled).toBe(true)
-    expect(container.querySelector('button[aria-label="停止生成"]')).toBeNull()
-    expect(container.querySelector('button[aria-label="发送消息"]')).toBeNull()
-    expect(textarea.getAttribute("aria-busy")).toBe("true")
-    expect(inputRef.current?.focus).toBeTypeOf("function")
-
-    act(() => pendingButton?.click())
-    expect(onStop).not.toHaveBeenCalled()
-  })
-
   it("exposes distinct accessible actions for generation and idle states", async () => {
     const sendingView = await mountComposer({ sending: true })
     const stop = sendingView.container.querySelector<HTMLButtonElement>('button[aria-label="停止生成"]')
