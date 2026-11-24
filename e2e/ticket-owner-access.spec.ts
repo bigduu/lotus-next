@@ -232,3 +232,101 @@ test("Enter saves semantic ingress during an existing run without opening the le
   expect(runtime.httpRequests.filter(({ method, url }) => method === "POST" && new URL(url).pathname.endsWith("/guidance"))).toEqual([])
   expect(runtime.pageErrors).toEqual([])
 })
+
+test("holds negotiating Supervisor drafts and replays only the same uncertain ingress through partial scope", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "one recovery and routing boundary journey")
+  const id = "bamboo-default-supervisor"
+  const title = "Negotiating Supervisor"
+  const draft = "Keep the exact Human instruction"
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+  }, id)
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], { sessionId: id })
+  const session = {
+    id, title, kind: "root", title_version: 1, root_session_id: id, parent_session_id: null,
+    model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
+    created_at: "2026-10-15T00:00:00Z", updated_at: "2026-10-15T00:00:00Z",
+    is_running: true, last_run_status: "running", root_orchestration_only: true, thinking_mode: "ultra",
+    root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64), permission_mode: "default",
+  }
+  await page.route("**/api/v1/sessions?*", (route) => {
+    const sessions = new URL(route.request().url()).searchParams.get("kind") === "child" ? [] : [session]
+    return route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
+  })
+  await page.route(`**/api/v1/sessions/${id}`, (route) => route.fulfill({ json: { session }, headers: { ETag: '"1"' } }))
+  await page.route("**/api/v1/supervisor/default/approvals", (route) => route.fulfill({ json: { approvals: [] } }))
+  const { scope } = ticketSnapshot()
+  scope.binding.supervisor_session_id = id
+  let partial = false
+  const envelope = () => ({ ...scope.overview, truncated: partial, omitted_count: partial ? 1 : 0 })
+  let negotiate!: () => void
+  let negotiation = new Promise<void>((resolve) => { negotiate = resolve })
+  let loads = 0
+  await page.route("**/api/v1/tickets/scope", async (route) => {
+    loads += 1
+    await negotiation
+    return route.fulfill({ json: { ...scope, overview: envelope() } })
+  })
+  await page.route("**/api/v1/tickets/{search,changes}", (route) =>
+    route.fulfill({ json: { ...envelope(), data: [] } }))
+  const posts: Array<Record<string, unknown>> = []
+  await page.route("**/api/v1/chat", (route) => {
+    const payload = route.request().postDataJSON()
+    posts.push(payload)
+    if (posts.length === 1) return route.fulfill({ status: 503, json: { error: { message: "Unknown Human acknowledgement" } } })
+    return route.fulfill({ json: { session_id: id, message_id: payload.message_id, ingress_seq: 1, status: "queued" } })
+  })
+  await page.route(`**/api/v1/execute/${id}`, (route) =>
+    route.fulfill({ json: { session_id: id, status: "already_running" } }))
+  const receipt = () => page.evaluate((id) => sessionStorage.getItem("lotus-next.ticket-human." + id), id)
+  const editor = page.getByRole("textbox", { name: "消息", exact: true })
+  const send = page.getByRole("button", { name: "发送消息", exact: true })
+  const start = async (reload = false) => {
+    if (reload) await page.reload()
+    else await page.goto(standaloneScenario.entryUrl)
+    await expect(page.getByRole("banner")).toContainText(title)
+    await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeVisible()
+    await editor.fill(draft)
+    await expect(send).toBeDisabled()
+    await editor.press("Enter")
+    await expectComposerText(editor, draft)
+    await expect(page.getByRole("button", { name: "加入队列", exact: true })).toHaveCount(0)
+  }
+  try {
+    await start()
+    await expect.poll(() => loads).toBeGreaterThan(0)
+    expect(posts).toHaveLength(0)
+  } finally {
+    negotiate()
+  }
+  await expect(send).toBeEnabled()
+  await send.click()
+  await expect.poll(() => posts.length).toBe(1)
+  await expect.poll(receipt).not.toBeNull()
+  await expect(editor).toHaveAttribute("aria-busy", "false")
+  await expectComposerText(editor, draft)
+  expect(posts[0]).toMatchObject({ session_id: id, message: draft, message_id: expect.any(String) })
+  expect(posts[0].correlation_id).toBe(posts[0].message_id)
+
+  partial = true
+  const readsBeforeReload = loads
+  negotiation = new Promise<void>((resolve) => { negotiate = resolve })
+  try {
+    await start(true)
+    await expect.poll(() => loads).toBeGreaterThan(readsBeforeReload)
+    expect(posts).toHaveLength(1)
+    await expect.poll(receipt).not.toBeNull()
+  } finally {
+    negotiate()
+  }
+  await expect(send).toBeEnabled()
+  await send.click()
+  await expect.poll(() => posts.length).toBe(2)
+  expect(posts[1]).toEqual(posts[0])
+  await expect.poll(receipt).toBeNull()
+  await expectComposerText(editor, "")
+  expect(observation.httpRequests.filter(({ method, url }) =>
+    method === "POST" && new URL(url).pathname.endsWith("/guidance"))).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+})

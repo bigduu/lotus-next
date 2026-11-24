@@ -207,6 +207,9 @@ it("keeps negotiation pending until loading establishes an available or absent s
   await mount()
   expect(controller.negotiated).toBe(false)
   expect(controller.canSendIngress).toBe(false)
+  const fallback = container.querySelector('[data-testid="ticket-work-availability"]')!
+  expect(fallback.querySelector('[role="status"]')).not.toBeNull()
+  expect(fallback.querySelector("button")).toBeNull()
   await settleWorkTest(async () => finish(null))
   expect(controller.negotiated).toBe(true)
   expect(controller.state).toBeNull()
@@ -517,18 +520,34 @@ it.each(["disabled", "uninitialized", "unbound", "unsupported", "error"] as cons
   expect(controller.negotiated).toBe(true)
   expect(controller.canRespond).toBe(false)
   expect(controller.canSendIngress).toBe(false)
-  await settleWorkTest(async () => controller.refresh())
+  const fallback = container.querySelector('[data-testid="ticket-work-availability"]')!
+  expect(fallback.querySelector(kind === "error" ? '[role="alert"]' : '[role="status"]')).not.toBeNull()
+  const details = fallback.querySelector("details")!
+  expect(details.textContent).toContain("exact service reason")
+  expect(details.open).toBe(false)
+  await settleWorkTest(() => fallback.querySelector<HTMLButtonElement>("button")!.click())
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
   expect(controller.availability.kind).toBe("ready")
   expect(controller.state).not.toBeNull()
 })
 
-it.each([401, 403, 503])("exposes initial HTTP %s instead of indefinite loading", async (status) => {
+it.each([
+  [401, "Authentication failed."],
+  [403, "You don't have permission"],
+  [503, "service failure"],
+] as const)("exposes initial HTTP %s instead of indefinite loading", async (status, safeDetail) => {
   vi.mocked(ticketClient.load).mockRejectedValueOnce(new ApiError("service failure", status, "failure"))
   await mount()
   expect(controller.availability.kind).toBe(status === 503 ? "error" : "forbidden")
   expect(controller.state).toBeNull()
   expect(controller.canRespond).toBe(false)
-  await settleWorkTest(async () => controller.refresh())
+  const fallback = container.querySelector('[data-testid="ticket-work-availability"]')!
+  expect(fallback.querySelector('[role="alert"]')).not.toBeNull()
+  const details = fallback.querySelector("details")!
+  expect(details.textContent).toContain(safeDetail)
+  expect(details.open).toBe(false)
+  await settleWorkTest(() => fallback.querySelector<HTMLButtonElement>("button")!.click())
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
   expect(controller.availability.kind).toBe("ready")
 })
 

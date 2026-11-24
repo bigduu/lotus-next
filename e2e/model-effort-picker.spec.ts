@@ -162,15 +162,23 @@ async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>,
 test("saved-session restoration completes before the picker test edits its draft", async ({ page }) => {
   const draft = "Preserve this draft while changing model and effort"
   const input = page.getByRole("textbox", { name: "消息", exact: true })
+  const toolbar = page.locator("[data-composer-toolbar]")
+  const savedPermission = toolbar.getByRole("region", { name: "会话权限", exact: true })
   let restorationChecks = 0
   const { observation, patches } = await setup(page, async () => {
     restorationChecks += 1
-    await expect(modelEffortPicker(page)).toBeVisible()
+    await expect(toolbar.getByRole("combobox", { name: "权限模式", exact: true })).toBeVisible()
+    await expect(savedPermission).toHaveCount(0)
+    await expect(toolbar.getByTestId("model-effort-picker")).toBeVisible()
     await expect(page.getByRole("banner")).not.toContainText(mainTitle)
     await expect(page.getByRole("status").filter({ hasText: "下次创建时使用普通模式" })).toHaveText("下次创建时使用普通模式")
     await expectComposerText(input, "")
   })
   expect(restorationChecks).toBe(1)
+  await expect(savedPermission.getByRole("combobox", { name: "权限模式", exact: true })).toBeVisible()
+  await expect(toolbar.getByTestId("model-effort-picker")).toBeVisible()
+  await expect(page.getByRole("banner").getByRole("combobox", { name: "权限模式", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("banner").getByTestId("model-effort-picker")).toHaveCount(0)
   await input.fill(draft)
   await expectComposerText(input, draft)
   await selectEffort(page, "高")
