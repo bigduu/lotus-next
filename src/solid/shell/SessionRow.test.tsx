@@ -100,7 +100,7 @@ it("lets a live run outrank a stale failure and keeps the unread signal", () => 
     <SessionRow chat={failed} active={false} unread {...actions} />
   </>)
   expect(view.indicator("retrying")).toBeNull()
-  expect(view.slot("retrying").querySelector(".animate-pulse")).not.toBeNull()
+  expect(view.row("retrying").querySelector("[data-session-running]")?.textContent).toBe(uiText("running_1f0eb99b"))
 
   const row = view.row("both")
   expect(row.querySelector("[data-session-run-failure]")).not.toBeNull()
@@ -174,8 +174,9 @@ it("shows the running indicator for work in flight even when the backend reports
   const view = mount(() => <SessionRow chat={chat("s", { isRunning: state().isRunning })}
     active={false} unread={false} running={state().running} {...actions} />)
   const indicator = () => view.row("s").querySelector("[data-session-running]")
-  expect(indicator()?.getAttribute("aria-label")).toBe("运行中")
-  expect(indicator()?.className).toContain("animate-pulse")
+  expect(indicator()?.textContent).toBe("运行中")
+  const button = view.row("s").querySelector("button")!
+  expect(document.getElementById(button.getAttribute("aria-describedby")!)?.textContent).toBe("运行中")
 
   setState({ running: false, isRunning: true })
   flush()

@@ -108,6 +108,29 @@ describe("English UI localization", () => {
   })
 
   it.each([
+    ["LLM error: API error: HTTP 400 Bad Request: bad tool schema", "模型服务拒绝了请求", "确认服务商支持所选模型和请求设置后再试。"],
+    ["LLM error: API error: Anthropic API error: HTTP 400 Bad Request: unsupported parameter", "模型服务拒绝了请求", "确认服务商支持所选模型和请求设置后再试。"],
+    ["LLM error: API error: HTTP 401 Unauthorized: invalid credentials", "模型服务拒绝了访问", "检查服务商凭据和模型访问权限后再试。"],
+    ["LLM error: Authentication error: Gemini authentication failed", "模型服务拒绝了访问", "检查服务商凭据和模型访问权限后再试。"],
+    ["LLM error: API error: Bodhi/OpenAI proxy HTTP 401 Unauthorized: invalid credentials", "模型服务拒绝了访问", "检查服务商凭据和模型访问权限后再试。"],
+    ["LLM error: API error: Bodhi/Gemini proxy HTTP 400 Bad Request: invalid parameter", "模型服务拒绝了请求", "确认服务商支持所选模型和请求设置后再试。"],
+    ["LLM error: API error: Bodhi/Anthropic proxy HTTP 403 Forbidden: access denied", "模型服务拒绝了访问", "检查服务商凭据和模型访问权限后再试。"],
+    ["LLM error: Anthropic upstream request failed (HTTP 401): error body timed out", "模型服务拒绝了访问", "检查服务商凭据和模型访问权限后再试。"],
+    ["Empty assistant response from LLM (response_id=None)", "模型返回了空响应", "检查服务商运行状态，或换用可用的模型后再试。"],
+    ["Stream timed out: phase=semantic_idle, deadline_ms=10000", "模型响应超时", "检查服务商连接，并在重试前查看已生成的内容。"],
+  ])("localizes recovery guidance for %s", async (detail, title, action) => {
+    await changeLocale("zh-CN")
+    expect(describeRunFailure(detail)).toEqual({ title, action })
+  })
+
+  it("does not take an HTTP status mentioned in an upstream error body as the request status", async () => {
+    await changeLocale("en-US")
+    expect(describeRunFailure("LLM error: API error: HTTP 500: upstream also mentioned HTTP 401")).toBeNull()
+    expect(describeRunFailure("LLM error: API error: HTTP 401: upstream also mentioned HTTP 429")?.title)
+      .toBe("Model service rejected access")
+  })
+
+  it.each([
     "The model returned no summary. Lower the reasoning effort for the model used for context compression, then try again.",
     "Context compression could not finish. Your conversation history was preserved.",
   ])("localizes an interrupted reply after compression fails: %s", async (detail) => {

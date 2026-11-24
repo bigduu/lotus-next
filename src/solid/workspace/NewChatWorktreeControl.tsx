@@ -9,6 +9,7 @@ import { Input } from "../ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
 import { composerControlClassName } from "@/lib/composer/composerStyles"
 import { cn } from "@/lib/utils"
+import { environmentPathName } from "../chat/environment/environmentSources"
 
 const normalizePath = (path: string | null | undefined) => path?.replace(/\/+$/, "") || "/"
 const folderName = (path: string) => path.split("/").filter(Boolean).at(-1) || path
@@ -21,7 +22,7 @@ type Inventory = {
 }
 
 /** A draft-only selector. Creating and binding a worktree belongs to first-send preparation. */
-export function NewChatWorktreeControl(props: NewChatWorktreeControlProps) {
+export function NewChatWorktreeControl(props: NewChatWorktreeControlProps & { showWorkspaceName?: boolean }) {
   const uiText = createUiText()
   const id = createUniqueId()
   const [open, setOpen] = createSignal(false)
@@ -66,7 +67,8 @@ export function NewChatWorktreeControl(props: NewChatWorktreeControlProps) {
       <PopoverTrigger type="button" aria-label={uiText("chat_worktree_control")} title={props.preparedPath || props.value?.repository || props.workspacePath || uiText("chat_worktree_current")}
           class={cn(composerControlClassName, newWorktree() && "bg-primary/10 text-primary")}>
           {props.error ? <AlertCircle class="size-4 shrink-0" /> : props.preparedPath ? <Check class="size-4 shrink-0" /> : newWorktree() ? <GitBranch class="size-4 shrink-0" /> : <FolderGit2 class="size-4 shrink-0" />}
-          <span class="truncate">{props.preparedPath ? uiText("chat_worktree_ready") : newWorktree() ? uiText("chat_worktree_new") : uiText("chat_worktree_current")}</span>
+          <span class="truncate">{props.preparedPath ? uiText("chat_worktree_ready") : newWorktree() ? uiText("chat_worktree_new")
+            : props.showWorkspaceName && props.workspacePath ? environmentPathName(props.workspacePath) : uiText("chat_worktree_current")}</span>
           <ChevronDown class="size-3 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent class="space-y-4 rounded-xl p-4" aria-label={uiText("chat_worktree_control")}

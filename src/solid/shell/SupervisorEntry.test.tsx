@@ -66,7 +66,7 @@ it("marks a supervisor whose last run failed, and stays quiet when it did not", 
 
   const running = mount(chat({ isRunning: true, lastRunStatus: "error", lastRunError: "earlier failure" }))
   expect(running.querySelector("[data-session-run-failure]")).toBeNull()
-  expect(running.querySelector("[data-session-running].animate-pulse")).not.toBeNull()
+  expect(running.querySelector("[data-session-running]")?.textContent).toBe(uiText("running_1f0eb99b"))
 
   const completed = mount(chat({ lastRunStatus: "completed" }))
   expect(completed.querySelector("[data-session-run-failure]")).toBeNull()

@@ -82,8 +82,9 @@ describe("shared interaction feedback", () => {
 
   it("leaves focus in a submenu when the pointer enters its own destination directly", async () => {
     const leave = vi.fn()
+    const rootAutoFocus = vi.fn()
     const host = mount(() => <DropdownMenu><DropdownMenuTrigger>Actions</DropdownMenuTrigger>
-      <DropdownMenuContent>
+      <DropdownMenuContent onOpenAutoFocus={rootAutoFocus}>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger onPointerLeave={leave}>Move</DropdownMenuSubTrigger>
           <DropdownMenuSubContent><DropdownMenuItem>Unsectioned</DropdownMenuItem></DropdownMenuSubContent>
@@ -92,7 +93,11 @@ describe("shared interaction feedback", () => {
     </DropdownMenu>)
     key(host.querySelector("button")!, "ArrowDown")
     const trigger = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-sub-trigger"]')!
-    await vi.waitFor(() => expect(document.activeElement).toBe(trigger))
+    // The modal focus trap opens independently of the list's roving focus.
+    await vi.waitFor(() => {
+      expect(rootAutoFocus).toHaveBeenCalled()
+      expect(document.activeElement).toBe(trigger)
+    })
     trigger.click()
     flush()
     const submenu = document.querySelector('[data-slot="dropdown-menu-sub-content"]')!

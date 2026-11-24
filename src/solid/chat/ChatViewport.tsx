@@ -31,6 +31,7 @@ export function ChatViewport(props: {
   onPreviewImage: (url: string) => void
   initialReadingAnchor?: HistoryReadingAnchor | null
   onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
+  followRequest?: object | null
   onAskSideChat?: (quote: SideChatQuote) => void
   revealMessage?: HistoryRevealRequest
   onMissingRevealedMessage?: () => void
@@ -106,6 +107,9 @@ export function ChatViewport(props: {
 
   onSettled(() => () => loadRequest?.controller.abort())
   createEffect(() => [entries(), pending(), live(), timeline()] as const, sticky.follow)
+  createEffect(() => props.followRequest, (request) => {
+    if (request) sticky.resume()
+  })
 
   const loadEarlierPage = (sessionId: string, preserveReading = false): Promise<void> => {
     if (props.chat.currentSessionId !== sessionId || !before()) return Promise.resolve()
@@ -240,12 +244,14 @@ export function ChatViewport(props: {
         }
       />
       <Show when={messageActions.notice}>
-        {(notice) => <p role={notice().error ? "alert" : "status"} class="absolute bottom-3 left-3 z-10 rounded-md border bg-popover px-3 py-2 text-sm">
-          {notice().text}
-        </p>}
+        {(notice) => <div class="pointer-events-none absolute inset-x-0 bottom-3 z-10 mx-auto w-[calc(100%-1.5rem)] max-w-6xl">
+          <p role={notice().error ? "alert" : "status"} class="pointer-events-auto w-fit max-w-full break-words rounded-md border bg-popover px-3 py-2 text-sm">
+            {notice().text}
+          </p>
+        </div>}
       </Show>
       <Show when={!sticky.following()}>
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex translate-y-1/2 justify-center" data-scroll-to-bottom-anchor="">
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 mx-auto flex w-[calc(100%-1.5rem)] max-w-6xl translate-y-1/2 justify-center" data-scroll-to-bottom-anchor="">
           <Button size="icon" variant="outline" class="pointer-events-auto rounded-full bg-card text-muted-foreground shadow-lg"
             aria-label={text("scroll_to_bottom_2b05ff67")} onClick={sticky.resume}>
             <ArrowDown />

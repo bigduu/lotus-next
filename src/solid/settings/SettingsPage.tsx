@@ -28,7 +28,7 @@ const SettingsClusters = lazy(() => import("./clusters/SettingsClusters"), { exp
 const groups = [
   { label: "settings_group_appearance", tabs: [
     { id: "general", label: "general_835b700e", icon: Settings2, owner: false },
-    { id: "notifications", label: "notifications_4b6ded8a", icon: Bell, owner: true },
+    { id: "notifications", label: "notifications_4b6ded8a", icon: Bell, owner: false },
   ] },
   { label: "settings_group_connections", tabs: [
     { id: "providers", label: "provider_9e218722", icon: Cpu, owner: true },
@@ -50,16 +50,16 @@ const groups = [
     { id: "masking", label: "keyword_masking_62e701d9", icon: ShieldCheck, owner: true },
     { id: "env", label: "environment_variables_ae27b474", icon: Globe, owner: true },
     { id: "metrics", label: "metrics_b87e67c7", icon: ChartNoAxesCombined, owner: true },
-    { id: "system", label: "system_5b50d7c4", icon: Monitor, owner: true },
+    { id: "system", label: "system_5b50d7c4", icon: Monitor, owner: false },
   ] },
 ] as const
 
 type Tab = (typeof groups)[number]["tabs"][number]
 export type SettingsTab = Tab["id"]
 
-const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
-  general: () => <SettingsGeneral />,
-  providers: () => <SettingsProviders />,
+const renderTab: Record<SettingsTab, (owner: boolean, onModelReady?: () => void) => JSX.Element> = {
+  general: (owner) => <SettingsGeneral ownerAccess={owner} />,
+  providers: (_owner, onModelReady) => <SettingsProviders onModelReady={onModelReady} />,
   "model-limits": () => <SettingsModelLimits />,
   retry: () => <SettingsRetry />,
   mcp: () => <SettingsMcp />,
@@ -69,7 +69,7 @@ const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
   masking: () => <SettingsMasking />,
   schedules: () => <SettingsSchedules />,
   prompts: () => <SettingsPrompts />,
-  notifications: () => <SettingsNotifications />,
+  notifications: (owner) => <SettingsNotifications ownerAccess={owner} />,
   jiandu: () => <SettingsJiandu />,
   "config-share": () => <SettingsConfigShare />,
   system: (owner) => <SettingsSystem ownerAccess={owner} />,
@@ -82,6 +82,7 @@ export function SettingsPage(props: {
   ownerAccess: boolean
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
+  onModelReady?: () => void
 }) {
   const text = createUiText()
   const categoryId = "settings-category"
@@ -130,7 +131,7 @@ export function SettingsPage(props: {
             <p class="settings-panel-hint">{text(`settings_hint_${tab.id}`)}</p>
           </div>
           <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
-            {renderTab[tab.id](props.ownerAccess)}
+            {renderTab[tab.id](props.ownerAccess, props.onModelReady)}
           </Loading>
         </div>}</Show>
       </div>

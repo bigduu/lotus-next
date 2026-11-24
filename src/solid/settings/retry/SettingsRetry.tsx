@@ -1,4 +1,5 @@
 import { createSignal, For, onSettled, Show } from "solid-js"
+import { apiClient } from "@services/api"
 import { settingsService, type CoreSectionData, type LlmRetryConfig } from "@services/config/SettingsService"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
@@ -37,9 +38,24 @@ function validEnvelope(envelope: { data: CoreSectionData; revision: number }) {
     && Number.isSafeInteger(envelope.revision) && envelope.revision >= 0
 }
 
+async function readEffectivePolicy(): Promise<Draft | null> {
+  const result = await apiClient.get<{ upstream_retry?: Draft }>("execute/defaults", { cache: "no-store" })
+  const policy = result.upstream_retry
+  if (!policy) return null
+  const fields: Draft = {}
+  for (const { key } of FIELDS) {
+    const value = policy[key]
+    if (typeof value === "number" && Number.isSafeInteger(value)) fields[key] = value
+  }
+  return fields.max_attempts === undefined ? null : fields
+}
+
 export function SettingsRetry() {
   const text = createUiText()
   const [draft, setDraft] = createSignal<Draft | null>(null)
+  const [effective, setEffective] = createSignal<Draft | null>(null)
+  const [savedOverride, setSavedOverride] = createSignal(false)
+  const [editedCount, setEditedCount] = createSignal(0)
   const [revision, setRevision] = createSignal<number | null>(null)
   const [loading, setLoading] = createSignal(true)
   const [busy, setBusy] = createSignal(false)
@@ -48,10 +64,13 @@ export function SettingsRetry() {
   const edited = new Set<Field>()
   let active = true
 
-  function apply(envelope: { data: CoreSectionData; revision: number }) {
-    setDraft({ ...envelope.data.llm_retry })
+  function apply(envelope: { data: CoreSectionData; revision: number }, policy: Draft | null) {
+    setEffective(policy)
+    setSavedOverride(envelope.data.llm_retry != null)
+    setDraft(policy ? { ...policy } : null)
     setRevision(envelope.revision)
     edited.clear()
+    setEditedCount(0)
   }
 
   async function load() {
@@ -59,8 +78,10 @@ export function SettingsRetry() {
       const envelope = await settingsService.getTypedSection<CoreSectionData>(CORE)
       if (!active) return false
       if (validEnvelope(envelope)) {
-        apply(envelope)
-        setError(null)
+        const policy = envelope.data.llm_retry ?? await readEffectivePolicy().catch(() => null)
+        if (!active) return false
+        apply(envelope, policy)
+        setError(policy ? null : text("retry_effective_unavailable"))
         return true
       }
     } catch {
@@ -92,7 +113,7 @@ export function SettingsRetry() {
 
   async function save() {
     const initial = draft()
-    if (!active || !initial || busy() || revision() === null) return
+    if (!active || !initial || busy() || revision() === null || !edited.size) return
     const local = validateDraft(initial)
     if ("error" in local) {
       setError(local.error)
@@ -107,7 +128,8 @@ export function SettingsRetry() {
       if (!active) return
       if (!validEnvelope(current)) throw new Error(text("retry_load_failed"))
       // CAS is bound to a fresh section. Merge only fields edited in this panel.
-      const merged = { ...current.data.llm_retry }
+      const merged = { ...(current.data.llm_retry ?? await readEffectivePolicy()) }
+      if (!active) return
       for (const key of edited) merged[key] = local.data[key]
       const validated = validateDraft(merged)
       if ("error" in validated) {
@@ -119,7 +141,8 @@ export function SettingsRetry() {
       )
       if (!active) return
       if (!validEnvelope(response)) throw new Error(text("retry_save_unconfirmed"))
-      apply(response)
+      if (!response.data.llm_retry) throw new Error(text("retry_save_unconfirmed"))
+      apply(response, response.data.llm_retry)
       setSaved(true)
     } catch {
       if (!active) return
@@ -142,6 +165,14 @@ export function SettingsRetry() {
           <h3 class="text-sm font-medium">{text("retry_title")}</h3>
           <p class="text-xs text-muted-foreground">{text("retry_description")}</p>
         </div>
+        <p class="text-sm">
+          {text(savedOverride() ? "retry_effective_custom" : "retry_effective_default", {
+            v0: effective()?.max_attempts ?? 0,
+            v1: (effective()?.total_budget_ms ?? 0) / 1000,
+          })}
+        </p>
+        <details class="space-y-3" open={savedOverride()}>
+          <summary class="cursor-pointer text-sm font-medium">{text("advanced_settings_44455611")}</summary>
         <div class="space-y-3">
           <For each={FIELDS}>{({ key, label, hint, min, max }) => {
             const id = "llm-retry-" + key
@@ -157,6 +188,7 @@ export function SettingsRetry() {
                   const next = event.currentTarget.valueAsNumber
                   setSaved(false)
                   edited.add(key)
+                  setEditedCount(edited.size)
                   setDraft((previous) => ({ ...previous, [key]: Number.isFinite(next) ? next : undefined }))
                 }} />
               <p id={id + "-hint"} class="text-xs text-muted-foreground">{text(hint)}</p>
@@ -164,9 +196,10 @@ export function SettingsRetry() {
           }}</For>
         </div>
         <div class="flex items-center gap-2">
-          <Button size="sm" disabled={busy() || revision() === null} onClick={() => void save()}>{text("save_a3030bf8")}</Button>
+          <Button size="sm" disabled={busy() || revision() === null || editedCount() === 0} onClick={() => void save()}>{text("save_a3030bf8")}</Button>
           <Button size="sm" variant="secondary" disabled={busy()} onClick={() => void reload()}>{text("reload_state_df7392cc")}</Button>
         </div>
+        </details>
         <Show when={error()}><p role="alert" class="text-xs text-destructive">{error()}</p></Show>
         <Show when={saved()}><p role="status" class="text-xs text-muted-foreground">{text("retry_saved")}</p></Show>
       </section>

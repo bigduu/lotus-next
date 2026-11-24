@@ -17,11 +17,11 @@ export interface BambooMemoryConfig {
   auto_dream_enabled?: boolean;
 }
 
-/** Sub-agent execution settings (mirrors the backend's typed `subagents` section).
- *  Sub-agents always run as isolated OS actor processes; there is no runtime toggle. */
+/** Sub-agent execution settings from Bamboo's typed `subagents` section. */
 export interface BambooSubagentsConfig {
-  /** Max actor processes running at once (backend default: 8). */
-  max_concurrent?: number;
+  max_concurrent?: number | null;
+  max_total_secs?: number | null;
+  max_idle_secs?: number | null;
 }
 
 /**
@@ -216,6 +216,7 @@ export interface UtilityService {
    */
   getSetupStatus(): Promise<{
     is_complete: boolean;
+    model_setup_in_app?: boolean;
     has_proxy_config: boolean;
     has_proxy_env: boolean;
     message: string;
@@ -342,6 +343,7 @@ class HttpUtilityService implements UtilityService {
 
   async getSetupStatus(): Promise<{
     is_complete: boolean;
+    model_setup_in_app?: boolean;
     has_proxy_config: boolean;
     has_proxy_env: boolean;
     message: string;
@@ -350,6 +352,7 @@ class HttpUtilityService implements UtilityService {
     // flow distinguishes "setup incomplete" from "backend not reachable yet".
     return await apiClient.get<{
       is_complete: boolean;
+      model_setup_in_app?: boolean;
       has_proxy_config: boolean;
       has_proxy_env: boolean;
       message: string;

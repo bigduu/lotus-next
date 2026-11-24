@@ -44,6 +44,7 @@ const ComposerEditor = lazy(() => import("../composer/ComposerEditor"), { export
 export function ComposerPanel(props: {
   chat: Chat
   workspacePath: string | null
+  setupNeedsModel?: boolean
   inputId?: string
   projectId: string | null
   onSelectProject: (id: string | null) => void
@@ -63,6 +64,8 @@ export function ComposerPanel(props: {
   captureSessionCreated: () => (sessionId: string) => void
   onPreviewImage: (url: string) => void
   onAttachmentsChange?: (attachments: readonly ChatImageAttachment[]) => void
+  registerImageDrop?: (handler: ((files: FileList) => void) | null) => void
+  onSubmitMessage?: () => void
   onModelFailureChange?: (active: boolean) => void
   pageVisible?: boolean
 }) {
@@ -148,7 +151,7 @@ export function ComposerPanel(props: {
   })
   createEffect(() => [draftKey(), props.pageVisible !== false && models.modelError !== null] as const,
     ([, active]) => { props.onModelFailureChange?.(active) })
-  const submissionUnavailable = () => interactionBlocked() || models.busy ||
+  const submissionUnavailable = () => props.setupNeedsModel || interactionBlocked() || models.busy ||
     (props.semantic && (!props.canSendIngress || props.ingress.busy || props.ingress.activationPending))
   const blocked = () => submissionUnavailable() || models.rootAdmissionBlocked
   const inputId = untrack(() => props.inputId) ?? createUniqueId()
@@ -204,6 +207,12 @@ export function ComposerPanel(props: {
       console.error("[solid-composer] Could not attach image:", error)
     }
   }
+  onSettled(() => {
+    const register = props.registerImageDrop
+    if (!register) return
+    register((files) => { void addFiles(files) })
+    return () => register(null)
+  })
 
   const send = async () => {
     const key = draftKey()
@@ -275,6 +284,7 @@ export function ComposerPanel(props: {
             (!origin.prepare && draftChanged)) return
         }
       }
+      if (origin.isCurrent()) props.onSubmitMessage?.()
       const result = semantic && key
         ? await props.ingress.send({
             session_id: key,
@@ -324,6 +334,7 @@ export function ComposerPanel(props: {
       <Show when={draftKey() === ""}>
         <NewChatProjectControl projectId={props.projectId} onSelect={props.onSelectProject} />
         <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
+          showWorkspaceName={Boolean(props.projectId && !props.selectedWorktreePath)}
           value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
           disabled={worktree.locked || submitting() || props.chat.submissionPending}
           preparedPath={worktree.preparedPath} error={worktree.error} />
@@ -347,7 +358,7 @@ export function ComposerPanel(props: {
   return (
     <div ref={(element) => { column = element }} data-composer-region="" data-composer-column=""
       data-composer-compact={String(compactToolbar())}
-      class="relative mx-auto w-[calc(100%-1.5rem)] min-w-0 max-w-full shrink-0 pb-3 pt-1">
+      class="relative mx-auto w-[calc(100%-1.5rem)] min-w-0 max-w-6xl shrink-0 pb-3 pt-1">
       <ContextCompressionNotice feedback={props.pageVisible === false ? null : props.chat.contextCompression}
         sessionId={props.pageVisible !== false && props.chat.currentChat?.kind === "root" ? props.chat.currentSessionId : null}
         manualPending={commands.compactPending} runActive={running()} />
@@ -400,17 +411,10 @@ export function ComposerPanel(props: {
         {commandNotice()?.message}
       </p></Show>
       <div ref={(element) => { surface = element }} data-composer-surface=""
-        class="min-w-0 rounded-3xl border border-transparent bg-card p-1.5"
-        onDragOver={(event) => {
-          if (event.dataTransfer?.types.includes("Files")) event.preventDefault()
-        }}
-        onDrop={(event) => {
-          if (!event.dataTransfer?.files.length) return
-          event.preventDefault()
-          void addFiles(event.dataTransfer.files)
-        }}>
+        class="min-w-0 rounded-3xl border border-transparent bg-card p-1.5">
         <Show when={attachments().length}>
-          <div class="flex flex-wrap gap-2 px-2 py-1.5">
+          <div data-composer-attachments=""
+            class="flex max-h-[clamp(5.25rem,calc(35dvh-2rem),16rem)] flex-wrap content-start gap-2 overflow-y-auto overscroll-contain scroll-py-1 px-2 py-1.5">
             <For each={attachments()}>{(attachment) => (
               <div class="relative">
                 <button type="button" onClick={() => props.onPreviewImage(attachment.url)}

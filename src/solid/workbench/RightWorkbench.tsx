@@ -311,7 +311,12 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
   const [tabList, setTabList] = createSignal<HTMLDivElement | undefined>(undefined, { ownedWrite: true })
   let tabMenuTrigger: HTMLButtonElement | undefined
   let addTabTrigger: HTMLButtonElement | undefined
-  let closingTab: { key: string; hadFocus: boolean; scope: string | null | undefined } | null = null
+  let closingTab: {
+    key: string
+    focusedButton: HTMLButtonElement | null
+    scope: string | null | undefined
+    menuReturnTarget?: HTMLButtonElement
+  } | null = null
   let tabsContext: TabsContextValue | undefined
   const RegisterTabsContext = () => {
     tabsContext = useTabsContext()
@@ -356,6 +361,25 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
   }
   const openEntry = (entry: RightWorkbenchTab) => {
     if (entry !== "browser" || !browserUnavailable()) props.onTabChange(entry)
+  }
+  const preserveFocusAfterAddMenu = () => {
+    const trigger = addTabTrigger
+    const panel = trigger?.closest<HTMLElement>("#right-workbench")
+    if (!trigger || !panel) return
+    const document = panel.ownerDocument
+    const focused = document.activeElement
+    const closing = closingTab
+    if (closing?.focusedButton && (focused === closing.focusedButton || focused === document.body || focused === panel)) {
+      closing.menuReturnTarget = trigger
+    }
+    if (!(focused instanceof HTMLElement) || focused === panel || focused === trigger ||
+      !panel.contains(focused) || focused.closest('[role="menu"]')) return
+    const focusScope = props.focusScopeKey
+    // Kobalte focuses the menu trigger after this callback even when the event is cancelled.
+    queueMicrotask(() => {
+      if (visible() && props.pageVisible !== false && props.focusScopeKey === focusScope &&
+        document.activeElement === trigger && canRestoreFocus(focused)) focused.focus({ preventScroll: true })
+    })
   }
   const tabData = (key: string) => {
     const isBrowser = key.startsWith("browser:")
@@ -423,14 +447,15 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
     element?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')?.scrollIntoView({ block: "nearest", inline: "nearest" })
     const closing = closingTab
     if (!closing || ids.includes(closing.key)) return
-    closingTab = null
     const frame = requestAnimationFrame(() => {
+      if (closingTab !== closing) return
+      closingTab = null
       // The last tab and its list may still be in the DOM when the update begins.
       if (!visible() || props.pageVisible === false || props.focusScopeKey !== closing.scope) return
       const focused = document.activeElement
       const panel = addTabTrigger?.closest('#right-workbench[aria-modal="true"]')
-      // The narrow pane focuses its own container when the close button disappears.
-      if (focused !== document.body && !(closing.hadFocus && focused === panel)) return
+      if (focused !== document.body && !(closing.focusedButton &&
+        (focused === panel || focused === closing.menuReturnTarget))) return
       const list = tabList()
       const next = (list?.isConnected
         ? list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]:not([aria-hidden="true"])')
@@ -494,7 +519,8 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
                     onClick={(event) => {
                       const current = tab()
                       closingTab = {
-                        key, hadFocus: document.activeElement === event.currentTarget, scope: props.focusScopeKey,
+                        key, scope: props.focusScopeKey,
+                        focusedButton: document.activeElement === event.currentTarget ? event.currentTarget : null,
                       }
                       if (current.browserId) props.onBrowserClose?.(current.browserId)
                       else props.onToolClose(current.value as WorkbenchToolTab)
@@ -544,7 +570,7 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
             as={Button} ref={(node: HTMLButtonElement) => { addTabTrigger = node }} size="icon" variant="ghost" class="size-8 shrink-0"
             aria-label={text("open_workbench_tab_424b2095")}
           ><Plus class="size-4" /></DropdownMenuTrigger>
-          <DropdownMenuContent>
+          <DropdownMenuContent onCloseAutoFocus={preserveFocusAfterAddMenu}>
             <For each={enabledEntries()}>{(entry) => (
               <DropdownMenuItem disabled={entry.id === "browser" && browserUnavailable()} onSelect={() => openEntry(entry.id)}>
                 <Dynamic component={entry.icon} aria-hidden="true" />{nameOf(entry, text)}

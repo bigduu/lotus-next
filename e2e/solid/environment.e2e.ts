@@ -15,7 +15,10 @@ const summary = (id: string, title: string, workspace: string) => ({
   placement: { kind: "local", host: "fixture" },
 })
 const first = summary(root, "Environment fixture", "/fixture/main")
-const second = summary(other, "Other environment", "/fixture/other")
+const second = {
+  ...summary(other, "Other environment", "/fixture/other"),
+  placement: { kind: "ssh", host: "fixture-runner.example" },
+}
 const card = (page: Page) => page.getByRole("region", { name: "Environment", exact: true })
 const floating = (page: Page) => page.locator("[data-environment-floating]")
 const open = (page: Page) => page.getByRole("button", { name: "Open Environment", exact: true })
@@ -102,6 +105,8 @@ const inset = (page: Page) => page.locator("[data-chat-layout] > [data-chat-body
 test("Environment follows the actual pane width, session visit and workbench visibility", async ({ page, baseURL, isMobile }) => {
   if (!isMobile) await page.setViewportSize({ width: 1900, height: 900 })
   const { observed } = await installFixture(page, baseURL)
+  const placement = page.getByRole("banner").getByTitle("Running on ssh · fixture-runner.example", { exact: true })
+  await expect(placement).toHaveCount(0)
   if (isMobile) {
     await expect(open(page)).toBeVisible()
   } else {
@@ -116,8 +121,9 @@ test("Environment follows the actual pane width, session visit and workbench vis
       await expect(floating(page)).toHaveAttribute("data-state", visible ? "open" : "closed")
       await expect(floating(page)).toHaveAttribute("aria-hidden", String(!visible))
       await expect(visible ? close(page) : open(page)).toHaveAttribute("aria-expanded", String(visible))
-      await expect(floating(page)).toHaveCSS("transition-timing-function", "ease-out, ease-out, ease-out")
-      await expect(floating(page)).toHaveCSS("transition-duration", "0.2s, 0.2s, 0.2s")
+      const transitionCount = visible ? 3 : 4
+      await expect(floating(page)).toHaveCSS("transition-timing-function", Array(transitionCount).fill("ease-out").join(", "))
+      await expect(floating(page)).toHaveCSS("transition-duration", Array(transitionCount).fill("0.2s").join(", "))
       await expect.poll(() => inset(page)).toBe(visible ? 332 : 0)
     }
     await close(page).click()
@@ -138,17 +144,23 @@ test("Environment follows the actual pane width, session visit and workbench vis
   await expect(workbench).toBeVisible()
   await expect(floating(page)).toHaveAttribute("data-state", "closed")
   await expect.poll(() => inset(page)).toBe(0)
+  const suspendedLauncher = page.getByRole("button", { name: "Open Environment", exact: true, includeHidden: true })
+  await expect(suspendedLauncher).toBeDisabled()
+  await suspendedLauncher.dispatchEvent("click")
   await workbench.getByRole("button", { name: "Collapse workbench", exact: true }).click()
   await expect(card(page)).toBeVisible()
   if (!isMobile) await close(page).click()
 
   await selectSession(page, second.title, isMobile)
+  await expect(placement).toBeVisible()
+  await expect(placement.getByText("ssh · fixture-runner.example", { exact: true })).toHaveCSS("position", "static")
   if (isMobile) {
     await expect(open(page)).toHaveAttribute("aria-expanded", "false")
     await open(page).click()
   }
   await expect(card(page).getByText("other", { exact: true })).toBeVisible()
   await selectSession(page, first.title, isMobile)
+  await expect(placement).toHaveCount(0)
   if (isMobile) {
     await expect(open(page)).toHaveAttribute("aria-expanded", "false")
     await open(page).click()
@@ -160,6 +172,55 @@ test("Environment follows the actual pane width, session visit and workbench vis
   await expect(draftPreview).toBeVisible()
   await draftPreview.click()
   await expect(page.getByRole("dialog", { name: "Close preview", exact: true })).toBeVisible()
+  expect(observed.pageErrors).toEqual([])
+})
+
+test("short windows keep the editor and send button clear of the inline Environment", async ({ page, baseURL }, info) => {
+  await page.setViewportSize({ width: 390, height: 320 })
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  const { observed } = await installFixture(page, baseURL)
+  const editor = page.locator("[data-composer-editor]")
+  const send = page.getByRole("button", { name: "Send message", exact: true })
+  const isUncovered = (node: Element) => {
+    const rect = node.getBoundingClientRect()
+    return node.contains(node.ownerDocument.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))
+  }
+  await editor.fill("Draft retained across Environment layout changes")
+  await open(page).click()
+  await expect(floating(page)).toHaveAttribute("data-placement", "inline")
+  await expect(floating(page)).toHaveCSS("transition-duration", "0s")
+  await expect.poll(() => editor.evaluate(isUncovered)).toBe(true)
+  await expect.poll(() => send.evaluate(isUncovered)).toBe(true)
+
+  await page.setViewportSize({ width: 390, height: 550 })
+  await page.locator('input[type="file"][accept="image/*"]').setInputFiles(
+    Array.from({ length: 5 }, (_, index) => ({ name: `draft-${index}.png`, mimeType: "image/png", buffer: png })),
+  )
+  await expect(card(page).getByRole("button", { name: /^Preview draft-/ })).toHaveCount(5)
+  await expect.poll(() => floating(page).evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
+  await expect.poll(() => editor.evaluate(isUncovered)).toBe(true)
+  await expect.poll(() => send.evaluate(isUncovered)).toBe(true)
+  const screenshot = info.outputPath("inline-environment.png")
+  await page.screenshot({ path: screenshot, animations: "disabled" })
+  await info.attach("inline Environment above the draft composer", { path: screenshot, contentType: "image/png" })
+
+  await card(page).getByRole("button", { name: "Preview draft-0.png", exact: true }).click()
+  const preview = page.getByRole("dialog", { name: "Close preview", exact: true })
+  await expect(preview).toBeVisible()
+  await expect.poll(() => preview.evaluate((element) => element.contains(element.ownerDocument.activeElement))).toBe(true)
+  await page.keyboard.press("Escape")
+  await expect(preview).toBeHidden()
+  await expect(card(page)).toBeVisible()
+
+  await card(page).getByRole("button", { name: /^Changes/ }).focus()
+  await page.keyboard.press("Escape")
+  await expect(card(page)).toBeHidden()
+  await expect(open(page)).toBeFocused()
+
+  await open(page).click()
+  await editor.click()
+  await expect(card(page)).toBeHidden()
+  await expect(editor).toBeFocused()
   expect(observed.pageErrors).toEqual([])
 })
 
@@ -212,6 +273,7 @@ test("loads earlier sources on demand and shares one prefix with Review without 
   await changes.click()
   const review = page.locator("#right-workbench").getByRole("tabpanel", { name: "Review", exact: true })
   await expect(review.getByText("archived.ts", { exact: false }).first()).toBeVisible()
+  if (!isMobile) await expect(page.locator("#right-workbench").getByRole("tab", { name: "Review", exact: true })).toBeFocused()
   expect(calls.filter(Boolean)).toEqual(["environment/5"])
   await expect(page.getByText("Environment message 0", { exact: true })).toHaveCount(0)
   expect(observed.pageErrors).toEqual([])

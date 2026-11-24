@@ -258,7 +258,7 @@ let deferredBootstrapPromise: Promise<void> | null = null;
  * provider defaults + session list.  Callers should `await` this before
  * rendering the main layout, then fire-and-forget `bootstrapDeferred()`.
  */
-const bootstrapCritical = async (force: boolean = false): Promise<void> => {
+const bootstrapCritical = async (force: boolean = false, preferredSessionId?: string | null): Promise<void> => {
   if (isInitialized && !force) {
     return;
   }
@@ -294,10 +294,8 @@ const bootstrapCritical = async (force: boolean = false): Promise<void> => {
     }
   }
 
-  // Load chats as early as possible so the UI always has an active chat.
-  // This prevents the controlled message input from appearing "read-only"
-  // in fresh sessions (e.g., Playwright E2E with empty localStorage).
-  await appStore.getState().loadChats();
+  // An empty session list opens the new-chat draft.
+  await appStore.getState().loadChats(preferredSessionId);
 
   isCriticalDone = true;
 };
@@ -337,8 +335,8 @@ const bootstrapDeferred = async (): Promise<void> => {
  * Backward-compatible wrapper: runs critical path, then deferred in background.
  * Existing callers (App.tsx) can continue to call this without changes.
  */
-const initializeStore = async (force: boolean = false): Promise<void> => {
-  await bootstrapCritical(force);
+const initializeStore = async (force: boolean = false, preferredSessionId?: string | null): Promise<void> => {
+  await bootstrapCritical(force, preferredSessionId);
   // Fire-and-forget — deferred work must not block the shell from rendering.
   bootstrapDeferred().catch((err) => {
     console.error("[AppStore] Deferred bootstrap error:", err);

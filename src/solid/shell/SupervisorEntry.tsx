@@ -6,6 +6,7 @@ import { Button } from "../ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { Input } from "../ui/input"
+import { SessionRunningBadge } from "./SessionRunningBadge"
 import { createUiText } from "./uiText"
 
 const ManagedSessionsDialog = lazy(() => import("../workbench/inspector/SupervisorManagedSessions"), {
@@ -135,7 +136,7 @@ export function SupervisorEntry(props: Props) {
               </span>
             </Show>
           }>
-            <span data-session-running="" aria-hidden="true" class="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
+            <SessionRunningBadge label={text("running_1f0eb99b")} />
           </Show>
         </Button>
         <span id={statusId} class="sr-only">{status()}</span>

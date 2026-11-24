@@ -85,6 +85,14 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   const settings = settingsSurface(page);
   await expect(settings).toBeVisible();
   await expect(settingsSurface(page, "dialog")).toHaveCount(0);
+  const header = settings.locator("header");
+  const title = header.getByRole("heading", { name: "系统设置", exact: true });
+  const back = header.getByRole("button", { name: "返回聊天", exact: true });
+  await expect(title).toHaveCSS("font-size", (page.viewportSize()?.width ?? 0) >= 640 ? "18px" : "16px");
+  await expect(header).toHaveCSS("height", "65px");
+  const backBounds = (await back.boundingBox())!;
+  expect((await title.boundingBox())!.x).toBeGreaterThan(backBounds.x + backBounds.width);
+  await expect(settings.getByRole("heading", { name: "默认模型", exact: true })).toBeVisible();
   const categoryOptions = await settings.locator("#settings-category option").evaluateAll((options) =>
     options.map((option) => option.getAttribute("value")));
   expect(new Set(categoryOptions).size).toBe(categoryOptions.length);
@@ -123,6 +131,143 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   await expect(composer).toBeVisible();
   expect(observation.errorResponses).toEqual([]);
   expect(observation.pageErrors).toEqual([]);
+});
+
+test("open-access guests can change local settings without loading owner controls", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Notification, "permission", { value: "granted" });
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+    localStorage.setItem("copilot_ui_theme_v1", "system");
+    localStorage.setItem("lotus_experience_mode_v1", "advanced");
+  });
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], {
+    bootstrapRequestState: "unauthenticated",
+  });
+  // The chat shell loads its configuration independently of the composer.
+  await Promise.all([
+    page.waitForResponse((response) => response.request().method() === "GET"
+      && response.url() === standaloneScenario.origin + "/api/v1/bamboo/config"
+      && response.ok()),
+    page.goto(standaloneScenario.entryUrl),
+  ]);
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+  const earlierRequests = observation.apiUrls.length;
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  const categories = settings.locator("#settings-category option");
+  await expect(categories).toHaveCount(3);
+  expect(await categories.evaluateAll((options) => options.map((option) => option.getAttribute("value"))))
+    .toEqual(["general", "notifications", "system"]);
+  await expect(settings.getByRole("heading", { name: "默认模型", exact: true })).toHaveCount(0);
+
+  await expect(settings.locator(".settings-nav-item[aria-current=page]")).toHaveCSS("border-radius", "10px");
+  await expect(settings.locator("#app-language")).toHaveCSS("border-radius", "10px");
+  await expect(settings.locator(".settings-choice[aria-pressed=true]", { hasText: "跟随系统" }))
+    .toHaveCSS("border-radius", "10px");
+
+  await selectSettingsCategory(settings, "system", "系统");
+  await expect(settings.getByText("前端版本", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "清除本地缓存", exact: true })).toBeVisible();
+  const vdi = settings.getByRole("switch", { name: "图形兼容模式", exact: true });
+  await vdi.check();
+  await expect(page.locator("body")).toHaveAttribute("data-vdi-safe", "true");
+  await expect(settings.getByRole("button", { name: "重置应用", exact: true })).toHaveCount(0);
+  await expect(settings.getByRole("region", { name: "Tailscale 远程访问" })).toHaveCount(0);
+
+  await selectSettingsCategory(settings, "notifications", "通知");
+  const reminder = settings.getByRole("switch", { name: "任务完成提醒", exact: true });
+  await reminder.click();
+  await expect(reminder).toBeChecked();
+  await expect(settings.getByRole("button", { name: "发送测试通知", exact: true })).toBeVisible();
+  await expect(settings.getByRole("region", { name: "通知偏好(服务端)" })).toHaveCount(0);
+  await expect(settings.getByRole("region", { name: "通知渠道" })).toHaveCount(0);
+
+  await selectSettingsCategory(settings, "system", "系统");
+  await expect(vdi).toBeChecked();
+  await selectSettingsCategory(settings, "notifications", "通知");
+  await expect(reminder).toBeChecked();
+  const ownerEndpoints = new Set([
+    "/api/v1/bamboo/config",
+    "/api/v1/bamboo/access/status",
+    "/api/v1/bamboo/tailscale",
+    "/api/v1/bamboo/config/notifications",
+    "/api/v1/notifications/preferences",
+  ]);
+  const ownerRequests = observation.apiUrls.slice(earlierRequests)
+    .filter((request) => ownerEndpoints.has(new URL(request).pathname));
+  expect(ownerRequests).toEqual([]);
+  expect(observation.errorResponses).toEqual([]);
+  expect(observation.pageErrors).toEqual([]);
+});
+
+test("owners can save and reset local Sub-agent time limits", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+    localStorage.setItem("lotus_experience_mode_v1", "advanced");
+  });
+  await installArtifactRuntime(page, standaloneScenario);
+  let subagents: Record<string, number | null> = { max_concurrent: 6 };
+  const writes: Record<string, number | null>[] = [];
+  await page.route("**/api/v1/bamboo/config", async (route) => {
+    if (route.request().method() === "POST") {
+      const { subagents: patch } = route.request().postDataJSON() as { subagents?: Record<string, number | null> };
+      if (patch) {
+        writes.push(patch);
+        subagents = Object.fromEntries(Object.entries({ ...subagents, ...patch })
+          .filter(([, value]) => value !== null));
+      }
+    }
+    await route.fulfill({ json: { subagents } });
+  });
+
+  await page.goto(standaloneScenario.entryUrl);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  await selectSettingsCategory(settings, "system", "系统");
+  const section = settings.getByRole("region", { name: "子代理", exact: true });
+  const total = section.getByRole("textbox", { name: "总时限（秒）", exact: true });
+  const idle = section.getByRole("textbox", { name: "空闲时限（秒）", exact: true });
+  const save = section.getByRole("button", { name: "保存", exact: true });
+  await expect(total).toHaveAttribute("placeholder", "3600");
+  await expect(idle).toHaveAttribute("placeholder", "900");
+  await total.fill("0");
+  await save.click();
+  await expect(section.getByRole("alert")).toHaveText("请输入正整数秒数，或留空使用默认值。");
+  expect(writes).toHaveLength(0);
+
+  await total.fill("10800");
+  await idle.fill("1800");
+  await save.click();
+  await expect(section.getByRole("status")).toHaveText("已保存");
+  expect(writes[0]).toEqual({ max_total_secs: 10800, max_idle_secs: 1800 });
+  await selectSettingsCategory(settings, "general", "通用");
+  await selectSettingsCategory(settings, "system", "系统");
+  await expect(total).toHaveValue("10800");
+  await expect(idle).toHaveValue("1800");
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("Sub-agent time limits", { body: await section.screenshot(), contentType: "image/png" });
+  }
+
+  await total.fill("");
+  subagents = { ...subagents, max_concurrent: 9, max_idle_secs: 2400 };
+  const memory = settings.getByRole("region", { name: "记忆", exact: true });
+  await memory.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(memory.getByRole("status")).toHaveText("已保存");
+  await expect(total).toHaveValue("");
+  await expect(idle).toHaveValue("2400");
+  await expect(section.getByRole("textbox", { name: /最大并发数/ })).toHaveValue("9");
+  await save.click();
+  await expect(section.getByRole("status")).toHaveText("已保存");
+  expect(writes[1]).toEqual({ max_total_secs: null });
+  expect(subagents).toEqual({ max_concurrent: 9, max_idle_secs: 2400 });
 });
 
 // This is a DOM contract check for the explicitly supported old modal layout,

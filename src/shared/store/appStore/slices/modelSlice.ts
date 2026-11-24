@@ -78,7 +78,7 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
         try {
           const setupStatus = await serviceFactory.getSetupStatus();
           if (revision !== modelLoadRevision) return;
-          if (!setupStatus.is_complete) {
+          if (!setupStatus.is_complete && !setupStatus.model_setup_in_app) {
             debugLog("[ModelSlice]", "Setup not complete, skipping model fetch");
             set({
               models: [],

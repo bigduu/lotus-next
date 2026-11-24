@@ -8,6 +8,10 @@ const cleanups: Array<() => void> = []
 
 const getTypedSection = vi.fn()
 const putTypedSection = vi.fn()
+const getEffectiveDefaults = vi.fn()
+vi.mock("@services/api", () => ({
+  apiClient: { get: (...args: unknown[]) => getEffectiveDefaults(...args) },
+}))
 
 vi.mock("@services/config/SettingsService", () => ({
   settingsService: {
@@ -71,6 +75,7 @@ describe("SettingsRetry", () => {
   beforeEach(() => {
     getTypedSection.mockReset()
     putTypedSection.mockReset()
+    getEffectiveDefaults.mockReset()
     getTypedSection.mockResolvedValue(envelope({ llm_retry: policy }, 3))
   })
 
@@ -84,6 +89,18 @@ describe("SettingsRetry", () => {
     expect(getTypedSection).toHaveBeenCalledWith("core")
     expect(field(host, "max_attempts").value).toBe("8")
     expect(field(host, "attempt_timeout_ms").value).toBe("180000")
+  })
+
+  it("shows the effective policy when the new install has no saved override", async () => {
+    getTypedSection.mockResolvedValue(envelope({}, 3))
+    getEffectiveDefaults.mockResolvedValue({ upstream_retry: { ...policy, max_attempts: 6 } })
+    const host = await mount()
+    await flush()
+    expect(getEffectiveDefaults).toHaveBeenCalledWith("execute/defaults", { cache: "no-store" })
+    expect(field(host, "max_attempts").value).toBe("6")
+    expect(field(host, "base_delay_ms").value).toBe("500")
+    expect(button(host, "save").disabled).toBe(true)
+    expect(host.querySelector("details")?.open).toBe(false)
   })
 
   it("writes only llm_retry back into the core section, keeping other keys", async () => {
@@ -160,6 +177,7 @@ describe("SettingsRetry", () => {
 
     const host = await mount()
     await flush()
+    await settle(() => setValue(field(host, "max_attempts"), "7"))
     await settle(async () => {
       button(host, "save").click()
     })

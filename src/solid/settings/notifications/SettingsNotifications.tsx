@@ -146,10 +146,10 @@ function BrowserPreferences() {
   </section>
 }
 
-export function SettingsNotifications() {
+export function SettingsNotifications(props: { ownerAccess: boolean }) {
   return <div class="space-y-4" data-settings-notifications="">
-    <ServerPreferences />
+    <Show when={props.ownerAccess}><ServerPreferences /></Show>
     <BrowserPreferences />
-    <ChannelsSection />
+    <Show when={props.ownerAccess}><ChannelsSection /></Show>
   </div>
 }

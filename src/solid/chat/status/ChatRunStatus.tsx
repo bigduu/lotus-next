@@ -140,6 +140,9 @@ export function ChatRunStatus(props: {
         </Show>
       </div>
     </Show>
+    <Show when={chat.upstreamRetryNotice}>{(notice) =>
+      <p role="status" class="mx-4 mb-2 text-xs text-muted-foreground">{notice()}</p>
+    }</Show>
     <Show when={chat.upstreamRetryStatus}>{(status) =>
       <p role="status" class="mx-4 mb-2 text-xs text-muted-foreground">{text(upstreamStatus[status()])}</p>
     }</Show>

@@ -61,7 +61,7 @@ export function InstanceEditor(props: InstanceEditorProps) {
   const initial = untrack(() => {
     const initial = draftFromInstance(props.instance)
     const models = props.initialRuntimeModels
-    return models ? { ...initial, runtimeModels: [...models], initialRuntimeModels: [...models] } : initial
+    return models ? { ...initial, runtimeModels: [...models] } : initial
   })
   const [draft, setDraft] = createSignal(initial)
   const [advanced, setAdvanced] = createSignal(!!initial.requestOverridesJson || !!initial.responsesOnlyModels ||

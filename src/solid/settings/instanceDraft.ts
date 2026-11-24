@@ -21,7 +21,6 @@ export interface Draft {
   fastModel: string | null
   visionModel: string | null
   runtimeModels: string[]
-  initialRuntimeModels: readonly string[]
   modelCapabilities: NonNullable<ProviderInstance["config"]["model_capabilities"]>
   reasoningEffort: string
   responsesOnlyModels: string
@@ -44,7 +43,6 @@ export function draftFromInstance(inst: ProviderInstance | null): Draft {
     fastModel: typeof cfg.fast_model === "string" && cfg.fast_model.trim() ? cfg.fast_model : null,
     visionModel: typeof cfg.vision_model === "string" && cfg.vision_model.trim() ? cfg.vision_model : null,
     runtimeModels: inst ? getRuntimeModelIds(inst) : [],
-    initialRuntimeModels: inst ? getRuntimeModelIds(inst) : [],
     modelCapabilities: structuredClone(inst?.config.model_capabilities ?? {}),
     reasoningEffort: str(cfg.reasoning_effort),
     responsesOnlyModels: Array.isArray(cfg.responses_only_models)
@@ -71,13 +69,7 @@ export function buildPayload(
 ): { payload: InstanceSavePayload } | { error: string } {
   const type = draft.type
   const config: Record<string, unknown> = {}
-  const modelCapabilities = { ...draft.modelCapabilities }
-  for (const model of draft.runtimeModels) {
-    if (!draft.initialRuntimeModels.includes(model) && modelCapabilities[model]?.supports_vision !== false) {
-      modelCapabilities[model] = { ...modelCapabilities[model], supports_vision: true }
-    }
-  }
-  config.model_capabilities = modelCapabilities
+  config.model_capabilities = draft.modelCapabilities
   config.runtime_models = [...new Set(draft.runtimeModels.map((model) => model.trim()).filter(Boolean))]
   if (draft.model.trim() && !(config.runtime_models as string[]).includes(draft.model.trim())) {
     return { error: text("runtime_models_default_required") }

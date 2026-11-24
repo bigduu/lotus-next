@@ -229,6 +229,54 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe("Sidebar running session priority", () => {
+  it("moves live roots above pinned and older dates and returns them to their original groups", () => {
+    const [running, setRunning] = createSignal<string[]>([])
+    render({
+      isRunning: (entry) => running().includes(entry.id),
+      chats: [
+        ...props.chats, chat("idle-pinned", 5, { pinned: true }), chat("running-pinned", 4, { pinned: true }),
+        chat("old-root", -10), chat("child", 5, { parentSessionId: "day-0" }),
+      ],
+    })
+    const priority = () => container.querySelector('section[aria-label="优先"]')
+    expect(priority()).toBeNull()
+    expect(row("old-root")).toBeNull()
+
+    run(() => setRunning(["old-root", "running-pinned", "child"]))
+    expect([...container.querySelectorAll("[data-session]")].slice(0, 3).map((entry) => entry.getAttribute("data-session")))
+      .toEqual(["running-pinned", "old-root", "idle-pinned"])
+    expect(priority()?.contains(row("old-root"))).toBe(true)
+    expect(container.querySelectorAll('[data-session="running-pinned"]')).toHaveLength(1)
+    expect(row("child")).toBeNull()
+
+    search(" OLD-ROOT ")
+    expect(priority()?.contains(row("old-root"))).toBe(true)
+    expect(row("running-pinned")).toBeNull()
+    search("day-0")
+    expect(priority()).toBeNull()
+    expect(row("day-0")).not.toBeNull()
+    search("")
+
+    run(() => setRunning([]))
+    expect(priority()).toBeNull()
+    expect(row("running-pinned")).not.toBeNull()
+    expect(row("old-root")).toBeNull()
+    click("更早")
+    expect(row("old-root")).not.toBeNull()
+  })
+
+  it("shows all running sessions in Project view beyond the regular preview limit", () => {
+    localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
+    render({
+      chats: Array.from({ length: 9 }, (_, index) => chat(`running-${index}`, index, { isRunning: true })),
+      currentSessionId: null,
+    })
+    expect(container.querySelectorAll('section[aria-label="优先"] [data-session]')).toHaveLength(9)
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
+  })
+})
+
 describe("Sidebar date disclosures", () => {
   it("shows five populated dates plus pinned and counts all older root sessions", () => {
     render({ chats: [...props.chats, chat("pinned", -30, { pinned: true }), chat("old-second", -1), chat("child", -2, { parentSessionId: "day-0" })] })
