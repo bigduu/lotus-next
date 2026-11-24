@@ -114,28 +114,33 @@ export function MemorySettings(props: ConfigProps) {
 
 export function SubagentSettings(props: ConfigProps) {
   const text = createUiText()
-  const [concurrency, setConcurrency] = createSignal(String(props.config.subagents?.max_concurrent ?? ""))
-  const [totalSeconds, setTotalSeconds] = createSignal(String(props.config.subagents?.max_total_secs ?? ""))
-  const [idleSeconds, setIdleSeconds] = createSignal(String(props.config.subagents?.max_idle_secs ?? ""))
+  const [concurrency, setConcurrency] = createSignal<string>()
+  const [totalSeconds, setTotalSeconds] = createSignal<string>()
+  const [idleSeconds, setIdleSeconds] = createSignal<string>()
   const action = createSystemAction()
   const save = () => action.run(async () => {
-    const value = concurrency().trim() ? Number(concurrency()) : null
-    if (value !== null && (!Number.isInteger(value) || value < 1)) throw new Error(text("concurrency_must_be_an_integer_of_at_least_1_9240ee0f"))
-    const total = totalSeconds().trim() ? Number(totalSeconds()) : null
-    const idle = idleSeconds().trim() ? Number(idleSeconds()) : null
-    if ([total, idle].some((seconds) => seconds !== null && (!Number.isSafeInteger(seconds) || seconds < 1))) {
-      throw new Error(text("subagent_time_limit_invalid"))
+    const patch: BambooSubagentsConfig = {}
+    const edits = [
+      ["max_concurrent", concurrency(), "concurrency_must_be_an_integer_of_at_least_1_9240ee0f"],
+      ["max_total_secs", totalSeconds(), "subagent_time_limit_invalid"],
+      ["max_idle_secs", idleSeconds(), "subagent_time_limit_invalid"],
+    ] as const
+    for (const [field, draft, message] of edits) {
+      if (draft === undefined) continue
+      const value = draft.trim() ? Number(draft) : null
+      if (value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new Error(text(message))
+      if (value !== (props.config.subagents?.[field] ?? null)) patch[field] = value
     }
-    const patch: BambooSubagentsConfig = { max_concurrent: value }
-    if (total !== (props.config.subagents?.max_total_secs ?? null)) patch.max_total_secs = total
-    if (idle !== (props.config.subagents?.max_idle_secs ?? null)) patch.max_idle_secs = idle
-    const saved = (await props.saveSection({ subagents: patch })).subagents
-    if (
-      (patch.max_total_secs !== undefined && (saved?.max_total_secs ?? null) !== total) ||
-      (patch.max_idle_secs !== undefined && (saved?.max_idle_secs ?? null) !== idle)
-    ) {
-      throw new Error(text("subagent_time_limits_unconfirmed"))
+    if (Object.keys(patch).length) {
+      const saved = (await props.saveSection({ subagents: patch })).subagents
+      const timeFields = ["max_total_secs", "max_idle_secs"] as const
+      if (timeFields.some((field) => patch[field] !== undefined && (saved?.[field] ?? null) !== patch[field])) {
+        throw new Error(text("subagent_time_limits_unconfirmed"))
+      }
     }
+    setConcurrency(undefined)
+    setTotalSeconds(undefined)
+    setIdleSeconds(undefined)
   })
   return (
     <SystemSection title={text("sub_agent_acd37b4c")}>
@@ -144,18 +149,26 @@ export function SubagentSettings(props: ConfigProps) {
           <div class="text-sm">{text("maximum_concurrency_dd9fd5ce")}</div>
           <div class="text-xs text-muted-foreground">{text("maximum_simultaneous_subagent_processes_leave_blank_for_c6efded8")}</div>
         </div>
-        <Input class="w-24 text-right" inputmode="numeric" placeholder="8" value={concurrency()} onInput={(event) => setConcurrency(event.currentTarget.value)} />
+        <Input class="w-24 text-right" inputmode="numeric" placeholder="8" disabled={action.busy()}
+          value={concurrency() ?? String(props.config.subagents?.max_concurrent ?? "")}
+          onInput={(event) => setConcurrency(event.currentTarget.value)} />
       </label>
       <label class="flex items-center justify-between gap-2 text-sm">
         {text("subagent_total_time_seconds")}
-        <Input class="w-24 text-right" inputmode="numeric" placeholder="3600" value={totalSeconds()} onInput={(event) => setTotalSeconds(event.currentTarget.value)} />
+        <Input class="w-24 text-right" inputmode="numeric" placeholder="3600" disabled={action.busy()}
+          value={totalSeconds() ?? String(props.config.subagents?.max_total_secs ?? "")}
+          onInput={(event) => setTotalSeconds(event.currentTarget.value)} />
       </label>
       <label class="flex items-center justify-between gap-2 text-sm">
         {text("subagent_idle_time_seconds")}
-        <Input class="w-24 text-right" inputmode="numeric" placeholder="900" value={idleSeconds()} onInput={(event) => setIdleSeconds(event.currentTarget.value)} />
+        <Input class="w-24 text-right" inputmode="numeric" placeholder="900" disabled={action.busy()}
+          value={idleSeconds() ?? String(props.config.subagents?.max_idle_secs ?? "")}
+          onInput={(event) => setIdleSeconds(event.currentTarget.value)} />
       </label>
       <p class="text-xs text-muted-foreground">{text("subagent_time_limits_defaults")}</p>
-      <SaveSection action={action} onSave={() => { void save() }} />
+      <SaveSection action={action}
+        disabled={concurrency() === undefined && totalSeconds() === undefined && idleSeconds() === undefined}
+        onSave={() => { void save() }} />
     </SystemSection>
   )
 }

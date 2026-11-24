@@ -215,10 +215,12 @@ test("owners can save and reset local Sub-agent time limits", async ({ page }, t
   const writes: Record<string, number | null>[] = [];
   await page.route("**/api/v1/bamboo/config", async (route) => {
     if (route.request().method() === "POST") {
-      const { subagents: patch } = route.request().postDataJSON();
-      writes.push(patch);
-      subagents = Object.fromEntries(Object.entries({ ...subagents, ...patch })
-        .filter(([, value]) => value !== null)) as Record<string, number>;
+      const { subagents: patch } = route.request().postDataJSON() as { subagents?: Record<string, number | null> };
+      if (patch) {
+        writes.push(patch);
+        subagents = Object.fromEntries(Object.entries({ ...subagents, ...patch })
+          .filter(([, value]) => value !== null));
+      }
     }
     await route.fulfill({ json: { subagents } });
   });
@@ -245,7 +247,7 @@ test("owners can save and reset local Sub-agent time limits", async ({ page }, t
   await idle.fill("1800");
   await save.click();
   await expect(section.getByRole("status")).toHaveText("已保存");
-  expect(writes[0]).toEqual({ max_concurrent: 6, max_total_secs: 10800, max_idle_secs: 1800 });
+  expect(writes[0]).toEqual({ max_total_secs: 10800, max_idle_secs: 1800 });
   await selectSettingsCategory(settings, "general", "通用");
   await selectSettingsCategory(settings, "system", "系统");
   await expect(total).toHaveValue("10800");
@@ -255,10 +257,17 @@ test("owners can save and reset local Sub-agent time limits", async ({ page }, t
   }
 
   await total.fill("");
+  subagents = { ...subagents, max_concurrent: 9, max_idle_secs: 2400 };
+  const memory = settings.getByRole("region", { name: "记忆", exact: true });
+  await memory.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(memory.getByRole("status")).toHaveText("已保存");
+  await expect(total).toHaveValue("");
+  await expect(idle).toHaveValue("2400");
+  await expect(section.getByRole("textbox", { name: /最大并发数/ })).toHaveValue("9");
   await save.click();
   await expect(section.getByRole("status")).toHaveText("已保存");
-  expect(writes[1]).toEqual({ max_concurrent: 6, max_total_secs: null });
-  expect(subagents).toEqual({ max_concurrent: 6, max_idle_secs: 1800 });
+  expect(writes[1]).toEqual({ max_total_secs: null });
+  expect(subagents).toEqual({ max_concurrent: 9, max_idle_secs: 2400 });
 });
 
 // This is a DOM contract check for the explicitly supported old modal layout,
