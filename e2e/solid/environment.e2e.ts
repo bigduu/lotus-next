@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
 
 const root = "all-surface-session"
@@ -21,7 +21,7 @@ const floating = (page: Page) => page.locator("[data-environment-floating]")
 const open = (page: Page) => page.getByRole("button", { name: "Open Environment", exact: true })
 const close = (page: Page) => page.getByRole("button", { name: "Collapse Environment", exact: true })
 
-async function installFixture(page: Page, baseURL: string | undefined, older?: Promise<void>) {
+async function installFixture(page: Page, baseURL: string | undefined, older?: Promise<void>, running = false) {
   const entryUrl = new URL("/", baseURL).href
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
@@ -31,18 +31,31 @@ async function installFixture(page: Page, baseURL: string | undefined, older?: P
   const observed = await installArtifactRuntime(page, {
     ...standaloneScenario, origin: new URL(entryUrl).origin, entryUrl,
   }, [], { serveStaticFromLocalServer: true })
+  const active = running ? { ...first, is_running: true, last_run_status: "running" } : first
+  let socket: WebSocketRoute | undefined
+  let watching = false
+  let sequence = 0
+  if (running) await page.routeWebSocket(/.*/, (connection) => {
+    socket = connection
+    connection.onMessage((raw) => {
+      const frame = JSON.parse(String(raw))
+      if (frame.type === "hello") connection.send(JSON.stringify({ type: "welcome" }))
+      if (frame.type === "ping") connection.send(JSON.stringify({ type: "pong" }))
+      if (frame.type === "subscribe" && frame.ch === `agent.${root}`) watching = true
+    })
+  })
   await page.route((url) => url.pathname === "/api/v1/sessions", (route) => {
     const kind = new URL(route.request().url()).searchParams.get("kind")
-    const sessions = kind === "child" ? [] : [first, second]
+    const sessions = kind === "child" ? [] : [active, second]
     return route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
   })
-  for (const session of [first, second]) {
+  for (const session of [active, second]) {
     await page.route(`**/api/v1/sessions/${session.id}`, (route) => route.fulfill({ json: { session }, headers: { ETag: '"1"' } }))
   }
   const calls: Array<string | null> = []
   const rows = Array.from({ length: older ? 105 : 1 }, (_, index) => {
     const entry = { id: `environment-row-${index}`, role: "user", content: `Environment message ${index}`, created_at: at }
-    if (older && index === 0) return { ...entry, content_parts: [
+    if ((older || running) && index === 0) return { ...entry, content_parts: [
       { type: "image_url", image_url: { url: `bamboo-attachment://${root}/archived.png` } },
     ] }
     if (older && index === 1) return { ...entry, role: "assistant", content: "", tool_calls: [
@@ -70,7 +83,11 @@ async function installFixture(page: Page, baseURL: string | undefined, older?: P
     route.fulfill({ json: { session_id: other, messages: [{ id: "other-row", role: "user", content: "Other session message", created_at: at }] } }))
   await page.goto(entryUrl)
   await expect(page.getByRole("heading", { name: first.title, exact: true })).toBeVisible()
-  return { calls, observed }
+  if (running) await expect.poll(() => watching).toBe(true)
+  return { calls, observed, emit(event: object) {
+    if (!socket) throw new Error("Missing live Environment fixture socket")
+    socket.send(JSON.stringify({ ch: `agent.${root}`, seq: ++sequence, event }))
+  } }
 }
 
 async function selectSession(page: Page, title: string, mobile: boolean) {
@@ -90,6 +107,19 @@ test("Environment follows the actual pane width, session visit and workbench vis
   } else {
     await expect(close(page)).toBeVisible()
     await expect.poll(() => inset(page)).toBe(332)
+    const layoutWidth = () => page.locator("[data-chat-layout]").evaluate((element) => Math.round(element.getBoundingClientRect().width))
+    const sideWidth = page.viewportSize()!.width - await layoutWidth()
+    for (const width of [1483, 1484, 1485]) {
+      await page.setViewportSize({ width: sideWidth + width, height: 900 })
+      await expect.poll(layoutWidth).toBe(width)
+      const visible = width >= 1484
+      await expect(floating(page)).toHaveAttribute("data-state", visible ? "open" : "closed")
+      await expect(floating(page)).toHaveAttribute("aria-hidden", String(!visible))
+      await expect(visible ? close(page) : open(page)).toHaveAttribute("aria-expanded", String(visible))
+      await expect(floating(page)).toHaveCSS("transition-timing-function", "ease-out, ease-out, ease-out")
+      await expect(floating(page)).toHaveCSS("transition-duration", "0.2s, 0.2s, 0.2s")
+      await expect.poll(() => inset(page)).toBe(visible ? 332 : 0)
+    }
     await close(page).click()
     await page.setViewportSize({ width: 1400, height: 900 })
   }
@@ -107,6 +137,7 @@ test("Environment follows the actual pane width, session visit and workbench vis
   const workbench = page.locator("#right-workbench")
   await expect(workbench).toBeVisible()
   await expect(floating(page)).toHaveAttribute("data-state", "closed")
+  await expect.poll(() => inset(page)).toBe(0)
   await workbench.getByRole("button", { name: "Collapse workbench", exact: true }).click()
   await expect(card(page)).toBeVisible()
   if (!isMobile) await close(page).click()
@@ -129,6 +160,31 @@ test("Environment follows the actual pane width, session visit and workbench vis
   await expect(draftPreview).toBeVisible()
   await draftPreview.click()
   await expect(page.getByRole("dialog", { name: "Close preview", exact: true })).toBeVisible()
+  expect(observed.pageErrors).toEqual([])
+})
+
+test("Environment summarizes live edits and opens the same saved source image", async ({ page, baseURL, isMobile }) => {
+  if (!isMobile) await page.setViewportSize({ width: 1900, height: 900 })
+  const { observed, emit } = await installFixture(page, baseURL, undefined, true)
+  if (isMobile) await open(page).click()
+  const changes = card(page).getByRole("button", { name: /^Changes/ })
+  await expect(changes).toContainText("0 changed files")
+  emit({ type: "tool_start", tool_call_id: "environment-edit", tool_name: "Edit", arguments: {} })
+  emit({ type: "tool_complete", tool_call_id: "environment-edit", result: { success: true, result: JSON.stringify({
+    operation: "edit", file_path: "/fixture/main/live.css",
+    diff: { unified: "--- a/live.css\n+++ b/live.css\n@@ -1,2 +1,3 @@\n-old\n+new\n+more\n same" },
+  }) } })
+  await expect(changes).toContainText("1 changed file")
+  await expect(changes).toContainText("+2")
+  await expect(changes).toContainText("−1")
+
+  const preview = card(page).getByRole("button", { name: "Preview attachment-archived.png", exact: true })
+  const source = await preview.locator("img").getAttribute("src")
+  expect(source).toContain(`/sessions/${root}/attachments/archived.png`)
+  await preview.click()
+  const dialog = page.getByRole("dialog", { name: "Close preview", exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator("img")).toHaveAttribute("src", source!)
   expect(observed.pageErrors).toEqual([])
 })
 
