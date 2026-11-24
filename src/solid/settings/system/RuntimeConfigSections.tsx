@@ -1,6 +1,7 @@
 import { RefreshCw } from "@lucide/solid"
 import { createMemo, createSignal, createUniqueId, For, onCleanup, onSettled, Show } from "solid-js"
 import { apiClient, getErrorMessage } from "@services/api"
+import type { BambooSubagentsConfig } from "@services/common/ServiceFactory"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
@@ -114,11 +115,27 @@ export function MemorySettings(props: ConfigProps) {
 export function SubagentSettings(props: ConfigProps) {
   const text = createUiText()
   const [concurrency, setConcurrency] = createSignal(String(props.config.subagents?.max_concurrent ?? ""))
+  const [totalSeconds, setTotalSeconds] = createSignal(String(props.config.subagents?.max_total_secs ?? ""))
+  const [idleSeconds, setIdleSeconds] = createSignal(String(props.config.subagents?.max_idle_secs ?? ""))
   const action = createSystemAction()
   const save = () => action.run(async () => {
     const value = concurrency().trim() ? Number(concurrency()) : null
     if (value !== null && (!Number.isInteger(value) || value < 1)) throw new Error(text("concurrency_must_be_an_integer_of_at_least_1_9240ee0f"))
-    await props.saveSection({ subagents: { max_concurrent: value as number | undefined } })
+    const total = totalSeconds().trim() ? Number(totalSeconds()) : null
+    const idle = idleSeconds().trim() ? Number(idleSeconds()) : null
+    if ([total, idle].some((seconds) => seconds !== null && (!Number.isSafeInteger(seconds) || seconds < 1))) {
+      throw new Error(text("subagent_time_limit_invalid"))
+    }
+    const patch: BambooSubagentsConfig = { max_concurrent: value }
+    if (total !== (props.config.subagents?.max_total_secs ?? null)) patch.max_total_secs = total
+    if (idle !== (props.config.subagents?.max_idle_secs ?? null)) patch.max_idle_secs = idle
+    const saved = (await props.saveSection({ subagents: patch })).subagents
+    if (
+      (patch.max_total_secs !== undefined && (saved?.max_total_secs ?? null) !== total) ||
+      (patch.max_idle_secs !== undefined && (saved?.max_idle_secs ?? null) !== idle)
+    ) {
+      throw new Error(text("subagent_time_limits_unconfirmed"))
+    }
   })
   return (
     <SystemSection title={text("sub_agent_acd37b4c")}>
@@ -129,6 +146,15 @@ export function SubagentSettings(props: ConfigProps) {
         </div>
         <Input class="w-24 text-right" inputmode="numeric" placeholder="8" value={concurrency()} onInput={(event) => setConcurrency(event.currentTarget.value)} />
       </label>
+      <label class="flex items-center justify-between gap-2 text-sm">
+        {text("subagent_total_time_seconds")}
+        <Input class="w-24 text-right" inputmode="numeric" placeholder="3600" value={totalSeconds()} onInput={(event) => setTotalSeconds(event.currentTarget.value)} />
+      </label>
+      <label class="flex items-center justify-between gap-2 text-sm">
+        {text("subagent_idle_time_seconds")}
+        <Input class="w-24 text-right" inputmode="numeric" placeholder="900" value={idleSeconds()} onInput={(event) => setIdleSeconds(event.currentTarget.value)} />
+      </label>
+      <p class="text-xs text-muted-foreground">{text("subagent_time_limits_defaults")}</p>
       <SaveSection action={action} onSave={() => { void save() }} />
     </SystemSection>
   )
