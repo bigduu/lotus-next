@@ -136,7 +136,13 @@ test("open-access guests can change local settings without loading owner control
   const observation = await installArtifactRuntime(page, standaloneScenario, [], {
     bootstrapRequestState: "unauthenticated",
   });
-  await page.goto(standaloneScenario.entryUrl);
+  // The chat shell loads its configuration independently of the composer.
+  await Promise.all([
+    page.waitForResponse((response) => response.request().method() === "GET"
+      && response.url() === standaloneScenario.origin + "/api/v1/bamboo/config"
+      && response.ok()),
+    page.goto(standaloneScenario.entryUrl),
+  ]);
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
   const earlierRequests = observation.apiUrls.length;
   if ((page.viewportSize()?.width ?? 0) < 768) {
