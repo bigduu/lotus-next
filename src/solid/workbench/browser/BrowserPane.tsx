@@ -311,7 +311,7 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
       if (untrack(() => props.active) && addressInput && canFocusBrowserControl(addressInput)) addressInput.focus({ preventScroll: true })
     })
     return (
-      <section class="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label={uiText("built_in_browser_42d6809d")} data-browser-empty>
+      <section class="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label={uiText("built_in_browser_42d6809d")} data-browser-empty="true">
         {profileControls(session)}
         <div class="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Globe2 aria-hidden="true" /></div>
         <div class="text-center">
@@ -349,7 +349,7 @@ export function BrowserPaneView(props: BrowserPaneViewProps) {
   }
 
   const page = (session: string) => (
-    <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label={uiText("built_in_browser_42d6809d")} data-browser-pane>
+    <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label={uiText("built_in_browser_42d6809d")} data-browser-pane="true">
       {profileControls(session)}
       <div class="flex shrink-0 items-center gap-1 border-b p-2">
         <Button size="icon" variant="ghost" aria-label={uiText("back_2d1d8c1e")} disabled={!browser().state?.can_go_back || controlsBlocked()} onClick={() => void browser().history("back")}>

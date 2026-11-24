@@ -221,6 +221,10 @@ it("clears the dialog overlay after a transient state failure when the model ans
 })
 
 it("keeps browser controls in one toolbar without a nested tab strip", () => {
+  const pane = host.querySelector("section[data-browser-pane]")
+  expect(pane?.getAttribute("data-browser-pane")).toBe("true")
+  expect(pane?.querySelector("[data-browser-viewport]")).not.toBeNull()
+  expect(host.querySelector("[data-browser-empty]")).toBeNull()
   expect(host.querySelector('nav[aria-label="浏览器标签列表"]')).toBeNull()
   expect(host.querySelector('button[aria-label="新建标签页"]')).toBeNull()
   expect(host.querySelector('input[aria-label="网页地址"]')).not.toBeNull()
@@ -234,7 +238,10 @@ it("shows a focused address entry instead of browser chrome when no page exists"
   })
   await show("empty-chat")
 
-  expect(host.querySelector("[data-browser-empty]")?.textContent).toContain("还没有打开网页")
+  const pane = host.querySelector("section[data-browser-empty]")
+  expect(pane?.getAttribute("data-browser-empty")).toBe("true")
+  expect(pane?.textContent).toContain("还没有打开网页")
+  expect(host.querySelector("[data-browser-pane]")).toBeNull()
   expect(host.querySelector<HTMLInputElement>('input[aria-label="网页地址"]')).toBe(document.activeElement)
   expect(host.querySelector('button[aria-label="后退"]')).toBeNull()
   expect(host.querySelector("[data-browser-viewport]")).toBeNull()
