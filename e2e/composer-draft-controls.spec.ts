@@ -95,6 +95,91 @@ test("hides only Project selection when the backend has no Projects API", async 
   expect(observed.pageErrors).toEqual([])
 })
 
+for (const [configured, label] of [[undefined, "自动"], ["max", "最大"], ["none", "关闭"]] as const) {
+  test(`keeps the configured Chat effort ${configured ?? "auto"} while editing and sends the override`, async ({ page }) => {
+    const observed = await fixture(page)
+    const chats: Array<Record<string, unknown>> = []
+    await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
+      default_provider_instance_id: "fixture-provider",
+      instances: [{ id: "fixture-provider", type: "openai", enabled: true, label: "Fixture provider", config: { model: "fixture-model" } }],
+      defaults: { chat: { provider: "fixture-provider", model: "fixture-model", reasoning_effort: configured } },
+      features: { provider_model_ref: true },
+    } }))
+    await page.route("**/api/v1/chat", (route) => {
+      chats.push(route.request().postDataJSON())
+      return route.fulfill({ json: { session_id: sessionId, status: "success", message_id: "effort-user" } })
+    })
+    await enterBlankChat(page)
+    if (await page.getByRole("dialog", { name: "更多", exact: true }).isVisible()) await page.keyboard.press("Escape")
+    const picker = page.getByRole("button", { name: "模型与推理强度", exact: true })
+    await expect(picker).toContainText(label)
+    await messages(page).fill("Use the requested reasoning setting")
+    await expect(picker).toContainText(label)
+    await picker.click()
+    const effort = page.getByRole("slider", { name: "推理强度", exact: true })
+    await effort.press("Home")
+    await effort.press("ArrowRight")
+    await expect(picker).toContainText("关闭")
+    await page.keyboard.press("Escape")
+    await page.getByRole("button", { name: "发送消息", exact: true }).click()
+    await expect.poll(() => chats).toEqual([expect.objectContaining({
+      message: "Use the requested reasoning setting", reasoning_effort: "none",
+    })])
+    expect(observed.pageErrors).toEqual([])
+  })
+}
+
+test("invalidates the first send if the user leaves while execution capability is pending", async ({ page }) => {
+  const observed = await fixture(page)
+  let resolveDefaults!: () => void
+  const pending = new Promise<void>((resolve) => { resolveDefaults = resolve })
+  let defaultsRequested = false
+  await page.route("**/api/v1/execute/defaults", async (route) => {
+    defaultsRequested = true
+    await pending
+    return route.fulfill({ json: { live_bootstrap_resume: {
+      protocol_version: 1, offer_timeout_ms: 600000, waiting_endpoint: "execute/{session_id}/retry",
+      continue_run_header: "Bamboo-Run-Id", initial_opt_in_field: "live_bootstrap_resume",
+    } } })
+  })
+  const chats: unknown[] = []
+  await page.route("**/api/v1/chat", (route) => {
+    chats.push(route.request().postDataJSON())
+    return route.fulfill({ json: { session_id: sessionId, status: "success" } })
+  })
+  try {
+    await enterBlankChat(page)
+    if (await page.getByRole("dialog", { name: "更多", exact: true }).isVisible()) await page.keyboard.press("Escape")
+    const editor = messages(page)
+    await editor.fill("Keep this preflight draft")
+    await expect.poll(() => defaultsRequested).toBe(true)
+    const destination = page.getByRole("button", { name: /All-surface acceptance/ }).first()
+    const openSidebar = page.getByRole("button", { name: "菜单", exact: true })
+    if (await openSidebar.isVisible()) {
+      const bounds = await destination.boundingBox()
+      if (!bounds || bounds.x < 0) await openSidebar.click()
+    }
+    // Both actions are genuine button events dispatched together so the
+    // bounded capability wait cannot expire between pointer automations.
+    const send = page.getByRole("button", { name: "发送消息", exact: true })
+    await expect(send).toBeEnabled()
+    const target = await destination.elementHandle()
+    expect(target).not.toBeNull()
+    await send.evaluate((button, next) => {
+      if (!(button instanceof HTMLButtonElement) || !(next instanceof HTMLButtonElement)) throw new Error("Expected both chat controls")
+      button.click()
+      next.click()
+    }, target)
+    resolveDefaults()
+    await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
+    await expect(page.getByRole("button", { name: "正在发送", exact: true })).toHaveCount(0)
+    expect(chats).toEqual([])
+    expect(observed.pageErrors).toEqual([])
+  } finally {
+    resolveDefaults()
+  }
+})
+
 test("opens the saved default prompt preset once and restores focus after Escape", async ({ page }) => {
   const observed = await fixture(page)
   await page.route("**/api/v1/prompt-presets", (route) => route.fulfill({

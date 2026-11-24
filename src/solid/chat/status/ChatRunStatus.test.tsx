@@ -170,6 +170,43 @@ it("keeps draft recovery visible during an independent pending interaction", () 
   expect(view.send).not.toHaveBeenCalled()
 })
 
+it.each([
+  ["Budget error: compression stream closed before response.completed", "message_sent_but_generation_was_interrupted_62a4d83d", null],
+  ["Stream timed out: phase=bootstrap, deadline_ms=120000, last_http_status=429, retry_delay_ms=60000",
+    "model_service_rate_limited_8b54cf50", "the_provider_or_proxy_returned_429_wait_for_the_rate_li_b76133d9"],
+  ["Stream timed out: phase=bootstrap, deadline_ms=120000, last_semantic_ms_ago=never",
+    "model_service_connection_timed_out_ecde837c", "the_model_response_could_not_be_established_check_the_p_c6ee27c5"],
+  ["Tool error: Execution failed: Native canonical Session Source scope changed",
+    "session_source_changed", "session_source_changed_action"],
+] as const)("preserves guidance and actionable retry after loading %s", (detail, title, action) => {
+  const view = mount(session(from, "error", detail))
+  const notice = alert(view.host)!
+  expect(notice.textContent).toContain(uiText(title))
+  if (action) expect(notice.textContent).toContain(uiText(action))
+  expect(notice.querySelector("details")?.open).toBe(false)
+  expect(notice.querySelector("details")?.textContent).toContain(detail)
+  expect(button(view.host, "run_diagnostics_open")).toBeDefined()
+  expect(button(view.host, "upstream_retry_until_stopped")).toBeUndefined()
+  expect(view.retry).not.toHaveBeenCalled()
+  button(view.host, "retry_generation_37960b38")!.click()
+  expect(view.retry).toHaveBeenCalledExactlyOnceWith(undefined)
+  expect(view.send).not.toHaveBeenCalled()
+})
+
+it.each([
+  ["LLM error: HTTP 429: model_cooldown", "model_service_rate_limited_8b54cf50"],
+  ["Tool error: Execution failed: Native canonical Session Source scope changed", "session_source_changed"],
+] as const)("retries a scoped live error %s without replaying its message", (message, title) => {
+  const failure = { ...generationFailure, message }
+  const view = mount(session(from, "completed"), { sendFailure: failure })
+  expect(alert(view.host)?.textContent).toContain(uiText(title))
+  expect(alert(view.host)?.querySelector("details")?.textContent).toContain(message)
+  expect(view.retry).not.toHaveBeenCalled()
+  button(view.host, "retry_generation_37960b38")!.click()
+  expect(view.retry).toHaveBeenCalledExactlyOnceWith(failure)
+  expect(view.send).not.toHaveBeenCalled()
+})
+
 it("closes an old preview on navigation and binds the next preview to its own saved error", async () => {
   const view = mount(session(from, "error", "PRIVATE_OLD_ERROR. Diagnostic ID: " + oldDiagnostic + "."))
   expect((await openDiagnostic(view.host)).diagnostic.diagnostic_id).toBe(oldDiagnostic)

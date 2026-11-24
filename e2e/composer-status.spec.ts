@@ -84,6 +84,18 @@ test("keeps a pending submission distinct from a running generation", async ({ p
   await expect.poll(() => operations).toEqual(["submit", "execute"])
   await expect(pending).toHaveCount(0)
   await expect(stop).toBeEnabled()
+
+  const create = page.getByRole("button", { name: "New Session", exact: true })
+  const menu = page.getByRole("button", { name: "Menu", exact: true })
+  if (await menu.isVisible()) {
+    const bounds = await create.boundingBox()
+    if (!bounds || bounds.x < 0) await menu.click()
+  }
+  await create.click()
+  await expect(page.getByRole("heading", { name: "Start a new task", exact: true })).toBeVisible()
+  await expect(stop).toHaveCount(0)
+  await expect(send).toBeVisible()
+  expect(operations).toEqual(["submit", "execute"])
   expect(observation.errorResponses).toEqual([])
   expect(observation.pageErrors).toEqual([])
 })
