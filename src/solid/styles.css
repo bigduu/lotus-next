@@ -1,3 +1,8 @@
 @import "tailwindcss" source(none);
 @import "../app-styles.css";
 @source "./";
+
+/* Short windows need room for both the attachment tray and the send controls. */
+[data-composer-surface]:has([data-composer-attachments]) [data-composer-editor] {
+  max-height: min(10rem, 25dvh);
+}
