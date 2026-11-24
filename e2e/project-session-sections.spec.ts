@@ -980,3 +980,75 @@ test("search by title or session ID reveals folded project sections", async ({ p
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
 })
+
+test("running sessions rise above pinned and folded projects until their work finishes", async ({ page }, testInfo) => {
+  const { observation, fixtureSessions, projectWrites } = await installSectionFixture(page)
+  const target = fixtureSessions.find(({ id }) => id === "alpha-search")!
+  const pinned = fixtureSessions.find(({ id }) => id === "beta-session")!
+  pinned.pinned = true
+  let socket: WebSocketRoute | undefined
+  let subscribed = false
+  await page.routeWebSocket(/.*/, (webSocket) => {
+    socket = webSocket
+    webSocket.onMessage((raw) => {
+      const frame = JSON.parse(String(raw)) as { type?: string; ch?: string }
+      if (frame.type === "hello") webSocket.send(JSON.stringify({ type: "welcome" }))
+      if (frame.type === "ping") webSocket.send(JSON.stringify({ type: "pong" }))
+      if (frame.type === "subscribe" && frame.ch === "feed") subscribed = true
+    })
+  })
+  const publishRun = (running: boolean, seq: number) => {
+    const ts = new Date(Date.parse(at) + seq * 1000).toISOString()
+    target.is_running = running
+    target.last_run_status = running ? "running" : "completed"
+    target.updated_at = ts
+    target.last_activity_at = ts
+    socket!.send(JSON.stringify({
+      ch: "feed", seq,
+      event: { seq, ts, session_id: target.id, event: {
+        type: running ? "execution_started" : "complete", session_id: target.id,
+      } },
+    }))
+  }
+
+  const phone = testInfo.project.name === "phone-chromium"
+  await page.emulateMedia({ colorScheme: phone ? "light" : "dark", reducedMotion: "reduce" })
+  await page.goto(standaloneScenario.entryUrl)
+  await openSidebar(page, phone)
+  await expect.poll(() => subscribed).toBe(true)
+  const sidebar = page.locator('[data-slot="sidebar"]')
+  const alpha = project(page, alphaId)
+  const investigation = section(alpha, alphaInvestigation)
+  const priority = sidebar.getByRole("region", { name: "优先", exact: true })
+  await expect(row(investigation, target.id)).toBeVisible()
+  await expect(row(sidebar, pinned.id)).toBeVisible()
+  await disclosure(investigation).click()
+  await disclosure(alpha).click()
+  await expect(priority).toHaveCount(0)
+
+  publishRun(true, 1)
+  const runningRow = row(priority, target.id)
+  const runningBadge = runningRow.locator("[data-session-running]")
+  await expect(runningBadge).toBeVisible()
+  await expect(runningBadge).toHaveText("运行中")
+  await expect(runningRow.getByRole("button", { name: target.title, exact: true })).toHaveAccessibleDescription("运行中")
+  await expect(sidebar.locator("[data-sidebar-session]").first()).toHaveAttribute("data-sidebar-session", target.id)
+  await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "false")
+  const screenshot = testInfo.outputPath("sidebar-priority.png")
+  await sidebar.screenshot({ path: screenshot, animations: "disabled" })
+  await testInfo.attach("Priority sessions and running badge", { path: screenshot, contentType: "image/png" })
+
+  await disclosure(alpha).click()
+  await expect(disclosure(investigation)).toHaveAttribute("aria-expanded", "false")
+  await disclosure(investigation).click()
+  await expect(row(investigation, target.id)).toHaveCount(0)
+  await expect(row(sidebar, target.id)).toHaveCount(1)
+
+  publishRun(false, 2)
+  await expect(priority).toHaveCount(0)
+  await expect(row(investigation, target.id)).toBeVisible()
+  await expect(row(investigation, target.id).locator("[data-session-running]")).toHaveCount(0)
+  expect(projectWrites).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})

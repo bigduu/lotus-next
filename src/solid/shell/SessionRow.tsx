@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu"
 import { createSidebarContextMenu } from "./createSidebarContextMenu"
+import { SessionRunningBadge } from "./SessionRunningBadge"
 import { createUiText } from "./uiText"
 import { WorktreeStateBadge } from "./WorktreeStateBadge"
 
@@ -39,6 +40,7 @@ export function SessionRow(props: {
 }) {
   const text = createUiText()
   const unreadId = createUniqueId()
+  const runningId = createUniqueId()
   const failureId = createUniqueId()
   const [editing, setEditing] = createSignal(false)
   const [draft, setDraft] = createSignal("")
@@ -52,7 +54,8 @@ export function SessionRow(props: {
     ? props.chat.lastRunError?.trim() || text("session_last_run_failed_hint")
     : undefined
   const description = createMemo(() =>
-    [props.unread ? unreadId : null, runFailed() ? failureId : null].filter(Boolean).join(" ") || undefined,
+    [props.unread ? unreadId : null, running() ? runningId : null, runFailed() ? failureId : null]
+      .filter(Boolean).join(" ") || undefined,
   )
 
   const rename = () => {
@@ -134,19 +137,22 @@ export function SessionRow(props: {
         >
           <span title={failureDetail()} data-session-run-failure={runFailed() ? "" : undefined}
             class="flex size-3.5 shrink-0 items-center justify-center">
-            {running() ? (
-              <span data-session-running="" role="img" aria-label={text("running_1f0eb99b")}
-                title={text("running_1f0eb99b")} class="size-1.5 animate-pulse rounded-full bg-primary" />
-            ) : runFailed() ? (
+            {runFailed() ? (
               <AlertCircle aria-hidden="true" class="size-3.5 text-destructive" />
             ) : props.unread ? (
               <span aria-hidden="true" title={text("new_messages_ce3b9bb1")} class="size-1.5 rounded-full bg-primary" />
             ) : null}
           </span>
-          <span class="truncate">{props.chat.title || text("new_session_c57c30bc")}</span>
+          <span class="min-w-0 flex-1 truncate">{props.chat.title || text("new_session_c57c30bc")}</span>
+          <Show when={running()}>
+            <SessionRunningBadge label={text("running_1f0eb99b")} />
+          </Show>
         </button>
         <Show when={props.unread}>
           <span id={unreadId} class="sr-only">{text("unread_messages_519491f4")}</span>
+        </Show>
+        <Show when={running()}>
+          <span id={runningId} class="sr-only">{text("running_1f0eb99b")}</span>
         </Show>
         <Show when={runFailed()}>
           <span id={failureId} class="sr-only">{text("session_last_run_failed_hint")}</span>
