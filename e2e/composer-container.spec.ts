@@ -133,7 +133,7 @@ test("short windows keep the editor and Send reachable with multiple image attac
   await page.keyboard.press("Enter")
   const preview = page.getByRole("dialog", { name: "Close preview", exact: true })
   await expect(preview.locator("img")).toHaveAttribute("src", source!)
-  await page.keyboard.press("Escape")
+  await preview.getByRole("button", { name: "Close preview", exact: true }).click()
   await expect(preview).toBeHidden()
   await lastRemove.click()
   await expect(lastPreview).toHaveCount(0)
