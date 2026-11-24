@@ -1,13 +1,18 @@
-import { createMemo, createSignal, Errored, lazy, Loading, Show } from "solid-js"
+import { createMemo, createSignal, Errored, lazy, Loading, onCleanup, Show } from "solid-js"
 import type { RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
 import {
   ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle,
 } from "../../ui/responsive-dialog"
+import type { RunDiagnosticsDialogContent } from "./RunDiagnosticsDialogContent"
 
-const loadDialog = () => import("./RunDiagnosticsDialogContent")
-const makeDialog = () => lazy(loadDialog, { export: "RunDiagnosticsDialogContent" })
+type DialogModule = { RunDiagnosticsDialogContent: typeof RunDiagnosticsDialogContent }
+type LoadDialog = () => Promise<DialogModule>
+const loadOriginal = () => import("./RunDiagnosticsDialogContent")
+const loadAlternate = () => import("./RunDiagnosticsDialogContent.tsx?diagnostics-retry")
+let loadDialog: LoadDialog = loadOriginal
+const makeDialog = (load: LoadDialog) => lazy(load, { export: "RunDiagnosticsDialogContent" })
 
 function Pending(props: { failed?: boolean; onClose: () => void }) {
   const text = createUiText()
@@ -21,24 +26,32 @@ function Pending(props: { failed?: boolean; onClose: () => void }) {
 }
 
 /** Opening the optional diagnostic does not read a session until the user asks. */
-export function RunDiagnosticsEntry(props: { subject: RunDiagnosticsSubject }) {
+export function RunDiagnosticsEntry(props: { subject: RunDiagnosticsSubject; loadDialog?: LoadDialog }) {
   const text = createUiText()
-  const [opened, setOpened] = createSignal<{ subject: RunDiagnosticsSubject; Content: ReturnType<typeof makeDialog> } | null>(null)
+  const visit = createMemo(() => ({ subject: props.subject }))
+  const [opened, setOpened] = createSignal<{ visit: ReturnType<typeof visit>; Content: ReturnType<typeof makeDialog> } | null>(null)
+  let mounted = true
+  onCleanup(() => { mounted = false })
   const active = createMemo(() => {
     const value = opened()
-    return value?.subject === props.subject ? value : null
+    return value?.visit === visit() ? value : null
   })
   const close = () => setOpened(null)
+  const closeFailure = () => {
+    // A failed import URL is cached by the browser for this document.
+    if (!props.loadDialog) loadDialog = loadAlternate
+    close()
+  }
   return <>
-    <Button type="button" size="sm" variant="outline" onClick={() => setOpened({ subject: props.subject, Content: makeDialog() })}>
+    <Button type="button" size="sm" variant="outline" onClick={() => setOpened({ visit: visit(), Content: makeDialog(props.loadDialog ?? loadDialog) })}>
       {text("run_diagnostics_open")}
     </Button>
     <Show when={active()} keyed>{(entry) => {
       const Content = entry.Content
-      const isCurrent = () => active() === entry
-      return <Errored fallback={() => <Pending failed onClose={close} />}>
+      const isCurrent = () => mounted && active() === entry
+      return <Errored fallback={() => <Pending failed onClose={closeFailure} />}>
         <Loading fallback={<Pending onClose={close} />}>
-          <Content subject={entry.subject} isCurrent={isCurrent} onClose={close} />
+          <Content subject={entry.visit.subject} isCurrent={isCurrent} onClose={close} />
         </Loading>
       </Errored>
     }}</Show>

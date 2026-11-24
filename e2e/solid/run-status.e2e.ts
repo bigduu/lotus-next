@@ -1,6 +1,6 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { createHash } from "node:crypto"
-import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
+import { artifactFileForSource, installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
 
 const id = "all-surface-session"
 const at = "2026-10-25T04:51:29.725Z"
@@ -109,6 +109,40 @@ async function fixture(page: Page, baseURL: string | undefined, type: "diagnosti
     withdrawDiagnostic() { diagnostic = null },
   }
 }
+
+test("diagnostics can reopen after the optional dialog chunk fails without reloading", async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "One built diagnostic chunk recovery case")
+  const source = "src/solid/chat/status/RunDiagnosticsDialogContent.tsx"
+  const [original, alternate] = await Promise.all([
+    artifactFileForSource(source),
+    artifactFileForSource(`${source}?diagnostics-retry`),
+  ])
+  expect(original).not.toBe(alternate)
+  const f = await fixture(page, baseURL, "diagnostic")
+  const requests: string[] = []
+  let navigations = 0
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations += 1 })
+  await page.route("**/assets/RunDiagnosticsDialogContent-*.js", (route) => {
+    const asset = new URL(route.request().url()).pathname.slice(1)
+    requests.push(asset)
+    return asset === original ? route.abort("failed") : route.fallback()
+  })
+  const baseline = f.detailReads
+  const open = page.getByRole("button", { name: "View diagnostics", exact: true })
+  const dialog = page.getByRole("dialog", { name: "Run diagnostics", exact: true })
+  await open.click()
+  await expect(dialog).toContainText("Diagnostics could not be loaded. Close and try again.")
+  await expect(dialog.getByRole("button", { name: "Download diagnostic JSON" })).toHaveCount(0)
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await open.click()
+  await expect(dialog.locator("pre")).toContainText('"canonical_status": "not_checked"')
+  expect(requests).toEqual([original, alternate])
+  expect(navigations).toBe(0)
+  expect(f.detailReads).toBe(baseline)
+  expect(f.writes).toEqual([])
+  expect(f.observed.pageErrors).toEqual([])
+})
 
 test("Solid diagnostics read only on request, export the reviewed report, and withdraw absent details", async ({ page, baseURL }) => {
   const f = await fixture(page, baseURL, "diagnostic")
