@@ -218,7 +218,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
       data-history-viewport=""
       onScroll={captureReadingAnchor}
     >
-      <div data-message-list-content="" class="relative mx-auto flex min-w-0 w-full max-w-full flex-col py-4">
+      <div data-message-list-content="" class="relative mx-auto flex min-w-0 w-full max-w-6xl flex-col py-4">
         <div ref={(element) => { prefix = element }} class="flex flex-col gap-2 empty:hidden">{props.before}</div>
         <div
           ref={(element) => { history = element }}
