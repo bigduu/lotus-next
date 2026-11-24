@@ -23,7 +23,9 @@ export function describeRunFailure(detail: string | null): RunFailureGuidance | 
   }
 
   const failure = detail.replace(/^Turn \d+ failed terminally: /i, "")
-  const status = failure.match(/^(?:LLM (?:error|overflow): )?(?:API error: )?(?:(?:Anthropic|Gemini) API error: )?HTTP (400|401|403)\b/i)?.[1]
+  const providerFailure = failure.replace(/^(?:LLM (?:error|overflow): )?(?:API error: )?/i, "")
+  const status = providerFailure.match(/^(?:(?:Anthropic|Gemini) API error: |Bodhi\/(?:OpenAI|Anthropic|Gemini) proxy )?HTTP (400|401|403)\b/i)?.[1]
+    ?? providerFailure.match(/^Anthropic upstream request failed \(HTTP (400|401|403)\):/i)?.[1]
   if (status === "401" || status === "403" || /^(?:LLM error: )?Authentication error:/i.test(failure)) {
     return {
       title: uiText("run_failure_model_access_rejected"),

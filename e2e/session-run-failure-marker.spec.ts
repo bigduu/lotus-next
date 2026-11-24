@@ -4,7 +4,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 const failedId = "failed-run-session"
 const healthyId = "healthy-session"
 const at = "2026-10-31T00:00:00Z"
-const detail = "Provider upstream returned 502"
+const detail = "LLM error: API error: Bodhi/OpenAI proxy HTTP 401 Unauthorized: invalid fixture credentials"
 
 const sessions = [
   {
@@ -26,8 +26,8 @@ const sessions = [
   },
 ]
 
-test("the sidebar marks a session whose last run failed in red, and only that session", async ({ page }, info) => {
-  test.skip(info.project.name !== "desktop-chromium", "one desktop pass covers the sidebar marker")
+test("a failed session has a sidebar marker and actionable recovery guidance", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "one desktop pass covers the failed session")
   await page.emulateMedia({ reducedMotion: "reduce" })
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
@@ -41,6 +41,8 @@ test("the sidebar marks a session whose last run failed in red, and only that se
       await route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
     } else if (request.method() === "GET" && path === `/api/v1/sessions/${healthyId}`) {
       await route.fulfill({ json: { session: sessions[1] }, headers: { ETag: '"1"' } })
+    } else if (request.method() === "GET" && path.endsWith("/sessions/" + failedId)) {
+      await route.fulfill({ json: { session: sessions[0] }, headers: { ETag: '"1"' } })
     } else if (request.method() === "GET" && path === `/api/v1/history/${healthyId}`) {
       await route.fulfill({ json: { session_id: healthyId, messages: [
         { id: "healthy-request", role: "user", content: "Run the healthy fixture.", created_at: at },
@@ -90,4 +92,13 @@ test("the sidebar marks a session whose last run failed in red, and only that se
   expect(Math.abs((boxes[0]!.width) - (boxes[1]!.width))).toBeLessThan(0.5)
 
   await info.attach("sidebar-failed-run-marker", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" })
+
+  await failedRow.getByRole("button").first().click()
+  await expect(page.getByRole("banner")).toContainText(sessions[0]!.title)
+  const guidance = page.getByRole("alert").filter({ hasText: "模型服务拒绝了访问" })
+  await expect(guidance).toContainText("检查服务商凭据和模型访问权限后再试。")
+  await info.attach("terminal-model-access-guidance", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  })
 })
