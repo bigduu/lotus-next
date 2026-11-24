@@ -547,8 +547,9 @@ it.each([
   const close = vi.fn()
   const [load, setLoad] = createSignal(false)
   const [open, setOpen] = createSignal(true)
-  const pending = Promise.withResolvers<{ default: typeof RightWorkbenchContent }>()
-  const LateContent = lazy(() => pending.promise)
+  let resolveContent!: (module: { default: typeof RightWorkbenchContent }) => void
+  const pending = new Promise<{ default: typeof RightWorkbenchContent }>((resolve) => { resolveContent = resolve })
+  const LateContent = lazy(() => pending)
   const { host } = mount({}, () => <><button data-background>Background</button>
     <RightWorkbenchSurface {...mode} onClose={close}>
       <Show when={load()}><Loading fallback={<span>Loading workbench</span>}>
@@ -565,7 +566,7 @@ it.each([
   await vi.waitFor(() => expect(document.activeElement).toBe(rename))
   dispatch(() => setLoad(true))
   expect(host.textContent).toContain("Loading workbench")
-  pending.resolve({ default: RightWorkbenchContent })
+  resolveContent({ default: RightWorkbenchContent })
   await vi.waitFor(() => { flush(); expect(host.textContent).not.toContain("Loading workbench") })
   expect(host.querySelector("#right-workbench")).toBe(panel)
   dispatch(() => host.querySelector<HTMLButtonElement>("[data-background]")!.focus())
