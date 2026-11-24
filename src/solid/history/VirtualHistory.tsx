@@ -1,11 +1,12 @@
 import type { JSX } from "@solidjs/web"
-import { createEffect, createSignal, For, onSettled, type Accessor } from "solid-js"
+import { createEffect, createSignal, For, onSettled, untrack, type Accessor } from "solid-js"
 import { measureElement, observeElementRect, type VirtualItem } from "@tanstack/virtual-core"
 import { cn } from "../../lib/utils"
 import { createElementVirtualizer } from "./createElementVirtualizer"
 
 const INITIAL_RECT = { width: 1024, height: 720 }
 const HISTORY_ROW_GAP = 8
+const STABLE_LAYOUT_FRAMES = 3
 
 export interface HistoryReadingAnchor {
   key: string
@@ -25,6 +26,8 @@ export interface VirtualHistoryProps<T extends HistoryEntry> {
   after?: JSX.Element
   preserveOnPrepend?: boolean
   followingLatest?: boolean
+  /** Prepare the initial bottom position offscreen until the content is ready. */
+  initialContentReady?: (viewport: HTMLDivElement) => boolean
   initialReadingAnchor?: HistoryReadingAnchor | null
   onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
   onMissingReadingAnchor?: () => void
@@ -40,6 +43,11 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
   const [scrollMargin, setScrollMargin] = createSignal(0)
   const [outsideHistory, setOutsideHistory] = createSignal(0)
   const [prepend, setPrepend] = createSignal<{ entries: readonly T[]; anchor: HistoryReadingAnchor } | null>(null)
+  const [initialBottomPending, setInitialBottomPending] = createSignal(
+    untrack(() => !!props.initialContentReady && !!props.followingLatest && !props.initialReadingAnchor),
+  )
+  const preparingInitialHistory = () => initialBottomPending() && !!props.initialContentReady &&
+    props.followingLatest && props.entries.length > 0
   let scroller!: HTMLDivElement
   let prefix!: HTMLDivElement
   let history!: HTMLDivElement
@@ -133,6 +141,43 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
   })
 
   createEffect(
+    () => [viewport(), preparingInitialHistory(), props.followingLatest, props.initialContentReady] as const,
+    ([element, preparing, following, contentReady]) => {
+      if (!following || !contentReady) {
+        setInitialBottomPending(false)
+        return
+      }
+      const view = element?.ownerDocument.defaultView
+      if (!element || !view || !preparing) return
+      let frame: number
+      let previousHeight: number | undefined
+      let stableFrames = 0
+      const check = () => {
+        const bounds = history.getBoundingClientRect()
+        const lastRow = history.lastElementChild as HTMLElement | null
+        const lastBounds = lastRow?.getBoundingClientRect()
+        const atBottom = element.clientHeight > 0 &&
+          Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 2
+        const lastRowMeasured = lastRow?.dataset.historyEntryKey === props.entries.at(-1)?.key &&
+          lastBounds && (!lastBounds.height || Math.abs(bounds.bottom - lastBounds.bottom) <= 2)
+        // Row measurements and the sticky bottom correction can land in
+        // different frames. Present them only once both agree.
+        if (atBottom && lastRowMeasured && bounds.height === previousHeight && contentReady(element)) {
+          stableFrames += 1
+          if (stableFrames >= STABLE_LAYOUT_FRAMES) {
+            setInitialBottomPending(false)
+            return
+          }
+        } else stableFrames = 0
+        previousHeight = bounds.height
+        frame = view.requestAnimationFrame(check)
+      }
+      frame = view.requestAnimationFrame(check)
+      return () => view.cancelAnimationFrame(frame)
+    },
+  )
+
+  createEffect(
     () => {
       const entries = props.entries
       const pending = prepend()
@@ -178,7 +223,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
           stableFrames = 0
         }
         attempts += 1
-        if (stableFrames >= 3 || attempts >= 12) {
+        if (stableFrames >= STABLE_LAYOUT_FRAMES || attempts >= 12) {
           finish()
           return
         }
@@ -201,7 +246,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
   const captureReadingAnchor = () => {
     props.onScroll?.()
     const report = props.onReadingAnchor
-    if (!report || (props.initialReadingAnchor && !restored) || prepend()) return
+    if (!report || preparingInitialHistory() || (props.initialReadingAnchor && !restored) || prepend()) return
     if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 2) {
       report(null)
       return
@@ -216,9 +261,12 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
       ref={(element) => { scroller = element }}
       class={cn("min-h-0 min-w-0 flex-1 overflow-y-auto px-3 [overflow-anchor:none]", props.class)}
       data-history-viewport=""
+      aria-busy={preparingInitialHistory() ? "true" : undefined}
       onScroll={captureReadingAnchor}
     >
-      <div data-message-list-content="" class="relative mx-auto flex min-w-0 w-full max-w-6xl flex-col py-4">
+      <div data-message-list-content="" class="relative mx-auto flex min-w-0 w-full max-w-6xl flex-col py-4"
+        style={{ visibility: preparingInitialHistory() ? "hidden" : undefined }}
+      >
         <div ref={(element) => { prefix = element }} class="flex flex-col gap-2 empty:hidden">{props.before}</div>
         <div
           ref={(element) => { history = element }}
