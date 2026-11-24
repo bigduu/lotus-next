@@ -204,6 +204,72 @@ test("open-access guests can change local settings without loading owner control
   expect(observation.pageErrors).toEqual([]);
 });
 
+test("owners can save and reset local Sub-agent time limits", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+    localStorage.setItem("lotus_experience_mode_v1", "advanced");
+  });
+  await installArtifactRuntime(page, standaloneScenario);
+  let subagents: Record<string, number | null> = { max_concurrent: 6 };
+  const writes: Record<string, number | null>[] = [];
+  await page.route("**/api/v1/bamboo/config", async (route) => {
+    if (route.request().method() === "POST") {
+      const { subagents: patch } = route.request().postDataJSON() as { subagents?: Record<string, number | null> };
+      if (patch) {
+        writes.push(patch);
+        subagents = Object.fromEntries(Object.entries({ ...subagents, ...patch })
+          .filter(([, value]) => value !== null));
+      }
+    }
+    await route.fulfill({ json: { subagents } });
+  });
+
+  await page.goto(standaloneScenario.entryUrl);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  await selectSettingsCategory(settings, "system", "系统");
+  const section = settings.getByRole("region", { name: "子代理", exact: true });
+  const total = section.getByRole("textbox", { name: "总时限（秒）", exact: true });
+  const idle = section.getByRole("textbox", { name: "空闲时限（秒）", exact: true });
+  const save = section.getByRole("button", { name: "保存", exact: true });
+  await expect(total).toHaveAttribute("placeholder", "3600");
+  await expect(idle).toHaveAttribute("placeholder", "900");
+  await total.fill("0");
+  await save.click();
+  await expect(section.getByRole("alert")).toHaveText("请输入正整数秒数，或留空使用默认值。");
+  expect(writes).toHaveLength(0);
+
+  await total.fill("10800");
+  await idle.fill("1800");
+  await save.click();
+  await expect(section.getByRole("status")).toHaveText("已保存");
+  expect(writes[0]).toEqual({ max_total_secs: 10800, max_idle_secs: 1800 });
+  await selectSettingsCategory(settings, "general", "通用");
+  await selectSettingsCategory(settings, "system", "系统");
+  await expect(total).toHaveValue("10800");
+  await expect(idle).toHaveValue("1800");
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("Sub-agent time limits", { body: await section.screenshot(), contentType: "image/png" });
+  }
+
+  await total.fill("");
+  subagents = { ...subagents, max_concurrent: 9, max_idle_secs: 2400 };
+  const memory = settings.getByRole("region", { name: "记忆", exact: true });
+  await memory.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(memory.getByRole("status")).toHaveText("已保存");
+  await expect(total).toHaveValue("");
+  await expect(idle).toHaveValue("2400");
+  await expect(section.getByRole("textbox", { name: /最大并发数/ })).toHaveValue("9");
+  await save.click();
+  await expect(section.getByRole("status")).toHaveText("已保存");
+  expect(writes[1]).toEqual({ max_total_secs: null });
+  expect(subagents).toEqual({ max_concurrent: 9, max_idle_secs: 2400 });
+});
+
 // This is a DOM contract check for the explicitly supported old modal layout,
 // not evidence that a historical package passed real-Bamboo acceptance.
 test("published baseline Settings helper retains the explicit modal contract", async ({ page }) => {
