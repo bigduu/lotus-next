@@ -5,7 +5,7 @@ for (const mode of ["idle", "running", "monitoring"] as const) {
   const queued = mode !== "idle";
   const action = mode === "monitoring" ? "queues guidance while a command is monitored"
     : queued ? "queues guidance during a run" : "sends a draft through Bamboo";
-  test(`Solid Lotus restores a session and ${action}`, async ({ page, baseURL }) => {
+  test(`Solid Lotus restores a session and ${action}`, async ({ page, baseURL }, info) => {
     const id = "all-surface-session";
     const entryUrl = new URL("/", baseURL).href;
     const session = {
@@ -90,6 +90,9 @@ for (const mode of ["idle", "running", "monitoring"] as const) {
     const closeReview = workbench.getByRole("button", { name: "关闭Review标签页" });
     await closeReview.press("Enter");
     await expect(workbench.getByRole("tab", { name: "会话任务 DAG", exact: true })).toBeFocused();
+    if (mode === "idle" && info.project.name === "phone-chromium") {
+      await info.attach("Phone workbench focus after closing Review", { body: await page.screenshot(), contentType: "image/png" });
+    }
     await workbench.getByRole("button", { name: /^关闭.+标签页$/ }).press("Enter");
     await expect(workbench.getByRole("tab")).toHaveCount(0);
     await expect(workbench.getByRole("button", { name: "打开工作面板标签页" })).toBeFocused();
