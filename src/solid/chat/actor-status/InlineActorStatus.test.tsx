@@ -1,5 +1,5 @@
 import { render, type JSX } from "@solidjs/web"
-import { createSignal, flush } from "solid-js"
+import { createMemo, createSignal, flush } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
 import { uiText } from "@shared/i18n/text"
 import type { SubAgentCard } from "@services/chat/actorInlineStatus"
@@ -28,8 +28,8 @@ function mount(agents: Record<string, SubAgentCard>, originUnconfirmed = false) 
         if (!next.delete(id)) next.add(id)
         return next
       }),
-      groups: () => ({ byOrigin: new Map(), folded: {}, unplaced: {}, hasUnconfirmedAge: false }),
-      error: () => null,
+      groups: createMemo(() => ({ byOrigin: new Map(), folded: {}, unplaced: {}, hasUnconfirmedAge: false })),
+      error: createMemo(() => null),
       refresh: vi.fn(),
     }
     return <InlineActorGroup agents={rows()} status={status} onOpen={onOpen} originUnconfirmed={originUnconfirmed} />
