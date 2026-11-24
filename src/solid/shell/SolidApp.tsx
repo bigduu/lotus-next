@@ -1,4 +1,4 @@
-import { BookText, Bot, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, WifiOff, Workflow } from "@lucide/solid"
+import { BookText, Bot, ChevronLeft, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, WifiOff, Workflow } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, onSettled, Show } from "solid-js"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
@@ -961,6 +961,16 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               <PanelRightOpen />
             </Button>
           </header>
+          <Show when={chat.currentChat?.id === currentSession() && chat.currentChat?.parentSessionId} keyed>
+            {(parentId) => <button type="button" onClick={() => {
+              const child = chat.currentChat
+              if (child?.id === appStore.getState().currentSessionId && child?.parentSessionId === parentId) {
+                void select(parentId).catch(openError)
+              }
+            }} class="flex w-full shrink-0 items-center gap-1.5 border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+              <ChevronLeft class="size-3.5" aria-hidden="true" />{text("subagent_back_to_parent_session_5f5fc758")}
+            </button>}
+          </Show>
           <div data-chat-layout="" ref={environment.bindLayout} class="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div data-chat-body="true" data-session-drop-target="main" ref={sessionDrop.bindTarget} class="flex min-h-0 min-w-0 flex-1 flex-col"
             style={{ "padding-inline-end": `${environment.reservedWidth()}px`, transition: "padding-inline-end 200ms ease-out" }}>
