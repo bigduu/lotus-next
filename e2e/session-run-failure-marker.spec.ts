@@ -4,6 +4,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 const failedId = "failed-run-session"
 const healthyId = "healthy-session"
 const at = "2026-10-31T00:00:00Z"
+const failedRequest = "Check the saved authentication fixture."
 const detail = "LLM error: API error: Bodhi/OpenAI proxy HTTP 401 Unauthorized: invalid fixture credentials"
 
 const sessions = [
@@ -48,7 +49,11 @@ test("a failed session has a sidebar marker and actionable recovery guidance", a
         { id: "healthy-request", role: "user", content: "Run the healthy fixture.", created_at: at },
         { id: "healthy-answer", role: "assistant", content: "The healthy fixture completed.", created_at: at },
       ] } })
-    } else if (path === `/api/v1/respond/${healthyId}/pending`) {
+    } else if (request.method() === "GET" && path.endsWith("/history/" + failedId)) {
+      await route.fulfill({ json: { session_id: failedId, messages: [
+        { id: "failed-request", role: "user", content: failedRequest, created_at: at },
+      ] } })
+    } else if (path.endsWith("/respond/" + healthyId + "/pending") || path.endsWith("/respond/" + failedId + "/pending")) {
       await route.fulfill({ json: { has_pending_question: false } })
     } else await route.fallback()
   })
@@ -95,6 +100,7 @@ test("a failed session has a sidebar marker and actionable recovery guidance", a
 
   await failedRow.getByRole("button").first().click()
   await expect(page.getByRole("banner")).toContainText(sessions[0]!.title)
+  await expect(page.getByText(failedRequest, { exact: true })).toBeVisible()
   const guidance = page.getByRole("alert").filter({ hasText: "模型服务拒绝了访问" })
   await expect(guidance).toContainText("检查服务商凭据和模型访问权限后再试。")
   await info.attach("terminal-model-access-guidance", {
