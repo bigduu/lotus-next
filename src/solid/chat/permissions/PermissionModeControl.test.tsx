@@ -1,19 +1,41 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createSignal, Show } from "solid-js"
+import { render, type JSX } from "@solidjs/web"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { agentClient, SessionPermissionContractError, type SessionPermissionSnapshot, type SessionSummary } from "@services/chat/AgentService"
 import { ApiError, NetworkRequestError, RequestTimeoutError } from "@services/api"
-import { useAppStore } from "@shared/store/appStore"
+import { appStore } from "@shared/store/appStore/state"
 import { sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
-import { useNewSessionPermission } from "@shared/store/newSessionPermission"
-import i18n, { changeLocale, i18nReady } from "@shared/i18n"
+import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
+import i18n, { changeLocale, i18nReady } from "@shared/i18n/runtime"
+import { settleChat } from "../chatInteractionTestHarness"
 import { NewSessionPermissionControl, PermissionModeControl } from "./PermissionModeControl"
+
+vi.mock("@kobalte/core/dialog", async () => {
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (name: string) => string }
+  }>("node:module")
+  const entry = createRequire(import.meta.url).resolve("@kobalte/core/dialog")
+  return vi.importActual(entry.replace(/\.jsx$/, ".js"))
+})
+vi.mock("@kobalte/core/select", async () => {
+  const { createRequire } = await vi.importActual<{
+    createRequire: (url: string) => { resolve: (name: string) => string }
+  }>("node:module")
+  const entry = createRequire(import.meta.url).resolve("@kobalte/core/select")
+  return vi.importActual(entry.replace(/\.jsx$/, ".js"))
+})
+
+vi.mock("@lucide/solid", () => {
+  const Icon = (props: Pick<JSX.IntrinsicElements["svg"], "aria-hidden" | "class">) =>
+    <svg aria-hidden={props["aria-hidden"]} class={props.class} />
+  const ShieldAlert = (props: Pick<JSX.IntrinsicElements["svg"], "aria-hidden" | "class">) =>
+    <Icon aria-hidden={props["aria-hidden"]} class={`lucide-shield-alert ${props.class ?? ""}`} />
+  return { Check: Icon, ChevronDown: Icon, ShieldAlert, X: Icon }
+})
 
 const read = vi.fn<typeof agentClient.getSessionPermissionMode>()
 const patch = vi.fn<typeof agentClient.patchSessionPermissionMode>()
-const roots: Root[] = []
-const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+const disposers: (() => void)[] = []
 
 const snapshot = (mode: SessionPermissionSnapshot["mode"] = "default", etag = '"7"', sessionId = "a"): SessionPermissionSnapshot => ({ mode, etag, sessionId })
 const summary = (id: string): SessionSummary => ({
@@ -39,52 +61,56 @@ const button = (name: string) => {
   if (!found) throw new Error(`Button ${name} is missing`)
   return found
 }
-const openOptions = () => act(() => {
-  selector().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))
+const openOptions = () => settleChat(() => {
+  selector().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }))
 })
-const choose = (mode: string) => {
+
+async function choose(mode: string) {
   if (selector().disabled) return
-  openOptions()
-  act(() => {
-    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
-      .find((item) => item.textContent?.toLowerCase() === mode)
-    if (!option) throw new Error(`Permission option ${mode} is missing`)
-    option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
-  })
+  await openOptions()
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+    .find((item) => item.textContent?.toLowerCase() === mode)
+  if (!option) throw new Error(`Permission option ${mode} is missing`)
+  await settleChat(() => option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
 }
-const selectedMode = () => {
-  const text = selector().textContent?.toLowerCase() ?? ""
+
+function selectedMode() {
+  const text = selector().textContent?.trim().toLowerCase() ?? ""
   return ["default", "bypass", "auto"].includes(text) ? text : ""
 }
-const click = (name: string) => act(() => button(name).click())
-const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve() })
-async function mount(id = "a", compact = false) {
+
+const click = (name: string) => settleChat(() => button(name).click())
+
+async function mount(id = "a") {
   const container = document.body.appendChild(document.createElement("div"))
-  const root = createRoot(container); roots.push(root)
-  const render = async (sessionId: string) => act(async () => {
-    root.render(<PermissionModeControl sessionId={sessionId} title={`Session ${sessionId}`} compact={compact} />)
-  })
-  await render(id)
-  return { render }
+  const [sessionId, setSessionId] = createSignal(id)
+  // The production composer also keys the control by Session identity.
+  const dispose = render(() => <Show when={sessionId()} keyed>{(current) =>
+    <PermissionModeControl sessionId={current} title={`Session ${current}`} />
+  }</Show>, container)
+  disposers.push(() => { dispose(); container.remove() })
+  await settleChat()
+  return { render: (next: string) => settleChat(() => setSessionId(next)) }
 }
 
 beforeEach(async () => {
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() })
-  await i18nReady; await changeLocale("en-US")
-  useAppStore.getState().resetSessionPermissionModes()
-  useAppStore.setState({ chats: [summary("a"), summary("b")].map(sessionSummaryToChatItem), currentSessionId: "a" })
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+  await i18nReady
+  await changeLocale("en-US", { persist: false })
+  appStore.getState().resetSessionPermissionModes()
+  appStore.setState({ chats: [summary("a"), summary("b")].map(sessionSummaryToChatItem), currentSessionId: "a" })
   read.mockReset().mockImplementation(async (id) => snapshot("default", '"7"', id))
   patch.mockReset()
   vi.spyOn(agentClient, "getSessionPermissionMode").mockImplementation(read)
   vi.spyOn(agentClient, "patchSessionPermissionMode").mockImplementation(patch)
 })
 afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  useAppStore.getState().resetSessionPermissionModes()
-  document.body.replaceChildren()
+  for (const dispose of disposers.splice(0)) dispose()
+  appStore.getState().resetSessionPermissionModes()
+  vi.restoreAllMocks()
 })
 
-describe("PermissionModeControl", () => {
+describe("Solid PermissionModeControl", () => {
   it("explains Supervisor inheritance in the ordinary Auto confirmation", async () => {
     const before = { ...snapshot(), supervisorDispatchInheritsPermissionMode: true as const }
     const auto = { ...snapshot("auto", '"8"'), supervisorDispatchInheritsPermissionMode: true as const }
@@ -92,11 +118,11 @@ describe("PermissionModeControl", () => {
     patch.mockResolvedValueOnce(auto)
 
     await mount()
-    choose("auto")
+    await choose("auto")
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New execution sessions started by this Supervisor inherit its permission mode.")
     expect(patch).not.toHaveBeenCalled()
-    click("Enable Auto")
-    await flush()
+    await click("Enable Auto")
+    await settleChat()
     expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"', true)
     expect(selectedMode()).toBe("auto")
   })
@@ -105,13 +131,13 @@ describe("PermissionModeControl", () => {
     const upgraded = { ...snapshot(), supervisorDispatchInheritsPermissionMode: true as const }
     read.mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(upgraded)
     await mount()
-    choose("auto")
+    await choose("auto")
     expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("New execution sessions")
-    click("Enable Auto")
-    await flush()
+    await click("Enable Auto")
+    await settleChat()
     expect(patch).not.toHaveBeenCalled()
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("session changed")
-    choose("auto")
+    await choose("auto")
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New execution sessions")
   })
 
@@ -119,16 +145,16 @@ describe("PermissionModeControl", () => {
     const upgraded = { ...snapshot(), supervisorDispatchInheritsPermissionMode: true as const }
     read.mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(upgraded)
     await mount()
-    choose("auto")
+    await choose("auto")
     expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("New execution sessions")
-    await act(async () => {
-      useAppStore.getState().reconcileSessionPermissionModes([{
+    await settleChat(async () => {
+      appStore.getState().reconcileSessionPermissionModes([{
         ...summary("a"), supervisor_permission_etag: '"7"', supervisor_dispatch_inherits_permission_mode: true,
       }])
     })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
     expect(patch).not.toHaveBeenCalled()
-    choose("auto")
+    await choose("auto")
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New execution sessions")
   })
 
@@ -136,8 +162,8 @@ describe("PermissionModeControl", () => {
     const upgraded = { ...snapshot("auto"), supervisorDispatchInheritsPermissionMode: true as const }
     read.mockResolvedValueOnce(snapshot("auto")).mockResolvedValueOnce(upgraded)
     await mount()
-    await act(async () => {
-      useAppStore.getState().reconcileSessionPermissionModes([{
+    await settleChat(async () => {
+      appStore.getState().reconcileSessionPermissionModes([{
         ...summary("a"), permission_mode: "auto", supervisor_permission_etag: '"7"',
         supervisor_dispatch_inherits_permission_mode: true,
       }])
@@ -149,21 +175,21 @@ describe("PermissionModeControl", () => {
   })
 
   it("reads permissions when the selected session arrives after the composer mounts", async () => {
-    useAppStore.setState({ chats: [] })
-    await mount("a", true)
+    appStore.setState({ chats: [] })
+    await mount("a")
     expect(read).not.toHaveBeenCalled()
     expect(selector().textContent).not.toContain("Checking")
-    await act(async () => {
-      useAppStore.setState({ chats: [sessionSummaryToChatItem(summary("a"))] })
+    await settleChat(async () => {
+      appStore.setState({ chats: [sessionSummaryToChatItem(summary("a"))] })
     })
-    await flush()
+    await settleChat()
     expect(read).toHaveBeenCalledExactlyOnceWith("a")
     expect(selectedMode()).toBe("default")
     expect(selector().disabled).toBe(false)
   })
 
   it("uses the compact composer presentation without dropping its accessible help", async () => {
-    await mount("a", true)
+    await mount("a")
     const section = document.querySelector("section")
     const helpId = selector().getAttribute("aria-describedby")?.split(" ")[0]
     const help = document.getElementById(helpId ?? "")
@@ -177,17 +203,17 @@ describe("PermissionModeControl", () => {
   })
 
   it("opens themed options with the keyboard and cancels without changing permissions", async () => {
-    await mount("a", true)
-    act(() => selector().focus())
-    openOptions()
+    await mount("a")
+    await settleChat(() => selector().focus())
+    await openOptions()
     const list = document.querySelector<HTMLElement>('[role="listbox"]')!
-    expect(list.dataset.slot).toBe("select-content")
-    expect(list.className).toContain("bg-popover")
-    expect(list.className).toContain("text-popover-foreground")
+    const surface = list.closest<HTMLElement>('[data-slot="select-content"]')
+    expect(surface?.className).toContain("bg-popover")
+    expect(surface?.className).toContain("text-popover-foreground")
     expect([...list.querySelectorAll('[role="option"]')].map((item) => item.textContent)).toEqual(["Default", "Bypass", "Auto"])
-    expect(list.querySelector('[data-state="checked"]')?.textContent).toBe("Default")
-    act(() => list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
-    await flush()
+    expect(list.querySelector('[aria-selected="true"]')?.textContent).toBe("Default")
+    await settleChat(() => list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    await settleChat()
     expect(document.querySelector('[role="listbox"]')).toBeNull()
     await vi.waitFor(() => expect(document.activeElement).toBe(selector()))
     expect(selectedMode()).toBe("default")
@@ -196,23 +222,24 @@ describe("PermissionModeControl", () => {
 
   it("uses the same themed choices for the next session without mutating existing sessions", async () => {
     const refresh = vi.fn(async () => {})
-    const originalRefresh = useNewSessionPermission.getState().refresh
-    useNewSessionPermission.setState({ mode: "bypass", refresh })
+    const originalRefresh = newSessionPermissionStore.getState().refresh
+    newSessionPermissionStore.setState({ mode: "bypass", refresh })
     const container = document.body.appendChild(document.createElement("div"))
-    const root = createRoot(container); roots.push(root)
+    const dispose = render(() => <NewSessionPermissionControl />, container)
+    disposers.push(() => { dispose(); container.remove() })
     try {
-      await act(async () => root.render(<NewSessionPermissionControl />))
+      await settleChat()
       expect(selectedMode()).toBe("bypass")
       expect(refresh).toHaveBeenCalledOnce()
-      choose("default")
-      expect(useNewSessionPermission.getState().mode).toBe("default")
-      choose("auto")
+      await choose("default")
+      expect(newSessionPermissionStore.getState().mode).toBe("default")
+      await choose("auto")
       expect(selectedMode()).toBe("auto")
-      expect(useNewSessionPermission.getState().mode).toBe("auto")
+      expect(newSessionPermissionStore.getState().mode).toBe("auto")
       expect(patch).not.toHaveBeenCalled()
       expect(read).not.toHaveBeenCalled()
     } finally {
-      useNewSessionPermission.setState({ mode: "default", refresh: originalRefresh })
+      newSessionPermissionStore.setState({ mode: "default", refresh: originalRefresh })
     }
   })
 
@@ -231,7 +258,7 @@ describe("PermissionModeControl", () => {
     expect(selector().getAttribute("aria-label")).toBe("Permission mode")
     expect(selector().disabled).toBe(true); expect(selectedMode()).toBe("")
     expect(patch).not.toHaveBeenCalled()
-    await act(async () => { pending.resolve(snapshot()); await pending.promise })
+    await settleChat(async () => { pending.resolve(snapshot()); await pending.promise })
     expect(selector().disabled).toBe(false); expect(selectedMode()).toBe("default")
   })
 
@@ -246,22 +273,22 @@ describe("PermissionModeControl", () => {
 
   it("shows timeout and retry visibly in the compact composer, then confirms the mode", async () => {
     const pending = deferred<SessionPermissionSnapshot>(); read.mockReturnValueOnce(pending.promise)
-    await mount("a", true)
+    await mount("a")
     expect(document.querySelector('[role="status"]')?.textContent).toContain("Checking session permissions")
-    await act(async () => { pending.reject(new RequestTimeoutError()); await Promise.resolve(); await Promise.resolve() })
+    await settleChat(async () => { pending.reject(new RequestTimeoutError()); await Promise.resolve(); await Promise.resolve() })
     const error = document.querySelector<HTMLElement>('[role="alert"]')!
     expect(error.textContent).toContain("timed out")
     expect(error.className).not.toContain("sr-only")
     expect(selector().disabled).toBe(true)
     read.mockResolvedValueOnce(snapshot())
-    await click("Refresh mode"); await flush()
+    await click("Refresh mode"); await settleChat()
     expect(selectedMode()).toBe("default")
     expect(error.isConnected).toBe(false)
   })
 
   it("keeps unsupported errors visible in the compact composer", async () => {
     read.mockRejectedValueOnce(new SessionPermissionContractError())
-    await mount("a", true)
+    await mount("a")
     const error = document.querySelector<HTMLElement>('[role="alert"]')!
     expect(error.textContent).toContain("never interpreted as Auto")
     expect(error.className).not.toContain("sr-only")
@@ -270,45 +297,46 @@ describe("PermissionModeControl", () => {
 
   it("keeps the confirmed mode selected while saving and retains forced-confirmation Bypass copy", async () => {
     const pending = deferred<SessionPermissionSnapshot>(); patch.mockReturnValueOnce(pending.promise)
-    await mount(); choose("bypass")
-    await flush()
+    await mount(); await choose("bypass")
+    await settleChat()
     expect(patch).toHaveBeenCalledExactlyOnceWith("a", "bypass", '"7"', false)
     expect(selectedMode()).toBe("default"); expect(selector().disabled).toBe(true)
     expect(document.querySelector('[role="status"]')?.textContent).toBe("Saving mode…")
-    await act(async () => { pending.resolve(snapshot("bypass", '"8"')); await pending.promise })
+    await settleChat(async () => { pending.resolve(snapshot("bypass", '"8"')); await pending.promise })
     expect(selectedMode()).toBe("bypass"); expect(selector().disabled).toBe(false)
     expect(document.body.textContent).toContain("forced confirmations still ask")
   })
 
   it("requires a current-session Auto confirmation and puts initial focus on Cancel", async () => {
-    await mount(); choose("auto"); await flush()
+    await mount(); await choose("auto"); await settleChat()
     const dialog = document.querySelector('[role="dialog"]')
     expect(dialog?.textContent).toContain("Enable Auto for this session?")
     expect(dialog?.textContent).toContain("Session a")
     expect(dialog?.textContent).toContain("Plan/Guardian")
-    expect(document.activeElement).toBe(button("Cancel"))
+    await vi.waitFor(() => expect(document.activeElement).toBe(button("Cancel")))
     expect(patch).not.toHaveBeenCalled(); expect(selectedMode()).toBe("default")
-    click("Cancel"); await flush()
+    await click("Cancel"); await settleChat()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     await vi.waitFor(() => expect(document.activeElement).toBe(selector())); expect(patch).not.toHaveBeenCalled()
   })
 
   it("sends Auto once only after explicit confirmation, without a Boolean write", async () => {
     const pending = deferred<SessionPermissionSnapshot>(); patch.mockReturnValueOnce(pending.promise)
-    await mount(); choose("auto"); click("Enable Auto"); choose("bypass")
-    await flush()
+    await mount(); await choose("auto"); await click("Enable Auto"); await choose("bypass")
+    await settleChat()
     expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"', false)
     expect(selector().disabled).toBe(true)
-    await act(async () => { pending.resolve(snapshot("auto", '"8"')); await pending.promise })
+    await settleChat(async () => { pending.resolve(snapshot("auto", '"8"')); await pending.promise })
     expect(selectedMode()).toBe("auto")
     expect(document.body.textContent).toContain("no approval prompts, including forced confirmations")
     expect(document.body.textContent).toContain("OS/sandbox limits still apply")
   })
 
   it("supports Escape cancellation and restores keyboard focus without sending", async () => {
-    await mount(); choose("auto"); await flush()
-    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
-    await flush()
+    await mount(); await choose("auto"); await settleChat()
+    await vi.waitFor(() => expect(document.activeElement).toBe(button("Cancel")))
+    await settleChat(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    await settleChat()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     await vi.waitFor(() => expect(document.activeElement).toBe(selector())); expect(patch).not.toHaveBeenCalled()
   })
@@ -317,7 +345,7 @@ describe("PermissionModeControl", () => {
     await mount()
     read.mockResolvedValueOnce(snapshot("default", '"8"'))
     patch.mockResolvedValueOnce(snapshot("auto", '"9"'))
-    choose("auto"); click("Enable Auto"); await flush()
+    await choose("auto"); await click("Enable Auto"); await settleChat()
     expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"8"', false)
     expect(read).toHaveBeenCalledTimes(2)
     expect(selectedMode()).toBe("auto"); expect(selector().disabled).toBe(false)
@@ -327,7 +355,7 @@ describe("PermissionModeControl", () => {
   it("shows a changed preflight mode and asks for re-selection without sending the confirmed Auto intent", async () => {
     await mount()
     read.mockResolvedValueOnce(snapshot("bypass", '"8"'))
-    choose("auto"); click("Enable Auto"); await flush()
+    await choose("auto"); await click("Enable Auto"); await settleChat()
     expect(patch).not.toHaveBeenCalled()
     expect(selectedMode()).toBe("bypass"); expect(selector().disabled).toBe(false)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("changed while you were choosing")
@@ -338,7 +366,7 @@ describe("PermissionModeControl", () => {
     await mount()
     patch.mockRejectedValueOnce(new ApiError("Conflict", 412, "Precondition Failed"))
     read.mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(snapshot("auto", '"9"'))
-    choose("bypass"); await flush()
+    await choose("bypass"); await settleChat()
     expect(selectedMode()).toBe("auto"); expect(selector().disabled).toBe(false)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("session changed elsewhere")
     expect(patch).toHaveBeenCalledTimes(1)
@@ -348,29 +376,29 @@ describe("PermissionModeControl", () => {
     await mount()
     patch.mockRejectedValueOnce(new NetworkRequestError())
     read.mockResolvedValueOnce(snapshot()).mockRejectedValueOnce(new NetworkRequestError())
-    choose("auto"); click("Enable Auto"); await flush()
+    await choose("auto"); await click("Enable Auto"); await settleChat()
     expect(selector().disabled).toBe(true); expect(selectedMode()).toBe("")
     expect(selector().textContent).toBe("Unconfirmed")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("current permission mode could not be confirmed")
     read.mockResolvedValueOnce(snapshot("auto", '"8"'))
-    click("Refresh mode"); await flush()
+    await click("Refresh mode"); await settleChat()
     expect(selector().disabled).toBe(false); expect(selectedMode()).toBe("auto")
     expect(patch).toHaveBeenCalledTimes(1)
   })
 
   it("does not display session A's late mutation in session B", async () => {
     const pending = deferred<SessionPermissionSnapshot>(); patch.mockReturnValueOnce(pending.promise)
-    const { render } = await mount(); choose("auto"); click("Enable Auto")
+    const { render } = await mount(); await choose("auto"); await click("Enable Auto")
     await render("b")
     expect(selectedMode()).toBe("default"); expect(selector().disabled).toBe(false)
-    await act(async () => { pending.resolve(snapshot("auto", '"8"')); await pending.promise })
+    await settleChat(async () => { pending.resolve(snapshot("auto", '"8"')); await pending.promise })
     expect(selectedMode()).toBe("default")
-    expect(useAppStore.getState().chats.find((chat) => chat.id === "a")?.config.permissionMode).toBe("auto")
+    expect(appStore.getState().chats.find((chat) => chat.id === "a")?.config.permissionMode).toBe("auto")
     expect(patch.mock.calls).toEqual([["a", "auto", '"7"', false]])
   })
 
   it("discards an unaccepted confirmation on session switches, including switching back", async () => {
-    const { render } = await mount(); choose("auto")
+    const { render } = await mount(); await choose("auto")
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
     await render("b"); await render("a")
     expect(document.querySelector('[role="dialog"]')).toBeNull()
@@ -378,16 +406,16 @@ describe("PermissionModeControl", () => {
   })
 
   it("invalidates the Auto dialog if the authoritative ETag changes before confirmation", async () => {
-    await mount(); choose("auto")
+    await mount(); await choose("auto")
     read.mockResolvedValueOnce(snapshot("bypass", '"8"'))
-    await act(async () => { await useAppStore.getState().refreshSessionPermissionMode("a") })
+    await settleChat(async () => { await appStore.getState().refreshSessionPermissionMode("a") })
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(selectedMode()).toBe("bypass"); expect(patch).not.toHaveBeenCalled()
   })
 
   it("localizes risk and error text while keeping all three explicit mode names", async () => {
     await changeLocale("zh-CN")
-    await mount(); choose("auto")
+    await mount(); await choose("auto")
     expect(selector().getAttribute("aria-label")).toBe("权限模式")
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("为当前会话启用 Auto？")
     expect(button("启用 Auto")).toBeTruthy(); expect(button("取消")).toBeTruthy()
