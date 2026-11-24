@@ -311,7 +311,7 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
   const [tabList, setTabList] = createSignal<HTMLDivElement | undefined>(undefined, { ownedWrite: true })
   let tabMenuTrigger: HTMLButtonElement | undefined
   let addTabTrigger: HTMLButtonElement | undefined
-  let closingTab: string | null = null
+  let closingTab: { key: string; hadFocus: boolean; scope: string | null | undefined } | null = null
   let tabsContext: TabsContextValue | undefined
   const RegisterTabsContext = () => {
     tabsContext = useTabsContext()
@@ -421,11 +421,16 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
 
   createEffect(() => ({ key: selectedValue(), ids: visibleTabIds(), element: tabList() }), ({ ids, element }) => {
     element?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')?.scrollIntoView({ block: "nearest", inline: "nearest" })
-    if (!closingTab || ids.includes(closingTab)) return
+    const closing = closingTab
+    if (!closing || ids.includes(closing.key)) return
     closingTab = null
     const frame = requestAnimationFrame(() => {
       // The last tab and its list may still be in the DOM when the update begins.
-      if (!visible() || props.pageVisible === false || document.activeElement !== document.body) return
+      if (!visible() || props.pageVisible === false || props.focusScopeKey !== closing.scope) return
+      const focused = document.activeElement
+      const panel = addTabTrigger?.closest('#right-workbench[aria-modal="true"]')
+      // The narrow pane focuses its own container when the close button disappears.
+      if (focused !== document.body && !(closing.hadFocus && focused === panel)) return
       const list = tabList()
       const next = (list?.isConnected
         ? list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]:not([aria-hidden="true"])')
@@ -486,9 +491,11 @@ export function RightWorkbenchContent(props: RightWorkbenchProps) {
                     disabled={tab().isBrowser && props.browserBusy}
                     class={closeClass}
                     onFocusIn={(event) => event.stopPropagation()}
-                    onClick={() => {
+                    onClick={(event) => {
                       const current = tab()
-                      closingTab = key
+                      closingTab = {
+                        key, hadFocus: document.activeElement === event.currentTarget, scope: props.focusScopeKey,
+                      }
                       if (current.browserId) props.onBrowserClose?.(current.browserId)
                       else props.onToolClose(current.value as WorkbenchToolTab)
                     }}
