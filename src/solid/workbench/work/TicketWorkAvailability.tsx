@@ -31,6 +31,8 @@ export function TicketWorkAvailability(props: {
   initializing?: boolean
   initializationError?: string | null
   onInitialize?: () => void
+  onConfigureModel?: () => void
+  onManageProjects?: () => void
 }) {
   const text = createUiText()
   const kind = () => props.availability.kind
@@ -49,6 +51,17 @@ export function TicketWorkAvailability(props: {
   return <section data-testid="ticket-work-availability" class="space-y-3 p-4 text-sm">
     <p role={kind() === "error" || kind() === "forbidden" ? "alert" : "status"} class="font-medium">{text(reason()?.[0] ?? title[kind()])}</p>
     <Show when={body()}>{(message) => <p class="text-muted-foreground">{text(message())}</p>}</Show>
+    <Show when={kind() === "uninitialized" && props.onConfigureModel}>
+      <button type="button" class="rounded-md border px-3 py-1.5" onClick={() => props.onConfigureModel?.()}>
+        {text("model_setup_open")}
+      </button>
+    </Show>
+    <Show when={kind() === "uninitialized" && props.onManageProjects && !props.onConfigureModel}>
+      <p class="text-muted-foreground">{text("work_workspace_setup")}</p>
+      <button type="button" class="rounded-md border px-3 py-1.5" onClick={() => props.onManageProjects?.()}>
+        {text("manage_projects_302f96cf")}
+      </button>
+    </Show>
     <Show when={props.initializationError}><p role="alert" class="text-destructive">{props.initializationError}</p></Show>
     <Show when={props.availability.initialization && props.onInitialize}>
       <button type="button" disabled={!props.canInitialize || props.initializing || props.refreshing} onClick={() => props.onInitialize?.()} class="rounded-md border px-3 py-1.5 disabled:opacity-50">

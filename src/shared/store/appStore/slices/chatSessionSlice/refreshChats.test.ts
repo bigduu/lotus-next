@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStore } from "zustand/vanilla";
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor";
 import {
   agentClient,
   type ListSessionsResponse,
@@ -415,6 +416,44 @@ describe("lazy session index loading", () => {
       [{ kind: "root", limit: 200, offset: 1 }],
     ]);
     expect(store.getState().chats.map((chat) => chat.id)).toEqual(["root-new", "root-old"]);
+  });
+
+  it("keeps an empty install at a draft until the first message", async () => {
+    const store = chatStore();
+    vi.spyOn(agentClient, "listSessions").mockResolvedValue({ sessions: [], total: 0, limit: 200, offset: 0 });
+    vi.spyOn(agentClient, "getRunningSessions").mockResolvedValueOnce({ sessions: [] });
+    const create = vi.spyOn(agentClient, "createSession");
+    await store.getState().loadChats();
+    expect(store.getState().currentSessionId).toBeNull();
+    expect(store.getState().chats).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("keeps the first chat at a draft when Work has bootstrapped an unused Supervisor", async () => {
+    const store = chatStore();
+    vi.spyOn(agentClient, "listSessions").mockResolvedValue(page([summary(DEFAULT_SUPERVISOR_SESSION_ID)], 0));
+    vi.spyOn(agentClient, "getRunningSessions").mockResolvedValueOnce({ sessions: [] });
+    await store.getState().loadChats();
+    expect(store.getState().currentSessionId).toBeNull();
+    expect(store.getState().chats.map((chat) => chat.id)).toEqual([DEFAULT_SUPERVISOR_SESSION_ID]);
+  });
+
+  it("restores an explicitly selected Supervisor before loading any other Root history", async () => {
+    const store = chatStore();
+    vi.spyOn(agentClient, "listSessions").mockResolvedValue(page([
+      summary("ordinary"),
+      summary(DEFAULT_SUPERVISOR_SESSION_ID),
+    ], 0));
+    vi.spyOn(agentClient, "getRunningSessions").mockResolvedValueOnce({ sessions: [] });
+    const history = vi.spyOn(agentClient, "getHistory").mockResolvedValue({
+      session_id: DEFAULT_SUPERVISOR_SESSION_ID,
+      messages: [],
+    });
+
+    await store.getState().loadChats(DEFAULT_SUPERVISOR_SESSION_ID);
+
+    expect(store.getState().currentSessionId).toBe(DEFAULT_SUPERVISOR_SESSION_ID);
+    expect(history.mock.calls.map(([id]) => id)).toEqual([DEFAULT_SUPERVISOR_SESSION_ID]);
   });
 
   it("restores a persisted child through detail lookup and its own root tree", async () => {

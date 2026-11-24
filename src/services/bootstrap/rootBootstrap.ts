@@ -129,7 +129,7 @@ export function createRootBootstrap({
     try {
       const setup = await ServiceFactory.getInstance().getSetupStatus()
       if (!isCurrent(operation)) return
-      if (!setup.is_complete) {
+      if (!setup.is_complete && !setup.model_setup_in_app) {
         publish({
           kind: "setup",
           ownerAccess,

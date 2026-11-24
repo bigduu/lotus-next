@@ -16,7 +16,7 @@ interface RuntimeModelsEditorProps {
   onChange: (models: string[]) => void
   candidates: readonly ProviderModelDescriptor[]
   modelCapabilities: Record<string, { supports_vision?: boolean | null }>
-  onVisionChange: (model: string, supportsVision: boolean) => void
+  onVisionChange: (model: string, supportsVision: boolean | null) => void
   onFetchModels?: () => void
   fetchingModels?: boolean
   fetchModelsNotice?: ModelDiscoveryNotice
@@ -54,7 +54,7 @@ export function RuntimeModelsEditor(props: RuntimeModelsEditorProps) {
     <fieldset data-testid="runtime-models-editor" class="space-y-2 rounded-md border bg-background p-2.5">
       <legend class="px-1 text-xs font-medium">{text("runtime_models")}</legend>
       <p class="text-xs text-muted-foreground">{text("runtime_models_hint")}</p>
-      <p class="text-xs text-muted-foreground">{text("model_vision_hint")}</p>
+      <p class="text-xs text-muted-foreground">{text("model_vision_auto_hint")}</p>
       <p role="status" class="text-xs text-muted-foreground">
         {text("runtime_models_selected", { count: props.value.length })}
       </p>
@@ -99,8 +99,12 @@ export function RuntimeModelsEditor(props: RuntimeModelsEditorProps) {
                   <span>{text("model_vision_label")}</span>
                   <select aria-label={text("model_vision_for", { model: id })}
                     class="max-w-full rounded border bg-background px-1 py-1 text-xs"
-                    value={String(props.modelCapabilities[id]?.supports_vision !== false)}
-                    onChange={(event) => props.onVisionChange(id, event.currentTarget.value === "true")}>
+                    value={String(props.modelCapabilities[id]?.supports_vision ?? "unknown")}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value
+                      props.onVisionChange(id, value === "unknown" ? null : value === "true")
+                    }}>
+                    <option value="unknown">{text("model_vision_unconfirmed")}</option>
                     <option value="true">{text("model_vision_yes")}</option>
                     <option value="false">{text("model_vision_no")}</option>
                   </select>

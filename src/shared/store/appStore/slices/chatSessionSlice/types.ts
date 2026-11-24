@@ -90,7 +90,7 @@ export interface ChatSlice {
   deleteMessage: (sessionId: string, messageId: string) => Promise<DeleteMessageResult>;
   invalidateHistoryAfterMessageDelete: (sessionId: string, messageId: string) => void;
 
-  loadChats: () => Promise<void>;
+  loadChats: (preferredSessionId?: string | null) => Promise<void>;
   refreshChats: () => Promise<void>;
   refreshChatsNow: () => Promise<void>;
   /** Hydrate the flattened child tree for the selected root/child session. */

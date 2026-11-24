@@ -548,6 +548,7 @@ export function createChat(
   const toolCallsByIdRef = cell<Map<string, LiveToolCall>>(new Map())
   // One-line "what is the agent doing" status (tool running / compacting…),
   // shown while no text is streaming.
+  const [upstreamRetryNotice, setUpstreamRetryNotice] = createSignal<string | null>(null)
   const [streamStatusState, setStreamStatusState] = createSignal<string | null>(null)
   const streamStatusRef = cell<string | null>(null)
   const [compressionState, setCompressionState] = createSignal<ScopedCompressionFeedback | null>(null)
@@ -829,6 +830,7 @@ export function createChat(
   const pushToken = (c: string) => {
       // Text is flowing again — the "running tool…" status line is stale.
       setStreamStatus(null)
+      setUpstreamRetryNotice(null)
       recordOutput(c)
       streamBufRef.current += c
       if (!canPublishPreview() || cancelTextPublishRef.current) return
@@ -877,6 +879,7 @@ export function createChat(
       streamOperationRef.current = null
       setLiveSegmentsState(retainedSegments)
       setStreamStatus(null)
+      setUpstreamRetryNotice(null)
       setStreamingText(visibleText)
       setStreamingReasoningText(null)
       // Release the run even when a failed history read keeps static tool
@@ -943,15 +946,16 @@ export function createChat(
     }
     void (async () => {
       try {
-        await initializeStore()
+        await initializeStore(false, savedSessionId)
       } catch {
         // The store exposes backend availability separately; still let the shell boot.
       }
 
-      // Restore the last session the user was on (not whatever loadChats defaulted to).
+      // Bootstrap can select a listed Root immediately. Restore a saved child
+      // or a Root missing from the initial list through the full lookup path.
       try {
-        if (savedSessionId) {
-          const store = appStore.getState()
+        const store = appStore.getState()
+        if (savedSessionId && store.currentSessionId !== savedSessionId) {
           const restored = store.chats.some((c) => c.id === savedSessionId)
             || await store.restoreSession(savedSessionId)
           if (restored) {
@@ -1217,6 +1221,7 @@ export function createChat(
       toolCallsByIdRef.current.clear()
       setLiveSegmentsState(EMPTY_SEGMENTS)
       setStreamStatus(null)
+      setUpstreamRetryNotice(null)
       setStreamingText("")
       setStreamingReasoningText(null)
       // Only canonical pending reads and matching acknowledgements settle a question.
@@ -1604,11 +1609,21 @@ export function createChat(
             if (ownsRunEvent() && !observedOutput && !startEventRunId && isRetryRunId(runId)) startEventRunId = runId
           },
           onToken: (content) => { if (ownsOutput()) pushToken(content) },
-          onReasoningToken: (content) => { if (ownsOutput()) pushReasoning(content) },
+          onReasoningToken: (content) => {
+            if (!ownsOutput()) return
+            setUpstreamRetryNotice(null)
+            pushReasoning(content)
+          },
+          onUpstreamRetryScheduled: (status, delayMs) => {
+            if (ownsOutput()) setUpstreamRetryNotice(uiText("upstream_retry_scheduled", {
+              v0: status, v1: Math.ceil(delayMs / 1000),
+            }))
+          },
           onToolStart: (toolCallId, toolName, args) => {
             // A tool id identifies one invocation within this operation, even
             // when critical events are replayed after a subscription reconnect.
             if (!toolCallId || toolCallsByIdRef.current.has(toolCallId) || !ownsOutput()) return
+            setUpstreamRetryNotice(null)
             // Natural reading order: whatever text streamed before this tool
             // round freezes above it; the buffers restart afterwards.
             freezeTextSegment()
@@ -2836,6 +2851,7 @@ export function createChat(
     get streamingReasoning() { return streamingReasoning() },
     get liveSegments() { return liveSegments() },
     get streamStatus() { return streamStatus() },
+    get upstreamRetryNotice() { return streamSid() === sid() ? upstreamRetryNotice() : null },
     get contextCompression() { return contextCompression() },
     get outputRate() { return outputRate() },
     get upstreamRetryStatus() {
