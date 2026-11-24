@@ -259,6 +259,70 @@ it.each([false, true])("keeps a safe focus target when closing a tab, delayed=%s
   expect(onTabReorder).not.toHaveBeenCalled()
 })
 
+it.each([
+  { earlyPaint: false, moveFocus: false },
+  { earlyPaint: true, moveFocus: false },
+  { earlyPaint: false, moveFocus: true },
+])("settles narrow workbench focus after Add menu cleanup, earlyPaint=$earlyPaint, moveFocus=$moveFocus", async ({ earlyPaint, moveFocus }) => {
+  const frames = new Map<number, FrameRequestCallback>()
+  let nextFrame = 0
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const id = ++nextFrame
+    frames.set(id, callback)
+    return id
+  })
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => { frames.delete(id) })
+  const paint = async () => {
+    const timestamp = performance.now()
+    for (const id of [...frames.keys()]) {
+      const callback = frames.get(id)
+      frames.delete(id)
+      if (callback) dispatch(() => callback(timestamp))
+      await Promise.resolve()
+    }
+  }
+  const { host, update } = mount({
+    docked: false, activeTab: "task-dag", openToolTabs: ["task-dag"], taskDag: <div>Task graph</div>,
+    onTabChange: (tab) => {
+      if (tab === "review") update({ activeTab: "review", openToolTabs: ["task-dag", "review"] })
+    },
+    onToolClose: () => update({ activeTab: "task-dag", openToolTabs: ["task-dag"] }),
+  })
+  const add = button(host, "打开工作面板标签页")
+  dispatch(() => add.focus())
+  key(add, "Enter")
+  await paint()
+  await paint()
+  const review = [...host.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find((item) => item.textContent === "Review")!
+  key(review, "Enter")
+  expect(exposedTabs(host).find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent).toBe("Review")
+  await vi.waitFor(() => {
+    flush()
+    expect(host.querySelector('[role="menu"][data-state="open"]')).toBeNull()
+  })
+  // Kobalte restores the menu trigger after two frames. Exercise both orders
+  // between that callback and the focus request made by closing the tab.
+  if (earlyPaint) await paint()
+  const close = button(host, "关闭Review标签页")
+  dispatch(() => close.focus())
+  expect(document.activeElement).toBe(close)
+  dispatch(() => close.click())
+  expect(exposedTabs(host)).toHaveLength(1)
+  const successor = exposedTabs(host)[0]!
+  expect(successor.getAttribute("aria-selected")).toBe("true")
+  const target = moveFocus ? button(host, "收起工作面板") : successor
+  if (moveFocus) {
+    dispatch(() => target.focus())
+    expect(document.activeElement).toBe(target)
+  }
+
+  await paint()
+  await paint()
+  await paint()
+  expect(document.activeElement).toBe(target)
+})
+
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => { flush(); resolve() }))
 const activeModal = () => document.querySelector<HTMLElement>('#right-workbench[aria-modal="true"]')
 it("traps narrow workbench focus, dismisses its menu before the workbench, and restores its opener", async () => {
