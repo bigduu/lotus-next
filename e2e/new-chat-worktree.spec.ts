@@ -10,7 +10,7 @@ const target = `${root}/first-chat`
 const selection = { repository: "/repo/zenith", root, name: "first-chat", branch: "chat/first-chat" }
 const sectionInZenith = { id: "section:00000000-0000-4000-8000-0000000000a1", name: "Section chat" }
 
-async function install(page: Page, mode: "success" | "bind-conflict" | "uncertain" | "delayed" | "chat-delayed" = "success",
+async function install(page: Page, mode: "success" | "bind-conflict" | "uncertain" | "delayed" | "chat-delayed" | "chat-unconfirmed" = "success",
   options: { section?: { id: string; name: string }; projectDefault?: boolean; defaultRoot?: string | null } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
@@ -90,7 +90,8 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
     if (path === "/api/v1/chat") {
       chats.push(request.postDataJSON())
       order.push("chat")
-      if (mode === "chat-delayed") await chatGate
+      if (mode === "chat-delayed" || mode === "chat-unconfirmed") await chatGate
+      if (mode === "chat-unconfirmed") return route.abort("failed")
       return route.fulfill({ json: { session_id: "all-surface-session", status: "success" } })
     }
     if (path === "/api/v1/execute/all-surface-session") {
@@ -381,3 +382,32 @@ test("a section-scoped new chat keeps its durable assignment when leaving during
   await expectComposerText(page.getByRole("textbox", { name: "消息", exact: true }), "")
   expect(state.observation.pageErrors).toEqual([])
 })
+
+for (const outcome of ["accepted", "unconfirmed"] as const) {
+  test(`a ${outcome} prepared send leaves its replacement draft untouched`, async ({ page }) => {
+    const state = await install(page, outcome === "accepted" ? "chat-delayed" : "chat-unconfirmed")
+    await configure(page)
+    await closeSettings(page)
+    await submit(page, "Original prepared request")
+    await expect.poll(() => state.chats.length).toBe(1)
+
+    await revealSidebar(page)
+    await page.getByRole("button", { name: "在 Zenith 中新建会话", exact: true }).click()
+    const editor = page.getByRole("textbox", { name: "消息", exact: true })
+    await editor.fill("Replacement draft")
+    state.releaseChat()
+
+    await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled()
+    if (outcome === "accepted") await expect.poll(() => state.executes.length).toBe(1)
+    else expect(state.executes).toEqual([])
+    await expect(page.getByRole("heading", { name: "开始新任务", exact: true })).toBeVisible()
+    await expectComposerText(editor, "Replacement draft")
+    await revealComposerSettings(page)
+    await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("当前工作区")
+    expect(state.creates).toEqual([selection])
+    expect(state.bindings).toEqual([{ body: { path: target }, revision: '"1"' }])
+    expect(state.chats).toEqual([expect.objectContaining({ message: "Original prepared request", workspace_path: target })])
+    expect(state.sidebarWrites).toEqual([])
+    expect(state.observation.pageErrors).toEqual([])
+  })
+}
