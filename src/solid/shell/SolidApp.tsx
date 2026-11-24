@@ -151,12 +151,12 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     return !currentSession() && worktree?.projectId === newSession()?.projectId ? worktree?.path ?? null : null
   }
   const displayWorkspace = () => chat.currentChat?.config?.workspacePath ?? selectedWorktreePath()
+    ?? (newSession() ? projects()[newSession()!.projectId]?.project_path : undefined) ?? pickedWorkspace()
   const remotePlacement = () => {
     const session = chat.currentChat
     const placement = session?.id === currentSession() ? session?.placement : null
     return placement?.host && placement.kind !== "local" ? placement : null
   }
-    ?? (newSession() ? projects()[newSession()!.projectId]?.project_path : undefined) ?? pickedWorkspace()
   const runTimeline = createRunInteractionTimeline({ chat, workspace: displayWorkspace })
   const readingAnchors = new Map<string, HistoryReadingAnchor>()
   const sessionView = createMemo(() => ({ id: currentSession() }), {
