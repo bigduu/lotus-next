@@ -1,10 +1,14 @@
 import { render } from "@solidjs/web"
-import { flush } from "solid-js"
+import { createUniqueId, flush } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
+import type { Editor } from "@tiptap/core"
 import { agentClient } from "@services/chat/AgentService"
 import { appStore } from "@shared/store/appStore/state"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { uiText } from "@shared/i18n/text"
+import { workspaceService } from "@services/workspace/WorkspaceService"
+import { ComposerEditor } from "../../composer/ComposerEditor"
+import { settleChat } from "../chatInteractionTestHarness"
 import { ComposerCommandMenus } from "./ComposerCommandMenus"
 import { createComposerCommands, type ComposerCommandsOptions } from "./createComposerCommands"
 
@@ -13,9 +17,12 @@ const session: ChatItem = {
   config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null },
 }
 let cleanup: (() => void) | undefined
+const scopedDisposers: (() => void)[] = []
 
 afterEach(() => {
   cleanup?.()
+  cleanup = undefined
+  for (const dispose of scopedDisposers.splice(0).reverse()) dispose()
   vi.restoreAllMocks()
 })
 
@@ -104,4 +111,95 @@ it("shows the disabled exact compact command with its reason while running", () 
   expect(options[0].textContent).toContain(uiText("compact_wait_for_session"))
   options[0].click()
   expect(view.compact).not.toHaveBeenCalled()
+})
+
+function scopedEditor(suffix: string, content: string, workspace?: string) {
+  const { chats, inputStates } = appStore.getState()
+  const currentChat = { ...session, id: `test-session-${suffix}` }
+  appStore.setState({ chats: [...chats, currentChat] })
+  appStore.getState().setInputContent(currentChat.id, content)
+  const openGoal = vi.fn()
+  const send = vi.fn()
+  const host = document.body.appendChild(document.createElement("div"))
+  const dispose = render(() => {
+    const inputId = createUniqueId()
+    const chat = {
+      currentChat, currentSessionId: currentChat.id, executionCompatibility: { blocked: false }, submissionPending: false,
+    } as ComposerCommandsOptions["chat"]
+    const commands = createComposerCommands({
+      chat, inputId, draftKey: () => currentChat.id, workspacePath: () => workspace,
+      running: () => false, blocked: () => false, hasAttachments: () => false, queueBusy: () => false,
+      queuePending: () => false, thinkingMode: () => "standard", openGoal,
+    })
+    return <><ComposerCommandMenus commands={commands} /><ComposerEditor id={inputId} value={content}
+      label="Messages" title="Enter" placeholder="Message" busy={false}
+      mentionsEnabled={Boolean(workspace)} mentionScope={workspace}
+      onChange={(value) => appStore.getState().setInputContent(currentChat.id, value)}
+      onSubmit={send} onAddFiles={vi.fn()} onSuggestionChange={commands.setFileSuggestion} /></>
+  }, host)
+  scopedDisposers.push(() => {
+    dispose()
+    host.remove()
+    appStore.setState({ chats, inputStates })
+  })
+  flush()
+  const input = host.querySelector<HTMLDivElement & { editor: Editor }>("[data-composer-editor]")!
+  return { host, input, openGoal, send, id: currentChat.id }
+}
+
+function pressEnter(element: HTMLElement, options: KeyboardEventInit = {}) {
+  const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true, cancelable: true, ...options })
+  element.dispatchEvent(event)
+  flush()
+  return event
+}
+
+it("selects a slash option on Enter without sending and ignores IME Enter", () => {
+  const pane = scopedEditor("slash", "/goal")
+  expect(pane.host.querySelector('[role="option"]')).not.toBeNull()
+  expect(pressEnter(pane.input, { isComposing: true }).defaultPrevented).toBe(false)
+  expect(pressEnter(pane.input, { keyCode: 229 }).defaultPrevented).toBe(false)
+  expect(pane.openGoal).not.toHaveBeenCalled()
+  expect(pressEnter(pane.input).defaultPrevented).toBe(true)
+  expect(pane.openGoal).toHaveBeenCalledExactlyOnceWith(pane.id)
+  expect(pane.send).not.toHaveBeenCalled()
+})
+
+it("routes command keyboard shortcuts to only their own pane", () => {
+  const first = scopedEditor("first-slash", "/goal")
+  const second = scopedEditor("second-slash", "/goal")
+  const parameters = document.body.appendChild(document.createElement("textarea"))
+  try {
+    expect(first.input.id).not.toBe(second.input.id)
+    expect(pressEnter(parameters).defaultPrevented).toBe(false)
+    expect(pressEnter(second.input, { isComposing: true }).defaultPrevented).toBe(false)
+    expect(pressEnter(second.input, { keyCode: 229 }).defaultPrevented).toBe(false)
+    pressEnter(second.input)
+    expect(first.openGoal).not.toHaveBeenCalled()
+    expect(second.openGoal).toHaveBeenCalledExactlyOnceWith(second.id)
+    expect(second.send).not.toHaveBeenCalled()
+    pressEnter(first.input)
+    expect(first.openGoal).toHaveBeenCalledExactlyOnceWith(first.id)
+    expect(first.send).not.toHaveBeenCalled()
+  } finally {
+    parameters.remove()
+  }
+})
+
+it("picks a workspace file only in the focused split editor without sending", async () => {
+  vi.spyOn(workspaceService, "listWorkspaceFiles").mockResolvedValue([{ name: "README.md", path: "README.md", is_directory: false }])
+  const first = scopedEditor("first-file", "@re", "/first")
+  const second = scopedEditor("second-file", "@re", "/second")
+  await settleChat(() => {
+    first.input.editor.commands.setTextSelection(4)
+    second.input.editor.commands.setTextSelection(4)
+    second.input.editor.view.focus()
+  })
+  expect(first.host.querySelector('[role="listbox"]')).not.toBeNull()
+  expect(second.host.querySelector('[role="listbox"]')).not.toBeNull()
+  pressEnter(second.input)
+  expect(first.host.querySelector('[data-type="mention"]')).toBeNull()
+  expect(second.host.querySelector('[data-type="mention"]')?.textContent).toBe("@README.md")
+  expect(first.send).not.toHaveBeenCalled()
+  expect(second.send).not.toHaveBeenCalled()
 })

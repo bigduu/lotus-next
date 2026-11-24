@@ -73,6 +73,39 @@ function paste(input: HTMLElement, text: string, files: File[] = []) {
   return event
 }
 
+function enter(element: HTMLElement, options: KeyboardEventInit = {}) {
+  const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true, cancelable: true, ...options })
+  element.dispatchEvent(event)
+  flush()
+  return event
+}
+
+describe("composer Enter shortcuts", () => {
+  it.each([{ isComposing: true }, { keyCode: 229 }])("leaves composing Enter and its modifiers to the IME: %j", (ime) => {
+    const view = mount({ value: "保留这条消息" })
+    for (const keys of [{}, { ctrlKey: true }, { metaKey: true }]) {
+      expect(enter(view.input, { ...ime, ...keys }).defaultPrevented).toBe(false)
+    }
+    expect(view.props.onSubmit).not.toHaveBeenCalled()
+    expect(composerText(view.editor.state.doc)).toBe("保留这条消息")
+  })
+
+  it.each([{}, { ctrlKey: true }, { metaKey: true }])("submits exactly once for Enter with %j", (modifiers) => {
+    const view = mount({ value: "保留这条消息" })
+    expect(enter(view.input, modifiers).defaultPrevented).toBe(true)
+    expect(view.props.onSubmit).toHaveBeenCalledOnce()
+  })
+
+  it.each([{}, { ctrlKey: true }, { metaKey: true }])("inserts one newline on Shift+Enter with %j", (modifiers) => {
+    const view = mount({ value: "one" })
+    view.editor.commands.setTextSelection(4)
+    expect(enter(view.input, { ...modifiers, shiftKey: true }).defaultPrevented).toBe(true)
+    view.editor.commands.insertContent("two")
+    expect(composerText(view.editor.state.doc)).toBe("one\ntwo")
+    expect(view.props.onSubmit).not.toHaveBeenCalled()
+  })
+})
+
 describe("Tiptap composer integration", () => {
   it("aborts an outdated prediction and discards its result even if the request finishes", async () => {
     vi.useFakeTimers()

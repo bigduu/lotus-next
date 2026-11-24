@@ -2,7 +2,6 @@ import { act, createRef, type ComponentProps } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
-import type { Editor } from "@tiptap/core"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { Composer } from "./Composer"
 import { NewChatWorktreeControl } from "./NewChatWorktreeControl"
@@ -174,35 +173,6 @@ describe("Composer submission controls", () => {
     expect(view.textarea.style.paddingRight).toBe(inputPadding)
   })
 
-  it.each([
-    ["native composition", { isComposing: true }],
-    ["legacy IME key code", { keyCode: 229 }],
-  ])("does not submit Enter during %s", async (_label, eventInit) => {
-    const onSubmit = vi.fn()
-    const { textarea } = await mountComposer({ onSubmit })
-
-    for (const modifiers of [{}, { ctrlKey: true }, { metaKey: true }]) {
-      expect(dispatchSubmitShortcut(textarea, { ...eventInit, ...modifiers }).defaultPrevented).toBe(false)
-    }
-
-    expect(onSubmit).not.toHaveBeenCalled()
-  })
-
-  it.each([{}, { ctrlKey: true }, { metaKey: true }])("submits once for Enter with modifiers %j", async (modifiers) => {
-    const onSubmit = vi.fn()
-    const { textarea } = await mountComposer({ onSubmit })
-
-    expect(dispatchSubmitShortcut(textarea, modifiers).defaultPrevented).toBe(true)
-
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-  })
-
-  it.each([{}, { ctrlKey: true }, { metaKey: true }])("inserts a newline for Shift+Enter with modifiers %j", async (modifiers) => {
-    const { textarea, props } = await mountComposer()
-    expect(dispatchSubmitShortcut(textarea, { ...modifiers, shiftKey: true }).defaultPrevented).toBe(true)
-    expect(props.onSubmit).not.toHaveBeenCalled()
-  })
-
   it.each<Partial<ComponentProps<typeof Composer>>>([
     { draft: "  \n " },
     { submissionPending: true },
@@ -221,33 +191,6 @@ describe("Composer submission controls", () => {
     const { textarea, props } = await mountComposer({ ...overrides, draft: "" })
     dispatchSubmitShortcut(textarea)
     expect(props.onSubmit).toHaveBeenCalledOnce()
-  })
-
-  it("lets the open slash picker select on Enter without sending", async () => {
-    const onPick = vi.fn()
-    const { textarea, props } = await mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: onPick })
-    expect(dispatchSubmitShortcut(textarea, { isComposing: true }).defaultPrevented).toBe(false)
-    expect(dispatchSubmitShortcut(textarea, { keyCode: 229 }).defaultPrevented).toBe(false)
-    expect(onPick).not.toHaveBeenCalled()
-    expect(dispatchSubmitShortcut(textarea).defaultPrevented).toBe(true)
-    expect(onPick).toHaveBeenCalledOnce()
-    expect(props.onSubmit).not.toHaveBeenCalled()
-  })
-
-  it("routes picker keys only to their own pane, leaving parameter textareas and IME alone", async () => {
-    const first = await mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
-    const second = await mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
-    const parameters = document.body.appendChild(document.createElement("textarea"))
-    expect(first.textarea.id).not.toBe(second.textarea.id)
-    expect(dispatchSubmitShortcut(parameters).defaultPrevented).toBe(false)
-    expect(dispatchSubmitShortcut(second.textarea, { isComposing: true }).defaultPrevented).toBe(false)
-    expect(dispatchSubmitShortcut(second.textarea, { keyCode: 229 }).defaultPrevented).toBe(false)
-    dispatchSubmitShortcut(second.textarea)
-    expect(first.props.onPickGoal).not.toHaveBeenCalled()
-    expect(second.props.onPickGoal).toHaveBeenCalledOnce()
-    expect(second.props.onSubmit).not.toHaveBeenCalled()
-    dispatchSubmitShortcut(first.textarea)
-    expect(first.props.onPickGoal).toHaveBeenCalledOnce()
   })
 
   it("exposes distinct accessible actions for generation and idle states", async () => {
@@ -284,27 +227,6 @@ it("formats the output rate with the selected UI locale instead of the French br
   await act(async () => { await changeLocale("fr-FR") })
   expect(view.container.querySelector("[data-output-rate]")?.textContent).toContain((1234.5).toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }))
   vi.restoreAllMocks()
-})
-
-
-it("routes @file Enter only to the owning composer in split panes", async () => {
-  const files = [{ name: "README.md", path: "README.md", is_directory: false }]
-  const first = await mountComposer({ draft: "@re", displayWorkspace: "/first", workspaceFiles: files })
-  const second = await mountComposer({ draft: "@re", displayWorkspace: "/second", workspaceFiles: files })
-  const editor = (element: HTMLElement) => (element as HTMLElement & { editor: Editor }).editor
-  await act(async () => {
-    editor(first.textarea).commands.setTextSelection(4)
-    editor(second.textarea).commands.setTextSelection(4)
-    editor(second.textarea).view.focus()
-    await Promise.resolve()
-  })
-  expect(first.container.querySelector('[role="listbox"]')).not.toBeNull()
-  expect(second.container.querySelector('[role="listbox"]')).not.toBeNull()
-  await act(async () => { dispatchSubmitShortcut(second.textarea); await Promise.resolve() })
-  expect(first.container.querySelector('[data-type="mention"]')).toBeNull()
-  expect(second.container.querySelector('[data-type="mention"]')?.textContent).toBe("@README.md")
-  expect(first.props.onSubmit).not.toHaveBeenCalled()
-  expect(second.props.onSubmit).not.toHaveBeenCalled()
 })
 
 
