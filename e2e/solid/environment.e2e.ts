@@ -15,7 +15,10 @@ const summary = (id: string, title: string, workspace: string) => ({
   placement: { kind: "local", host: "fixture" },
 })
 const first = summary(root, "Environment fixture", "/fixture/main")
-const second = summary(other, "Other environment", "/fixture/other")
+const second = {
+  ...summary(other, "Other environment", "/fixture/other"),
+  placement: { kind: "ssh", host: "fixture-runner.example" },
+}
 const card = (page: Page) => page.getByRole("region", { name: "Environment", exact: true })
 const floating = (page: Page) => page.locator("[data-environment-floating]")
 const open = (page: Page) => page.getByRole("button", { name: "Open Environment", exact: true })
@@ -102,6 +105,8 @@ const inset = (page: Page) => page.locator("[data-chat-layout] > [data-chat-body
 test("Environment follows the actual pane width, session visit and workbench visibility", async ({ page, baseURL, isMobile }) => {
   if (!isMobile) await page.setViewportSize({ width: 1900, height: 900 })
   const { observed } = await installFixture(page, baseURL)
+  const placement = page.getByRole("banner").getByTitle("Running on ssh · fixture-runner.example", { exact: true })
+  await expect(placement).toHaveCount(0)
   if (isMobile) {
     await expect(open(page)).toBeVisible()
   } else {
@@ -143,12 +148,15 @@ test("Environment follows the actual pane width, session visit and workbench vis
   if (!isMobile) await close(page).click()
 
   await selectSession(page, second.title, isMobile)
+  await expect(placement).toBeVisible()
+  await expect(placement.getByText("ssh · fixture-runner.example", { exact: true })).toHaveCSS("position", "static")
   if (isMobile) {
     await expect(open(page)).toHaveAttribute("aria-expanded", "false")
     await open(page).click()
   }
   await expect(card(page).getByText("other", { exact: true })).toBeVisible()
   await selectSession(page, first.title, isMobile)
+  await expect(placement).toHaveCount(0)
   if (isMobile) {
     await expect(open(page)).toHaveAttribute("aria-expanded", "false")
     await open(page).click()

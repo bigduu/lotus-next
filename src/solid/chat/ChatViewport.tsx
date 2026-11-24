@@ -31,6 +31,7 @@ export function ChatViewport(props: {
   onPreviewImage: (url: string) => void
   initialReadingAnchor?: HistoryReadingAnchor | null
   onReadingAnchor?: (anchor: HistoryReadingAnchor | null) => void
+  followRequest?: object | null
   onAskSideChat?: (quote: SideChatQuote) => void
   revealMessage?: HistoryRevealRequest
   onMissingRevealedMessage?: () => void
@@ -106,6 +107,9 @@ export function ChatViewport(props: {
 
   onSettled(() => () => loadRequest?.controller.abort())
   createEffect(() => [entries(), pending(), live(), timeline()] as const, sticky.follow)
+  createEffect(() => props.followRequest, (request) => {
+    if (request) sticky.resume()
+  })
 
   const loadEarlierPage = (sessionId: string, preserveReading = false): Promise<void> => {
     if (props.chat.currentSessionId !== sessionId || !before()) return Promise.resolve()

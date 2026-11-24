@@ -28,7 +28,7 @@ const SettingsClusters = lazy(() => import("./clusters/SettingsClusters"), { exp
 const groups = [
   { label: "settings_group_appearance", tabs: [
     { id: "general", label: "general_835b700e", icon: Settings2, owner: false },
-    { id: "notifications", label: "notifications_4b6ded8a", icon: Bell, owner: true },
+    { id: "notifications", label: "notifications_4b6ded8a", icon: Bell, owner: false },
   ] },
   { label: "settings_group_connections", tabs: [
     { id: "providers", label: "provider_9e218722", icon: Cpu, owner: true },
@@ -50,7 +50,7 @@ const groups = [
     { id: "masking", label: "keyword_masking_62e701d9", icon: ShieldCheck, owner: true },
     { id: "env", label: "environment_variables_ae27b474", icon: Globe, owner: true },
     { id: "metrics", label: "metrics_b87e67c7", icon: ChartNoAxesCombined, owner: true },
-    { id: "system", label: "system_5b50d7c4", icon: Monitor, owner: true },
+    { id: "system", label: "system_5b50d7c4", icon: Monitor, owner: false },
   ] },
 ] as const
 
@@ -69,7 +69,7 @@ const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
   masking: () => <SettingsMasking />,
   schedules: () => <SettingsSchedules />,
   prompts: () => <SettingsPrompts />,
-  notifications: () => <SettingsNotifications />,
+  notifications: (owner) => <SettingsNotifications ownerAccess={owner} />,
   jiandu: () => <SettingsJiandu />,
   "config-share": () => <SettingsConfigShare />,
   system: (owner) => <SettingsSystem ownerAccess={owner} />,

@@ -63,6 +63,8 @@ export function ComposerPanel(props: {
   captureSessionCreated: () => (sessionId: string) => void
   onPreviewImage: (url: string) => void
   onAttachmentsChange?: (attachments: readonly ChatImageAttachment[]) => void
+  registerImageDrop?: (handler: ((files: FileList) => void) | null) => void
+  onSubmitMessage?: () => void
   onModelFailureChange?: (active: boolean) => void
   pageVisible?: boolean
 }) {
@@ -204,6 +206,12 @@ export function ComposerPanel(props: {
       console.error("[solid-composer] Could not attach image:", error)
     }
   }
+  onSettled(() => {
+    const register = props.registerImageDrop
+    if (!register) return
+    register((files) => { void addFiles(files) })
+    return () => register(null)
+  })
 
   const send = async () => {
     const key = draftKey()
@@ -275,6 +283,7 @@ export function ComposerPanel(props: {
             (!origin.prepare && draftChanged)) return
         }
       }
+      if (origin.isCurrent()) props.onSubmitMessage?.()
       const result = semantic && key
         ? await props.ingress.send({
             session_id: key,
@@ -400,15 +409,7 @@ export function ComposerPanel(props: {
         {commandNotice()?.message}
       </p></Show>
       <div ref={(element) => { surface = element }} data-composer-surface=""
-        class="min-w-0 rounded-3xl border border-transparent bg-card p-1.5"
-        onDragOver={(event) => {
-          if (event.dataTransfer?.types.includes("Files")) event.preventDefault()
-        }}
-        onDrop={(event) => {
-          if (!event.dataTransfer?.files.length) return
-          event.preventDefault()
-          void addFiles(event.dataTransfer.files)
-        }}>
+        class="min-w-0 rounded-3xl border border-transparent bg-card p-1.5">
         <Show when={attachments().length}>
           <div class="flex flex-wrap gap-2 px-2 py-1.5">
             <For each={attachments()}>{(attachment) => (

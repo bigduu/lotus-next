@@ -387,11 +387,10 @@ describe("AssistantMarkdown security, layout and theme semantics", () => {
     const codeBody = view.container.querySelector<HTMLElement>(
       '[data-streamdown="code-block-body"]',
     )
-    const codeSource = codeBody?.querySelector<HTMLElement>("pre")
     expect(codeBlock?.className.split(" ")).toEqual(expect.arrayContaining(["my-2", "p-1.5", "gap-1"]))
     expect(codeHeader?.className).toContain("h-5")
     expect(codeBody?.className.split(" ")).toEqual(expect.arrayContaining(["text-sm", "px-3", "py-2.5"]))
-    expect(codeSource?.className.split(" ")).toEqual(expect.arrayContaining(["m-0", "p-0"]))
+    expect(codeBody?.querySelector("pre > code")?.textContent).toBe("/a/very/long/path/without/a/breakpoint")
 
     await vi.waitFor(() => {
       flush()

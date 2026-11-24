@@ -47,6 +47,24 @@ const DATA_PARTS: Readonly<Record<string, string>> = {
   thead: "table-header",
   tr: "table-row",
 }
+const CONTENT_CLASSES: Readonly<Record<string, string>> = {
+  blockquote: "border-muted-foreground/30",
+  code: "rounded bg-muted px-1.5 py-0.5 font-mono text-sm",
+  h1: "text-3xl font-semibold",
+  h2: "text-2xl font-semibold",
+  h3: "text-xl font-semibold",
+  h4: "text-lg font-semibold",
+  h5: "text-base font-semibold",
+  h6: "text-sm font-semibold",
+  li: "py-1 [&>p]:inline",
+  ol: "list-inside list-decimal [li_&]:ps-6",
+  table: "divide-y divide-border",
+  tbody: "divide-y divide-border",
+  td: "px-4 py-2 text-sm",
+  th: "px-4 py-2 text-start text-sm font-semibold",
+  thead: "bg-muted/80",
+  ul: "list-inside list-disc [li_&]:ps-6",
+}
 const CONTENT_TAGS = new Set([
   "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
   "li", "ol", "p", "section", "strong", "sup", "table", "tbody", "td", "th", "thead", "tr", "ul",
@@ -237,8 +255,8 @@ function CodeElement(props: ElementProps) {
   )
 }
 const TableElement = (props: ElementProps) => (
-  <div class="my-3 min-w-0 rounded-md border" data-streamdown="table-wrapper">
-    <div>
+  <div class="my-4 min-w-0 rounded-lg border bg-sidebar p-2" data-streamdown="table-wrapper">
+    <div class="rounded-md border bg-background">
       <ContentElement {...props} />
     </div>
   </div>
@@ -256,7 +274,7 @@ function ContentElement(props: ElementProps) {
       fallback={<MarkdownChildren nodes={props.node().children} actions={props.actions} />}>
       <Dynamic
         component={tag()}
-        class={attribute(props.node(), "className")}
+        class={cn(CONTENT_CLASSES[tag()], attribute(props.node(), "className"))}
         id={scopedAttribute(props, "id")}
         start={tag() === "ol" && Number.isSafeInteger(originalStart()) ? originalStart() : undefined}
         style={align() ? { "text-align": align() } : undefined}

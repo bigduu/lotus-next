@@ -1,5 +1,6 @@
-import { BookText, Bot, ChevronLeft, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, WifiOff, Workflow } from "@lucide/solid"
+import { BookText, Bot, ChevronLeft, Container, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, Monitor, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, Server, WifiOff, Workflow } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, onSettled, Show } from "solid-js"
+import { Dynamic } from "@solidjs/web"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
 import { SIDE_CHAT_FEATURE } from "@services/chat/sideChat"
@@ -18,6 +19,7 @@ import { sessionHasLiveWork } from "@/lib/sessionBackgroundTasks"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import type { ChatItem } from "@shared/types/chatMessages"
 import type { ChatImageAttachment } from "@/lib/chatImageAttachments"
+import { Badge } from "../ui/badge"
 import { Button } from "../ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "../ui/responsive-dialog"
@@ -150,11 +152,17 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   }
   const displayWorkspace = () => chat.currentChat?.config?.workspacePath ?? selectedWorktreePath()
     ?? (newSession() ? projects()[newSession()!.projectId]?.project_path : undefined) ?? pickedWorkspace()
+  const remotePlacement = () => {
+    const session = chat.currentChat
+    const placement = session?.id === currentSession() ? session?.placement : null
+    return placement?.host && placement.kind !== "local" ? placement : null
+  }
   const runTimeline = createRunInteractionTimeline({ chat, workspace: displayWorkspace })
   const readingAnchors = new Map<string, HistoryReadingAnchor>()
   const sessionView = createMemo(() => ({ id: currentSession() }), {
     equals: (previous, next) => previous?.id === next.id,
   })
+  const [followRequest, setFollowRequest] = createSignal<{ view: ReturnType<typeof sessionView> } | null>(null)
   let modelFailureScope: ReturnType<typeof sessionView> | null = null
   const currentNotice = () => {
     const value = notice()
@@ -610,6 +618,17 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const sessionDrop = createSessionDrop(() => chat.chats, (id) => {
     if (!settingsOpen()) void select(id).catch(openError)
   })
+  const [imageDropActive, setImageDropActive] = createSignal(false)
+  let addDroppedImages: ((files: FileList) => void) | null = null
+  const clearImageDrop = () => setImageDropActive(false)
+  onSettled(() => {
+    window.addEventListener("dragend", clearImageDrop)
+    window.addEventListener("drop", clearImageDrop)
+    return () => {
+      window.removeEventListener("dragend", clearImageDrop)
+      window.removeEventListener("drop", clearImageDrop)
+    }
+  })
   const openProjectWork = (id: string) => {
     const scope = { id }
     setProjectWorkError(null)
@@ -798,9 +817,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           onDelete={setSessionToDelete}
           onError={openError}
         />}
-        workbench={<Show when={workbenchState().open} fallback={<aside id="right-workbench" hidden />}>
+        workbench={<Show when={workbenchState().open || visibleWorkbenchTools().includes("side-chat")} fallback={<aside id="right-workbench" hidden />}>
           <Loading fallback={<aside id="right-workbench" hidden />}>
-            <RightWorkbench docked={docked()} expanded={taskExpanded()} pageVisible={!settingsOpen()} width="100%"
+            <RightWorkbench visible={workbenchState().open} docked={docked()} expanded={taskExpanded()} pageVisible={!settingsOpen()} width="100%"
               activeTab={visibleWorkbenchTab()}
               openToolTabs={visibleWorkbenchTools()}
               workEnabled={workEnabled()}
@@ -890,10 +909,30 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   ? () => setExpandedDagScope(taskExpanded() ? null : activeDagScope()) : undefined} /> : undefined} />
           </Loading>
         </Show>}>
-        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <Show when={sessionDrop.active()}>
+        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col"
+          onDragOver={(event) => {
+            const transfer = event.dataTransfer
+            if (!transfer?.types.includes("Files")) return
+            event.preventDefault()
+            // File contents are protected until drop, and some drags omit MIME types.
+            const files = Array.from(transfer.items).filter((item) => item.kind === "file")
+            const acceptsImages = !files.length || files.some((file) => !file.type || file.type.startsWith("image/"))
+            transfer.dropEffect = acceptsImages ? "copy" : "none"
+            setImageDropActive(acceptsImages)
+          }}
+          onDragLeave={(event) => {
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) clearImageDrop()
+          }}
+          onDrop={(event) => {
+            clearImageDrop()
+            const transfer = event.dataTransfer
+            if (!transfer?.types.includes("Files")) return
+            event.preventDefault()
+            if (transfer.files.length) addDroppedImages?.(transfer.files)
+          }}>
+          <Show when={sessionDrop.active() || imageDropActive()}>
             <div class="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
-              {text("drop_to_open_session")}
+              {text(sessionDrop.active() ? "drop_to_open_session" : "drop_to_add_images_6ccb05f2")}
             </div>
           </Show>
           <header role="banner" class="flex min-h-12 shrink-0 items-center gap-2 border-b px-3 py-2">
@@ -906,6 +945,14 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             <h1 class="min-w-0 flex-1 truncate text-sm font-semibold">
               {chat.currentChat?.title || text("new_session_c57c30bc")}
             </h1>
+            <Show when={remotePlacement()}>{(placement) => (
+              <Badge variant="outline" class="max-w-24 min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 sm:max-w-36 sm:px-2 dark:text-blue-400"
+                title={text("running_on_caee1687", { v0: placement().kind, v1: placement().host })}>
+                <Dynamic component={placement().kind === "ssh" ? Server : placement().kind === "docker" ? Container : Monitor}
+                  class="shrink-0" aria-hidden="true" />
+                <span class="min-w-0 truncate">{placement().kind} · {placement().host}</span>
+              </Badge>
+            )}</Show>
             <Show when={currentSession()}>
               <Button size="icon" variant="ghost" title={displayWorkspace() ?? undefined}
                 aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
@@ -1006,6 +1053,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               onAskSideChat={sideChatScope() ? (quote) => openSideChat({ quote }) : undefined}
               revealMessage={sideChatReveal()?.scope === sideChatScope() ? sideChatReveal() ?? undefined : undefined}
               onMissingRevealedMessage={() => reportNotice({ text: text("side_chat_source_unavailable"), error: false })}
+              followRequest={followRequest()?.view === session ? followRequest() : null}
               initialReadingAnchor={session.id ? readingAnchors.get(session.id) : undefined}
               onReadingAnchor={(anchor) => {
                 if (!session.id) return
@@ -1028,6 +1076,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
             onOpenWorkflowRuns={(id) => { if (id === currentSession()) setWorkflowSession(id) }}
             onOpenSideChat={sideChatScope() ? openSideChat : undefined}
+            registerImageDrop={(handler) => { addDroppedImages = handler }}
+            onSubmitMessage={() => {
+              if (!settingsOpen()) setFollowRequest({ view: sessionView() })
+            }}
             onModelFailureChange={(active) => { modelFailureScope = active ? sessionView() : null }}
             onPreviewImage={setImage} onAttachmentsChange={setDraftAttachments} captureSessionCreated={() => {
               const intent = newSession()

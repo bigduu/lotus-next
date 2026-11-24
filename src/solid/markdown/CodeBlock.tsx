@@ -22,16 +22,16 @@ export function CodeBlock(props: { code: string; language: string; incomplete: b
   })
 
   return (
-    <div class="my-2 grid min-w-0 gap-1 rounded-xl border bg-card p-1.5" data-streamdown="code-block"
+    <div class="my-2 grid min-w-0 gap-1 rounded-xl border bg-sidebar p-1.5" data-streamdown="code-block"
       data-incomplete={props.incomplete ? "" : undefined}>
       <Show when={props.language}>
         <div class="flex h-5 items-center px-1 font-mono text-xs leading-4 text-muted-foreground"
           data-streamdown="code-block-header">{props.language}</div>
       </Show>
-      <div class="rounded-md bg-background px-3 py-2.5 font-mono text-sm font-normal leading-[1.55]"
+      <div class="rounded-md border bg-background px-3 py-2.5 font-mono text-sm font-normal leading-[1.55]"
         data-streamdown="code-block-body">
-        <pre class="m-0 bg-transparent p-0 text-inherit leading-inherit">
-          <code class="font-normal">
+        <pre>
+          <code>
             <Show when={lines()} fallback={props.code}>
               {(result) => <For each={result()}>{(line, index) => (
                 <>{index() ? "\n" : ""}<For each={line}>{(token) => (
