@@ -189,7 +189,8 @@ export function createBrowserSession(readSessionId: Accessor<string | null>, rea
   // Keep one intent until its canonical read and any resulting write settle.
   const requestEntryOpen = (id: string) => {
     if (id !== sessionId() || entryOpen?.sessionId === id) return
-    entryOpen = { sessionId: id, phase: "waiting" }
+    const joinsInitialRead = initialReadPending === currentScope && currentScope?.sessionId === id && !profileFlights.has(id)
+    entryOpen = { sessionId: id, phase: joinsInitialRead ? "read" : "waiting" }
     setEntryOpening(true)
     setEntryOpenVersion((version) => version + 1)
   }
@@ -231,6 +232,9 @@ export function createBrowserSession(readSessionId: Accessor<string | null>, rea
       const scope: Scope = { sessionId, controller }
       currentScope = scope
       initialReadPending = scope
+      // The entry click can activate the scope before its intent effect runs.
+      // Attach that intent before a fast canonical read clears the pending ref.
+      if (entryOpen?.phase === "waiting" && !profileFlights.has(sessionId)) entryOpen.phase = "read"
       const actionFlights = actionsByScope
       const isCurrent = () => currentScope === scope && !controller.signal.aborted
 

@@ -235,6 +235,26 @@ it("opens from a fresh entry click after a closed scope was hidden", async () =>
   expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
 })
 
+it("uses the fresh activation's first closed read for the entry click and reconciles a refused default once", async () => {
+  const calls: string[] = []
+  states.a = null
+  vi.mocked(browserService.get).mockImplementation(async () => { calls.push("read"); throw notOpen() })
+  vi.mocked(browserService.open).mockImplementation(async () => {
+    calls.push("open")
+    throw new ApiError("unavailable", 503, "Unavailable", JSON.stringify({
+      error: { type: "browser_error", code: "browser_unavailable", message: "browser runtime unavailable: browser_shared_profile_unsupported: request clean explicitly" },
+    }))
+  })
+  await show("a", false)
+  browser.requestEntryOpen("a")
+  expect(calls).toEqual([])
+  await show()
+  expect(calls).toEqual(["read", "open", "read"])
+  expect(browser.error).toContain("不支持打开共享浏览器")
+  expect(browser.entryOpening).toBe(false)
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+})
+
 it("keeps a legacy default open unreported after an entry click", async () => {
   states.a = null
   const { profile_mode: _mode, storage_shared: _shared, ...legacy } = state("shared")
