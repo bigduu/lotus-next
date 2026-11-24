@@ -89,7 +89,7 @@ for (const mode of ["idle", "running", "monitoring"] as const) {
     await expect(workbench.getByRole("tab", { name: "Review" })).toHaveAttribute("aria-selected", "true");
     const closeReview = workbench.getByRole("button", { name: "关闭Review标签页" });
     await closeReview.press("Enter");
-    await expect(workbench.getByRole("tab", { name: /任务图/ })).toBeFocused();
+    await expect(workbench.getByRole("tab", { name: "会话任务 DAG", exact: true })).toBeFocused();
     await workbench.getByRole("button", { name: /^关闭.+标签页$/ }).press("Enter");
     await expect(workbench.getByRole("tab")).toHaveCount(0);
     await expect(workbench.getByRole("button", { name: "打开工作面板标签页" })).toBeFocused();

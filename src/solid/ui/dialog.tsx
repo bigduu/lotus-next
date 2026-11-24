@@ -1,4 +1,4 @@
-import { omit, Show } from "solid-js"
+import { createEffect, omit, Show } from "solid-js"
 import type { ComponentProps, JSX } from "@solidjs/web"
 import * as DialogPrimitive from "@kobalte/core/dialog"
 import { X } from "@lucide/solid"
@@ -37,9 +37,30 @@ type DialogContentProps = Omit<
   closeLabel?: string
 }
 
+const openModalSelector = '[aria-modal="true"][data-state="open"]:is([data-slot="dialog-content"], [data-slot="responsive-dialog-content"], [data-slot="sheet-content"])'
+
 export function DialogContent(props: DialogContentProps) {
   const dialog = DialogPrimitive.useDialogContext()
   const state = () => dialog.isOpen() ? "open" : "closed"
+
+  createEffect(() => dialog.isOpen() && dialog.modal() ? dialog.contentRef() : undefined, (element) => {
+    if (!element) return
+    const document = element.ownerDocument
+    let lastFocused: HTMLElement | null = null
+    const onFocus = (event: FocusEvent) => {
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      if (element.contains(target)) { lastFocused = target; return }
+      // Only the foreground modal owns focus. The primitive handles Tab at the
+      // endpoints but scripts can still focus another control.
+      if ([...document.querySelectorAll(openModalSelector)].at(-1) !== element) return
+      const fallback = lastFocused && element.contains(lastFocused) &&
+        !lastFocused.closest('[hidden], [inert], [aria-hidden="true"], :disabled') ? lastFocused : element
+      fallback.focus({ preventScroll: true })
+    }
+    document.addEventListener("focusin", onFocus)
+    return () => document.removeEventListener("focusin", onFocus)
+  })
 
   // Kobalte's alpha dismissable-layer stack can miss the dialog while its portal
   // registers. Bind dismissal to this surface and leave open listboxes to Select.
