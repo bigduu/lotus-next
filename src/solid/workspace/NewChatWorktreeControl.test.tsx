@@ -61,7 +61,7 @@ function mount(overrides: Partial<NewChatWorktreeControlProps> = {}) {
   })
   const [value, setValue] = createSignal(props().value)
   const host = document.body.appendChild(document.createElement("div"))
-  dispose = render(() => <NewChatWorktreeControl {...props()} value={value()}
+  dispose = render(() => <NewChatWorktreeControl {...props()} showWorkspaceName={Boolean(props().projectId)} value={value()}
     onChange={(next) => { setValue(next); props().onChange(next) }} />, host)
   flush()
   return { onChange, rerender: (next: Partial<NewChatWorktreeControlProps>) => {

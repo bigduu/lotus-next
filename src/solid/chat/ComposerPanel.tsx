@@ -334,6 +334,7 @@ export function ComposerPanel(props: {
       <Show when={draftKey() === ""}>
         <NewChatProjectControl projectId={props.projectId} onSelect={props.onSelectProject} />
         <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
+          showWorkspaceName={Boolean(props.projectId && !props.selectedWorktreePath)}
           value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
           disabled={worktree.locked || submitting() || props.chat.submissionPending}
           preparedPath={worktree.preparedPath} error={worktree.error} />

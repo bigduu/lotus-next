@@ -22,7 +22,7 @@ type Inventory = {
 }
 
 /** A draft-only selector. Creating and binding a worktree belongs to first-send preparation. */
-export function NewChatWorktreeControl(props: NewChatWorktreeControlProps) {
+export function NewChatWorktreeControl(props: NewChatWorktreeControlProps & { showWorkspaceName?: boolean }) {
   const uiText = createUiText()
   const id = createUniqueId()
   const [open, setOpen] = createSignal(false)
@@ -68,7 +68,7 @@ export function NewChatWorktreeControl(props: NewChatWorktreeControlProps) {
           class={cn(composerControlClassName, newWorktree() && "bg-primary/10 text-primary")}>
           {props.error ? <AlertCircle class="size-4 shrink-0" /> : props.preparedPath ? <Check class="size-4 shrink-0" /> : newWorktree() ? <GitBranch class="size-4 shrink-0" /> : <FolderGit2 class="size-4 shrink-0" />}
           <span class="truncate">{props.preparedPath ? uiText("chat_worktree_ready") : newWorktree() ? uiText("chat_worktree_new")
-            : props.projectId && props.workspacePath ? environmentPathName(props.workspacePath) : uiText("chat_worktree_current")}</span>
+            : props.showWorkspaceName && props.workspacePath ? environmentPathName(props.workspacePath) : uiText("chat_worktree_current")}</span>
           <ChevronDown class="size-3 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent class="space-y-4 rounded-xl p-4" aria-label={uiText("chat_worktree_control")}
