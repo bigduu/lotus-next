@@ -173,6 +173,17 @@ test("section header starts a new session directly and its menu offers the same 
   await expect(menu.getByRole("menuitem", { name: labels.manageSections, exact: true })).toBeVisible()
 })
 
+test("Supervisor dropdown focuses and activates its first action from the keyboard", async ({ page }) => {
+  const { supervisor } = sidebarItems(page)
+  const menu = page.getByRole("menu")
+  await supervisor.trigger.press("ArrowDown")
+  const first = menu.getByRole("menuitem", { name: labels.renameSupervisor, exact: true })
+  await expect(first).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(menu).toHaveCount(0)
+  await expect(page.getByRole("dialog", { name: labels.renameSupervisor, exact: true })).toBeVisible()
+})
+
 test("Supervisor keeps rename, managed sessions, Project scope and clear actions", async ({ page }) => {
   await openContext(sidebarItems(page).supervisor.origin)
   const menu = page.getByRole("menu")

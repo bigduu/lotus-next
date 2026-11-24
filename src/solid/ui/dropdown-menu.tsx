@@ -82,18 +82,41 @@ function DropdownMenuTrigger(
 function DropdownMenuContent(props: MenuContentProps) {
   const mount = useContext(DialogLayerMount)
   const menu = useContext(MenuState)!
+  const onOpenAutoFocus = (event: Event) => {
+    props.onOpenAutoFocus?.(event)
+    if (event.defaultPrevented || !(event.currentTarget instanceof HTMLElement)) return
+    const content = event.currentTarget
+    if (!content.isConnected || !menu.open()) {
+      event.preventDefault()
+      return
+    }
+    // Kobalte resolves its keyboard target after the trap's initial scan.
+    // Preserve a focused item, or use the current roving tab stop.
+    const active = content.ownerDocument.activeElement
+    if (active !== content && content.contains(active)) {
+      event.preventDefault()
+      return
+    }
+    const item = [...content.querySelectorAll<HTMLElement>('[data-highlighted][tabindex="0"]:not([aria-disabled="true"])')]
+      .find((candidate) => candidate.closest('[role="menu"]') === content)
+    if (item) {
+      event.preventDefault()
+      item.focus({ preventScroll: true })
+    }
+  }
   return (
     <DropdownMenuPrimitive.Portal mount={mount()}>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         data-state={menu.open() ? "open" : "closed"}
         onKeyDown={menuEscapeHandler(menu, props)}
+        onOpenAutoFocus={onOpenAutoFocus}
         class={cn(
           "bg-popover text-popover-foreground z-50 max-h-(--kb-popper-content-available-height) min-w-[8rem] origin-(--kb-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-md",
           surfaceMotion,
           props.class
         )}
-        {...omit(props, "class", "onKeyDown", "onEscapeKeyDown")}
+        {...omit(props, "class", "onKeyDown", "onEscapeKeyDown", "onOpenAutoFocus")}
       />
     </DropdownMenuPrimitive.Portal>
   )
