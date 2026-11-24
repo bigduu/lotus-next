@@ -24,6 +24,9 @@ import { transcriptWorkWait } from "./status/transcriptWorkWait"
 
 type Chat = ReturnType<typeof createChat>
 
+const savedHistoryContentReady = (viewport: HTMLDivElement) =>
+  !viewport.querySelector("[data-virtual-history] [data-assistant-markdown-fallback]")
+
 export function ChatViewport(props: {
   chat: Chat
   theme: "light" | "dark"
@@ -168,6 +171,8 @@ export function ChatViewport(props: {
         }}
         preserveOnPrepend
         followingLatest={sticky.following()}
+        initialContentReady={emptyTranscript() || props.chat.sending || props.pageVisible === false
+          ? undefined : savedHistoryContentReady}
         initialReadingAnchor={props.initialReadingAnchor}
         onReadingAnchor={props.onReadingAnchor}
         onMissingReadingAnchor={sticky.resume}
