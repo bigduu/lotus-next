@@ -99,7 +99,10 @@ const main = () => {
   const command = process.argv[2]
   if (command === "inventory") {
     assert.equal(Number(process.versions.node.split(".")[0]), 24, "Only Node 24 produces the feature browser artifact")
-    const list = (shard) => JSON.parse(execFileSync(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--list", "--reporter=json", ...(shard ? [`--shard=${shard}/${shardCount}`] : [])], { env: { ...process.env, CI: "true" }, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }))
+    const list = (shard) => JSON.parse(execFileSync(process.execPath, [
+      "node_modules/@playwright/test/cli.js", "test", "--config=playwright.feature.config.ts", "--list", "--reporter=json",
+      ...(shard ? [`--shard=${shard}/${shardCount}`] : []),
+    ], { env: { ...process.env, CI: "true" }, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }))
     const full = list()
     assert.deepEqual(full.config.projects.map((project) => project.name), projects)
     const tests = reportCases(full).map((test) => test.id)
