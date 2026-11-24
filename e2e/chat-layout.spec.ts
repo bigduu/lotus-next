@@ -123,19 +123,21 @@ async function expectComposerAlignment(scope: Locator) {
     const transcript = element.querySelector("[data-message-list-content]")!.getBoundingClientRect()
     const composer = element.querySelector("[data-composer-surface]")!.getBoundingClientRect()
     const input = element.querySelector('[data-composer-editor]')!
-    const style = element.ownerDocument.defaultView!.getComputedStyle(input)
+    const view = element.ownerDocument.defaultView!
+    const style = view.getComputedStyle(input)
     return {
       transcriptWidth: transcript.width, composerWidth: composer.width,
       transcriptLeft: transcript.left, composerLeft: composer.left,
       availableWidth: element.querySelector("[data-chat-body]")!.getBoundingClientRect().width
-        - parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element.querySelector("[data-chat-body]")!).paddingInlineEnd) - 24,
+        - parseFloat(view.getComputedStyle(element.querySelector("[data-chat-body]")!).paddingInlineEnd) - 24,
+      widthCap: 52 * parseFloat(view.getComputedStyle(element.ownerDocument.documentElement).fontSize),
       textLeft: input.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
       bodyLeft: element.querySelector('[data-message-role="assistant"] p')!.getBoundingClientRect().left,
     }
   })
   expect(Math.abs(edges.transcriptWidth - edges.composerWidth)).toBeLessThanOrEqual(1)
   expect(Math.abs(edges.transcriptLeft - edges.composerLeft)).toBeLessThanOrEqual(1)
-  expect(Math.abs(edges.transcriptWidth - edges.availableWidth)).toBeLessThanOrEqual(1)
+  expect(Math.abs(edges.transcriptWidth - Math.min(edges.availableWidth, edges.widthCap))).toBeLessThanOrEqual(1)
   expect(Math.abs(edges.textLeft - edges.bodyLeft)).toBeLessThanOrEqual(1.1)
   return edges.composerLeft + edges.composerWidth / 2
 }
@@ -154,29 +156,61 @@ test("chat tools, reasoning, body, and composer share reading edges on every vie
   expect(observation.pageErrors).toEqual([])
 })
 
+test("the wide new-session composer aligns with the home column", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "wide home geometry")
+  await page.setViewportSize({ width: 2300, height: 900 })
+  const observation = await openLayout(page)
+  await page.getByRole("button", { name: "新建会话", exact: true }).click()
+  const main = page.locator("[data-chat-layout]")
+  await expect(main.getByTestId("home-dashboard")).toBeVisible()
+  const alignment = await main.evaluate((element) => {
+    const home = element.querySelector('[data-testid="home-dashboard"] > div')!.getBoundingClientRect()
+    const composer = element.querySelector("[data-composer-surface]")!.getBoundingClientRect()
+    const view = element.ownerDocument.defaultView!
+    return {
+      leftDifference: Math.abs(home.left - composer.left),
+      widthDifference: Math.abs(home.width - composer.width),
+      widthCap: 52 * parseFloat(view.getComputedStyle(element.ownerDocument.documentElement).fontSize),
+      width: composer.width,
+    }
+  })
+  expect(alignment.leftDifference).toBeLessThanOrEqual(1)
+  expect(alignment.widthDifference).toBeLessThanOrEqual(1)
+  expect(alignment.width).toBeCloseTo(alignment.widthCap)
+  expect(observation.pageErrors).toEqual([])
+})
+
 test("Environment reserves shared pane space for the transcript, composer, and reading control", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "wide and constrained desktop Environment geometry")
   await openLayout(page)
   const main = page.locator("[data-chat-layout]").first()
   const floating = main.locator("[data-environment-floating]")
   const transcriptViewport = main.locator("[data-history-viewport]")
-  // Give the manual preference ownership before resizing across the auto-show
-  // breakpoint, so a changing accessible label cannot race the click.
-  await page.getByRole("button", { name: "打开 Environment", exact: true }).click()
+  const body = main.locator("[data-chat-body]")
+  const inset = () => body.evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))
+  await page.setViewportSize({ width: 1772, height: 900 })
+  await expect(floating).toHaveAttribute("data-state", "closed")
+  await expect.poll(inset).toBe(0)
+  await expectComposerAlignment(main)
+  await page.setViewportSize({ width: 1773, height: 900 })
+  await expect(floating).toHaveAttribute("data-state", "open")
+  await expect.poll(inset).toBe(332)
+  await expectComposerAlignment(main)
+  // Keep the manual preference stable during the following resizes.
   await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
   for (const width of [1900, 1440]) {
     await page.setViewportSize({ width, height: 900 })
     await page.getByRole("button", { name: "打开 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "open")
     const expectedInset = await main.evaluate((element) => element.getBoundingClientRect().width >= 1484 ? 332 : 0)
-    await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(expectedInset)
+    await expect.poll(inset).toBe(expectedInset)
     await expect.poll(() => composerColumnShift(main)).toBe(0)
     await expect(transcriptViewport).toHaveCSS("transform", "none")
     const reservedCenter = await expectComposerAlignment(main)
     await expectDisclosureAlignment(main)
     await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "closed")
-    await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(0)
+    await expect.poll(inset).toBe(0)
     await expect.poll(() => composerColumnShift(main)).toBe(0)
     await expect(transcriptViewport).toHaveCSS("transform", "none")
     const centered = await expectComposerAlignment(main)

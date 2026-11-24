@@ -1,6 +1,7 @@
 import { ChevronRight, File, FileDiff, FolderGit2, FolderKanban, Image as ImageIcon, ListFilter, Monitor } from "@lucide/solid"
-import { For, Show } from "solid-js"
+import { createEffect, For, Show } from "solid-js"
 import type { JSX } from "@solidjs/web"
+import { isCommandComposing } from "@/lib/commandComposition"
 import type { SessionPlacement } from "@services/chat/AgentService"
 import type { SessionFileChangeSummary } from "@/lib/sessionFileChanges"
 import { createUiText } from "../../shell/uiText"
@@ -41,7 +42,7 @@ export function EnvironmentLauncher(props: { environment: EnvironmentController 
   return <Button type="button" size="icon" variant="ghost"
     aria-label={text(environment.visible() ? "collapse_environment_4c6b8293" : "open_environment_052cba79")}
     aria-expanded={environment.visible() ? "true" : "false"} aria-controls={environment.controlsId}
-    onClick={environment.toggle}>
+    disabled={environment.disabled()} onClick={environment.toggle}>
     <ListFilter />
   </Button>
 }
@@ -88,20 +89,60 @@ export function EnvironmentCard(props: {
   const placementLabel = () => props.placement
     ? props.placement.kind === "local" ? "Local" : props.placement.kind
     : text("execution_location_unconfirmed_64b94db6")
+  let island!: HTMLDivElement
+  const launcher = `button[aria-controls="${environment.controlsId}"]`
 
-  return <div data-environment-floating="" data-state={environment.visible() ? "open" : "closed"}
+  createEffect(environment.visible, (visible) => {
+    if (!visible) return
+    const document = island.ownerDocument
+    const belongsToIsland = (target: EventTarget | null) =>
+      target instanceof Element && (island.contains(target) || !!target.closest(launcher))
+    const isOtherLayer = (target: EventTarget | null) => target instanceof Element &&
+      !!target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"], [data-slot="dialog-overlay"], [data-slot="sheet-overlay"]')
+    const modalOpen = () => !!document.querySelector('[aria-modal="true"][data-state="open"]')
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (environment.floating() || event.defaultPrevented || event.button !== 0 || belongsToIsland(event.target) || modalOpen()) return
+      // The close control can be detached and the island restored before the click reaches the window.
+      const fromLayer = event.composedPath().some((target) =>
+        isOtherLayer(target) || (target instanceof Element && target.matches('#right-workbench, [aria-controls="right-workbench"]')))
+      if (!fromLayer) environment.dismiss()
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || isCommandComposing(event) || !environment.visible()) return
+      if (environment.floating() && !belongsToIsland(event.target)) return
+      if (modalOpen() || isOtherLayer(event.target)) return
+      const focusWasInside = island.contains(document.activeElement)
+      environment.dismiss()
+      event.preventDefault()
+      if (focusWasInside) document.querySelector<HTMLElement>(launcher)?.focus({ preventScroll: true })
+    }
+    document.defaultView?.addEventListener("click", closeOnOutsideClick)
+    document.defaultView?.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.defaultView?.removeEventListener("click", closeOnOutsideClick)
+      document.defaultView?.removeEventListener("keydown", closeOnEscape)
+    }
+  })
+
+  return <div ref={(element) => { island = element }} data-environment-floating=""
+    data-placement={environment.floating() ? "floating" : "inline"} data-state={environment.visible() ? "open" : "closed"}
     aria-hidden={environment.visible() ? "false" : "true"} inert={!environment.visible()}
-    class="absolute right-3 top-3 z-30 max-h-[calc(100%-1.5rem)] max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl"
+    class={`min-h-0 w-80 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl ${environment.floating()
+      ? "absolute right-3 top-3 z-30" : "relative mx-3 self-end"}`}
     style={{
       opacity: environment.visible() ? 1 : 0,
-      transform: environment.visible() ? "translateX(0) scale(1)" : "translateX(0.75rem) scale(0.98)",
+      transform: environment.floating() && !environment.visible() ? "translateX(0.75rem) scale(0.98)" : undefined,
       "transform-origin": "top right",
+      "max-height": environment.floating() ? "calc(100% - 1.5rem)" : environment.visible() ? "min(36dvh, 16rem)" : "0px",
+      "margin-top": !environment.floating() && environment.visible() ? "0.75rem" : undefined,
       visibility: environment.visible() ? "visible" : "hidden",
       "pointer-events": environment.visible() ? "auto" : "none",
-      transition: "opacity 200ms ease-out, transform 200ms ease-out, visibility 200ms ease-out",
+      transition: environment.floating()
+        ? "opacity 200ms ease-out, transform 200ms ease-out, visibility 200ms ease-out"
+        : "opacity 200ms ease-out, max-height 200ms ease-out, margin-top 200ms ease-out, visibility 200ms ease-out",
     }}>
     <section id={environment.controlsId} aria-label="Environment" data-environment-card=""
-      class="rounded-2xl border bg-popover p-2 text-popover-foreground shadow-lg" style={{ width: "20rem", "max-width": "100%" }}>
+      class="w-full rounded-2xl border bg-popover p-2 text-popover-foreground shadow-lg">
       <div class="px-3 pb-2 pt-1 text-sm font-semibold">Environment</div>
       <EnvironmentRow icon={<FileDiff class="size-4" />} label="Changes"
         detail={countsIncomplete() ? undefined : text("changed_files_b757f839", { v0: props.changes.fileCount, count: props.changes.fileCount })}

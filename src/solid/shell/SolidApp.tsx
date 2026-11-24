@@ -22,7 +22,7 @@ import type { ChatItem } from "@shared/types/chatMessages"
 import type { ChatImageAttachment } from "@/lib/chatImageAttachments"
 import { Badge } from "../ui/badge"
 import { Button } from "../ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "../ui/responsive-dialog"
 import type { HistoryReadingAnchor } from "../history/VirtualHistory"
 import { createChat } from "../chat/createChat"
@@ -242,6 +242,21 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     return tab && visibleWorkbenchTools().includes(tab) ? tab : null
   }
   const desktopSidebar = () => containerWidth() >= 768 && !sidebarCollapsed()
+  let workbenchLauncher: HTMLButtonElement | undefined
+  const compactHeader = () => environment.layoutWidth() < 512
+  const headerWorkspace = () => environment.layoutWidth() >= 640 ? displayWorkspace() : null
+  const taskInMenu = () => compactHeader() && (sideChatScope() !== null || workEnabled())
+  const agentsInMenu = () => compactHeader() && (taskInMenu() || taskList().length > 0)
+  const openSubagentTree = () => workbench.capture().update((state) => ({
+    ...activateWorkbenchTab(state, "subagents"), subagents: { ...state.subagents, view: "tree" },
+  }))
+  const openHeaderWorkbench = (event: MouseEvent, open: () => void) => {
+    // Docking can move the clicked action into More as the chat pane narrows.
+    if (event.detail === 0 && document.activeElement === event.currentTarget) {
+      workbenchLauncher?.focus({ preventScroll: true })
+    }
+    open()
+  }
   const workbenchWidth = createWorkbenchWidth(containerWidth, () => desktopSidebar() ? sidebarWidth.width() : 0,
     () => workbenchState().dockWidth, (width) => workbench.capture().setField("dockWidth", width))
   const dagSession = () => {
@@ -510,6 +525,38 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     browserSelectionVersion += 1
     workbench.capture().update((state) => ({ ...activateWorkbenchTab(state, "review"), reviewTarget: fileId ?? null }))
   }
+  const [environmentReviewFocus, requestEnvironmentReviewFocus] = createSignal<{
+    visit: ReturnType<typeof sessionView>
+    opener: Element | null
+  }>()
+  const openEnvironmentReview = () => {
+    requestEnvironmentReviewFocus({ visit: sessionView(), opener: document.activeElement })
+    openReview()
+  }
+  createEffect(
+    () => [environmentReviewFocus(), sessionView(), docked() && reviewing() && !settingsOpen()] as const,
+    ([request, visit, active]) => {
+      if (!request) return
+      if (!active || request.visit !== visit) { requestEnvironmentReviewFocus(undefined); return }
+      const focusReview = () => {
+        if (environmentReviewFocus() !== request) return
+        const activeElement = document.activeElement
+        if (activeElement !== request.opener && activeElement !== document.body) {
+          requestEnvironmentReviewFocus(undefined)
+          return
+        }
+        const tab = shell.querySelector<HTMLElement>('#right-workbench [role="tab"][aria-selected="true"]')
+        if (!tab?.getClientRects().length) return
+        tab.focus({ preventScroll: true })
+        requestEnvironmentReviewFocus(undefined)
+      }
+      // The workbench can load and render in a detached tree on its first visit.
+      const observer = new MutationObserver(focusReview)
+      observer.observe(shell, { childList: true, subtree: true })
+      const frame = requestAnimationFrame(focusReview)
+      return () => { observer.disconnect(); cancelAnimationFrame(frame) }
+    },
+  )
   const selectWorkbenchActor = (id: string) => {
     browserSelectionVersion += 1
     const root = id === rootId()
@@ -952,30 +999,32 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               {text(sessionDrop.active() ? "drop_to_open_session" : "drop_to_add_images_6ccb05f2")}
             </div>
           </Show>
-          <header role="banner" class="flex min-h-12 shrink-0 items-center gap-2 border-b px-3 py-2">
+          <header role="banner" class="flex min-h-14 min-w-0 shrink-0 items-center gap-2 border-b px-3 py-2">
             <Button variant="ghost" size="icon" class={sidebarCollapsed() ? "" : "md:hidden"}
               aria-label={text("menu_4ce4cafd")} onClick={() => {
                 setSidebarOpen(true); setSidebarCollapsed(false)
               }}>
               <PanelLeftOpen class="size-4" />
             </Button>
-            <h1 class="min-w-0 flex-1 truncate text-sm font-semibold">
-              {chat.currentChat?.title || text("new_session_c57c30bc")}
-            </h1>
-            <Show when={remotePlacement()}>{(placement) => (
-              <Badge variant="outline" class="max-w-24 min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 sm:max-w-36 sm:px-2 dark:text-blue-400"
-                title={text("running_on_caee1687", { v0: placement().kind, v1: placement().host })}>
-                <Dynamic component={placement().kind === "ssh" ? Server : placement().kind === "docker" ? Container : Monitor}
-                  class="shrink-0" aria-hidden="true" />
-                <span class="min-w-0 truncate">{placement().kind} · {placement().host}</span>
-              </Badge>
-            )}</Show>
-            <Show when={currentSession()}>
-              <Button size={displayWorkspace() ? "sm" : "icon"} variant="ghost" title={displayWorkspace() ?? undefined}
+            <div class={compactHeader() ? "flex min-w-0 flex-1 flex-col gap-0.5" : "flex min-w-0 flex-1 items-center gap-2"}>
+              <h1 class="min-w-0 flex-1 truncate text-sm font-medium">
+                {chat.currentChat?.title || text("new_session_c57c30bc")}
+              </h1>
+              <Show when={remotePlacement()}>{(placement) => (
+                <Badge variant="outline" class={`${compactHeader() ? "max-w-full self-start" : "max-w-[min(9rem,50%)]"} min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 dark:text-blue-400`}
+                  title={text("running_on_caee1687", { v0: placement().kind, v1: placement().host })}>
+                  <Dynamic component={placement().kind === "ssh" ? Server : placement().kind === "docker" ? Container : Monitor}
+                    class="shrink-0" aria-hidden="true" />
+                  <span class="min-w-0 truncate">{placement().kind} · {placement().host}</span>
+                </Badge>
+              )}</Show>
+            </div>
+            <Show when={!compactHeader() && currentSession()}>
+              <Button size={headerWorkspace() ? "sm" : "icon"} variant="ghost" title={displayWorkspace() ?? undefined}
                 class="max-w-36 gap-1.5" aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
                 <FolderClosed class="size-4 shrink-0" />
-                <Show when={displayWorkspace()}>{(path) =>
-                  <span class="hidden truncate sm:inline">{environmentPathName(path())}</span>
+                <Show when={headerWorkspace()}>{(path) =>
+                  <span class="truncate">{environmentPathName(path())}</span>
                 }</Show>
               </Button>
             </Show>
@@ -996,18 +1045,18 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   running={Boolean(chat.currentChat && sessionHasLiveWork(chat.currentChat, executions()[chat.currentChat.id], backgroundBash()))} />
               </Show>
             </Show>
-            <Show when={taskList().length > 0}>
+            <Show when={!taskInMenu() && taskList().length > 0}>
               <Button size="icon" variant="ghost" title={text("session_task_dag_open")} aria-label={text("session_task_dag_open")}
-                onClick={() => openWorkbenchTab("task-dag")}> <Workflow class="size-4" /> </Button>
+                onClick={(event) => openHeaderWorkbench(event, () => openWorkbenchTab("task-dag"))}> <Workflow class="size-4" /> </Button>
             </Show>
             <Show when={currentSession()}>
               <EnvironmentLauncher environment={environment} />
-              <Button size="icon" variant="ghost" title={text("open_subagent_tree")}
-                aria-label={text("open_subagent_tree")} onClick={() => workbench.capture().update((state) => ({
-                  ...activateWorkbenchTab(state, "subagents"), subagents: { ...state.subagents, view: "tree" },
-                }))}>
-                <Bot class="size-4" />
-              </Button>
+              <Show when={!agentsInMenu()}>
+                <Button size="icon" variant="ghost" title={text("open_subagent_tree")}
+                  aria-label={text("open_subagent_tree")} onClick={(event) => openHeaderWorkbench(event, openSubagentTree)}>
+                  <Bot class="size-4" />
+                </Button>
+              </Show>
             </Show>
             <Show when={currentSession()} keyed>{(id) => (
               <DropdownMenu>
@@ -1015,6 +1064,22 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   <MoreHorizontal class="size-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent class="min-w-44">
+                  <Show when={compactHeader()}>
+                    <DropdownMenuItem onSelect={() => setWorkspaceOpen(true)}>
+                      <FolderClosed />{text("select_working_directory_18240aa3")}
+                    </DropdownMenuItem>
+                    <Show when={taskInMenu() && taskList().length > 0}>
+                      <DropdownMenuItem onSelect={() => openWorkbenchTab("task-dag")}>
+                        <Workflow />{text("session_task_dag_open")}
+                      </DropdownMenuItem>
+                    </Show>
+                    <Show when={agentsInMenu()}>
+                      <DropdownMenuItem onSelect={openSubagentTree}>
+                        <Bot />{text("open_subagent_tree")}
+                      </DropdownMenuItem>
+                    </Show>
+                    <DropdownMenuSeparator />
+                  </Show>
                   <DropdownMenuItem onSelect={() => { if (chat.currentChat?.id === id) setSessionToClear(chat.currentChat) }}>
                     <RotateCcw />{text("conversation_clear_action")}
                   </DropdownMenuItem>
@@ -1032,12 +1097,14 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}</Show>
-            <Button size="icon" variant="ghost"
-              aria-label={text(workbenchState().open ? "collapse_side_panel_e7d2fdd8" : "open_side_panel_732ea38b")}
-              aria-expanded={workbenchState().open ? "true" : "false"} aria-controls="right-workbench"
-              onClick={() => workbench.capture().setField("open", !workbenchState().open)}>
-              <PanelRightOpen />
-            </Button>
+            <Show when={currentSession() || workbenchState().open}>
+              <Button ref={(element) => { workbenchLauncher = element }} size="icon" variant="ghost"
+                aria-label={text(workbenchState().open ? "collapse_side_panel_e7d2fdd8" : "open_side_panel_732ea38b")}
+                aria-expanded={workbenchState().open ? "true" : "false"} aria-controls="right-workbench"
+                onClick={() => workbench.capture().setField("open", !workbenchState().open)}>
+                <PanelRightOpen />
+              </Button>
+            </Show>
           </header>
           <Show when={chat.currentChat?.id === currentSession() && chat.currentChat?.parentSessionId} keyed>
             {(parentId) => <button type="button" onClick={() => {
@@ -1052,6 +1119,12 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           <div data-chat-layout="" ref={environment.bindLayout} class="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div data-chat-body="true" data-session-drop-target="main" ref={sessionDrop.bindTarget} class="flex min-h-0 min-w-0 flex-1 flex-col"
             style={{ "padding-inline-end": `${environment.reservedWidth()}px`, transition: "padding-inline-end 200ms ease-out" }}>
+          <Show when={currentSession()}>
+            <EnvironmentCard environment={environment} workspace={displayWorkspace()}
+              projectName={projects()[chat.currentChat?.config?.projectId ?? ""]?.name} placement={chat.currentChat?.placement}
+              changes={fileChangeSummary()} sources={environmentSources()} hasEarlier={prefix().canRead} historyStatus={historyStatus()}
+              subagentStatus={subagentFileStatus()} onOpenReview={openEnvironmentReview} onPreviewImage={setImage} />
+          </Show>
           <Show when={!showHome()} fallback={<Loading fallback={null}>
             <HomeDashboard chats={chat.chats} onOpenSession={(id) => { void select(id).catch(openError) }}
               onPickTemplate={(prefill) => { appStore.getState().setInputContent("", prefill); focusComposer() }} onDescribeTask={focusComposer} />
@@ -1113,12 +1186,6 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               return (id) => sessionCreated(id, intent)
             }} />
           </div>
-          <Show when={currentSession()}>
-            <EnvironmentCard environment={environment} workspace={displayWorkspace()}
-              projectName={projects()[chat.currentChat?.config?.projectId ?? ""]?.name} placement={chat.currentChat?.placement}
-              changes={fileChangeSummary()} sources={environmentSources()} hasEarlier={prefix().canRead} historyStatus={historyStatus()}
-              subagentStatus={subagentFileStatus()} onOpenReview={openReview} onPreviewImage={setImage} />
-          </Show>
           </div>
         </main>
         </ResizableLayout>

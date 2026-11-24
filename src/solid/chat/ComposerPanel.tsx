@@ -357,7 +357,7 @@ export function ComposerPanel(props: {
   return (
     <div ref={(element) => { column = element }} data-composer-region="" data-composer-column=""
       data-composer-compact={String(compactToolbar())}
-      class="relative mx-auto w-[calc(100%-1.5rem)] min-w-0 max-w-full shrink-0 pb-3 pt-1">
+      class="relative mx-auto w-[calc(100%-1.5rem)] min-w-0 max-w-6xl shrink-0 pb-3 pt-1">
       <ContextCompressionNotice feedback={props.pageVisible === false ? null : props.chat.contextCompression}
         sessionId={props.pageVisible !== false && props.chat.currentChat?.kind === "root" ? props.chat.currentSessionId : null}
         manualPending={commands.compactPending} runActive={running()} />
