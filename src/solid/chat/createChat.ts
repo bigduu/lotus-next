@@ -946,15 +946,16 @@ export function createChat(
     }
     void (async () => {
       try {
-        await initializeStore()
+        await initializeStore(false, savedSessionId)
       } catch {
         // The store exposes backend availability separately; still let the shell boot.
       }
 
-      // Restore the last session the user was on (not whatever loadChats defaulted to).
+      // Bootstrap can select a listed Root immediately. Restore a saved child
+      // or a Root missing from the initial list through the full lookup path.
       try {
-        if (savedSessionId) {
-          const store = appStore.getState()
+        const store = appStore.getState()
+        if (savedSessionId && store.currentSessionId !== savedSessionId) {
           const restored = store.chats.some((c) => c.id === savedSessionId)
             || await store.restoreSession(savedSessionId)
           if (restored) {

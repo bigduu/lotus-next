@@ -171,10 +171,8 @@ for (const initialState of ["absent", "empty", "history"] as const) {
     const phone = testInfo.project.name === "phone-chromium"
     const entry = page.locator("aside").first().getByRole("button", { name: "Supervisor", exact: true })
     await expect(entry).toBeEnabled()
-    // The existing empty-account bootstrap creates its ordinary draft once.
-    // Opening Supervisor must never use that ordinary creation path again.
-    const initialChatPosts = chatPosts
-    expect(initialChatPosts).toBe(initialState === "absent" ? 1 : 0)
+    // Bootstrap keeps the first ordinary conversation as a draft.
+    expect(chatPosts).toBe(0)
     const open = async () => {
       if (phone) await page.getByRole("button", { name: "菜单", exact: true }).click()
       await expect(entry).toBeEnabled()
@@ -190,7 +188,7 @@ for (const initialState of ["absent", "empty", "history"] as const) {
     await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
     await open()
     expect(creations).toBe(initialState === "absent" ? 1 : 0)
-    expect(chatPosts).toBe(initialChatPosts)
+    expect(chatPosts).toBe(0)
     if (messages.length) await expect(page.getByText("保留的 Supervisor 历史", { exact: true })).toBeVisible()
     if (phone) {
       await page.getByRole("button", { name: "菜单", exact: true }).click()

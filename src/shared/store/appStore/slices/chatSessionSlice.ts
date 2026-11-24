@@ -712,15 +712,16 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     return refreshPromise;
   },
 
-  loadChats: async () => {
+  loadChats: async (preferredSessionId) => {
     debugLog("[ChatSlice]", "loadChats.start", {});
     // First send admits a draft with its current model and workspace. Creating
     // a Root during bootstrap can persist a missing model before setup finishes.
     const sessions = await listAllSessionPages({ kind: "root" });
 
     const chats = sessions.map(sessionSummaryToChatItem);
-    const currentSessionId = sessions.find((session) => session.id !== DEFAULT_SUPERVISOR_SESSION_ID
-      || session.message_count > 0 || session.is_running)?.id ?? null;
+    const currentSessionId = sessions.find((session) => session.id === preferredSessionId)?.id
+      ?? sessions.find((session) => session.id !== DEFAULT_SUPERVISOR_SESSION_ID
+        || session.message_count > 0 || session.is_running)?.id ?? null;
     debugLog("[ChatSlice]", "loadChats.listResolved", {
       count: sessions.length,
       currentSessionId,

@@ -438,6 +438,24 @@ describe("lazy session index loading", () => {
     expect(store.getState().chats.map((chat) => chat.id)).toEqual([DEFAULT_SUPERVISOR_SESSION_ID]);
   });
 
+  it("restores an explicitly selected Supervisor before loading any other Root history", async () => {
+    const store = chatStore();
+    vi.spyOn(agentClient, "listSessions").mockResolvedValue(page([
+      summary("ordinary"),
+      summary(DEFAULT_SUPERVISOR_SESSION_ID),
+    ], 0));
+    vi.spyOn(agentClient, "getRunningSessions").mockResolvedValueOnce({ sessions: [] });
+    const history = vi.spyOn(agentClient, "getHistory").mockResolvedValue({
+      session_id: DEFAULT_SUPERVISOR_SESSION_ID,
+      messages: [],
+    });
+
+    await store.getState().loadChats(DEFAULT_SUPERVISOR_SESSION_ID);
+
+    expect(store.getState().currentSessionId).toBe(DEFAULT_SUPERVISOR_SESSION_ID);
+    expect(history.mock.calls.map(([id]) => id)).toEqual([DEFAULT_SUPERVISOR_SESSION_ID]);
+  });
+
   it("restores a persisted child through detail lookup and its own root tree", async () => {
     const root = summary("root", { subagentCount: 1 });
     const child = summary("child", { kind: "child", rootSessionId: "root" });
