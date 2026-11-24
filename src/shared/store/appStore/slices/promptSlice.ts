@@ -1,4 +1,4 @@
-import { StateCreator } from "zustand";
+import type { StateCreator } from "zustand/vanilla";
 import { UserSystemPrompt } from "@shared/types/chat";
 import { SystemPromptService } from "@shared/services/SystemPromptService";
 import { getDefaultSystemPrompts } from "@shared/utils/defaultSystemPrompts";

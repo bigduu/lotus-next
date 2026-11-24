@@ -1,4 +1,4 @@
-import { StateCreator } from "zustand";
+import type { StateCreator } from "zustand/vanilla";
 
 import { AgentClient, type TaskItem as SessionTaskItem, type TaskListDelta } from "@services/chat/AgentService";
 

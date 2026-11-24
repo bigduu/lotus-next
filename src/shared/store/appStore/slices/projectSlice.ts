@@ -10,7 +10,7 @@
  * (`projectsMissing`) to avoid an unbounded refetch loop for sessions
  * referencing deleted or invisible Projects.
  */
-import type { StateCreator } from "zustand";
+import type { StateCreator } from "zustand/vanilla";
 import {
   projectService,
   type CreateProjectRequest,
