@@ -31,6 +31,66 @@ test("new provider offers only the three general provider types", async ({ page 
   expect(observation.pageErrors).toEqual([])
 })
 
+test("first-run model verification returns to the original draft", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const chat = { provider: "fixture-provider", model: "fixture-model" }
+  const instance = {
+    id: chat.provider, type: "openai", label: "Fixture provider", enabled: true,
+    config: { runtime_models: [chat.model] },
+  }
+  let verified = false
+  let saved = false
+  await page.route("**/api/v1/bamboo/setup/status", (route) => route.fulfill({ json: {
+    is_complete: false, model_setup_in_app: true, has_proxy_config: false, has_proxy_env: false, message: "",
+  } }))
+  await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ json: { sessions: [], total: 0, limit: 200, offset: 0 } }))
+  await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
+    default_provider_instance_id: instance.id,
+    instances: [instance],
+    ...(saved ? { defaults: { chat } } : {}),
+    features: { provider_model_ref: true },
+  } }))
+  await page.route(`**/api/v1/bamboo/settings/provider-instances/${instance.id}/probe`, async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ model: chat.model })
+    await route.fulfill({ json: { status: verified ? "ready" : "authentication_failed" } })
+  })
+  await page.route("**/api/v1/bamboo/config", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
+    expect(verified).toBe(true)
+    expect(route.request().postDataJSON()).toMatchObject({ defaults: { chat } })
+    saved = true
+    await route.fulfill({ json: {} })
+  })
+
+  await page.goto(standaloneScenario.entryUrl)
+  const editor = page.getByRole("textbox", { name: "消息", exact: true })
+  const send = page.getByRole("button", { name: "发送消息", exact: true })
+  const draft = "Continue with this first message"
+  await editor.fill(draft)
+  await expect(send).toBeDisabled()
+  await page.getByRole("button", { name: "配置模型", exact: true }).click()
+  const verify = page.getByRole("button", { name: "验证并使用模型", exact: true })
+  await verify.click()
+  await expect(page.getByRole("alert")).toContainText("请检查 API Key 和此模型的权限")
+  expect(saved).toBe(false)
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("first-run-model-verification", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
+  }
+  verified = true
+  await verify.click()
+  await expect(editor).toHaveText(draft)
+  await expect(send).toBeEnabled()
+  expect(observation.httpRequests.some(({ method, url }) => method === "POST" && new URL(url).pathname === "/api/v1/sessions")).toBe(false)
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("first-run-restored-draft", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
+  }
+  expect(observation.pageErrors).toEqual([])
+})
+
 test("the LiteLLM experiment saves per provider and reloads with its effective state", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
@@ -268,8 +328,8 @@ test("discovery requires explicit admission and preserves custom models after re
   await editor.getByRole("textbox", { name: "自定义模型 ID", exact: true }).fill(custom)
   await editor.getByRole("button", { name: "添加模型", exact: true }).click()
   await expect(editor.getByRole("checkbox", { name: custom, exact: true })).toBeChecked()
-  await expect(editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true })).toHaveValue("true")
-  await expect(editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true })).toHaveValue("true")
+  await expect(editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true })).toHaveValue("unknown")
+  await expect(editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true })).toHaveValue("unknown")
   await editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true }).selectOption("true")
   await editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true }).selectOption("false")
 
