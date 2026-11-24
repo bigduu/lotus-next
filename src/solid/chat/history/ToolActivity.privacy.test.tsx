@@ -171,11 +171,12 @@ function browserEvalMessages(
   ] as unknown as Message[]
 }
 
-function renderOpenTools(messages: Message[]) {
+function renderOpenTools(messages: Message[], presentation?: "process" | "preview") {
   const host = document.body.appendChild(document.createElement("div"))
   const cleanup = render(() => {
     const [open, setOpen] = createSignal<ReadonlySet<string>>(new Set())
     return <ToolActivity part={{ kind: "tools", items: messages }} groupKey="fixture"
+      preview={presentation === "preview"} expandedSingle={presentation === "process"}
       disclosure={{ isOpen: (key) => open().has(key), toggle: (key) => setOpen((previous) => new Set([...previous, key])) }}
       onPreviewImage={() => {}} />
   }, host)
@@ -185,6 +186,23 @@ function renderOpenTools(messages: Message[]) {
   flush()
   return host
 }
+
+it.each(["process", "preview"] as const)("keeps browser inputs and approval receipts private in %s presentation", (presentation) => {
+  const messages = browserMessages({ action: "type", text: privateText, unexpected: { text: privateText } })
+  const original = JSON.stringify(messages)
+  const host = renderOpenTools(messages, presentation)
+  expect(host.textContent).toContain("等待用户批准")
+  for (const value of [privateText, privateKey, privateResource, "permission_request"]) expect(host.textContent).not.toContain(value)
+  expect(host.querySelector("button, summary, details, [aria-expanded]")).toBeNull()
+  expect(JSON.stringify(messages)).toBe(original)
+})
+
+it("does not copy ordinary browser result bodies into a preview", () => {
+  const host = renderOpenTools(browserMessages({ action: "tabs" }, JSON.stringify({ value: privateEvalResult, url: privateEvalUrl })), "preview")
+  expect(host.textContent).not.toContain(privateEvalResult)
+  expect(host.textContent).not.toContain(privateEvalUrl)
+  expect(host.querySelector("pre")).toBeNull()
+})
 
 it.each([
   ["type", { action: "type", text: privateText, unexpected: { text: privateText } }],

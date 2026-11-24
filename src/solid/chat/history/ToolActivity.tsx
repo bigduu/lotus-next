@@ -1,6 +1,6 @@
 import { ChevronRight, Columns2, FileDiff, LoaderCircle, Rows3, WrapText } from "@lucide/solid"
 import { Dynamic } from "@solidjs/web"
-import { createMemo, createSignal, For, onSettled, Show } from "solid-js"
+import { createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js"
 
 import { safeViewImageSource } from "@/lib/chat/viewImageSources"
 import { sessionMessagePresentation } from "@/lib/chat/sessionMessagePresentation"
@@ -163,13 +163,23 @@ function EntryRow(props: {
     locale()
     return presentTool(props.entry).label
   })
-  const open = () => props.expanded || props.disclosure.isOpen(props.rowKey)
+  // Keep the initial directly disclosed result visible if a second call
+  // arrives in this Process. A reader can then collapse it like any other call.
+  const [openedAsSingle, setOpenedAsSingle] = createSignal(untrack(() => props.expanded))
+  const open = () => props.expanded || openedAsSingle() || props.disclosure.isOpen(props.rowKey)
+  const toggle = () => {
+    if (openedAsSingle()) {
+      setOpenedAsSingle(false)
+      if (!props.disclosure.isOpen(props.rowKey)) return
+    }
+    props.disclosure.toggle(props.rowKey)
+  }
   return (
     <div data-tool-call-entry="" class="min-w-0">
       <Show when={props.expanded} fallback={
         <details open={open()}>
           <summary data-tool-call-entry-toggle="" aria-expanded={open() ? "true" : "false"}
-            onClick={(event) => { event.preventDefault(); props.disclosure.toggle(props.rowKey) }}
+            onClick={(event) => { event.preventDefault(); toggle() }}
             class={cn(headingClass, "cursor-pointer list-none hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden")}>
             <EntryHeading entry={props.entry} running={props.running} open={open()} />
           </summary>
