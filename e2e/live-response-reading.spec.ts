@@ -2,6 +2,69 @@ import { installResizeDiagnostics } from "./support/resizeDiagnostics.js"
 import { expect, test, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
+test("sending from older history follows the latest until the reader scrolls away again", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "desktop scrolling regression")
+  const sessionId = "all-surface-session"
+  const message = "Reply sent from older history."
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+    localStorage.setItem("lotus_ui_locale_v1", "en-US")
+  }, sessionId)
+  const history = Array.from({ length: 24 }, (_, index) => ({
+    id: `history-${index}`,
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `Saved message ${index}.`,
+    created_at: "2026-09-07T00:00:00Z",
+  }))
+  const observation = await installArtifactRuntime(page, standaloneScenario, history)
+  let submitCount = 0
+  let release!: () => void
+  const receipt = new Promise<void>((resolve) => { release = resolve })
+  await page.route("**/api/v1/chat", async (route) => {
+    submitCount += 1
+    expect(route.request().postDataJSON()).toMatchObject({ session_id: sessionId, message })
+    await receipt
+    await route.fulfill({ json: { session_id: sessionId, message_id: "new-message", status: "success" } })
+  })
+  await page.route(`**/api/v1/execute/${sessionId}`, (route) =>
+    route.fulfill({ json: { session_id: sessionId, status: "started" } }))
+  await page.goto(standaloneScenario.entryUrl)
+
+  const editor = page.getByRole("textbox", { name: "Messages", exact: true })
+  const area = page.locator("[data-chat-body] [data-history-viewport]")
+  const jump = page.getByRole("button", { name: "Scroll to bottom", exact: true })
+  const gap = () => area.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)
+  const scrollUp = async () => {
+    await area.hover()
+    await page.mouse.wheel(0, -500)
+    await expect(jump).toBeVisible()
+    await expect.poll(gap).toBeGreaterThan(100)
+  }
+  await expect(editor).toBeVisible()
+  await expect(area.getByText("Saved message 23.", { exact: true })).toBeInViewport()
+  await scrollUp()
+  await editor.press("Enter")
+  await expect(jump).toBeVisible()
+  expect(submitCount).toBe(0)
+
+  try {
+    await editor.fill(message)
+    await editor.press("Enter")
+    await expect.poll(() => submitCount).toBe(1)
+    await expect(jump).toHaveCount(0)
+    await expect.poll(gap).toBeLessThanOrEqual(2)
+    await scrollUp()
+  } finally {
+    release()
+  }
+  await expect(editor).toBeEmpty()
+  await expect(jump).toBeVisible()
+  await expect.poll(gap).toBeGreaterThan(100)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.errorResponses).toEqual([])
+})
+
 test("home-to-chat follows streaming and late layout, pauses for reading, and reconnects", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop scrolling regression")
   await installResizeDiagnostics(page)

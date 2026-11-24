@@ -484,7 +484,7 @@ test("file picker and image paste retain the draft, remove safely, and submit th
   expect(observation.pageErrors).toEqual([])
 })
 
-test("Enter submits an image-only draft through the ordinary message route", async ({ page }) => {
+test("dropping an image over history adds it once and Enter submits the image-only draft", async ({ page }) => {
   const { editor, chats, observation } = await openComposer(page)
   await expect(page.getByRole("banner")).toContainText("Composer editor acceptance")
   await expect(editor).toHaveAttribute("aria-busy", "false")
@@ -494,8 +494,21 @@ test("Enter submits an image-only draft through the ordinary message route", asy
   await editor.press("Enter")
   expect(chats).toHaveLength(0)
   await editor.fill("")
-  await page.locator('input[type="file"]').setInputFiles({ name: "only-image.png", mimeType: "image/png", buffer: Buffer.from(pixel, "base64") })
-  await expect(page.locator("[data-composer-surface]").getByAltText("only-image.png", { exact: true })).toBeVisible()
+  const history = page.locator("[data-chat-body] [data-history-viewport]")
+  const transfer = await page.evaluateHandle((base64) => {
+    const data = new DataTransfer()
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
+    data.items.add(new File([bytes], "only-image.png", { type: "image/png" }))
+    return data
+  }, pixel)
+  const feedback = page.getByText("Drop to add images", { exact: true })
+  await history.dispatchEvent("dragover", { dataTransfer: transfer })
+  await expect(feedback).toBeVisible()
+  await history.dispatchEvent("drop", { dataTransfer: transfer })
+  await expect(feedback).toHaveCount(0)
+  const draftImage = page.locator("[data-composer-surface]").getByAltText("only-image.png", { exact: true })
+  await expect(draftImage).toHaveCount(1)
+  await expect(draftImage).toBeVisible()
   await expect(send).toBeEnabled()
   await editor.press("Enter")
   await expect.poll(() => chats).toEqual([expect.objectContaining({
@@ -503,7 +516,7 @@ test("Enter submits an image-only draft through the ordinary message route", asy
     message: "",
     images: [expect.objectContaining({ name: "only-image.png", base64: pixel, type: "image/png" })],
   })])
-  await expect(page.locator("[data-composer-surface]").getByAltText("only-image.png", { exact: true })).toHaveCount(0)
+  await expect(draftImage).toHaveCount(0)
   await expect(page.getByRole("article").getByRole("img", { name: "only-image.png", exact: true })).toBeVisible()
   expect(observation.errorResponses).toEqual([])
   expect(observation.pageErrors).toEqual([])

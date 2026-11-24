@@ -162,6 +162,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const sessionView = createMemo(() => ({ id: currentSession() }), {
     equals: (previous, next) => previous?.id === next.id,
   })
+  const [followRequest, setFollowRequest] = createSignal<{ view: ReturnType<typeof sessionView> } | null>(null)
   let modelFailureScope: ReturnType<typeof sessionView> | null = null
   const currentNotice = () => {
     const value = notice()
@@ -617,6 +618,17 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const sessionDrop = createSessionDrop(() => chat.chats, (id) => {
     if (!settingsOpen()) void select(id).catch(openError)
   })
+  const [imageDropActive, setImageDropActive] = createSignal(false)
+  let addDroppedImages: ((files: FileList) => void) | null = null
+  const clearImageDrop = () => setImageDropActive(false)
+  onSettled(() => {
+    window.addEventListener("dragend", clearImageDrop)
+    window.addEventListener("drop", clearImageDrop)
+    return () => {
+      window.removeEventListener("dragend", clearImageDrop)
+      window.removeEventListener("drop", clearImageDrop)
+    }
+  })
   const openProjectWork = (id: string) => {
     const scope = { id }
     setProjectWorkError(null)
@@ -897,10 +909,30 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                   ? () => setExpandedDagScope(taskExpanded() ? null : activeDagScope()) : undefined} /> : undefined} />
           </Loading>
         </Show>}>
-        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <Show when={sessionDrop.active()}>
+        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col"
+          onDragOver={(event) => {
+            const transfer = event.dataTransfer
+            if (!transfer?.types.includes("Files")) return
+            event.preventDefault()
+            // File contents are protected until drop, and some drags omit MIME types.
+            const files = Array.from(transfer.items).filter((item) => item.kind === "file")
+            const acceptsImages = !files.length || files.some((file) => !file.type || file.type.startsWith("image/"))
+            transfer.dropEffect = acceptsImages ? "copy" : "none"
+            setImageDropActive(acceptsImages)
+          }}
+          onDragLeave={(event) => {
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) clearImageDrop()
+          }}
+          onDrop={(event) => {
+            clearImageDrop()
+            const transfer = event.dataTransfer
+            if (!transfer?.types.includes("Files")) return
+            event.preventDefault()
+            if (transfer.files.length) addDroppedImages?.(transfer.files)
+          }}>
+          <Show when={sessionDrop.active() || imageDropActive()}>
             <div class="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
-              {text("drop_to_open_session")}
+              {text(sessionDrop.active() ? "drop_to_open_session" : "drop_to_add_images_6ccb05f2")}
             </div>
           </Show>
           <header role="banner" class="flex min-h-12 shrink-0 items-center gap-2 border-b px-3 py-2">
@@ -1021,6 +1053,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               onAskSideChat={sideChatScope() ? (quote) => openSideChat({ quote }) : undefined}
               revealMessage={sideChatReveal()?.scope === sideChatScope() ? sideChatReveal() ?? undefined : undefined}
               onMissingRevealedMessage={() => reportNotice({ text: text("side_chat_source_unavailable"), error: false })}
+              followRequest={followRequest()?.view === session ? followRequest() : null}
               initialReadingAnchor={session.id ? readingAnchors.get(session.id) : undefined}
               onReadingAnchor={(anchor) => {
                 if (!session.id) return
@@ -1043,6 +1076,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
             onOpenWorkflowRuns={(id) => { if (id === currentSession()) setWorkflowSession(id) }}
             onOpenSideChat={sideChatScope() ? openSideChat : undefined}
+            registerImageDrop={(handler) => { addDroppedImages = handler }}
+            onSubmitMessage={() => {
+              if (!settingsOpen()) setFollowRequest({ view: sessionView() })
+            }}
             onModelFailureChange={(active) => { modelFailureScope = active ? sessionView() : null }}
             onPreviewImage={setImage} onAttachmentsChange={setDraftAttachments} captureSessionCreated={() => {
               const intent = newSession()
