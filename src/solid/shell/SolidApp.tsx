@@ -690,6 +690,18 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     setNewSession(projectId ? { projectId, sectionId } : null)
     chat.newChat()
   }
+  const selectDraftProject = (projectId: string | null) => {
+    const state = appStore.getState()
+    if (state.currentSessionId || projectId === (newSession()?.projectId ?? null)) return
+    if (projectId) {
+      const project = state.projects[projectId]
+      if (project?.status !== "active" || project.project_path_status !== "configured") return
+    }
+    beginNewDraft()
+    setPickedWorktree(null)
+    setPickedWorkspace(null)
+    setNewSession(projectId ? { projectId } : null)
+  }
   const newChatFromPalette = () => {
     setSettingsOpen(false)
     beginNewDraft()
@@ -984,7 +996,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           <Show when={currentSession()} keyed>
             {(sessionId) => <SessionVersionMigrationGate sessionId={sessionId} state={chat.executionCompatibility} />}
           </Show>
-          <ComposerPanel chat={chat} workspacePath={displayWorkspace()} projectId={newSession()?.projectId ?? null}
+          <ComposerPanel chat={chat} inputId="lotus-message-input" workspacePath={displayWorkspace()}
+            projectId={newSession()?.projectId ?? null} onSelectProject={selectDraftProject}
             onOpenWorkspacePicker={() => setWorkspaceOpen(true)}
             pageVisible={!settingsOpen()}
             selectedWorktreePath={selectedWorktreePath()} draftEpoch={draftEpoch()} navigationVersion={() => navigationVersion}

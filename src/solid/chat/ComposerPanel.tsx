@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, LoaderCircle, Paperclip, Square, X } from "@lucide/solid"
-import { createEffect, createMemo, createSignal, For, lazy, Loading, onSettled, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, onSettled, Show, untrack } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
 import { createDraftCompletionRequest } from "@services/chat/draftCompletion"
@@ -26,6 +26,7 @@ import { createUiLocale, createUiText } from "../shell/uiText"
 import type { createChat } from "./createChat"
 import { createComposerCommands } from "./commands/createComposerCommands"
 import { ComposerCommandMenus } from "./commands/ComposerCommandMenus"
+import { NewChatProjectControl, NewChatPromptControl } from "./ComposerDraftControls"
 import { NewSessionPermissionControl, PermissionModeControl } from "./permissions/PermissionModeControl"
 import { createNewChatWorktree } from "../workspace/createNewChatWorktree"
 import { NewChatWorktreeControl } from "../workspace/NewChatWorktreeControl"
@@ -43,7 +44,9 @@ const ComposerEditor = lazy(() => import("../composer/ComposerEditor"), { export
 export function ComposerPanel(props: {
   chat: Chat
   workspacePath: string | null
+  inputId?: string
   projectId: string | null
+  onSelectProject: (id: string | null) => void
   selectedWorktreePath: string | null
   draftEpoch: number
   navigationVersion: () => number
@@ -145,7 +148,7 @@ export function ComposerPanel(props: {
   const submissionUnavailable = () => interactionBlocked() || models.busy ||
     (props.semantic && (!props.canSendIngress || props.ingress.busy || props.ingress.activationPending))
   const blocked = () => submissionUnavailable() || models.rootAdmissionBlocked
-  const inputId = "lotus-message-input"
+  const inputId = untrack(() => props.inputId) ?? createUniqueId()
   const mentionWorkspace = () => worktree.preparedPath ?? props.workspacePath
   const workspaceLabel = () => {
     const path = mentionWorkspace()
@@ -311,6 +314,7 @@ export function ComposerPanel(props: {
         <Paperclip class="size-4" />
       </Button>
       <Show when={draftKey() === ""}>
+        <NewChatProjectControl projectId={props.projectId} onSelect={props.onSelectProject} />
         <NewChatWorktreeControl projectId={props.projectId} workspacePath={props.workspacePath}
           value={worktree.selection} onChange={worktree.select} automatic={worktree.automatic}
           disabled={worktree.locked || submitting() || props.chat.submissionPending}
@@ -327,6 +331,7 @@ export function ComposerPanel(props: {
         <Show when={worktree.busy}><span role="status" class="px-2 text-xs text-muted-foreground">
           {text("chat_worktree_preparing")}
         </span></Show>
+        <NewChatPromptControl />
       </Show>
     </div>
   )

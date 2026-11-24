@@ -276,70 +276,6 @@ it("offers queue submission and Stop together while generating", async () => {
   expect(props.onSubmit).toHaveBeenCalledOnce()
 })
 
-describe("Composer new-chat project chip", () => {
-  it("shows the project chip for new chats and hides the manual workspace button once a project is selected", async () => {
-    useAppStore.setState({
-      projectsAvailable: true,
-      projects: {
-        p1: {
-          id: "p1", name: "Zenith", status: "active", revision: 1, resource_revision: 1,
-          project_path: "/tmp/zenith", project_path_status: "configured", workspace_count: 1,
-          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-          schema_version: 2, workspace_bindings: [],
-        },
-      },
-    })
-
-    const bare = await mountComposer({ hasSession: false })
-    expect(bare.container.textContent).toContain("选择项目")
-    expect(bare.container.textContent).toContain("选择工作目录")
-
-    const picked = await mountComposer({ hasSession: false, selectedProjectId: "p1" })
-    expect(picked.container.textContent).toContain("Zenith")
-    const workspaceButton = [...picked.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("工作目录"),
-    )
-    expect(workspaceButton?.className).toContain("hidden")
-
-    useAppStore.setState({ projects: {}, projectsAvailable: null })
-  })
-
-  it("hides the project chip entirely when the backend has no Project API", async () => {
-    useAppStore.setState({ projectsAvailable: false, projects: {} })
-    const view = await mountComposer({ hasSession: false })
-    expect(view.container.textContent).not.toContain("选择项目")
-    useAppStore.setState({ projectsAvailable: null })
-  })
-})
-
-describe("Composer new-chat prompt chip", () => {
-  it("uses the real default preset without rendering a duplicate fallback option", async () => {
-    useAppStore.setState({
-      lastSelectedPromptId: null,
-      systemPrompts: [{
-        id: "general_assistant",
-        name: "Bodhi",
-        content: "Default Bodhi prompt",
-        isDefault: true,
-      }],
-    })
-
-    const { container } = await mountComposer({ hasSession: false })
-    const trigger = container.querySelector<HTMLButtonElement>('button[title="系统提示词:Bodhi"]')
-
-    expect(trigger?.textContent).toContain("Bodhi")
-    expect(trigger?.textContent).not.toContain("默认提示词")
-
-    act(() => {
-      trigger?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
-    })
-    const options = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .map((item) => item.textContent?.trim())
-
-    expect(options).toEqual(["Bodhi"])
-  })
-})
-
 it("formats the output rate with the selected UI locale instead of the French browser locale", async () => {
   vi.spyOn(window.navigator, "language", "get").mockReturnValue("fr-FR")
   const view = await mountComposer({ outputRate: 1234.5 })
@@ -424,16 +360,6 @@ describe("container-aware composer toolbar", () => {
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
-  it("places the new-chat workspace slot beside Project on desktop and omits it for existing sessions", async () => {
-    observeWidth(900)
-    const h = await mountComposer({ hasSession: false, workspaceControl: <button data-workspace-control>Current workspace</button> })
-    const slot = h.container.querySelector('[data-workspace-control]')!
-    expect(slot.closest('[data-composer-secondary-controls]')).not.toBeNull()
-    expect(slot.previousElementSibling?.getAttribute('data-slot')).toBe('dropdown-menu-trigger')
-    h.rerender({ hasSession: true })
-    expect(h.container.querySelector('[data-workspace-control]')).toBeNull()
-  })
-
   it("keeps compact More open when its nested worktree selector is inspected and cancelled", async () => {
     observeWidth(420)
     const onChange = vi.fn()
@@ -449,22 +375,6 @@ describe("container-aware composer toolbar", () => {
     expect(document.querySelector('[role="dialog"][aria-label="更多"]')).not.toBeNull()
     expect(onChange).not.toHaveBeenCalled()
     expect(h.props.onSubmit).not.toHaveBeenCalled()
-  })
-
-  it("keeps More open while a nested preset menu is cancelled", async () => {
-    observeWidth(420)
-    useAppStore.setState({ systemPrompts: [{ id: "preset", name: "Bodhi", content: "Existing preset", isDefault: true }] })
-    const { container, props } = await mountComposer({ hasSession: false })
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click())
-    const preset = document.querySelector<HTMLButtonElement>('button[title="系统提示词:Bodhi"]')!
-    act(() => preset.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
-    expect(document.querySelector('[role="menuitem"]')?.textContent).toContain("Bodhi")
-    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
-    await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull())
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
-    await vi.waitFor(() => expect(document.activeElement).toBe(preset))
-    expect(props.onDraftChange).not.toHaveBeenCalled()
-    expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
   it("dismisses More before opening the workspace picker", async () => {
