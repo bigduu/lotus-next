@@ -183,3 +183,52 @@ test("clears the saved message before startup settles and preserves the next dra
     confirm()
   }
 })
+
+test("Enter saves semantic ingress during an existing run without opening the legacy guidance queue", async ({ page }) => {
+  const id = "bamboo-default-supervisor"
+  await page.addInitScript((sessionId) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", sessionId)
+  }, id)
+  const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass", sessionId: id })
+  const { scope } = ticketSnapshot()
+  scope.binding.supervisor_session_id = id
+  await page.route("**/api/v1/tickets/scope", (route) => route.fulfill({ json: scope }))
+  await page.route("**/api/v1/tickets/{search,changes}", (route) => route.fulfill({ json: { ...scope.overview, data: [] } }))
+  const session = {
+    id, title: "Running Supervisor", kind: "root", root_session_id: id, parent_session_id: null,
+    title_version: 1, model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
+    created_at: "2026-10-15T00:00:00Z", updated_at: "2026-10-15T00:00:00Z",
+    is_running: true, last_run_status: "running", root_orchestration_only: false, thinking_mode: "standard",
+    root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64), permission_mode: "default",
+  }
+  await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
+    json: { sessions: new URL(route.request().url()).searchParams.get("kind") === "child" ? [] : [session], total: 1, limit: 200, offset: 0 },
+  }))
+  await page.route(`**/api/v1/sessions/${id}`, (route) => route.fulfill({ json: { session }, headers: { ETag: '"1"' } }))
+  const posts: Array<{ session_id: string; message_id: string; message: string; correlation_id: string }> = []
+  await page.route("**/api/v1/chat", (route) => {
+    const request = route.request().postDataJSON() as (typeof posts)[number]
+    posts.push(request)
+    return route.fulfill({ json: { session_id: id, message_id: request.message_id, ingress_seq: 1, status: "queued" } })
+  })
+  await page.route(`**/api/v1/execute/${id}`, (route) => route.fulfill({ json: { session_id: id, status: "already_running" } }))
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("banner")).toContainText(session.title)
+  await expect(page.getByTestId("ticket-work-status")).toBeVisible()
+  const editor = page.getByRole("textbox", { name: "消息", exact: true })
+  await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeEnabled()
+  await editor.fill("A second ticket instruction during generation")
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled()
+  await expect(page.getByRole("combobox", { name: "发送时机", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "加入队列", exact: true })).toHaveCount(0)
+  await editor.press("Enter")
+  await expect.poll(() => posts).toEqual([expect.objectContaining({
+    session_id: id, message: "A second ticket instruction during generation", message_id: expect.any(String),
+  })])
+  expect(posts[0].correlation_id).toBe(posts[0].message_id)
+  await expectComposerText(editor, "")
+  await expect(editor).toHaveAttribute("aria-busy", "false")
+  expect(runtime.httpRequests.filter(({ method, url }) => method === "POST" && new URL(url).pathname.endsWith("/guidance"))).toEqual([])
+  expect(runtime.pageErrors).toEqual([])
+})

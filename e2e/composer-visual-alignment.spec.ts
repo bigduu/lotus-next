@@ -38,6 +38,29 @@ async function toolbarGeometry(page: Page) {
   })
 }
 
+async function installStreamingRate(page: Page) {
+  const session = "all-surface-session"
+  const channel = `agent.${session}`
+  let socket: WebSocketRoute | undefined
+  let subscribed = false
+  let seq = 0
+  await page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    ws.onMessage((raw) => {
+      const frame = JSON.parse(String(raw))
+      if (frame.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+      if (frame.type === "subscribe" && frame.ch === channel) subscribed = true
+    })
+  })
+  await page.route("**/api/v1/chat", (route) => route.fulfill({ json: { session_id: session, status: "success" } }))
+  await page.route(`**/api/v1/execute/${session}`, (route) => route.fulfill({ json: { status: "started", session_id: session } }))
+  return {
+    waitForSubscription: () => expect.poll(() => subscribed).toBe(true),
+    emit: (content: string) => socket!.send(JSON.stringify({ ch: channel, seq: ++seq, event: { type: "token", content } })),
+  }
+}
+
 for (const width of [390, 1440]) {
   for (const theme of ["light", "dark"]) {
     test(`streaming metadata preserves the editor and Stop contrast at ${width}px in ${theme}`, async ({ page }, info) => {
@@ -49,41 +72,30 @@ for (const width of [390, 1440]) {
         localStorage.setItem("copilot_ui_theme_v1", theme)
       }, theme)
       const observation = await installArtifactRuntime(page, standaloneScenario)
-      let socket: WebSocketRoute | undefined
-      let subscribed = false
-      let seq = 0
-      await page.routeWebSocket(/.*/, (ws) => {
-        socket = ws
-        ws.onMessage((raw) => {
-          const frame = JSON.parse(String(raw))
-          if (frame.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
-          if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
-          if (frame.type === "subscribe" && frame.ch === "agent.all-surface-session") subscribed = true
-        })
-      })
-      await page.route("**/api/v1/chat", (route) => route.fulfill({ json: { session_id: "all-surface-session", status: "success" } }))
-      await page.route("**/api/v1/execute/all-surface-session", (route) => route.fulfill({ json: { status: "started", session_id: "all-surface-session" } }))
+      const stream = await installStreamingRate(page)
       await page.goto(standaloneScenario.entryUrl)
       await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
       const editor = page.getByRole("textbox", { name: "消息", exact: true })
       await expect(page.getByRole("combobox", { name: "权限模式", exact: true })).toBeEnabled()
       await editor.fill("Synthetic streaming alignment check")
       await page.getByRole("button", { name: "发送消息", exact: true }).click()
-      await expect.poll(() => subscribed).toBe(true)
+      await stream.waitForSubscription()
       const stop = page.getByRole("button", { name: "停止生成", exact: true })
       await expect(stop).toBeVisible()
       const draft = "流式输出期间保留这份草稿，并使用完整的输入宽度。".repeat(5)
       await editor.fill(draft)
       const before = await toolbarGeometry(page)
-      const emit = (content: string) => socket!.send(JSON.stringify({
-        ch: "agent.all-surface-session", seq: ++seq, event: { type: "token", content },
-      }))
-      emit("First synthetic sample. ")
+      const originalEditor = await editor.elementHandle()
+      const rate = page.locator("[data-output-rate]")
+      await expect(rate).toHaveCount(0)
+      stream.emit("First synthetic sample. ")
       // The real estimator needs two arrivals at least 600ms apart.
       await page.waitForTimeout(700)
-      emit("Second synthetic sample for output rate. ")
-      const rate = page.locator("[data-output-rate]")
+      stream.emit("Second synthetic sample for output rate. ")
       await expect(rate).toBeVisible()
+      await expect(rate).toHaveText(/^约 [0-9]+\.[0-9] token\/秒$/)
+      await expect(rate).toHaveAttribute("title", "根据流式文本估算，不用于计费")
+      expect(await editor.evaluate((element, previous) => element === previous, originalEditor)).toBe(true)
       expect(await rate.evaluate((element) => !!element.closest("[data-composer-toolbar]"))).toBe(true)
       const after = await toolbarGeometry(page)
       expect(after.editor).toEqual(before.editor)
@@ -105,10 +117,43 @@ for (const width of [390, 1440]) {
       const file = info.outputPath(`streaming-toolbar-${width}-${theme}.png`)
       await page.locator("[data-composer-surface]").screenshot({ path: file, animations: "disabled" })
       await info.attach("Streaming toolbar", { path: file, contentType: "image/png" })
+      await expect(rate).toHaveCount(0)
+      expect(await editor.evaluate((element, previous) => element === previous, originalEditor)).toBe(true)
+      expect((await toolbarGeometry(page)).editor).toEqual(before.editor)
       expect(observation.pageErrors).toEqual([])
     })
   }
 }
+
+test.describe("output rate locale", () => {
+  test.use({ locale: "fr-FR" })
+
+  for (const locale of ["en-US", "fr-FR"]) {
+    test(`formats the streaming rate with the ${locale} UI locale`, async ({ page }, info) => {
+      test.skip(info.project.name !== "desktop-chromium", "locale formatting uses the same toolbar on all devices")
+      await page.addInitScript((locale) => {
+        localStorage.setItem("bodhi_onboarded_v1", "1")
+        localStorage.setItem("lotus_next_last_session", "all-surface-session")
+        localStorage.setItem("lotus_ui_locale_v1", locale)
+      }, locale)
+      await installArtifactRuntime(page, standaloneScenario)
+      const stream = await installStreamingRate(page)
+      await page.goto(standaloneScenario.entryUrl)
+      await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
+      expect(await page.evaluate(() => navigator.language)).toBe("fr-FR")
+      const editor = page.locator("[data-composer-editor]")
+      await editor.fill("Stream through the real output-rate tracker")
+      await editor.press("Enter")
+      await stream.waitForSubscription()
+      stream.emit("Prepare the sample. ")
+      await page.getByText("Prepare the sample.", { exact: true }).waitFor()
+      await page.waitForTimeout(700)
+      stream.emit("A".repeat(7_000))
+      const format = locale === "en-US" ? /[0-9],[0-9]{3}\.[0-9]/ : /[0-9]\u202f[0-9]{3},[0-9]/
+      await expect(page.locator("[data-output-rate]")).toHaveText(format)
+    })
+  }
+})
 
 for (const width of [320, 390, 820, 1440]) {
   for (const theme of ["light", "dark"]) {

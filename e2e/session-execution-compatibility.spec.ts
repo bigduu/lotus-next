@@ -11,7 +11,7 @@ const report = (mode: Mode) => ({ session_version: mode === "legacy" || mode ===
     message: mode === "state-conflict" ? "Unsupported retained runtime format" : "Unsupported declared behavior version",
   }] : [] })
 
-async function fixture(page: Page, initial: Mode) {
+async function fixture(page: Page, initial: Mode, running = false) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_ui_locale_v1", "en-US")
@@ -19,6 +19,17 @@ async function fixture(page: Page, initial: Mode) {
   }, sid)
   const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
   let mode = initial
+  const stops: string[] = []
+  if (running) {
+    await page.routeWebSocket(/.*/, (socket) => {
+      socket.onMessage((raw) => {
+        const frame = JSON.parse(String(raw))
+        if (frame.type === "hello") socket.send(JSON.stringify({ type: "welcome" }))
+        if (frame.type === "ping") socket.send(JSON.stringify({ type: "pong" }))
+        if (frame.type === "stop") stops.push(frame.session_id)
+      })
+    })
+  }
   const writes: { path: string; body: unknown }[] = []
   const saved: { id: string; role: string; content: string; created_at: string }[] = [
     { id: "legacy-user", role: "user", content: "Existing history remains readable", created_at: at },
@@ -29,7 +40,7 @@ async function fixture(page: Page, initial: Mode) {
     model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
     created_at: at, updated_at: at, last_activity_at: at, message_count: 2,
     workspace_path: "/workspace/lotus-next", permission_mode: "default", bypass_permissions: false,
-    is_running: false, last_run_status: "completed", subagent_count: 0,
+    is_running: running, last_run_status: running ? "running" : "completed", subagent_count: 0,
     root_orchestration_only: false, thinking_mode: "standard", root_mode_transition_epoch: 0,
     root_mode_birth_token: "a".repeat(64) }
   const refusal = () => ({ session_id: sid, error: { type: "conflict", code: "session_execution_incompatible", message: "Execution compatibility conflict" },
@@ -51,6 +62,13 @@ async function fixture(page: Page, initial: Mode) {
       saved.push({ id: "accepted-continuation", role: "user", content: request.postDataJSON().message, created_at: at })
       return route.fulfill({ status: 201, json: { session_id: sid, message_id: "accepted-continuation", ingress_seq: 1, status: "success" } })
     }
+    if (running && path === "/api/v1/execute/defaults") {
+      return route.fulfill({ json: { upstream_retry: { supported_modes: [] } } })
+    }
+    if (running && path === `/api/v1/stop/${sid}` && request.method() === "POST") {
+      stops.push(sid)
+      return route.fulfill({ status: 204 })
+    }
     if (path === `/api/v1/execute/${sid}`) {
       if (mode === "execute-refusal") { mode = "version-conflict"; return route.fulfill({ status: 409, json: refusal() }) }
       return route.fulfill({ json: { status: "started", session_id: sid } })
@@ -61,7 +79,7 @@ async function fixture(page: Page, initial: Mode) {
   await expect(page.getByText("Existing history remains readable", { exact: true })).toBeVisible()
   const input = page.getByRole("textbox", { name: "Messages", exact: true }).first()
   await expect(input).toBeVisible()
-  return { runtime, writes, input, setMode(value: Mode) { mode = value },
+  return { runtime, writes, input, stops, setMode(value: Mode) { mode = value },
     count(path: string) { return writes.filter((entry) => entry.path === path).length } }
 }
 
@@ -130,7 +148,8 @@ test("compatibility fixture: typed submit conflict retains draft and only an exp
   await page.getByRole("button", { name: "Check compatibility again", exact: true }).click()
   await expect(page.locator('[data-session-execution-blocked="true"]')).toHaveCount(0)
   expect(f.count("/api/v1/chat")).toBe(1)
-  await page.getByRole("button", { name: "Send message", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled()
+  await f.input.press("Enter")
   await expect.poll(() => f.count(`/api/v1/execute/${sid}`)).toBe(1)
   expect(f.count("/api/v1/chat")).toBe(2)
   expect(f.count("/api/v1/sessions")).toBe(0)
@@ -145,5 +164,22 @@ test("compatibility fixture: typed execute refusal preserves the acknowledged me
   await expect(page.getByText("This message is saved before execution refusal", { exact: true }).first()).toBeVisible()
   await expect(page.getByText("Existing history remains readable", { exact: true })).toBeVisible()
   expect(f.count("/api/v1/chat")).toBe(1); expect(f.count(`/api/v1/execute/${sid}`)).toBe(1)
+  expect(f.runtime.pageErrors).toEqual([])
+})
+
+test("a compatibility conflict blocks another submission while the existing run can still be stopped", async ({ page }) => {
+  const f = await fixture(page, "version-conflict", true)
+  await expect(page.locator('[data-session-execution-blocked="true"]')).toBeVisible()
+  await f.input.fill("Retain the draft while stopping the old run")
+  await expect(page.getByRole("button", { name: "Add to queue", exact: true })).toBeDisabled()
+  await f.input.press("Enter")
+  const stop = page.getByRole("button", { name: "Stop generation", exact: true })
+  await expect(stop).toBeEnabled()
+  expect(f.writes).toEqual([])
+  await stop.click()
+  await expect.poll(() => f.stops).toEqual([sid])
+  await expect(f.input).toHaveText("Retain the draft while stopping the old run")
+  expect(f.writes.filter(({ path }) => !path.startsWith("/api/v1/stop/"))).toEqual([])
+  expect(f.runtime.errorResponses).toEqual([])
   expect(f.runtime.pageErrors).toEqual([])
 })
