@@ -1,31 +1,44 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
+import { createSignal } from "solid-js"
+import { render as mount, type ComponentProps, type JSX } from "@solidjs/web"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { changeLocale } from "@shared/i18n"
-import { uiText } from "@shared/i18n/ui"
+import { changeLocale } from "@shared/i18n/runtime"
+import { uiText } from "@shared/i18n/text"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
 import { resetBackendFeatures, setBackendFeatures } from "@/lib/backendFeatures"
 import { agentClient } from "@services/chat/AgentService"
+import { settleChat } from "../chatInteractionTestHarness"
 import { ContextCompressionNotice } from "./ContextCompressionNotice"
 
-let root: Root
+// Vitest only transforms the application's Solid JSX. Preserve the icon's
+// observable SVG attributes without loading Lucide's uncompiled JSX entry.
+vi.mock("@lucide/solid", () => ({
+  LoaderCircle: (props: Pick<JSX.IntrinsicElements["svg"], "aria-hidden" | "class">) =>
+    <svg aria-hidden={props["aria-hidden"]} class={props.class} />,
+}))
+
+type Props = ComponentProps<typeof ContextCompressionNotice>
+let dispose: (() => void) | undefined
+let setProps: (value: Props) => void
 let host: HTMLDivElement
+
 beforeEach(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   host = document.body.appendChild(document.createElement("div"))
-  root = createRoot(host)
+  const [props, set] = createSignal<Props>({})
+  setProps = set
+  dispose = mount(() => <ContextCompressionNotice feedback={props().feedback} sessionId={props().sessionId} />, host)
 })
+
 afterEach(() => {
-  act(() => root.unmount())
+  dispose?.()
   host.remove()
   resetBackendFeatures()
   vi.useRealTimers()
   vi.restoreAllMocks()
-  Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 })
-const render = async (feedback?: ContextCompressionFeedback | null, sessionId?: string) => {
-  await act(async () => root.render(<ContextCompressionNotice feedback={feedback} sessionId={sessionId} />))
-}
+
+const render = (feedback?: ContextCompressionFeedback | null, sessionId?: string) =>
+  settleChat(() => setProps({ feedback, sessionId }))
+
 const cases: { feedback: ContextCompressionFeedback; key: Parameters<typeof uiText>[0] }[] = [
   { feedback: { status: "running" }, key: "context_compression_notice_running" },
   { feedback: { status: "completed", awaitingUsage: true }, key: "context_compression_notice_completed_waiting" },
@@ -158,7 +171,7 @@ it("rediscovers a running compaction after transient errors on reopen", async ()
   expect(readback).toHaveBeenCalledTimes(1)
   expect(host.textContent).toBe("")
 
-  await act(async () => vi.advanceTimersByTimeAsync(4_000))
+  await settleChat(() => vi.advanceTimersByTimeAsync(4_000))
   expect(readback).toHaveBeenCalledTimes(3)
   expect(host.textContent).toContain(uiText("compact_status_summarizing", { part: 2, total: 3 }))
 })
@@ -169,7 +182,7 @@ it("bounds background discovery retries and reads again on focus", async () => {
   const readback = vi.spyOn(agentClient, "getSessionCompactionStatus").mockRejectedValue(new Error("offline"))
 
   await render(undefined, "chat")
-  await act(async () => vi.advanceTimersByTimeAsync(20_000))
+  await settleChat(() => vi.advanceTimersByTimeAsync(20_000))
   expect(readback).toHaveBeenCalledTimes(3)
 
   readback.mockResolvedValue({
@@ -178,7 +191,7 @@ it("bounds background discovery retries and reads again on focus", async () => {
     active: null,
     applied: { id: "attempt", strategy: "message_summary" },
   })
-  await act(async () => { window.dispatchEvent(new Event("focus")) })
+  await settleChat(() => { window.dispatchEvent(new Event("focus")) })
   expect(host.textContent).toContain(uiText("compact_status_applied", {
     strategy: uiText("context_message_summary_label"),
   }))

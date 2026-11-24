@@ -1,5 +1,5 @@
 import { LoaderCircle } from "@lucide/solid"
-import { createEffect, createMemo, createSignal, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, Show, untrack } from "solid-js"
 import { uiText } from "@shared/i18n/text"
 import { backendSupports, onBackendFeatures } from "@/lib/backendFeatures"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
@@ -89,7 +89,7 @@ export function ContextCompressionNotice(props: {
       let consecutiveFailures = 0
       const awaitingAttempt = manualPending || (runActive && feedback?.status === "running")
       let shouldPoll = awaitingAttempt
-      const current = () => !controller.signal.aborted && visit() === origin
+      const current = () => !controller.signal.aborted && untrack(visit) === origin
 
       async function refresh() {
         if (reading || !current()) return
