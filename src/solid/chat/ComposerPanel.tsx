@@ -290,6 +290,7 @@ export function ComposerPanel(props: {
         isOriginCurrent: origin.prepare ? origin.isCurrent : undefined,
         ...(liveBootstrapResume ? { liveBootstrapResume: true } : {}),
       })
+      if (result.kind === "unconfirmed" && origin.isCurrent()) focusEditor()
       if (result.kind !== "accepted") return
       if (!key && submission.projectId) sessionCreated(result.sessionId)
       if (origin.prepare && (!origin.viewerIsCurrent() || (!result.navigated && !origin.isCurrent()))) return
@@ -307,6 +308,7 @@ export function ComposerPanel(props: {
       }
     } catch (error) {
       console.error("[solid-composer] Submission failed:", error)
+      if (origin.isCurrent()) focusEditor()
     } finally {
       active = false
       setSubmitting(false)

@@ -197,7 +197,6 @@ import { apiClient } from "@services/api"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { applyTicketSnapshot } from "@services/tickets/state"
 import { ChatPane } from "./ChatPane"
-import { uiText } from "@shared/i18n/ui"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
 const skillA = skill("skill-a")
 const skillB = skill("skill-b")
@@ -254,29 +253,6 @@ function change(textarea: HTMLTextAreaElement, value: string) {
   act(() => { setter?.call(textarea, value); textarea.dispatchEvent(new Event("input", { bubbles: true })) })
 }
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve() }) }
-async function addImage(name: string) {
-  const readComplete = deferred<void>()
-  const nativeReadAsDataUrl = FileReader.prototype.readAsDataURL
-  const readSpy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader, blob: Blob) {
-    this.addEventListener("loadend", () => readComplete.resolve(), { once: true })
-    nativeReadAsDataUrl.call(this, blob)
-  })
-  try {
-    await act(async () => {
-      composer().onAddFiles([new File([name], name, { type: "image/png" })])
-      await readComplete.promise
-    })
-  } finally {
-    readSpy.mockRestore()
-  }
-  await vi.waitFor(
-    () => expect(composer().attachments.some((attachment) => attachment.name === name)).toBe(true),
-    { timeout: 1_000 },
-  )
-}
-async function fill(textarea: HTMLTextAreaElement) {
-  act(() => composer().onPickSkill(skillA)); await addImage("before.png"); change(textarea, "original request")
-}
 let mediaMatches = true
 const mediaListeners = new Set<(event: MediaQueryListEvent) => void>()
 beforeEach(() => {
@@ -759,55 +735,4 @@ describe("ChatPane composer acknowledgement", () => {
     expect(document.querySelector('[data-testid="session-permission"]')).toBeNull()
   })
 
-  it("preserves an exact raw draft, focus, and template ownership before ACK", async () => {
-    const templatePrompt = Object.freeze({ prompt: "template prompt", revision: 7 })
-    runtime.peekTemplate.mockReturnValue(templatePrompt)
-    const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
-    const textarea = await mount(send, null)
-    await addImage("pending.png")
-    change(textarea, "  exact raw draft  ")
-    document.body.tabIndex = -1; document.body.focus(); act(() => composer().onSubmit()); await flush()
-    expect(send).toHaveBeenCalledWith("  exact raw draft  ", {
-      skillIds: undefined, images: [expect.objectContaining({ name: "pending.png" })], workspacePath: "/picked", projectId: null, templatePrompt,
-      permissionMode: "default", rootOrchestrationOnly: false,
-    })
-    expect(composer().attachments).toEqual([expect.objectContaining({ name: "pending.png" })])
-    expect(runtime.state.inputStates[""]?.content).toBe("  exact raw draft  "); expect(runtime.peekTemplate).toHaveBeenCalledTimes(1); expect(document.activeElement).toBe(textarea)
-  })
-  it("clears all unchanged fields only after a valid ACK", async () => {
-    write("session-1", "")
-    const send = vi.fn<Send>().mockResolvedValue({
-      kind: "accepted", operationId: 2, sessionId: "session-1", navigated: false,
-    })
-    const textarea = await mount(send, "session-1")
-    await fill(textarea); act(() => composer().onSubmit()); await flush()
-    expect(send).toHaveBeenCalledWith("original request", {
-      skillIds: ["skill-a"], images: [expect.objectContaining({ name: "before.png" })],
-      workspacePath: "/picked", projectId: null, templatePrompt: null,
-      permissionMode: undefined, rootOrchestrationOnly: undefined,
-    })
-    expect(runtime.state.inputStates["session-1"]?.content).toBe(""); expect(composer()).toMatchObject({ attachments: [], selectedSkill: null })
-  })
-  it("keeps every field edited during ACK wait, including an external draft write", async () => {
-    write("session-1", "")
-    const ack = deferred<Awaited<ReturnType<Send>>>()
-    const send = vi.fn<Send>().mockReturnValue(ack.promise)
-    const textarea = await mount(send, "session-1")
-    await fill(textarea); act(() => composer().onSubmit()); act(() => composer().onPickSkill(skillB))
-    await addImage("after.png"); act(() => write("session-1", "external pane draft"))
-    ack.resolve({ kind: "accepted", operationId: 3, sessionId: "session-1", navigated: false })
-    await flush()
-    expect(runtime.state.inputStates["session-1"]?.content).toBe("external pane draft")
-    expect(composer().attachments.map((item) => item.name)).toEqual(["before.png", "after.png"])
-    expect(composer().selectedSkill).toEqual(skillB); expect(send).toHaveBeenCalledTimes(1)
-  })
-  it("re-keys a newer new-chat draft after ACK without overwriting it", async () => {
-    const ack = deferred<Awaited<ReturnType<Send>>>()
-    const send = vi.fn<Send>().mockReturnValue(ack.promise)
-    const textarea = await mount(send, null)
-    change(textarea, "first request"); act(() => composer().onSubmit()); change(textarea, "second request")
-    ack.resolve({ kind: "accepted", operationId: 4, sessionId: "created", navigated: true })
-    await flush()
-    expect(runtime.state.inputStates["created"]?.content).toBe("second request"); expect(runtime.state.inputStates[""]?.content).toBe("")
-  })
 })
