@@ -4,15 +4,19 @@ import { createUiText } from "../../shell/uiText"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "../../ui/responsive-dialog"
 import type { WorkflowRunsContentProps } from "./WorkflowRunsContent"
 
+export type WorkflowRunsContentLoader = () => Promise<typeof import("./WorkflowRunsContent")>
+
 export interface WorkflowRunsDialogProps extends WorkflowRunsContentProps {
   sessionTitle: string
   onClose: () => void
+  loadContent?: WorkflowRunsContentLoader
 }
 
 const WorkflowRunsContent = lazy(() => import("./WorkflowRunsContent"))
 
 export function WorkflowRunsDialog(props: WorkflowRunsDialogProps) {
   const text = createUiText()
+  const RunSession = props.loadContent ? lazy(props.loadContent) : WorkflowRunsContent
   const opener = document.activeElement
   let panel: HTMLDivElement | undefined
   onCleanup(() => {
@@ -43,7 +47,7 @@ export function WorkflowRunsDialog(props: WorkflowRunsDialogProps) {
             <Loading fallback={
               <p role="status" aria-live="polite" class="px-5 py-4 text-sm text-muted-foreground">{text("workflow_run_loading")}</p>
             }>
-              <WorkflowRunsContent sessionId={sessionId} projectId={props.projectId} projectName={props.projectName} />
+              <RunSession sessionId={sessionId} projectId={props.projectId} projectName={props.projectName} />
             </Loading>
           </Errored>
         )}</Show>
