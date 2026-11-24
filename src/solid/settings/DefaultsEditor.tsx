@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js"
 import type { ReasoningEffort } from "@services/chat/AgentService"
-import { getErrorMessage } from "@services/api"
+import { apiClient, getErrorMessage } from "@services/api"
 import { providerStore } from "@shared/store/appStore/slices/providerState"
-import type { ProviderDefaultModelRefKey, ProviderInstance } from "@shared/types/providerConfig"
+import { getRuntimeModelIds, type ProviderDefaultModelRefKey, type ProviderInstance } from "@shared/types/providerConfig"
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
 import { cn } from "@/lib/utils"
 import { createStoreSelector } from "../state/createStoreSelector"
@@ -107,7 +107,22 @@ function ModelFields(props: ModelFieldsProps) {
   )
 }
 
-export function DefaultsEditor() {
+const PROBE_ERRORS = {
+  authentication_failed: "model_probe_auth_failed",
+  model_unavailable: "model_probe_unavailable",
+  timed_out: "model_probe_timed_out",
+  request_failed: "model_probe_request_failed",
+} as const
+
+// These roles are resolved by the server for the no-overrides chat route.
+const RESOLVED_FIELDS = {
+  fast: "fast_model",
+  task_summary: "summarization_model",
+  memory_background: "background_model",
+} as const
+type ResolvedFields = Partial<Record<typeof RESOLVED_FIELDS[keyof typeof RESOLVED_FIELDS], string>>
+
+export function DefaultsEditor(props: { verifyFirstModel?: boolean; onModelReady?: () => void }) {
   const text = createUiText()
   const state = createStoreSelector(providerStore, (value) => value)
   const snapshot = createMemo(() => state().providerSnapshot ?? state().providerRepairSnapshot)
@@ -117,20 +132,38 @@ export function DefaultsEditor() {
   const [saving, setSaving] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   const [saved, setSaved] = createSignal(false)
+  const [resolvedModels, setResolvedModels] = createSignal<ResolvedFields>({})
+  let resolvedRead = 0
   let savedTimer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
 
+  const firstSetup = () => props.verifyFirstModel === true && !snapshot()?.defaults?.chat
   const dirty = createMemo(() => JSON.stringify(draft()) !== JSON.stringify(baseline()))
   const compatibilitySync = createMemo(() => {
     const current = snapshot()
     return !!current?.defaults?.chat.provider &&
       current.defaults.chat.provider !== (current.default_provider_instance_id ?? "")
   })
-  createEffect(snapshot, (value) => {
+  createEffect(() => [snapshot(), firstSetup()] as const, ([value, setup]) => {
     if (!value || untrack(() => dirty() || saving())) return
     const next = draftFromDefaults(value.defaults, value.features?.chat_ultra_by_default === true)
-    setDraft(next)
     setBaseline(next)
+    const candidates = setup ? value.instances.filter((instance) => instance.enabled)
+      .flatMap((instance) => getRuntimeModelIds(instance).map((model) => ({ provider: instance.id, model }))) : []
+    if (candidates.length === 1) {
+      const [candidate] = candidates
+      setDraft({ ...next, roles: { ...next.roles, chat: { ...candidate, reasoningEffort: "" } } })
+    } else {
+      setDraft(next)
+    }
+  })
+  createEffect(snapshot, (current) => {
+    const revision = ++resolvedRead
+    setResolvedModels({})
+    if (!current?.defaults?.chat || !props.verifyFirstModel) return
+    void apiClient.get<ResolvedFields>("execute/defaults", { cache: "no-store" }).then((result) => {
+      if (!disposed && revision === resolvedRead) setResolvedModels(result)
+    }).catch(() => undefined)
   })
   onSettled(() => () => {
     disposed = true
@@ -165,11 +198,23 @@ export function DefaultsEditor() {
     if (invalid) { setError(invalid); return }
 
     const previous = baseline()
+    const verify = firstSetup()
     setSaving(true)
     setError(null)
     setSaved(false)
     clearTimeout(savedTimer)
     try {
+      if (verify) {
+        const chat = selected.roles.chat
+        const response = await apiClient.post<{ status: "ready" | keyof typeof PROBE_ERRORS }>(
+          "bamboo/settings/provider-instances/" + encodeURIComponent(chat.provider) + "/probe",
+          { model: chat.model.trim() },
+        )
+        if (disposed) return
+        if (response.status !== "ready") {
+          throw new Error(text(PROBE_ERRORS[response.status] ?? "model_probe_request_failed"))
+        }
+      }
       const { confirmed, remainingIssues } = await saveDefaults(selected, previous, text)
       if (disposed) return
       setDraft(confirmed)
@@ -179,6 +224,7 @@ export function DefaultsEditor() {
       } else {
         setSaved(true)
         savedTimer = setTimeout(() => setSaved(false), 2500)
+        if (verify) props.onModelReady?.()
       }
     } catch (caught) {
       if (!disposed) setError(getErrorMessage(caught))
@@ -192,6 +238,10 @@ export function DefaultsEditor() {
     const value = () => draft().roles[role.key]
     const invalid = () => hasRoleIssue(state().providerRepairIssues, role.key)
     const isChat = role.key === "chat"
+    const inherited = () => {
+      if (value().provider || !Object.hasOwn(RESOLVED_FIELDS, role.key)) return undefined
+      return resolvedModels()[RESOLVED_FIELDS[role.key as keyof typeof RESOLVED_FIELDS]]
+    }
     return (
       <div class={cn("rounded-md border p-2.5", invalid() && "border-amber-500/50 bg-amber-500/5")}>
         <div class="mb-2">
@@ -211,6 +261,9 @@ export function DefaultsEditor() {
           onUltra={isChat ? (chatUltra) => setDraft((value) => chatUltra === value.chatUltra ? value : { ...value, chatUltra }) : undefined}
           update={(patch) => setRole(role.key, patch)}
         />
+        <Show when={inherited()}>{(model) =>
+          <p class="mt-2 text-[11px] text-muted-foreground">{text("model_inherited_effective", { v0: model() })}</p>
+        }</Show>
         <Show when={isChat && draft().chatUltra}>
           <p class="mt-2 text-[11px] text-muted-foreground">{text("chat_ultra_default_description")}</p>
         </Show>
@@ -227,7 +280,8 @@ export function DefaultsEditor() {
     <Show when={canManage()}>
       <section class="rounded-lg border p-3">
         <div class="mb-2 text-xs font-medium text-muted-foreground">{text("default_model_preferences_acdce210")}</div>
-        <p class="mb-2 text-xs text-muted-foreground">{text("four_common_purposes_appear_first_unset_specialist_mode_50869c72")}</p>
+        <p class="mb-2 text-xs text-muted-foreground">{text(firstSetup()
+          ? "model_probe_description" : "four_common_purposes_appear_first_unset_specialist_mode_50869c72")}</p>
 
         <Show when={hasCompatibilityRouteIssue(state().providerRepairIssues) || compatibilitySync()}>
           <p role="alert" class="mb-2 rounded-md border border-amber-500/50 p-2 text-xs text-amber-700 dark:text-amber-300">
@@ -235,7 +289,7 @@ export function DefaultsEditor() {
           </p>
         </Show>
         <div role="group" aria-label={text("common_model_purposes_4ad51f49")} class="space-y-2">
-          <For each={PRIMARY_ROLES}>{roleEditor}</For>
+          <For each={firstSetup() ? PRIMARY_ROLES.filter(({ key }) => key === "chat") : PRIMARY_ROLES}>{roleEditor}</For>
         </div>
         <details class="mt-3 rounded-md border" open={hasAdvancedIssue()}>
           <summary class="cursor-pointer px-2.5 py-2 text-xs font-medium text-muted-foreground">
@@ -277,7 +331,8 @@ export function DefaultsEditor() {
         <div class="mt-2.5 flex items-center justify-end gap-2">
           <Show when={saved()}><span class="text-xs text-emerald-500">{text("saved_1bd91a7d")}</span></Show>
           <Button size="sm" onClick={() => void save()} disabled={saving() || (!dirty() && !compatibilitySync())}>
-            {saving() ? text("saving_ff509c9b") : text("save_preferences_f96c9903")}
+            {firstSetup() ? text(saving() ? "model_probe_verifying" : "model_probe_and_use")
+              : text(saving() ? "saving_ff509c9b" : "save_preferences_f96c9903")}
           </Button>
         </div>
       </section>

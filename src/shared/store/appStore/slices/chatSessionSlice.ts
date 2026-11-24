@@ -1,6 +1,7 @@
 import { uiText } from "@shared/i18n/text"
 import { getCompletedAnswerHandoffs, invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers, reconcileCompletedAnswers } from "@/lib/completedAnswerHandoffRegistry";
 import { matchesCompletedAnswer } from "@/lib/completedAnswerHandoff";
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor";
 import type { StateCreator } from "zustand/vanilla";
 import { ChatItem, Message } from "@shared/types/chat";
 import { messageOccurrenceKey } from "@shared/types/chatMessages";
@@ -713,26 +714,13 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   loadChats: async () => {
     debugLog("[ChatSlice]", "loadChats.start", {});
-    let sessions = await listAllSessionPages({ kind: "root" });
-    if (sessions.length === 0) {
-      // Use provider defaults when creating the initial session on startup
-      const defaultModelRef = providerStore.getState().providerSnapshot?.defaults?.chat;
-      const defaultModel = defaultModelRef?.model?.trim();
-      debugLog("[ChatSlice]", "loadChats.createInitialSession", {
-        defaultModel: defaultModel ?? null,
-        defaultModelRef: defaultModelRef ?? null,
-      });
-      const created = await agentClient.createSession({
-        title: i18n.t("chat.sidebar.newSession"),
-        model: defaultModel,
-        model_ref: defaultModelRef,
-        provider: defaultModelRef?.provider,
-      });
-      sessions = [created.session];
-    }
+    // First send admits a draft with its current model and workspace. Creating
+    // a Root during bootstrap can persist a missing model before setup finishes.
+    const sessions = await listAllSessionPages({ kind: "root" });
 
     const chats = sessions.map(sessionSummaryToChatItem);
-    const currentSessionId = chats[0]?.id ?? null;
+    const currentSessionId = sessions.find((session) => session.id !== DEFAULT_SUPERVISOR_SESSION_ID
+      || session.message_count > 0 || session.is_running)?.id ?? null;
     debugLog("[ChatSlice]", "loadChats.listResolved", {
       count: sessions.length,
       currentSessionId,

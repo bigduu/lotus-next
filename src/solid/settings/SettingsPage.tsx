@@ -57,9 +57,9 @@ const groups = [
 type Tab = (typeof groups)[number]["tabs"][number]
 export type SettingsTab = Tab["id"]
 
-const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
+const renderTab: Record<SettingsTab, (owner: boolean, onModelReady?: () => void) => JSX.Element> = {
   general: () => <SettingsGeneral />,
-  providers: () => <SettingsProviders />,
+  providers: (_owner, onModelReady) => <SettingsProviders onModelReady={onModelReady} />,
   "model-limits": () => <SettingsModelLimits />,
   retry: () => <SettingsRetry />,
   mcp: () => <SettingsMcp />,
@@ -82,6 +82,7 @@ export function SettingsPage(props: {
   ownerAccess: boolean
   tab: SettingsTab
   onTabChange: (tab: SettingsTab) => void
+  onModelReady?: () => void
 }) {
   const text = createUiText()
   const categoryId = "settings-category"
@@ -130,7 +131,7 @@ export function SettingsPage(props: {
             <p class="settings-panel-hint">{text(`settings_hint_${tab.id}`)}</p>
           </div>
           <Loading fallback={<p role="status">{text("loading_4927a53b")}</p>}>
-            {renderTab[tab.id](props.ownerAccess)}
+            {renderTab[tab.id](props.ownerAccess, props.onModelReady)}
           </Loading>
         </div>}</Show>
       </div>

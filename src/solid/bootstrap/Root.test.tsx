@@ -151,6 +151,18 @@ describe("Root canonical bootstrap composition", () => {
     expect(container.querySelector("[data-app-mounted]")?.textContent).toBe("Lotus Next App")
   })
 
+  it("opens the draft shell when the backend supports in-app model setup", async () => {
+    bootstrapMocks.requestServerBootstrap.mockResolvedValue({ kind: "ready" })
+    getSetupStatusMock.mockResolvedValue({
+      is_complete: false,
+      model_setup_in_app: true,
+      message: "legacy proxy status",
+    })
+    const { container } = await mountRoot()
+    expect(container.querySelector("[data-app-mounted]")).not.toBeNull()
+    expect(markSetupCompleteMock).not.toHaveBeenCalled()
+  })
+
   it("keeps first-run setup behind bootstrap and guards its completion path", async () => {
     bootstrapMocks.requestServerBootstrap.mockResolvedValue({ kind: "ready" })
     getSetupStatusMock

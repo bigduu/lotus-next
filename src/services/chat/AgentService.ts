@@ -57,6 +57,7 @@ export type AgentEventType =
   | "notification"
   | "execution_started"
   | "runner_progress"
+  | "upstream_retry_scheduled"
   | "goal_status_changed"
   | "complete"
   | "cancelled"
@@ -414,6 +415,8 @@ export interface AgentEvent {
   entered_at?: string;
   // RunnerProgress event
   round_count?: number;
+  http_status?: number;
+  retry_delay_ms?: number;
   // SessionTitleUpdated event
   title_version?: number;
   source?: "auto" | "manual" | "fallback";
@@ -1340,6 +1343,7 @@ export interface AgentEventHandlers {
   onPlanFileUpdated?: (event: AgentEvent) => void;
   onExecutionStarted?: (runId: string, startedAt?: string) => void;
   onRunnerProgress?: (sessionId: string, roundCount: number) => void;
+  onUpstreamRetryScheduled?: (httpStatus: number, delayMs: number) => void;
   onGoalStatusChanged?: (event: AgentEvent) => void;
 }
 
@@ -2186,6 +2190,14 @@ export class AgentClient {
       case "execution_started":
         if (event.session_id !== sessionId) break;
         handlers.onExecutionStarted?.(event.run_id || "", event.started_at);
+        break;
+      case "upstream_retry_scheduled":
+        if (typeof event.http_status === "number" && Number.isInteger(event.http_status)
+          && event.http_status >= 100 && event.http_status <= 599
+          && typeof event.retry_delay_ms === "number" && Number.isSafeInteger(event.retry_delay_ms)
+          && event.retry_delay_ms >= 0) {
+          handlers.onUpstreamRetryScheduled?.(event.http_status, event.retry_delay_ms);
+        }
         break;
       case "runner_progress":
         if (event.session_id && typeof event.round_count === "number") {

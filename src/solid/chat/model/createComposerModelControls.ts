@@ -63,7 +63,10 @@ export function createComposerModelControls(input: {
     const id = sessionId()
     return thinking.blocked || Boolean(id && getRootModeFenceState(id) !== "clear")
   }
-  const legacyModel = () => sessionId() ? input.chat.currentChat?.config?.model : undefined
+  const legacyModel = () => {
+    const model = sessionId() ? input.chat.currentChat?.config?.model?.trim() : undefined
+    return model && model !== "unknown" ? model : undefined
+  }
   const activeModel = createMemo(() => sessionId()
     ? input.chat.currentChat?.config?.model_ref ?? (legacyModel() ? undefined : providerSnapshot()?.defaults?.chat)
     : resolveNewChatModelRef(providerSnapshot(), selectedModel()))

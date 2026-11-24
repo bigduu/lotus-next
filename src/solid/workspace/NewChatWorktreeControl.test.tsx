@@ -85,7 +85,9 @@ describe("NewChatWorktreeControl", () => {
   it("defaults to the current workspace and does not load inventory until opened", async () => {
     const h = mount()
     expect(mocks.list).not.toHaveBeenCalled()
-    expect(document.body.textContent).toBe("Current workspace")
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Chat workspace"]')!
+    expect(trigger.textContent).toBe("repo")
+    expect(trigger.title).toBe("/repo")
     expect(h.onChange).not.toHaveBeenCalled()
     await open()
     expect(mocks.list).toHaveBeenCalledExactlyOnceWith("project-a")

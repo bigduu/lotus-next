@@ -294,9 +294,7 @@ const bootstrapCritical = async (force: boolean = false): Promise<void> => {
     }
   }
 
-  // Load chats as early as possible so the UI always has an active chat.
-  // This prevents the controlled message input from appearing "read-only"
-  // in fresh sessions (e.g., Playwright E2E with empty localStorage).
+  // An empty session list opens the new-chat draft.
   await appStore.getState().loadChats();
 
   isCriticalDone = true;

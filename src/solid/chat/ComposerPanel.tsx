@@ -44,6 +44,7 @@ const ComposerEditor = lazy(() => import("../composer/ComposerEditor"), { export
 export function ComposerPanel(props: {
   chat: Chat
   workspacePath: string | null
+  setupNeedsModel?: boolean
   inputId?: string
   projectId: string | null
   onSelectProject: (id: string | null) => void
@@ -150,7 +151,7 @@ export function ComposerPanel(props: {
   })
   createEffect(() => [draftKey(), props.pageVisible !== false && models.modelError !== null] as const,
     ([, active]) => { props.onModelFailureChange?.(active) })
-  const submissionUnavailable = () => interactionBlocked() || models.busy ||
+  const submissionUnavailable = () => props.setupNeedsModel || interactionBlocked() || models.busy ||
     (props.semantic && (!props.canSendIngress || props.ingress.busy || props.ingress.activationPending))
   const blocked = () => submissionUnavailable() || models.rootAdmissionBlocked
   const inputId = untrack(() => props.inputId) ?? createUniqueId()

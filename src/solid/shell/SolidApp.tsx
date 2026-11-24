@@ -5,6 +5,7 @@ import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
 import { SIDE_CHAT_FEATURE } from "@services/chat/sideChat"
 import { backendSupports, onBackendFeatures } from "@/lib/backendFeatures"
+import { providerStore } from "@shared/store/appStore/slices/providerState"
 import { appStore } from "@shared/store/appStore/state"
 import { themeStore } from "@shared/store/themeState"
 import { copyText } from "@shared/utils/clipboard"
@@ -33,7 +34,7 @@ import { ComposerPanel } from "../chat/ComposerPanel"
 import { ConversationClearDialog } from "../chat/ConversationClearDialog"
 import { createEnvironment } from "../chat/environment/createEnvironment"
 import { EnvironmentCard, EnvironmentLauncher } from "../chat/environment/Environment"
-import { collectEnvironmentSources } from "../chat/environment/environmentSources"
+import { collectEnvironmentSources, environmentPathName } from "../chat/environment/environmentSources"
 import { createSupervisorApprovals } from "../chat/supervisor-approvals/createSupervisorApprovals"
 import { SupervisorApprovalEntry } from "../chat/supervisor-approvals/SupervisorApprovalEntry"
 import { createRootModeAuthority } from "../chat/model/createRootModeAuthority"
@@ -176,6 +177,13 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [forking, setForking] = createSignal<ReturnType<typeof sessionView> | null>(null)
   const showHome = () => !currentSession() && !chat.sending && !chat.pendingUserText
     && chat.pendingUserImages.length === 0 && chat.pendingUserMessages.length === 0
+  const providerSettings = createStoreSelector(providerStore, (state) => state.providerSnapshot)
+  const needsModelSetup = () => {
+    const snapshot = providerSettings()
+    return props.ownerAccess && chat.booted && snapshot && !snapshot.defaults?.chat
+      && !snapshot.instances.some((instance) => instance.enabled && typeof instance.config.model === "string" && instance.config.model.trim())
+  }
+  let openedForModelSetup = false
   const focusComposer = () => document.getElementById("lotus-message-input")?.focus()
   const rootAuthority = createRootModeAuthority(currentSession, () => chat.currentChat?.kind)
   const workEnabled = () => Boolean(chat.currentChat && isDefaultSupervisor(chat.currentChat))
@@ -376,7 +384,13 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     setPaletteOpen(false)
     setSettingsOpen(true)
   }
+  const openModelSetup = () => {
+    openedForModelSetup = true
+    setSettingsTab("providers")
+    openSettings()
+  }
   const closeSettings = () => {
+    openedForModelSetup = false
     const returnFocus = settingsReturnFocus
     setSettingsOpen(false)
     requestAnimationFrame(() => {
@@ -837,7 +851,10 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                 <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing}
                   canRefresh={tickets.canRefresh} onRefresh={() => { void tickets.refresh() }}
                   canInitialize={tickets.canInitialize} initializing={tickets.initializing}
-                  initializationError={tickets.initializationError} onInitialize={() => { void tickets.initialize() }} />
+                  initializationError={tickets.initializationError} onInitialize={() => { void tickets.initialize() }}
+                  onConfigureModel={needsModelSetup() ? openModelSetup : undefined}
+                  onManageProjects={props.ownerAccess && !Object.values(projects()).some((project) => project.project_path)
+                    ? () => setProjectsOpen(true) : undefined} />
               }>
                 <LazyTicketWorkPanel controller={tickets} selectedWorkId={currentWorkSelection()?.id}
                   onShowAll={() => openTicketWork(null)} onReady={() => { requestAnimationFrame(focusWorkPanel) }}
@@ -954,9 +971,12 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               </Badge>
             )}</Show>
             <Show when={currentSession()}>
-              <Button size="icon" variant="ghost" title={displayWorkspace() ?? undefined}
-                aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
-                <FolderClosed class="size-4" />
+              <Button size={displayWorkspace() ? "sm" : "icon"} variant="ghost" title={displayWorkspace() ?? undefined}
+                class="max-w-36 gap-1.5" aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
+                <FolderClosed class="size-4 shrink-0" />
+                <Show when={displayWorkspace()}>{(path) =>
+                  <span class="hidden truncate sm:inline">{environmentPathName(path())}</span>
+                }</Show>
               </Button>
             </Show>
             <Show when={sideChatScope()}>
@@ -1066,7 +1086,14 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           <Show when={currentSession()} keyed>
             {(sessionId) => <SessionVersionMigrationGate sessionId={sessionId} state={chat.executionCompatibility} />}
           </Show>
+          <Show when={showHome() && needsModelSetup()}>
+            <div class="flex items-center justify-between gap-3 border-t px-4 py-2">
+              <p class="text-sm text-muted-foreground">{text("model_setup_for_first_message")}</p>
+              <Button size="sm" onClick={openModelSetup}>{text("model_setup_open")}</Button>
+            </div>
+          </Show>
           <ComposerPanel chat={chat} inputId="lotus-message-input" workspacePath={displayWorkspace()}
+            setupNeedsModel={!currentSession() && Boolean(needsModelSetup())}
             projectId={newSession()?.projectId ?? null} onSelectProject={selectDraftProject}
             onOpenWorkspacePicker={() => setWorkspaceOpen(true)}
             pageVisible={!settingsOpen()}
@@ -1105,7 +1132,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             </div>
           )}>
             <Loading fallback={<p role="status" class="px-4 py-3">{text("loading_settings_69ede7ee")}</p>}>
-              <SettingsPage ownerAccess={props.ownerAccess} tab={settingsTab()} onTabChange={setSettingsTab} />
+              <SettingsPage ownerAccess={props.ownerAccess} tab={settingsTab()} onTabChange={setSettingsTab}
+                onModelReady={() => { if (openedForModelSetup) closeSettings() }} />
             </Loading>
           </Errored>
         </SettingsFrame>

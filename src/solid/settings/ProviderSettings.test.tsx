@@ -677,7 +677,7 @@ describe("Provider instance credential handling", () => {
 })
 
 describe("Explicit runtime model selection", () => {
-  it("defaults Vision on, saves independent opt-outs, reloads and re-enables one model", async () => {
+  it("shows unconfirmed Vision until explicitly set and preserves each model choice", async () => {
     const current: ProviderInstance = { ...instance, config: { ...instance.config, runtime_models: ["image", "text"] } }
     const onSave = vi.fn().mockResolvedValue(undefined)
     const container = await mount(() => <InstanceEditor instance={current} onSave={onSave} onCancel={vi.fn()} />)
@@ -686,8 +686,8 @@ describe("Explicit runtime model selection", () => {
       expect(select).not.toBeNull()
       await settle(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })) })
     }
-    expect(container.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("true")
-    expect(container.querySelector<HTMLSelectElement>('select[aria-label="text 的 Vision 支持"]')!.value).toBe("true")
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("unknown")
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="text 的 Vision 支持"]')!.value).toBe("unknown")
     await setVision(container, "image", "false")
     await setVision(container, "text", "false")
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
@@ -697,7 +697,7 @@ describe("Explicit runtime model selection", () => {
     expect(reloaded.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("false")
     expect(reloaded.querySelector<HTMLSelectElement>('select[aria-label="text 的 Vision 支持"]')!.value).toBe("false")
     const other = await mount(() => <InstanceEditor instance={{ ...current, id: "other" }} onSave={vi.fn()} onCancel={vi.fn()} />)
-    expect(other.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("true")
+    expect(other.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("unknown")
     await setVision(reloaded, "image", "true")
     await click([...reloaded.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
     expect(onSave.mock.calls[1][0].config.model_capabilities.image.supports_vision).toBe(true)
@@ -712,7 +712,7 @@ describe("Explicit runtime model selection", () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     const container = await mount(() => <InstanceEditor instance={current} onSave={onSave} onCancel={vi.fn()} />)
     for (const model of ["missing", "null-model"]) {
-      expect(container.querySelector<HTMLSelectElement>(`select[aria-label="${model} 的 Vision 支持"]`)!.value).toBe("true")
+      expect(container.querySelector<HTMLSelectElement>(`select[aria-label="${model} 的 Vision 支持"]`)!.value).toBe("unknown")
     }
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
     expect(onSave.mock.calls[0][0].config.model_capabilities).toEqual({ "null-model": { supports_vision: null, note: "keep" } })
@@ -735,9 +735,7 @@ describe("Explicit runtime model selection", () => {
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
     expect(onSave.mock.calls[0]?.[0].config.runtime_models).toEqual(["usable", "vendor:custom-name"])
     expect(onSave.mock.calls[0]?.[0].config.runtime_models).not.toContain("unusable")
-    expect(onSave.mock.calls[0]?.[0].config.model_capabilities).toEqual({
-      usable: { supports_vision: true }, "vendor:custom-name": { supports_vision: true },
-    })
+    expect(onSave.mock.calls[0]?.[0].config.model_capabilities).toEqual({})
   })
 
   it("does not admit a custom id while an IME composition is being confirmed", async () => {
@@ -903,6 +901,38 @@ describe("Editable provider model combobox", () => {
 })
 
 describe("Provider defaults authoritative refresh", () => {
+  it("verifies the single admitted model before saving the first chat preference", async () => {
+    const model = "new-chat"
+    const admitted = { ...instance, config: { ...instance.config, runtime_models: [model] } }
+    const current = { ...snapshot(), instances: [admitted], defaults: undefined }
+    const chat = { provider: admitted.id, model }
+    const saved = { ...current, defaults: { chat } }
+    const loadProviderInstances = vi.fn(async () => {
+      providerStore.setState({ providerSnapshot: saved })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post")
+      .mockResolvedValueOnce({ status: "authentication_failed" })
+      .mockResolvedValueOnce({ status: "ready" })
+      .mockResolvedValueOnce(undefined)
+    const onModelReady = vi.fn()
+    const container = await mount(() => <DefaultsEditor verifyFirstModel onModelReady={onModelReady} />)
+    const verify = [...container.querySelectorAll("button")].find((button) => button.textContent === "验证并使用模型") ?? null
+    expect((roleByName("combobox", "对话(必填)模型", container) as HTMLInputElement).value).toBe(model)
+    await click(verify)
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("请检查 API Key 和此模型的权限")
+    expect(post).toHaveBeenCalledExactlyOnceWith(`bamboo/settings/provider-instances/${admitted.id}/probe`, { model })
+    expect(onModelReady).not.toHaveBeenCalled()
+
+    await click(verify)
+    expect(post).toHaveBeenNthCalledWith(3, "/bamboo/config", expect.objectContaining({
+      defaults: expect.objectContaining({ chat }),
+    }))
+    expect(onModelReady).toHaveBeenCalledOnce()
+  })
+
   it("preserves a saved Work review route when another purpose is edited", async () => {
     const review = { provider: instance.id, model: "new-review", reasoning_effort: "none" as const }
     const current = {

@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js"
 import { Pencil, Plus, RefreshCw, Trash2 } from "@lucide/solid"
+import { serviceFactory } from "@services/common/ServiceFactory"
 import { getErrorMessage } from "@services/api"
 import { appStore } from "@shared/store/appStore/state"
 import { providerStore } from "@shared/store/appStore/slices/providerState"
@@ -16,13 +17,14 @@ import { InstanceEditor } from "./InstanceEditor"
 import type { InstanceSavePayload } from "./instanceDraft"
 import type { ModelDiscoveryNotice } from "./RuntimeModelsEditor"
 
-export function SettingsProviders() {
+export function SettingsProviders(props: { onModelReady?: () => void }) {
   const text = createUiText()
   const state = createStoreSelector(providerStore, (value) => value)
   const snapshot = createMemo(() => state().providerSnapshot ?? state().providerRepairSnapshot)
   const instances = () => snapshot()?.instances ?? []
   const canManage = () => state().providerStatus === "ready" || state().providerStatus === "degraded"
   const [editing, setEditing] = createSignal<string | null>(null)
+  const [supportsFirstRun, setSupportsFirstRun] = createSignal(false)
   const [adding, setAdding] = createSignal(false)
   const [listError, setListError] = createSignal<string | null>(null)
   const [deleting, setDeleting] = createSignal<ProviderInstance | null>(null)
@@ -38,6 +40,11 @@ export function SettingsProviders() {
   onSettled(() => {
     const status = providerStore.getState().providerStatus
     if (status !== "loading") void loadInstances().catch(() => undefined)
+    let active = true
+    void serviceFactory.getSetupStatus().then((setup) => {
+      if (active) setSupportsFirstRun(setup.model_setup_in_app === true)
+    }).catch(() => undefined)
+    return () => { active = false }
   })
   createEffect(
     () => canManage() && state().catalog === null,
@@ -277,7 +284,7 @@ export function SettingsProviders() {
           <p class="text-xs text-muted-foreground">{text("no_provider_instances_yet_click_add_to_create_one_9f673789")}</p>
         </Show>
       </Show>
-      <DefaultsEditor />
+      <DefaultsEditor verifyFirstModel={supportsFirstRun()} onModelReady={props.onModelReady} />
       <ResponsiveDialog open={deleting() !== null} onOpenChange={(open) => { if (!open && !deleteBusy()) setDeleting(null) }}>
         <ResponsiveDialogContent class="gap-3 p-4">
           <ResponsiveDialogTitle>{text("delete_provider_instance_c190bd28")}</ResponsiveDialogTitle>
