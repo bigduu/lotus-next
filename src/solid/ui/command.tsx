@@ -1,4 +1,4 @@
-import { createContext, createEffect, createMemo, createSignal, createUniqueId, omit, onSettled, Show, useContext, type Accessor } from "solid-js"
+import { createContext, createEffect, createMemo, createSignal, createUniqueId, omit, onSettled, Show, untrack, useContext, type Accessor } from "solid-js"
 import type { ComponentProps, JSX } from "@solidjs/web"
 
 import { isCommandComposing } from "@/lib/commandComposition"
@@ -98,12 +98,27 @@ function Command(props: CommandProps) {
       active()?.choose()
       return
     }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
-
-    event.preventDefault()
     const selected = active()
     const index = selected ? available.indexOf(selected) : 0
-    const next = available[Math.min(available.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))]
+    let nextIndex: number
+    switch (event.key) {
+      case "Home":
+        nextIndex = 0
+        break
+      case "End":
+        nextIndex = available.length - 1
+        break
+      case "ArrowDown":
+        nextIndex = Math.min(available.length - 1, index + 1)
+        break
+      case "ArrowUp":
+        nextIndex = Math.max(0, index - 1)
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    const next = available[nextIndex]
     if (!next) return
     highlight(next)
     next.node()?.scrollIntoView({ block: "nearest" })
@@ -132,7 +147,7 @@ function CommandInput(props: CommandInputProps) {
   const command = useCommand()
 
   createEffect(() => props.value, (value) => {
-    if (typeof value === "string" && value !== command.query()) command.setQuery(value)
+    if (typeof value === "string" && value !== untrack(command.query)) command.setQuery(value)
   })
 
   return (
