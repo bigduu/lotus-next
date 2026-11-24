@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { feedbackMotion, surfaceMotion } from "@shared/theme/motion"
 import { Button } from "./button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "./dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./dropdown-menu"
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSub,
+  DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
+} from "./dropdown-menu"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "./responsive-dialog"
 import { Switch } from "./switch"
 
@@ -73,6 +76,41 @@ describe("shared interaction feedback", () => {
     await vi.waitFor(() => {
       expect(select).toHaveBeenCalledOnce()
       expect(disabled).not.toHaveBeenCalled()
+      expect(document.activeElement).toBe(trigger)
+    })
+  })
+
+  it("leaves focus in a submenu when the pointer enters its own destination directly", async () => {
+    const leave = vi.fn()
+    const host = mount(() => <DropdownMenu><DropdownMenuTrigger>Actions</DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger onPointerLeave={leave}>Move</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent><DropdownMenuItem>Unsectioned</DropdownMenuItem></DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>)
+    key(host.querySelector("button")!, "ArrowDown")
+    const trigger = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-sub-trigger"]')!
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger))
+    trigger.click()
+    flush()
+    const submenu = document.querySelector('[data-slot="dropdown-menu-sub-content"]')!
+    const destination = submenu.querySelector<HTMLElement>('[role="menuitem"]')!
+    await vi.waitFor(() => expect(submenu.contains(document.activeElement)).toBe(true))
+    const focused = document.activeElement
+
+    trigger.dispatchEvent(new PointerEvent("pointerleave", {
+      pointerType: "mouse", relatedTarget: destination, clientX: -1, clientY: -1,
+    }))
+    flush()
+    expect(leave).toHaveBeenCalledOnce()
+    expect(document.activeElement).toBe(focused)
+    expect(submenu.isConnected).toBe(true)
+
+    key(document.activeElement!, "Escape")
+    await vi.waitFor(() => {
+      expect(submenu.isConnected).toBe(false)
       expect(document.activeElement).toBe(trigger)
     })
   })

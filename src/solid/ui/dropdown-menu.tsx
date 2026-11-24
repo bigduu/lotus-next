@@ -1,4 +1,4 @@
-import { createContext, createSignal, omit, untrack, useContext, type Accessor } from "solid-js"
+import { createContext, createEffect, createSignal, omit, untrack, useContext, type Accessor } from "solid-js"
 import type { ComponentProps, JSX } from "@solidjs/web"
 import * as DropdownMenuPrimitive from "@kobalte/core/dropdown-menu"
 import { Check, ChevronRight, Circle } from "@lucide/solid"
@@ -262,6 +262,25 @@ function DropdownMenuSubTrigger(props: ComponentProps<typeof DropdownMenuPrimiti
   inset?: boolean
 }) {
   const menu = useContext(MenuState)!
+  createEffect(menu.trigger, (trigger) => {
+    if (!trigger) return
+    const onPointerLeave = (event: PointerEvent) => {
+      if (event.target !== trigger || event.pointerType !== "mouse"
+        || trigger.getAttribute("aria-expanded") !== "true" || !(event.relatedTarget instanceof Node)) return
+      const id = trigger.getAttribute("aria-controls")
+      if (!id || !trigger.ownerDocument.getElementById(id)?.contains(event.relatedTarget)) return
+
+      // The submenu can flip across the trigger. Kobalte's pointer grace may
+      // focus the parent while the pointer is already entering its submenu.
+      event.stopImmediatePropagation()
+      const triggerEvent = event as Parameters<JSX.EventHandler<HTMLDivElement, PointerEvent>>[0]
+      const handler = props.onPointerLeave
+      if (typeof handler === "function") handler(triggerEvent)
+      else handler?.[0](handler[1], triggerEvent)
+    }
+    trigger.addEventListener("pointerleave", onPointerLeave, true)
+    return () => trigger.removeEventListener("pointerleave", onPointerLeave, true)
+  })
   return (
     <DropdownMenuPrimitive.SubTrigger
       ref={[menu.setTrigger, props.ref]}
