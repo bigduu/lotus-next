@@ -429,13 +429,19 @@ async function verifyIsolation(f: Fixture) {
 
 test("pre-start failure and deferral remain visible without a summary animation", async ({ page }, info) => {
   const f = await prepare(page, info)
-  f.budget(94)
-  await expectUsage(f, 94)
+  const usage = page.getByRole("button", { name: f.copy("context_usage_06d7b2e3"), exact: true })
+  await expect(usage).toHaveCount(0)
   await expect(f.notice).toHaveCount(0)
   f.status(`failed_candidate_plan:${privateDetail}`)
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
   await expect(f.notice.locator("svg")).toHaveCount(0)
-  f.emit({ type: "token", content: "Synthetic answer continues." })
+  const answer = "Synthetic answer continues."
+  f.emit({ type: "token", content: answer })
+  await expect(page.locator(".assistant-streamdown")).toContainText(answer)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
+  await expect(usage).toHaveCount(0)
+  f.budget(94)
+  await expectUsage(f, 94)
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
   f.status("deferred_tool_protocol")
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_deferred_tool"))
