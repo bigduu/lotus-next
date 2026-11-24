@@ -43,11 +43,10 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
   const [scrollMargin, setScrollMargin] = createSignal(0)
   const [outsideHistory, setOutsideHistory] = createSignal(0)
   const [prepend, setPrepend] = createSignal<{ entries: readonly T[]; anchor: HistoryReadingAnchor } | null>(null)
-  const [initialBottomPending, setInitialBottomPending] = createSignal(
-    untrack(() => !!props.initialContentReady && !!props.followingLatest && !props.initialReadingAnchor),
+  const [initialBottom, setInitialBottom] = createSignal<"pending" | "aligning" | "ready">(
+    untrack(() => props.initialContentReady && props.followingLatest && !props.initialReadingAnchor ? "pending" : "ready"),
   )
-  const preparingInitialHistory = () => initialBottomPending() && !!props.initialContentReady &&
-    props.followingLatest && props.entries.length > 0
+  const preparingInitialHistory = () => initialBottom() === "aligning" && !!props.initialContentReady && props.followingLatest
   let scroller!: HTMLDivElement
   let prefix!: HTMLDivElement
   let history!: HTMLDivElement
@@ -141,14 +140,20 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
   })
 
   createEffect(
-    () => [viewport(), preparingInitialHistory(), props.followingLatest, props.initialContentReady] as const,
-    ([element, preparing, following, contentReady]) => {
+    () => [viewport(), initialBottom(), props.entries.length > 0, props.followingLatest, props.initialContentReady] as const,
+    ([element, phase, hasHistory, following, contentReady]) => {
+      if (phase === "ready") return
       if (!following || !contentReady) {
-        setInitialBottomPending(false)
+        setInitialBottom("ready")
         return
       }
       const view = element?.ownerDocument.defaultView
-      if (!element || !view || !preparing) return
+      if (!element || !view || !hasHistory) return
+      if (phase === "pending") {
+        // A transcript that fits can show its Markdown fallback immediately.
+        setInitialBottom(element.scrollHeight > element.clientHeight ? "aligning" : "ready")
+        return
+      }
       let frame: number
       let previousHeight: number | undefined
       let stableFrames = 0
@@ -165,7 +170,7 @@ export function VirtualHistory<T extends HistoryEntry>(props: VirtualHistoryProp
         if (atBottom && lastRowMeasured && bounds.height === previousHeight && contentReady(element)) {
           stableFrames += 1
           if (stableFrames >= STABLE_LAYOUT_FRAMES) {
-            setInitialBottomPending(false)
+            setInitialBottom("ready")
             return
           }
         } else stableFrames = 0
