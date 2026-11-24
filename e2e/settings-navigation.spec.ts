@@ -85,6 +85,14 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   const settings = settingsSurface(page);
   await expect(settings).toBeVisible();
   await expect(settingsSurface(page, "dialog")).toHaveCount(0);
+  const header = settings.locator("header");
+  const title = header.getByRole("heading", { name: "系统设置", exact: true });
+  const back = header.getByRole("button", { name: "返回聊天", exact: true });
+  await expect(title).toHaveCSS("font-size", (page.viewportSize()?.width ?? 0) >= 640 ? "18px" : "16px");
+  await expect(header).toHaveCSS("height", "65px");
+  const backBounds = (await back.boundingBox())!;
+  expect((await title.boundingBox())!.x).toBeGreaterThan(backBounds.x + backBounds.width);
+  await expect(settings.getByRole("heading", { name: "默认模型", exact: true })).toBeVisible();
   const categoryOptions = await settings.locator("#settings-category option").evaluateAll((options) =>
     options.map((option) => option.getAttribute("value")));
   expect(new Set(categoryOptions).size).toBe(categoryOptions.length);
@@ -154,6 +162,7 @@ test("open-access guests can change local settings without loading owner control
   await expect(categories).toHaveCount(3);
   expect(await categories.evaluateAll((options) => options.map((option) => option.getAttribute("value"))))
     .toEqual(["general", "notifications", "system"]);
+  await expect(settings.getByRole("heading", { name: "默认模型", exact: true })).toHaveCount(0);
 
   await expect(settings.locator(".settings-nav-item[aria-current=page]")).toHaveCSS("border-radius", "10px");
   await expect(settings.locator("#app-language")).toHaveCSS("border-radius", "10px");
