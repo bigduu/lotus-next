@@ -993,7 +993,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
                 {chat.currentChat?.title || text("new_session_c57c30bc")}
               </h1>
               <Show when={remotePlacement()}>{(placement) => (
-                <Badge variant="outline" class={`${compactHeader() ? "max-w-full self-start" : "max-w-36"} min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 dark:text-blue-400`}
+                <Badge variant="outline" class={`${compactHeader() ? "max-w-full self-start" : "max-w-[min(9rem,50%)]"} min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 dark:text-blue-400`}
                   title={text("running_on_caee1687", { v0: placement().kind, v1: placement().host })}>
                   <Dynamic component={placement().kind === "ssh" ? Server : placement().kind === "docker" ? Container : Monitor}
                     class="shrink-0" aria-hidden="true" />

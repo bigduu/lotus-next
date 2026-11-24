@@ -175,9 +175,12 @@ test("a dense remote header keeps its title and Workbench reachable without scro
   const workbench = page.locator("#right-workbench");
   await expect(workbench.getByRole("button", { name: /Prepare the workspace/ })).toBeVisible();
   await workbench.getByRole("button", { name: "Collapse workbench", exact: true }).click();
-  await page.setViewportSize({ width: 1100, height: 900 });
   const dag = header.getByRole("button", { name: "Open session task DAG", exact: true });
+  await page.setViewportSize({ width: 512, height: 740 });
   await expect(dag).toBeVisible();
+  await expect.poll(() => title.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(40);
+  await expect(launcher).toBeInViewport({ ratio: 1 });
+  await page.setViewportSize({ width: 1100, height: 900 });
   await dag.press("Enter");
   await expect(workbench.getByRole("button", { name: /Prepare the workspace/ })).toBeVisible();
   await expect(dag).toHaveCount(0);
