@@ -874,4 +874,3 @@ it("omits malformed and oversized browser_eval previews while ordinary tools sti
   expect(ordinary.textContent).toContain("/tmp/example.ts")
   expect(ordinary.textContent).toContain("done")
 })
-
