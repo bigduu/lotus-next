@@ -1,21 +1,27 @@
-import { act } from "react"
-import { createRoot, type Root } from "react-dom/client"
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import { render, type JSX } from "@solidjs/web"
+import { createSignal, flush } from "solid-js"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { applyActorTopologySnapshot, emptyActorTopology, type ActorTopologyRow, type ActorTopologyState } from "@/services/chat/actorTopology"
 import { actorSnapshotFixture, actorSnapshotV2Fixture } from "@/test/fixtures/actorSnapshot"
 import { actorSnapshotTree, parseActorSnapshot } from "@/services/chat/actorSnapshot"
 import { ActorTree, type ActorTreeProps } from "./ActorTree"
 
-const roots: Root[] = []
-const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-
-beforeAll(() => { reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true })
-afterAll(() => { Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT") })
-afterEach(() => {
-  for (const root of roots.splice(0)) act(() => root.unmount())
-  document.body.replaceChildren()
+vi.mock("@lucide/solid", () => {
+  const Icon = (props: Pick<JSX.IntrinsicElements["svg"], "class" | "aria-hidden">) =>
+    <svg class={props.class} aria-hidden={props["aria-hidden"]} />
+  return { ChevronDown: Icon, ChevronRight: Icon, CircleAlert: Icon, CircleCheck: Icon, CircleDot: Icon,
+    CircleMinus: Icon, CircleOff: Icon, CirclePause: Icon, CircleSlash: Icon, CircleX: Icon, Clock3: Icon,
+    LoaderCircle: Icon, RefreshCw: Icon }
 })
+
+const views: (() => void)[] = []
+afterEach(() => { for (const dispose of views.splice(0)) dispose() })
+
+function update(action: () => void) {
+  action()
+  flush()
+}
 
 function row(actorId: string, parentActorId: string | null, overrides: Partial<ActorTopologyRow> = {}): ActorTopologyRow {
   return {
@@ -43,18 +49,17 @@ function snapshot(actors: ActorTopologyRow[], revision = 1, previous = emptyActo
 function renderTree(props: Partial<ActorTreeProps> = {}) {
   const container = document.createElement("div")
   document.body.appendChild(container)
-  const root = createRoot(container)
-  roots.push(root)
   const initial: ActorTreeProps = {
     topology: snapshot([row("root", null)]),
     selectedActorId: null,
     onSelectActor: vi.fn(),
     ...props,
   }
-  const rerender = (next: Partial<ActorTreeProps>) => {
-    act(() => root.render(<ActorTree {...initial} {...next} />))
-  }
-  rerender({})
+  const [current, setCurrent] = createSignal(initial)
+  const dispose = render(() => <ActorTree {...current()} />, container)
+  views.push(() => { dispose(); container.remove() })
+  flush()
+  const rerender = (next: Partial<ActorTreeProps>) => update(() => setCurrent({ ...initial, ...next }))
   return { container, rerender, props: initial }
 }
 
@@ -65,7 +70,7 @@ function treeItem(container: HTMLElement, actorId: string): HTMLElement | null {
 
 function key(container: HTMLElement, value: string) {
   const tree = container.querySelector<HTMLElement>('[role="tree"]')!
-  act(() => tree.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true })))
+  update(() => tree.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true })))
 }
 
 describe("ActorTree", () => {
@@ -137,13 +142,13 @@ describe("ActorTree", () => {
     const { container } = renderTree({ topology })
     expect(actorOrder(container)).toEqual(["root", "branch", "done", "failed"])
 
-    act(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    update(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
     expect(actorOrder(container)).toEqual(["root", "branch", "nested-running", "nested-done", "done", "failed"])
     expect(treeItem(container, "nested-running")?.getAttribute("aria-level")).toBe("3")
     expect(treeItem(container, "nested-running")?.getAttribute("aria-posinset")).toBe("1")
 
-    act(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
-    act(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    update(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    update(() => treeItem(container, "branch")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
     expect(actorOrder(container)).toEqual(["root", "branch", "nested-running", "nested-done", "done", "failed"])
   })
 
@@ -187,9 +192,9 @@ describe("ActorTree", () => {
     expect(treeItem(container, "a")?.getAttribute("aria-expanded")).toBe("false")
     expect(treeItem(container, "b")).toBeNull()
 
-    act(() => treeItem(container, "a")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    update(() => treeItem(container, "a")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
     expect(treeItem(container, "b")?.getAttribute("aria-level")).toBe("3")
-    act(() => treeItem(container, "b")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    update(() => treeItem(container, "b")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
     rerender({ topology: first, selectedActorId: "c" })
     expect(treeItem(container, "c")?.getAttribute("aria-level")).toBe("4")
     expect(treeItem(container, "c")?.getAttribute("aria-selected")).toBe("true")
@@ -309,7 +314,7 @@ describe("ActorTree", () => {
     })
     expect(container.textContent).toContain("正在载入代理结构")
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("结构加载失败")
-    act(() => container.querySelector<HTMLButtonElement>("button")?.click())
+    update(() => container.querySelector<HTMLButtonElement>("button")?.click())
     expect(onRetry).toHaveBeenCalledTimes(1)
     expect(onSelectActor).not.toHaveBeenCalled()
 
