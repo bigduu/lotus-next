@@ -1,4 +1,4 @@
-import type { SprintOwnerControlsCopy } from "@/components/app/project-work/SprintOwnerControls.copy"
+import type { SprintOwnerControlsCopy } from "@/lib/project-work/SprintOwnerControls.copy"
 
 export const sprintOwnerControlsChinese: SprintOwnerControlsCopy = {
   title: "Sprint 规划",

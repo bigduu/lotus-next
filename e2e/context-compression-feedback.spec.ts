@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { expect, test, type Locator, type Page, type TestInfo, type WebSocketRoute } from "@playwright/test"
 import { uiEnUs } from "../src/shared/i18n/resources/ui-en-US.js"
 import { uiZhCn } from "../src/shared/i18n/resources/ui-zh-CN.js"
+import type { TaskList } from "../src/services/chat/AgentService.js"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -25,7 +26,11 @@ function session(id: string, title: string, running: boolean) {
   }
 }
 
-async function prepare(page: Page, info: TestInfo, { multipleSessions = false, running = true } = {}) {
+async function prepare(page: Page, info: TestInfo, { multipleSessions = false, running = true, tasks }: {
+  multipleSessions?: boolean
+  running?: boolean
+  tasks?: ReadonlyMap<string, TaskList>
+} = {}) {
   const phone = info.project.name === "phone-chromium"
   const locale = phone ? "zh-CN" : "en-US"
   const theme = phone ? "dark" : "light"
@@ -93,7 +98,7 @@ async function prepare(page: Page, info: TestInfo, { multipleSessions = false, r
     if (id && path === `/api/v1/history/${id}`) return route.fulfill({ json: { session_id: id, messages: [
       { id: `fixture-history-${id}`, role: "user", content: "Synthetic context feedback acceptance", created_at: at },
     ] } })
-    if (id && path === `/api/v1/task/${id}`) return route.fulfill({ json: { session_id: id, items: [] } })
+    if (id && path === `/api/v1/task/${id}`) return route.fulfill({ json: tasks?.get(id) ?? { session_id: id, items: [] } })
     if (id && path === `/api/v1/respond/${id}/pending`) return route.fulfill({ json: { has_pending_question: false } })
     if (id && path === `/api/v1/actors/${id}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(id, 0) })
     return route.fallback()
@@ -324,6 +329,50 @@ test("Session DAG keeps task states current on the idle feed and after reconnect
   await verifyIsolation(f)
 })
 
+test("only the visible Session hydrates its task shortcut after navigation and Settings", async ({ page }, info) => {
+  const saved: TaskList = { session_id: primary, title: "Review plan", created_at: at, updated_at: at,
+    items: [{ id: "review", description: "Review the visible session", status: "in_progress", depends_on: [], notes: "" }] }
+  const f = await prepare(page, info, { multipleSessions: true, tasks: new Map([[primary, saved]]) })
+  const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
+  const dag = page.locator("#right-workbench").getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
+  const requests = () => f.requests.filter(({ method, path }) => method === "GET" && path.startsWith("/api/v1/task/"))
+    .map(({ path }) => path.split("/").at(-1))
+  const select = async (title: string) => {
+    if (f.phone) await page.getByRole("banner").getByRole("button", { name: f.copy("menu_4ce4cafd"), exact: true }).click()
+    await page.getByRole("button", { name: title, exact: true }).click()
+    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible()
+  }
+  await expect(shortcut).toBeVisible()
+  await expect.poll(requests).toEqual([primary])
+  await expect(dag).toHaveCount(0)
+  await shortcut.click()
+  await expect(dag.getByRole("button", { name: /Review the visible session/ })).toBeVisible()
+  await page.locator("#right-workbench").getByRole("button", { name: f.copy("collapse_workbench_739b282d"), exact: true }).click()
+  await expect(dag).toHaveCount(0)
+
+  await select("Idle comparison B")
+  await expect(shortcut).toHaveCount(0)
+  await expect.poll(requests).toEqual([primary, comparison])
+  await select("Compression main")
+  await expect(shortcut).toBeVisible()
+  await expect.poll(requests).toEqual([primary, comparison, primary])
+
+  await page.keyboard.press("Control+k")
+  const search = page.getByPlaceholder(f.copy("search_sessions_or_actions_b2a0f9e8"), { exact: true })
+  const settingsTitle = f.copy("system_settings_68ea5dd4")
+  await search.fill(settingsTitle)
+  await search.press("Enter")
+  const settings = page.getByRole("main", { name: settingsTitle, exact: true })
+  await expect(settings).toBeVisible()
+  await expect(shortcut).toHaveCount(0)
+  await f.emitChange({ type: "session_history_committed", session_id: primary })
+  expect(requests()).toEqual([primary, comparison, primary])
+  await settings.getByRole("button", { name: f.copy("back_to_chat_5b8ac6b1"), exact: true }).click()
+  await expect(shortcut).toBeVisible()
+  await expect.poll(requests).toEqual([primary, comparison, primary, primary])
+  await verifyIsolation(f)
+})
+
 test("Inspector keeps a saved Task status when an older live update arrives", async ({ page }, info) => {
   test.skip(info.project.name === "phone-chromium", "Exercises the desktop workbench Inspector")
   const f = await prepare(page, info)
@@ -429,13 +478,19 @@ async function verifyIsolation(f: Fixture) {
 
 test("pre-start failure and deferral remain visible without a summary animation", async ({ page }, info) => {
   const f = await prepare(page, info)
-  f.budget(94)
-  await expectUsage(f, 94)
+  const usage = page.getByRole("button", { name: f.copy("context_usage_06d7b2e3"), exact: true })
+  await expect(usage).toHaveCount(0)
   await expect(f.notice).toHaveCount(0)
   f.status(`failed_candidate_plan:${privateDetail}`)
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
   await expect(f.notice.locator("svg")).toHaveCount(0)
-  f.emit({ type: "token", content: "Synthetic answer continues." })
+  const answer = "Synthetic answer continues."
+  f.emit({ type: "token", content: answer })
+  await expect(page.locator(".assistant-streamdown")).toContainText(answer)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
+  await expect(usage).toHaveCount(0)
+  f.budget(94)
+  await expectUsage(f, 94)
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
   f.status("deferred_tool_protocol")
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_deferred_tool"))

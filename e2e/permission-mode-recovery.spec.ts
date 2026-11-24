@@ -20,17 +20,20 @@ test("composer shows a failed permission read and recovers only after manual ref
   }, sessionId)
   const observation = await installArtifactRuntime(page, standaloneScenario)
   let reads = 0
+  // Root mode and permission state can read the session concurrently.
+  let revisionAvailable = false
   await page.route(`**/api/v1/sessions/${sessionId}`, (route) => {
     reads += 1
-    return route.fulfill({ json: { session }, ...(reads === 1 ? {} : { headers: { ETag: '"7"' } }) })
+    return route.fulfill({ json: { session }, ...(revisionAvailable ? { headers: { ETag: '"7"' } } : {}) })
   })
   await page.goto(standaloneScenario.entryUrl)
   const permission = page.locator('[data-variant="composer"][aria-label="会话权限"]')
-  const mode = permission.getByRole("combobox", { name: "权限模式" })
+  const mode = permission.getByRole("combobox", { name: "权限模式", exact: true })
   await expect(permission.getByRole("alert")).toBeVisible()
   await expect(permission.getByRole("alert")).toContainText("暂不能更改权限")
   await expect(mode).toBeDisabled()
   const readsBeforeRefresh = reads
+  revisionAvailable = true
   await permission.getByRole("button", { name: "刷新权限模式" }).click()
   await expect(mode).toBeEnabled()
   await expect(mode).toHaveText("Default")
@@ -75,7 +78,7 @@ test("Supervisor uses one permission mode for its new execution sessions", async
   })
   await page.goto(standaloneScenario.entryUrl)
   const permission = page.locator('[data-variant="composer"][aria-label="会话权限"]')
-  const mode = permission.getByRole("combobox", { name: "权限模式" })
+  const mode = permission.getByRole("combobox", { name: "权限模式", exact: true })
   await expect(mode).toHaveText("Default")
   await expect(permission).toHaveAttribute("title", /新建的执行会话会沿用此权限模式/)
   await mode.click()

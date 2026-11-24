@@ -11,7 +11,7 @@ const service = vi.hoisted(() => ({
 
 vi.mock("@services/config/SettingsService", () => ({ settingsService: service }));
 
-import { useProviderStore } from "./providerSlice";
+import { providerStore } from "./providerState";
 import { resolveNewChatModelRef, type ProviderInstancesConfig } from "@shared/types/providerConfig";
 
 const snapshot = (model = "gpt-5.6-sol"): ProviderInstancesConfig => ({
@@ -35,7 +35,7 @@ const snapshot = (model = "gpt-5.6-sol"): ProviderInstancesConfig => ({
 describe("provider instance authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useProviderStore.setState({
+    providerStore.setState({
       providerSnapshot: null,
       providerRepairSnapshot: null,
       providerRepairIssues: [],
@@ -50,9 +50,9 @@ describe("provider instance authority", () => {
   it("loads one validated snapshot and derives defaults from it", async () => {
     service.getProviderInstances.mockResolvedValue(snapshot());
 
-    await expect(useProviderStore.getState().loadProviderInstances()).resolves.toEqual(snapshot());
+    await expect(providerStore.getState().loadProviderInstances()).resolves.toEqual(snapshot());
 
-    const state = useProviderStore.getState();
+    const state = providerStore.getState();
     expect(state.providerStatus).toBe("ready");
     expect(state.providerSnapshot).toEqual(snapshot());
     expect(state.getActiveModel()).toBe("gpt-5.6-sol");
@@ -70,8 +70,8 @@ describe("provider instance authority", () => {
       instances: [{ ...initial.instances[0], config: { model: "instance-default", runtime_models: ["instance-default", "vendor:custom-name"] } }],
     };
     service.getProviderInstances.mockResolvedValue(wire);
-    await expect(useProviderStore.getState().loadProviderInstances()).resolves.toEqual({ ...wire, defaults: undefined });
-    const state = useProviderStore.getState();
+    await expect(providerStore.getState().loadProviderInstances()).resolves.toEqual({ ...wire, defaults: undefined });
+    const state = providerStore.getState();
     expect(state.providerStatus).toBe("ready");
     expect(state.providerSnapshot?.defaults).toBeUndefined();
     expect(state.providerRepairIssues).toEqual([]);
@@ -88,35 +88,35 @@ describe("provider instance authority", () => {
         finishReload = resolve;
       }),
     );
-    useProviderStore.setState({
+    providerStore.setState({
       providerSnapshot: snapshot(),
       providerStatus: "ready",
     });
 
-    const reload = useProviderStore.getState().loadProviderInstances();
+    const reload = providerStore.getState().loadProviderInstances();
 
-    expect(useProviderStore.getState()).toMatchObject({
+    expect(providerStore.getState()).toMatchObject({
       providerSnapshot: null,
       providerRepairSnapshot: null,
       providerRepairIssues: [],
       providerStatus: "loading",
     });
-    expect(useProviderStore.getState().getActiveModel()).toBeUndefined();
+    expect(providerStore.getState().getActiveModel()).toBeUndefined();
 
     finishReload(snapshot("reloaded"));
     await reload;
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("reloaded");
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("reloaded");
   });
 
   it("fails unavailable without retaining stale provider data", async () => {
-    useProviderStore.setState({ providerSnapshot: snapshot(), providerStatus: "ready" });
+    providerStore.setState({ providerSnapshot: snapshot(), providerStatus: "ready" });
     service.getProviderInstances.mockRejectedValue(new Error("private backend details"));
 
-    await expect(useProviderStore.getState().loadProviderInstances()).rejects.toThrow(
+    await expect(providerStore.getState().loadProviderInstances()).rejects.toThrow(
       "Provider settings are unavailable",
     );
 
-    expect(useProviderStore.getState()).toMatchObject({
+    expect(providerStore.getState()).toMatchObject({
       providerSnapshot: null,
       providerStatus: "unavailable",
       providerError: "Provider settings are unavailable",
@@ -126,10 +126,10 @@ describe("provider instance authority", () => {
   it("marks a malformed success payload incompatible", async () => {
     service.getProviderInstances.mockResolvedValue({ instances: "wrong" });
 
-    await expect(useProviderStore.getState().loadProviderInstances()).rejects.toThrow(
+    await expect(providerStore.getState().loadProviderInstances()).rejects.toThrow(
       "Provider instances payload is invalid",
     );
-    expect(useProviderStore.getState()).toMatchObject({
+    expect(providerStore.getState()).toMatchObject({
       providerSnapshot: null,
       providerStatus: "incompatible",
     });
@@ -149,9 +149,9 @@ describe("provider instance authority", () => {
     } satisfies ProviderInstancesConfig;
     service.getProviderInstances.mockResolvedValue(degraded);
 
-    await expect(useProviderStore.getState().loadProviderInstances()).resolves.toEqual(degraded);
+    await expect(providerStore.getState().loadProviderInstances()).resolves.toEqual(degraded);
 
-    const state = useProviderStore.getState();
+    const state = providerStore.getState();
     expect(state).toMatchObject({
       providerSnapshot: null,
       providerRepairSnapshot: degraded,
@@ -172,7 +172,7 @@ describe("provider instance authority", () => {
   });
 
   it("filters catalog models by exact instance id without a provider-kind fallback", () => {
-    useProviderStore.setState({
+    providerStore.setState({
       providerSnapshot: snapshot(),
       providerStatus: "ready",
       catalog: {
@@ -194,7 +194,7 @@ describe("provider instance authority", () => {
       },
     });
 
-    expect(useProviderStore.getState().getModelsForProvider("work").map((item) => item.reference.model)).toEqual([
+    expect(providerStore.getState().getModelsForProvider("work").map((item) => item.reference.model)).toEqual([
       "instance-model",
     ]);
   });
@@ -202,12 +202,12 @@ describe("provider instance authority", () => {
   it("rejects a provider model refresh when the request fails", async () => {
     service.fetchCatalogModels.mockRejectedValue(new Error("catalog transport failed"));
 
-    await expect(useProviderStore.getState().fetchCatalogModels("work")).rejects.toThrow(
+    await expect(providerStore.getState().fetchCatalogModels("work")).rejects.toThrow(
       "Provider model discovery failed",
     );
 
     expect(service.getProviderCatalog).not.toHaveBeenCalled();
-    expect(useProviderStore.getState().isCatalogFetching).toBe(false);
+    expect(providerStore.getState().isCatalogFetching).toBe(false);
   });
 
   it("rejects a provider model refresh when Bamboo reports an instance error", async () => {
@@ -216,13 +216,13 @@ describe("provider instance authority", () => {
       fetched: [{ provider: "work", error: `provider discovery failed: ${canary}` }],
     });
 
-    await expect(useProviderStore.getState().fetchCatalogModels("work")).rejects.toThrow(
+    await expect(providerStore.getState().fetchCatalogModels("work")).rejects.toThrow(
       "Provider model discovery failed",
     );
 
     expect(service.getProviderCatalog).not.toHaveBeenCalled();
-    expect(useProviderStore.getState().isCatalogFetching).toBe(false);
-    expect(JSON.stringify(useProviderStore.getState())).not.toContain(canary);
+    expect(providerStore.getState().isCatalogFetching).toBe(false);
+    expect(JSON.stringify(providerStore.getState())).not.toContain(canary);
   });
 
   it("stores targeted discoveries separately without admitting them or refetching providers", async () => {
@@ -235,7 +235,7 @@ describe("provider instance authority", () => {
     service.fetchCatalogModels.mockResolvedValue({
       fetched: [{ provider: "work", models: [discovered] }],
     });
-    useProviderStore.setState({
+    providerStore.setState({
       catalog: {
         providers: [],
         models: [
@@ -245,17 +245,17 @@ describe("provider instance authority", () => {
       },
     });
 
-    await useProviderStore.getState().fetchCatalogModels("work");
+    await providerStore.getState().fetchCatalogModels("work");
 
     expect(service.fetchCatalogModels).toHaveBeenCalledWith("work");
     expect(service.getProviderCatalog).not.toHaveBeenCalled();
     expect(
-      useProviderStore.getState().catalog?.models.map((model) => model.reference),
+      providerStore.getState().catalog?.models.map((model) => model.reference),
     ).toEqual([
       { provider: "work", model: "stale" },
       { provider: "other", model: "keep" },
     ]);
-    expect(useProviderStore.getState().discoveredModelsByProvider.work).toEqual([discovered]);
+    expect(providerStore.getState().discoveredModelsByProvider.work).toEqual([discovered]);
   });
 
   it("keeps a slow runtime catalog read independent from discovery candidates", async () => {
@@ -277,8 +277,8 @@ describe("provider instance authority", () => {
         resolveCatalog = resolve;
       }),
     );
-    const fullCatalogLoad = useProviderStore.getState().loadCatalog();
-    const duplicateLoad = useProviderStore.getState().loadCatalog();
+    const fullCatalogLoad = providerStore.getState().loadCatalog();
+    const duplicateLoad = providerStore.getState().loadCatalog();
     await Promise.resolve();
 
     expect(duplicateLoad).toBe(fullCatalogLoad);
@@ -293,7 +293,7 @@ describe("provider instance authority", () => {
     service.fetchCatalogModels.mockResolvedValue({
       fetched: [{ provider: "work", models: [fresh] }],
     });
-    await useProviderStore.getState().fetchCatalogModels("work");
+    await providerStore.getState().fetchCatalogModels("work");
 
     resolveCatalog({
       providers: [],
@@ -306,17 +306,17 @@ describe("provider instance authority", () => {
     });
     await fullCatalogLoad;
 
-    expect(useProviderStore.getState().getModelsForProvider("work").map((model) => model.reference.model)).toEqual([
+    expect(providerStore.getState().getModelsForProvider("work").map((model) => model.reference.model)).toEqual([
       "stale-full-read",
     ]);
-    expect(useProviderStore.getState().discoveredModelsByProvider.work).toEqual([fresh]);
+    expect(providerStore.getState().discoveredModelsByProvider.work).toEqual([fresh]);
   });
 
   it("clears empty discovery candidates while preserving admitted runtime models", async () => {
     service.fetchCatalogModels.mockResolvedValue({
       fetched: [{ provider: "work", models: [] }],
     });
-    useProviderStore.setState({
+    providerStore.setState({
       catalog: {
         providers: [],
         models: [
@@ -334,10 +334,10 @@ describe("provider instance authority", () => {
       },
     });
 
-    await useProviderStore.getState().fetchCatalogModels("work");
+    await providerStore.getState().fetchCatalogModels("work");
 
-    expect(useProviderStore.getState().getModelsForProvider("work").map((model) => model.reference.model)).toEqual(["stale"]);
-    expect(useProviderStore.getState().discoveredModelsByProvider.work).toEqual([]);
+    expect(providerStore.getState().getModelsForProvider("work").map((model) => model.reference.model)).toEqual(["stale"]);
+    expect(providerStore.getState().discoveredModelsByProvider.work).toEqual([]);
     expect(service.getProviderCatalog).not.toHaveBeenCalled();
   });
 
@@ -348,11 +348,11 @@ describe("provider instance authority", () => {
     service[method].mockResolvedValue(undefined);
     service.getProviderInstances.mockResolvedValue(snapshot("refreshed"));
 
-    await (useProviderStore.getState()[action] as (...values: unknown[]) => Promise<unknown>)(...args);
+    await (providerStore.getState()[action] as (...values: unknown[]) => Promise<unknown>)(...args);
 
     expect(service[method]).toHaveBeenCalledOnce();
     expect(service.getProviderInstances).toHaveBeenCalledOnce();
-    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("refreshed");
+    expect(providerStore.getState().providerSnapshot?.defaults?.chat.model).toBe("refreshed");
   });
 
   it("returns the exact server-created instance after refreshing authority", async () => {
@@ -369,7 +369,7 @@ describe("provider instance authority", () => {
       instances: [...snapshot().instances, created],
     });
 
-    const result = await useProviderStore.getState().createProviderInstance({
+    const result = await providerStore.getState().createProviderInstance({
       type: "openai",
       config: { api_key: "secret" },
     });
@@ -395,7 +395,7 @@ describe("provider instance authority", () => {
     service.createProviderInstance.mockResolvedValue(created);
     service.getProviderInstances.mockResolvedValue(snapshot());
 
-    const result = await useProviderStore.getState().createProviderInstance({
+    const result = await providerStore.getState().createProviderInstance({
       type: "openai",
       config: { api_key: "secret" },
     });
@@ -419,7 +419,7 @@ describe("provider instance authority", () => {
     service.createProviderInstance.mockResolvedValue(created);
     service.getProviderInstances.mockRejectedValue(new Error("offline"));
 
-    const result = await useProviderStore.getState().createProviderInstance({
+    const result = await providerStore.getState().createProviderInstance({
       type: "openai",
       config: { api_key: "secret" },
     });
@@ -431,7 +431,7 @@ describe("provider instance authority", () => {
       instanceConfirmed: false,
     });
     expect(result.instance).toBe(created);
-    expect(useProviderStore.getState()).toMatchObject({
+    expect(providerStore.getState()).toMatchObject({
       providerStatus: "unavailable",
       providerSnapshot: null,
       providerRepairSnapshot: null,
@@ -442,7 +442,7 @@ describe("provider instance authority", () => {
     service.createProviderInstance.mockResolvedValue({ type: "openai", label: "Missing id" });
     service.getProviderInstances.mockResolvedValue(snapshot());
 
-    const result = await useProviderStore.getState().createProviderInstance({
+    const result = await providerStore.getState().createProviderInstance({
       type: "openai",
       config: { api_key: "secret" },
     });
@@ -472,16 +472,16 @@ describe("provider instance authority", () => {
         },
       ],
     };
-    useProviderStore.setState({ catalog: originalCatalog });
+    providerStore.setState({ catalog: originalCatalog });
     service.fetchCatalogModels.mockResolvedValue({
       fetched: [{ provider: "work", models: [{ display_name: "missing reference" }] }],
     });
 
-    await expect(useProviderStore.getState().fetchCatalogModels("work")).rejects.toThrow(
+    await expect(providerStore.getState().fetchCatalogModels("work")).rejects.toThrow(
       "Provider model discovery failed",
     );
 
-    expect(useProviderStore.getState().catalog).toBe(originalCatalog);
+    expect(providerStore.getState().catalog).toBe(originalCatalog);
   });
 
   it("drops cross-instance models from a targeted refresh", async () => {
@@ -506,37 +506,37 @@ describe("provider instance authority", () => {
       ],
     });
 
-    await useProviderStore.getState().fetchCatalogModels("work");
+    await providerStore.getState().fetchCatalogModels("work");
 
-    expect(useProviderStore.getState().discoveredModelsByProvider.work.map((model) => model.reference)).toEqual([
+    expect(providerStore.getState().discoveredModelsByProvider.work.map((model) => model.reference)).toEqual([
       { provider: "work", model: "keep" },
     ]);
-    expect(useProviderStore.getState().catalog).toBeNull();
+    expect(providerStore.getState().catalog).toBeNull();
   });
 
   it("does not expose a credential-bearing mutation error", async () => {
     service.createProviderInstance.mockRejectedValue(new Error("request contained sk-secret"));
 
     await expect(
-      useProviderStore.getState().createProviderInstance({
+      providerStore.getState().createProviderInstance({
         type: "openai",
         config: { api_key: "sk-secret" },
       }),
     ).rejects.toThrow("Failed to create provider instance");
     expect(service.getProviderInstances).not.toHaveBeenCalled();
-    expect(JSON.stringify(useProviderStore.getState())).not.toContain("sk-secret");
+    expect(JSON.stringify(providerStore.getState())).not.toContain("sk-secret");
   });
 
   it("does not report a mutation complete when its authoritative refresh is incompatible", async () => {
-    useProviderStore.setState({ providerSnapshot: snapshot(), providerStatus: "ready" });
+    providerStore.setState({ providerSnapshot: snapshot(), providerStatus: "ready" });
     service.updateProviderInstance.mockResolvedValue(undefined);
     service.getProviderInstances.mockResolvedValue({ instances: "invalid" });
 
     await expect(
-      useProviderStore.getState().updateProviderInstance("work", { enabled: false }),
+      providerStore.getState().updateProviderInstance("work", { enabled: false }),
     ).rejects.toThrow("Provider instances payload is invalid");
 
-    expect(useProviderStore.getState()).toMatchObject({
+    expect(providerStore.getState()).toMatchObject({
       providerSnapshot: null,
       providerRepairSnapshot: null,
       providerStatus: "incompatible",

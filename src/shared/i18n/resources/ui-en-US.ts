@@ -1963,6 +1963,7 @@ export const uiEnUs = {
   "matches_are_masked_before_being_sent_to_models_or_logs__c8a6d58b": "Matches are masked before being sent to models or logs to prevent disclosure of secrets.",
   "add_rule_83009fcf": "Add rule",
   "content_pattern_to_mask_d870245d": "Content / Pattern to mask",
+  "masking_match_type": "Match type",
   "masking_rules_5f1fa4a9": "Masking rules (",
   "enable_rule_d23ee517": "Enable rule",
   "preview_13d61fea": "Preview",

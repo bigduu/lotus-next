@@ -1,17 +1,15 @@
 import path from "node:path"
 import { configDefaults, defineConfig } from "vitest/config"
-import react from "@vitejs/plugin-react"
+import solid from "@solidjs/vite-plugin"
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [solid({ refresh: false })],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
       "@services": path.resolve(__dirname, "./src/services"),
       "@shared": path.resolve(__dirname, "./src/shared"),
       "@pages": path.resolve(__dirname, "./src/pages"),
-      "@components": path.resolve(__dirname, "./src/components"),
-      "@app": path.resolve(__dirname, "./src/app"),
     },
   },
   test: {

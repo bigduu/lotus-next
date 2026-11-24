@@ -89,7 +89,7 @@ test("predicts a follow-up or draft continuation and accepts it with Right Arrow
   await settings.click()
   const preference = page.getByRole("switch", { name: "Predict chat messages" })
   await expect(preference).not.toBeChecked()
-  await preference.click()
+  await page.getByText("Predict chat messages", { exact: true }).click()
   await expect(preference).toBeChecked()
   await page.getByRole("button", { name: "Back to chat", exact: true }).click()
 
@@ -410,7 +410,14 @@ test("session changes and settings remount preserve exact plain-text drafts with
   await selectSession(page, "Other composer draft")
   await expectComposerText(editor, "")
   await editor.fill("Separate draft @README.md")
+  const column = page.locator("[data-composer-column]")
+  await column.evaluate((element) => { element.style.maxWidth = "420px" })
+  await expect(column).toHaveAttribute("data-composer-compact", "true")
+  await column.getByRole("button", { name: "More", exact: true }).click()
+  const more = page.getByRole("dialog", { name: "More", exact: true })
+  await expect(more).toBeVisible()
   await selectSession(page, "Composer editor acceptance")
+  await expect(more).toHaveCount(0)
   await expectComposerText(editor, original)
   // Plain-text state restores exact paths; it never guesses atomic spans.
   await expect(editor.locator('code, [data-type="mention"]')).toHaveCount(0)
@@ -428,11 +435,14 @@ test("session changes and settings remount preserve exact plain-text drafts with
 
 test("file picker and image paste retain the draft, remove safely, and submit the remaining attachment", async ({ page }) => {
   const { editor, chats, observation } = await openComposer(page)
+  const composer = page.locator("[data-composer-surface]")
+  const removeAttachment = (name: string) => composer.getByRole("button", { name, exact: true }).locator("..")
+    .getByRole("button", { name: "Remove image", exact: true })
   await editor.fill("Review image with ")
   await chooseFile(page, editor, "read", "README.md")
   const expected = await composerText(editor)
   await page.locator('input[type="file"]').setInputFiles({ name: "picked.png", mimeType: "image/png", buffer: Buffer.from(pixel, "base64") })
-  await expect(page.getByAltText("picked.png", { exact: true })).toBeVisible()
+  await expect(composer.getByAltText("picked.png", { exact: true })).toBeVisible()
   await editor.evaluate((element, base64) => {
     const browser = element.ownerDocument.defaultView!
     const clipboardData = new browser.DataTransfer()
@@ -442,11 +452,11 @@ test("file picker and image paste retain the draft, remove safely, and submit th
     clipboardData.setData("text/plain", "/tmp/screenshot-must-not-enter-draft.png")
     element.dispatchEvent(new browser.ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
   }, pixel)
-  await expect(page.getByAltText("pasted.png", { exact: true })).toBeVisible()
+  await expect(composer.getByAltText("pasted.png", { exact: true })).toBeVisible()
   await expectComposerText(editor, expected)
-  await page.getByAltText("picked.png", { exact: true }).locator("..").getByRole("button", { name: "Remove image", exact: true }).click()
-  await expect(page.getByAltText("picked.png", { exact: true })).toHaveCount(0)
-  await expect(page.getByAltText("pasted.png", { exact: true })).toBeVisible()
+  await removeAttachment("picked.png").click()
+  await expect(composer.getByAltText("picked.png", { exact: true })).toHaveCount(0)
+  await expect(composer.getByAltText("pasted.png", { exact: true })).toBeVisible()
   await editor.evaluate((element, base64) => {
     const browser = element.ownerDocument.defaultView!
     const dataTransfer = new browser.DataTransfer()
@@ -454,17 +464,47 @@ test("file picker and image paste retain the draft, remove safely, and submit th
     const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0))
     dataTransfer.items.add(new browser.File([bytes], "dropped.png", { type: "image/png" }))
     dataTransfer.setData("text/plain", "/tmp/dropped-must-not-enter-draft.png")
-    element.dispatchEvent(new browser.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }))
+    const box = element.getBoundingClientRect()
+    element.dispatchEvent(new browser.DragEvent("drop", {
+      bubbles: true, cancelable: true, dataTransfer, clientX: box.left + 12, clientY: box.top + 12,
+    }))
   }, pixel)
-  await expect(page.getByAltText("dropped.png", { exact: true })).toBeVisible()
+  await expect(composer.getByAltText("dropped.png", { exact: true })).toBeVisible()
   await expectComposerText(editor, expected)
-  await page.getByAltText("dropped.png", { exact: true }).locator("..").getByRole("button", { name: "Remove image", exact: true }).click()
-  await expect(page.getByAltText("dropped.png", { exact: true })).toHaveCount(0)
+  await removeAttachment("dropped.png").click()
+  await expect(composer.getByAltText("dropped.png", { exact: true })).toHaveCount(0)
   await editor.press("Enter")
   await expect.poll(() => chats.length).toBe(1)
   expect(chats[0].message).toBe(expected.trim())
   expect(chats[0].images).toEqual([expect.objectContaining({ name: "pasted.png", base64: pixel, type: "image/png" })])
   await expectComposerText(editor, "")
-  await expect(page.getByAltText("pasted.png", { exact: true })).toHaveCount(0)
+  await expect(composer.getByAltText("pasted.png", { exact: true })).toHaveCount(0)
+  const posted = page.getByRole("article").filter({ hasText: expected.trim() })
+  await expect(posted.getByRole("img", { name: "pasted.png", exact: true })).toBeVisible()
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("Enter submits an image-only draft through the ordinary message route", async ({ page }) => {
+  const { editor, chats, observation } = await openComposer(page)
+  await expect(page.getByRole("banner")).toContainText("Composer editor acceptance")
+  await expect(editor).toHaveAttribute("aria-busy", "false")
+  const send = page.getByRole("button", { name: "Send message", exact: true })
+  await editor.fill("  \n ")
+  await expect(send).toBeDisabled()
+  await editor.press("Enter")
+  expect(chats).toHaveLength(0)
+  await editor.fill("")
+  await page.locator('input[type="file"]').setInputFiles({ name: "only-image.png", mimeType: "image/png", buffer: Buffer.from(pixel, "base64") })
+  await expect(page.locator("[data-composer-surface]").getByAltText("only-image.png", { exact: true })).toBeVisible()
+  await expect(send).toBeEnabled()
+  await editor.press("Enter")
+  await expect.poll(() => chats).toEqual([expect.objectContaining({
+    session_id: mainId,
+    message: "",
+    images: [expect.objectContaining({ name: "only-image.png", base64: pixel, type: "image/png" })],
+  })])
+  await expect(page.locator("[data-composer-surface]").getByAltText("only-image.png", { exact: true })).toHaveCount(0)
+  await expect(page.getByRole("article").getByRole("img", { name: "only-image.png", exact: true })).toBeVisible()
+  expect(observation.errorResponses).toEqual([])
   expect(observation.pageErrors).toEqual([])
 })

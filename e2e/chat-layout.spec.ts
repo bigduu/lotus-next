@@ -56,8 +56,9 @@ async function openLayout(page: Page) {
     const historySession = sessions.find((item) => path === `/api/v1/history/${item.id}`)
     if (historySession) return route.fulfill({ json: { session_id: historySession.id, messages: history(historySession.id) } })
     if (path === `/api/v1/sessions/${childId}/history`) {
+      expect(url.searchParams.get("projection")).toBe("messages")
       const messages = history(childId).slice(0, 2).map(({ id, role, content, created_at }) => ({ id, role, content, created_at }))
-      return route.fulfill({ json: { session_id: childId, projection: "messages", is_delta: false, truncated: false, total_message_count: messages.length, messages } })
+      return route.fulfill({ json: { session_id: childId, projection: "messages", is_delta: false, truncated: true, total_message_count: messages.length + 1, messages } })
     }
     const actor = sessions.find((item) => path === "/api/v1/actors/" + item.id + "/snapshot")
     if (actor) {
@@ -158,6 +159,7 @@ test("Environment reserves shared pane space for the transcript, composer, and r
   await openLayout(page)
   const main = page.locator("[data-chat-layout]").first()
   const floating = main.locator("[data-environment-floating]")
+  const transcriptViewport = main.locator("[data-history-viewport]")
   // Give the manual preference ownership before resizing across the auto-show
   // breakpoint, so a changing accessible label cannot race the click.
   await page.getByRole("button", { name: "打开 Environment", exact: true }).click()
@@ -169,12 +171,14 @@ test("Environment reserves shared pane space for the transcript, composer, and r
     const expectedInset = await main.evaluate((element) => element.getBoundingClientRect().width >= 1484 ? 332 : 0)
     await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(expectedInset)
     await expect.poll(() => composerColumnShift(main)).toBe(0)
+    await expect(transcriptViewport).toHaveCSS("transform", "none")
     const reservedCenter = await expectComposerAlignment(main)
     await expectDisclosureAlignment(main)
     await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "closed")
     await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(0)
     await expect.poll(() => composerColumnShift(main)).toBe(0)
+    await expect(transcriptViewport).toHaveCSS("transform", "none")
     const centered = await expectComposerAlignment(main)
     expect(Math.abs(centered - reservedCenter - expectedInset / 2)).toBeLessThanOrEqual(1)
   }
@@ -212,14 +216,18 @@ test("the child transcript uses the shared reading column", async ({ page }, tes
   await childCard.getByRole("button", { name: "打开 Layout child 的会话", exact: true }).click()
   const child = workbench.locator("[data-subagent-transcript-pane]")
   await expect(child.locator('[data-message-role="assistant"] p')).toHaveText("Assistant baseline.")
+  await expect(child.getByRole("status")).toContainText("较早的子代理消息已省略")
   const childTextInset = await child.evaluate((element) =>
     element.querySelector('[data-message-role="assistant"] p')!.getBoundingClientRect().left
     - element.querySelector("[data-message-list-content]")!.getBoundingClientRect().left,
   )
   expect(childTextInset).toBe(14)
   await expect(child.locator('[data-message-role="user"]')).toHaveClass(/user-message-surface/)
+  await expect(child.locator('[data-message-role="user"]')).toHaveText("A quiet, aligned conversation.")
   await expect(child.locator("[data-process-toggle], [data-tool-call-toggle], [data-tool-call-entry], [data-reasoning-toggle]")).toHaveCount(0)
+  await expect(child.locator("[data-message-actions], [data-pending-user-message], [data-runtime-notice]")).toHaveCount(0)
   await expect(child.getByRole("textbox", { name: "消息", exact: true })).toHaveCount(0)
+  expect(observation.httpRequests.some(({ url }) => new URL(url).pathname === `/api/v1/history/${childId}`)).toBe(false)
   const screenshot = testInfo.outputPath("child-transcript-baseline.png")
   await page.screenshot({ path: screenshot, animations: "disabled" })
   await testInfo.attach("Child transcript baseline", { path: screenshot, contentType: "image/png" })

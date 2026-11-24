@@ -1,6 +1,6 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { apiClient, getErrorMessage, isApiError, isRequestError } from "../api/index.ts"
-import { isMaskedSecret } from "@/lib/secrets.ts"
+import { isMaskedSecret } from "@/lib/maskedSettingsValue.ts"
 
 const NOTIFICATION_CONFIG_PATH = "bamboo/config/notifications"
 

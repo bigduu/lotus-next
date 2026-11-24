@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import type { Message } from "@shared/types/chatMessages"
 
 function roleLabel(role: string): string {
@@ -15,7 +15,7 @@ function content(m: Message): string {
   return ""
 }
 
-export function buildMarkdown(messages: Message[], title: string): string {
+export function buildMarkdown(messages: readonly Message[], title: string): string {
   const lines: string[] = [`# ${title}`, ""]
   for (const m of messages) {
     const text = content(m)
@@ -25,7 +25,7 @@ export function buildMarkdown(messages: Message[], title: string): string {
   return lines.join("\n")
 }
 
-export function downloadMarkdown(messages: Message[], title: string) {
+export function downloadMarkdown(messages: readonly Message[], title: string) {
   const md = buildMarkdown(messages, title || "chat")
   const blob = new Blob([md], { type: "text/markdown;charset=utf-8" })
   const url = URL.createObjectURL(blob)

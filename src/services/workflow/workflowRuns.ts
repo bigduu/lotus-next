@@ -1,6 +1,6 @@
 import { apiClient, isApiError } from "../api"
 import { parseWorkflowArguments, type TypedWorkflowDraft, type WorkflowCatalogEntry } from "../command/workflowCatalog"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 
 export type WorkflowRunStatus = "queued" | "running" | "suspended" | "succeeded" | "failed" | "cancelled"
 export type WorkflowStepStatus = WorkflowRunStatus | "skipped"

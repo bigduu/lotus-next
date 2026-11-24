@@ -26,11 +26,12 @@ function isAtLeast(version, floor) {
 }
 
 describe("audited dependency floors", () => {
-  it("keeps only Mermaid direct and resolves every vulnerable package at a safe floor", () => {
-    expect(packageJson.dependencies.mermaid).toBe("^11.16.1")
-    expect(packageJson.dependencies).not.toHaveProperty("dompurify")
-    expect(packageJson.dependencies).not.toHaveProperty("postcss")
-    expect(packageJson.dependencies).not.toHaveProperty("nanoid")
+  it("bundles Mermaid and resolves every audited package at a safe floor", () => {
+    expect(packageJson.dependencies ?? {}).toEqual({})
+    expect(packageJson.devDependencies.mermaid).toBe("^11.16.1")
+    expect(packageJson.devDependencies).not.toHaveProperty("dompurify")
+    expect(packageJson.devDependencies).not.toHaveProperty("postcss")
+    expect(packageJson.devDependencies).not.toHaveProperty("nanoid")
     expect(packageJson).not.toHaveProperty("overrides")
 
     for (const [name, floor] of Object.entries(safeFloors)) {

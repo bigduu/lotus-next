@@ -1,6 +1,6 @@
 import { isRetryRunId, type UpstreamRetrySelection } from "./upstreamRetry";
 import type { PublicRunDiagnostic } from "./runDiagnostic"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { setBackendFeatures } from "@/lib/backendFeatures"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 import { debugLog } from "@shared/utils/debugFlags";

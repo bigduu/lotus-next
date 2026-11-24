@@ -99,3 +99,41 @@ test("manages a loop from a busy chat without posting or queuing a turn", async 
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([`404 ${standaloneScenario.origin}${endpoint}`])
 })
+
+test("sends a natural loop prompt unchanged after confirming support in an idle chat", async ({ page }) => {
+  const sessionId = "all-surface-session"
+  const prompt = "/loop 每隔五分钟检查构建"
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+  }, sessionId)
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+
+  const requests: string[] = []
+  await page.route(`**/api/v1/sessions/${sessionId}/loop`, (route) => {
+    expect(route.request().method()).toBe("GET")
+    requests.push("loop status")
+    return route.fulfill({ json: { session_id: sessionId, loop: null } })
+  })
+  await page.route("**/api/v1/chat", (route) => {
+    expect(route.request().method()).toBe("POST")
+    expect(route.request().postDataJSON()).toMatchObject({ session_id: sessionId, message: prompt })
+    requests.push("chat")
+    return route.fulfill({ json: { session_id: sessionId, message_id: "spoken-loop-user", status: "success" } })
+  })
+  await page.route(`**/api/v1/execute/${sessionId}`, (route) => {
+    expect(route.request().method()).toBe("POST")
+    requests.push("execute")
+    return route.fulfill({ json: { session_id: sessionId, status: "started", run_id: "spoken-loop-run", events_url: "/v2/stream" } })
+  })
+
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("heading", { name: "All-surface acceptance", exact: true })).toBeVisible()
+  const input = page.getByRole("textbox", { name: "消息", exact: true })
+  await input.fill(prompt)
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => requests).toEqual(["loop status", "chat", "execute"])
+  await expectComposerText(input, "")
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.errorResponses).toEqual([])
+})

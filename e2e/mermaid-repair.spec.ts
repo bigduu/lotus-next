@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 const invalid = "flowchart LR\nA[Broken --> B[Done]"
@@ -10,6 +10,50 @@ const documentSource = [
   `\`\`\`mermaid\n${invalid}\n\`\`\``,
   "尾部正文保持原样。",
 ].join("\n\n")
+
+function diagramImage(figure: Locator) {
+  return figure.getByRole("img", { name: "Mermaid 图表", exact: true })
+}
+
+async function inspectDiagram(figure: Locator) {
+  const image = diagramImage(figure)
+  await expect(image).toBeVisible()
+  await expect(image).toHaveAttribute("src", /^blob:/)
+  await expect(figure.locator("svg")).toHaveCount(0)
+  await expect.poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  return image.evaluate(async (node) => {
+    const img = node as HTMLImageElement
+    const document = img.ownerDocument
+    // Measure the actual image in its own SVG document. Disable scripts in the fixture viewer.
+    const frame = document.createElement("iframe")
+    frame.setAttribute("sandbox", "allow-same-origin")
+    frame.style.cssText = "position:fixed;left:-10000px;width:1000px;height:1000px;visibility:hidden"
+    const loaded = new Promise<void>((resolve) => { frame.onload = () => resolve() })
+    frame.src = img.currentSrc
+    try {
+      document.body.append(frame)
+      await loaded
+      const svg = frame.contentDocument!.querySelector("svg")!
+      const imageWindow = frame.contentWindow!
+      const view = svg.viewBox.baseVal
+      const content = svg.getBBox()
+      const labels = Array.from(svg.querySelectorAll("text"))
+      const edgeLabel = labels.find((label) => label.textContent?.trim() === "请求")!
+      return {
+        view: { x: view.x, y: view.y, width: view.width, height: view.height },
+        content: { x: content.x, y: content.y, width: content.width, height: content.height },
+        labels: labels.map((label) => label.textContent?.trim()),
+        paint: {
+          label: imageWindow.getComputedStyle(edgeLabel).fill,
+          line: imageWindow.getComputedStyle(svg.querySelector(".flowchart-link")!).stroke,
+          background: document.defaultView!.getComputedStyle(img.parentElement!).backgroundColor,
+        },
+      }
+    } finally {
+      frame.remove()
+    }
+  })
+}
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [320, 390, 1440]) {
@@ -32,28 +76,14 @@ for (const theme of ["light", "dark"] as const) {
       const target = figures.nth(1)
       await expect(sibling).toHaveAttribute("data-mermaid-state", "ready")
       await expect(target).toHaveAttribute("data-mermaid-state", "error")
-      const siblingSvg = await sibling.locator("svg").getAttribute("id")
-      const bounds = await sibling.evaluate((figure) => {
-        const svg = figure.querySelector("svg")!
-        const view = svg.viewBox.baseVal
-        const content = svg.getBBox()
-        return { view: { x: view.x, y: view.y, width: view.width, height: view.height },
-          content: { x: content.x, y: content.y, width: content.width, height: content.height } }
-      })
+      const siblingImage = await diagramImage(sibling).getAttribute("src")
+      const bounds = await inspectDiagram(sibling)
+      expect(bounds.labels).toContain("Sibling")
       expect(bounds.content.x).toBeGreaterThanOrEqual(bounds.view.x - 0.5)
       expect(bounds.content.y).toBeGreaterThanOrEqual(bounds.view.y - 0.5)
       expect(bounds.content.x + bounds.content.width).toBeLessThanOrEqual(bounds.view.x + bounds.view.width + 0.5)
       expect(bounds.content.y + bounds.content.height).toBeLessThanOrEqual(bounds.view.y + bounds.view.height + 0.5)
-      const colors = await sibling.evaluate((figure) => {
-        const browser = figure.ownerDocument.defaultView!
-        const svg = figure.querySelector("svg")!
-        const label = [...svg.querySelectorAll("text")].find((node) => node.textContent === "请求")!
-        return {
-          label: browser.getComputedStyle(label).fill,
-          line: browser.getComputedStyle(svg.querySelector(".flowchart-link")!).stroke,
-          background: browser.getComputedStyle(figure.querySelector('[role="img"]')!).backgroundColor,
-        }
-      })
+      const colors = bounds.paint
       const luminance = (color: string) => {
         const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map((value) => {
           const channel = Number(value) / 255
@@ -85,28 +115,28 @@ for (const theme of ["light", "dark"] as const) {
       await info.attach("Individual diagram source editor", { path: editorFile, contentType: "image/png" })
       await target.getByRole("button", { name: "渲染预览", exact: true }).click()
       await expect(target).toHaveAttribute("data-mermaid-state", "ready")
-      await expect(target.getByRole("img")).toContainText("Repaired")
+      expect((await inspectDiagram(target)).labels).toContain("Repaired")
       await expect(target.getByRole("button", { name: "编辑源码", exact: true })).toBeFocused()
-      expect(await sibling.locator("svg").getAttribute("id")).toBe(siblingSvg)
+      await expect(diagramImage(sibling)).toHaveAttribute("src", siblingImage!)
       await expect(markdown).toContainText("尾部正文保持原样。")
       expect(await markdown.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1)
       const readyFile = info.outputPath(`mermaid-repaired-${theme}-${width}.png`)
       await target.screenshot({ path: readyFile, animations: "disabled" })
       await info.attach("Repaired diagram", { path: readyFile, contentType: "image/png" })
       if (width === 1440) {
-        const oldSvg = await target.locator("svg").getAttribute("id")
+        const oldSrc = await diagramImage(target).getAttribute("src")
         await page.getByRole("button", { name: "系统设置", exact: true }).click()
         await page.getByRole("button", { name: theme === "light" ? "深色" : "浅色", exact: true }).click()
         await page.getByRole("button", { name: "返回聊天", exact: true }).click()
         await expect(target).toHaveAttribute("data-mermaid-state", "ready")
-        await expect(target.getByRole("img")).toContainText("Repaired")
-        expect(await target.locator("svg").getAttribute("id")).not.toBe(oldSvg)
+        expect((await inspectDiagram(target)).labels).toContain("Repaired")
+        await expect(diagramImage(target)).not.toHaveAttribute("src", oldSrc!)
       }
       await target.getByRole("button", { name: "编辑源码", exact: true }).click()
       await editor.fill("Discard this unsaved source")
       await editor.press("Escape")
       await expect(editor).toHaveCount(0)
-      await expect(target.getByRole("img")).toContainText("Repaired")
+      expect((await inspectDiagram(target)).labels).toContain("Repaired")
       await target.getByRole("button", { name: "还原原图", exact: true }).click()
       await expect(target).toHaveAttribute("data-mermaid-state", "error")
       await expect(target.locator("[data-mermaid-source]")).toHaveText(invalid)

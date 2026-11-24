@@ -108,3 +108,59 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     expect(observation.errorResponses).toEqual([])
   })
 }
+
+test("keeps queued text and images after an unconfirmed reply and clears them only after the same request is acknowledged", async ({ page }) => {
+  const id = "all-surface-session"
+  await page.addInitScript((sessionId) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", sessionId)
+  }, id)
+  const runtime = await installArtifactRuntime(page, standaloneScenario)
+  const session = {
+    id, title: "Guidance receipt", kind: "root", root_session_id: id, parent_session_id: null, title_version: 1,
+    root_orchestration_only: false, thinking_mode: "standard", root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
+    model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
+    created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
+    permission_mode: "default", is_running: true, last_run_status: "running",
+  }
+  await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
+    json: { sessions: new URL(route.request().url()).searchParams.get("kind") === "child" ? [] : [session], total: 1, limit: 200, offset: 0 },
+  }))
+  await page.route(`**/api/v1/sessions/${id}`, (route) => route.fulfill({ json: { session }, headers: { ETag: '"1"' } }))
+  const requests: Array<{ id: string; text: string; mode: string; images: Array<{ base64: string; type: string; name: string }> }> = []
+  await page.route(`**/api/v1/sessions/${id}/guidance`, (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { messages: [] } })
+    const body = route.request().postDataJSON() as (typeof requests)[number]
+    requests.push(body)
+    const receipt = requests.length === 1 ? "unrelated-receipt" : body.id
+    return route.fulfill({ status: 202, json: { id: receipt, activation_pending: false } })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("banner")).toContainText(session.title)
+  await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeEnabled()
+  const editor = page.getByRole("textbox", { name: "消息", exact: true })
+  await editor.fill("请结合图片继续")
+  const base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+  await page.locator('input[type="file"]').setInputFiles({ name: "retry.png", mimeType: "image/png", buffer: Buffer.from(base64, "base64") })
+  const preview = page.getByAltText("retry.png", { exact: true })
+  await expect(preview).toBeVisible()
+  const queue = page.getByRole("button", { name: "加入队列", exact: true })
+  await queue.click()
+  const alert = page.getByRole("alert").filter({ hasText: "未能确认发送" })
+  await expect(alert).toBeVisible()
+  await expectComposerText(editor, "请结合图片继续")
+  await expect(preview).toBeVisible()
+  expect(requests).toEqual([expect.objectContaining({
+    id: expect.any(String), text: "请结合图片继续", mode: "after_round",
+    images: [expect.objectContaining({ name: "retry.png", type: "image/png", base64 })],
+  })])
+
+  await queue.click()
+  await expect.poll(() => requests).toEqual([requests[0], requests[0]])
+  await expectComposerText(editor, "")
+  await expect(preview).toHaveCount(0)
+  await expect(alert).toHaveCount(0)
+  expect(runtime.httpRequests.filter(({ method, url }) => method === "POST"
+    && ["chat", "execute"].includes(new URL(url).pathname.split("/")[3]))).toEqual([])
+  expect(runtime.pageErrors).toEqual([])
+})

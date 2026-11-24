@@ -39,7 +39,7 @@ test("compacts from the composer without posting a turn and preserves failed dra
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
   const input = page.getByRole("textbox", { name: "消息", exact: true })
-  const command = page.getByRole("button", { name: /^\/compact(?:\s|$)/ })
+  const command = page.getByRole("option", { name: /^\/compact(?:\s|$)/ })
   await input.fill("/co")
   await expect(command).toBeEnabled()
   if (testInfo.project.name === "desktop-chromium") {

@@ -33,7 +33,7 @@ it.each(["fr-FR", "hi-IN"] as const)("loads only the selected %s overlay and reu
     return vi.importActual("./generated/hiAutoOverrides")
   })
   localStorage.setItem(APP_LOCALE_STORAGE_KEY, "en-US")
-  const application = await import("./index")
+  const application = await import("./runtime")
   await application.i18nReady
   expect(frenchLoaded).not.toHaveBeenCalled()
   expect(hindiLoaded).not.toHaveBeenCalled()
@@ -59,7 +59,7 @@ it.each(["fr-FR", "hi-IN"] as const)("falls back without losing %s after its ove
   if (locale === "fr-FR") vi.doMock("./generated/frAutoOverrides", unavailable)
   else vi.doMock("./generated/hiAutoOverrides", unavailable)
   localStorage.setItem(APP_LOCALE_STORAGE_KEY, locale)
-  const application = await import("./index")
+  const application = await import("./runtime")
   await expect(application.i18nReady).resolves.toBeUndefined()
   expect(application.default.language).toBe("en-US")
   expect(application.default.hasResourceBundle(locale, "translation")).toBe(false)
@@ -84,7 +84,7 @@ it("keeps a later Hindi selection when an earlier French overlay finishes slowly
     return frenchOverlay
   })
   localStorage.setItem(APP_LOCALE_STORAGE_KEY, "en-US")
-  const application = await import("./index")
+  const application = await import("./runtime")
   await application.i18nReady
   const earlierChoice = application.changeLocale("fr-FR", { persist: true })
   await vi.waitFor(() => expect(frenchRequested).toHaveBeenCalledOnce())
@@ -108,7 +108,7 @@ it("starts in English after a selected Chinese bundle fails, preserving the save
     },
   }))
   localStorage.setItem(APP_LOCALE_STORAGE_KEY, "zh-CN")
-  const application = await import("./index")
+  const application = await import("./runtime")
   await expect(application.i18nReady).resolves.toBeUndefined()
   expect(application.default.language).toBe("en-US")
   expect(application.default.t("ui.language_label")).toBe("Language")

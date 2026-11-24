@@ -1,5 +1,5 @@
 import { apiClient } from "@services/api"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import type { ReadEnvelope, ScopeBinding, SnapshotRef, TicketScope, WorkState } from "./types"
 
 export type SprintStatus = "planned" | "active" | "closed"

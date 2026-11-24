@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { artifactFileForSource, installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 import { expectComposerText } from "./support/composer.js"
 import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.js"
@@ -454,4 +454,48 @@ test("v1 mode switching re-reads eligibility and leaves initialized old binding 
   await expect(workbench.getByRole("button", { name: "初始化空工作范围", exact: true })).toHaveCount(0)
   expect(runtime.initializeCalls).toHaveLength(1)
   expect(runtime.observation.pageErrors).toEqual([])
+})
+
+test("Work detail chunk failure retries in place without writing", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "One built Work chunk recovery case")
+  let navigations = 0
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations += 1 })
+  const runtime = await fixture(page, "v1-ready")
+  const [original, alternate] = await Promise.all([
+    artifactFileForSource("src/solid/workbench/work/TicketWorkPanel.tsx"),
+    artifactFileForSource("src/solid/workbench/work/TicketWorkPanel.tsx?work-retry"),
+  ])
+  expect(original).not.toBe(alternate)
+  expect(runtime.observation.staticUrls.filter((url) => /TicketWorkPanel-.*\.js/.test(url))).toEqual([])
+  const requests: string[] = []
+  let abort!: () => void
+  const hold = new Promise<void>((resolve) => { abort = resolve })
+  await page.route("**/assets/TicketWorkPanel-*.js", async (route) => {
+    const path = new URL(route.request().url()).pathname.slice(1)
+    requests.push(path)
+    if (path === original) {
+      await hold
+      return route.abort("failed")
+    }
+    return route.fallback()
+  })
+  try {
+    const composer = page.getByRole("textbox", { name: "消息", exact: true })
+    await composer.fill("保留缓慢加载中的草稿")
+    const workbench = await openWork(page)
+    await expect(workbench.getByTestId("ticket-work-loading")).toBeVisible()
+    expect(requests).toEqual([original])
+    abort()
+    await expect(workbench.getByRole("alert")).toContainText("无法加载 Work 详情，对话仍可使用。")
+    await expectComposerText(composer, "保留缓慢加载中的草稿")
+    expect(navigations).toBe(1)
+    await workbench.getByRole("button", { name: "重试", exact: true }).click()
+    await expect(workbench.getByTestId("ticket-work-overview")).toBeVisible()
+    expect(requests).toEqual([original, alternate])
+    expect(navigations).toBe(1)
+    expect(runtime.writes.filter((path) => !["/api/v1/tickets/search", "/api/v1/tickets/changes"].includes(path))).toEqual([])
+    await expectComposerText(composer, "保留缓慢加载中的草稿")
+  } finally {
+    abort()
+  }
 })

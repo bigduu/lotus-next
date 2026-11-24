@@ -1,0 +1,203 @@
+import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
+import { uiText } from "@shared/i18n/text"
+import { apiClient, getErrorMessage, isApiError } from "@services/api"
+import { agentClient, type ChatRequest, type ChatResponse } from "@services/chat/AgentService"
+import { appStore } from "@shared/store/appStore/state"
+import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
+
+type References = Pick<ChatRequest, "thread_id" | "in_reply_to" | "correlation_id">
+type Delivery = { id: string; fingerprint: string; fingerprint_version?: 2; references?: References; phase?: "activation" }
+const receiptKey = (id: string) => `lotus-next.ticket-human.${id}`
+const admittedSessions = new Set<string>()
+const ingressListeners = new Set<() => void>()
+let revision = 0
+const notifyIngress = () => {
+  ++revision
+  for (const listener of ingressListeners) listener()
+}
+export const ticketIngressRevision = () => revision
+export function subscribeIngress(listener: () => void) {
+  ingressListeners.add(listener)
+  return () => { ingressListeners.delete(listener) }
+}
+function readReceipt(id: string): Delivery | undefined {
+  const raw = sessionStorage.getItem(receiptKey(id))
+  if (raw === null) return
+  const value = JSON.parse(raw)
+  if (typeof value?.id !== "string" || value.id.length === 0 || value.id.length > 128
+    || typeof value.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(value.fingerprint)
+    || (value.fingerprint_version !== undefined && value.fingerprint_version !== 2)
+    || (value.phase !== undefined && value.phase !== "activation")
+    || (value.references !== undefined && (typeof value.references !== "object" || value.references === null
+      || Object.entries(value.references).some(([key, reference]) => !["thread_id", "in_reply_to", "correlation_id"].includes(key)
+        || typeof reference !== "string" || reference.length === 0 || reference.length > 128)))) {
+    throw new Error(uiText("ticket_the_original_message_receipt_could_not_be_rea_0d475435"))
+  }
+  return value
+}
+
+function getStartStatus(sessionId: string | null | undefined) {
+  if (!sessionId) return null
+  try {
+    if (readReceipt(sessionId)?.phase !== "activation") return null
+  } catch {
+    return "unreadable"
+  }
+  // A saved activation without a live request needs recovery after a reload.
+  return admittedSessions.has(sessionId) ? "starting" : "unconfirmed"
+}
+
+function canonicalRequest(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalRequest)
+  if (value !== null && typeof value === "object") return Object.fromEntries(
+    Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonicalRequest(item)]))
+  return value
+}
+
+type IngressResult =
+  | { kind: "blocked" | "busy" }
+  | { kind: "accepted"; operationId: number; sessionId: string; navigated: false }
+  | { kind: "unconfirmed"; operationId: number }
+
+export type TicketIngressView = Readonly<{ sessionId?: string | null }>
+export type TicketIngressFailure = { view: TicketIngressView; message: string } | null
+
+export function hasPendingTicketIngress(sessionId: string | null | undefined) {
+  if (!sessionId) return false
+  try { return sessionStorage.getItem(receiptKey(sessionId)) !== null } catch { return false }
+}
+
+export function ticketIngressReferences(sessionId: string | null | undefined) {
+  if (!sessionId) return undefined
+  try { return readReceipt(sessionId)?.references } catch { return undefined }
+}
+
+export function ticketIngressState(sessionId: string | null | undefined, message: string | null = null) {
+  const startStatus = getStartStatus(sessionId)
+  const executePending = startStatus === "starting" || startStatus === "unconfirmed" ? sessionId ?? null : null
+  const executionBlocked = startStatus === "unconfirmed" && isSessionExecutionBlocked(executePending)
+  const rootModeBlocked = startStatus === "unconfirmed" && !!executePending && getRootModeFenceState(executePending) !== "clear"
+  const startError = startStatus === "unconfirmed" ? uiText(executionBlocked ? "session_compatibility_execution_blocked"
+    : rootModeBlocked ? "ticket_message_saved_but_the_root_mode_change_is_not_12907d7e"
+    : "ticket_message_saved_but_start_is_not_confirmed_you__c27c17c7") : null
+  return {
+    busy: !!sessionId && admittedSessions.has(sessionId),
+    executePending,
+    starting: startStatus === "starting",
+    canRetryStart: startStatus === "unconfirmed" && !executionBlocked && !rootModeBlocked,
+    error: startStatus === "starting" ? null : message ?? startError
+      ?? (startStatus === "unreadable" ? uiText("ticket_the_original_message_receipt_could_not_be_rea_0d475435") : null),
+  }
+}
+
+// One ordinary composer, one canonical Human ingress. An uncertain delivery
+// retains its exact payload and ID so a changed instruction cannot be replayed.
+export function createTicketIngressOperations(
+  view: () => TicketIngressView | null,
+  setFailure: (failure: TicketIngressFailure) => void,
+) {
+  let sequence = 0
+  const updateError = (captured: TicketIngressView | null, target: string, message: string | null) => {
+    if (captured === view() && captured?.sessionId === target) {
+      setFailure(message === null ? null : { view: captured, message })
+    }
+  }
+  const clearOwnedReceipt = (sessionId: string, deliveryId: string) => {
+    const stored = readReceipt(sessionId)
+    if (stored && stored.id !== deliveryId) return false
+    if (stored) sessionStorage.removeItem(receiptKey(sessionId))
+    notifyIngress()
+    return true
+  }
+  const execute = async (sessionId: string, delivery: Delivery) => {
+    if (isSessionExecutionBlocked(sessionId) || getRootModeFenceState(sessionId) !== "clear") return false
+    try {
+      const result = await agentClient.execute(sessionId)
+      if (result.session_id !== sessionId || !["started", "already_running", "completed"].includes(result.status)) return false
+      if (!clearOwnedReceipt(sessionId, delivery.id)) return false
+      void appStore.getState().loadChatHistory(sessionId).catch(() => {})
+      return true
+    } catch (failure) {
+      observeSessionExecutionConflict(sessionId, failure)
+      return false
+    }
+  }
+  const send = async (request: ChatRequest, canSend = () => true): Promise<IngressResult> => {
+    const sessionId = request.session_id
+    if (!sessionId) return { kind: "blocked" }
+    if (admittedSessions.has(sessionId)) return { kind: "busy" }
+    if (!canSend() || getRootModeFenceState(sessionId) !== "clear" || isSessionExecutionBlocked(sessionId)) return { kind: "blocked" }
+    const captured = view()
+    const operationId = ++sequence
+    let replay = false
+    let deliveryId: string | undefined
+    let activation: Promise<boolean> | undefined
+    const releaseAdmission = () => { admittedSessions.delete(sessionId); notifyIngress() }
+    admittedSessions.add(sessionId)
+    notifyIngress()
+    updateError(captured, sessionId, null)
+    try {
+      const prior = readReceipt(sessionId)
+      replay = !!prior
+      if (prior?.phase === "activation") return { kind: "blocked" }
+      if (prior?.references && Object.entries(prior.references).some(([key, value]) =>
+        request[key as keyof References] !== undefined && request[key as keyof References] !== value)) {
+        updateError(captured, sessionId, uiText("ticket_the_previous_message_is_not_confirmed_keep_th_18bb3408"))
+        return { kind: "blocked" }
+      }
+      const restored = prior?.references ? { ...request, ...prior.references } : request
+      const bytes = new TextEncoder().encode(JSON.stringify(prior && prior.fingerprint_version === undefined ? restored : canonicalRequest(restored)))
+      const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("")
+      if (prior && prior.fingerprint !== fingerprint) {
+        updateError(captured, sessionId, uiText("ticket_the_previous_message_is_not_confirmed_retry_w_26be7bc7"))
+        return { kind: "blocked" }
+      }
+      if (!canSend() || getRootModeFenceState(sessionId) !== "clear" || isSessionExecutionBlocked(sessionId)) return { kind: "blocked" }
+      const saved = prior ?? { fingerprint, fingerprint_version: 2 as const, id: crypto.randomUUID(), references: {
+        ...(request.thread_id ? { thread_id: request.thread_id } : {}),
+        ...(request.in_reply_to ? { in_reply_to: request.in_reply_to } : {}),
+        ...(request.correlation_id ? { correlation_id: request.correlation_id } : {}),
+      } }
+      deliveryId = saved.id
+      // No text/image/credential bytes in the reload receipt.
+      sessionStorage.setItem(receiptKey(sessionId), JSON.stringify(saved))
+      const response = await apiClient.postOnce<ChatResponse>("chat", { ...restored, message_id: saved.id, correlation_id: restored.correlation_id ?? saved.id })
+      if (response.session_id !== sessionId || response.message_id !== saved.id
+        || !Number.isSafeInteger(response.ingress_seq) || (response.ingress_seq ?? 0) < 1) throw new Error(uiText("ticket_no_persistence_confirmation_was_received_for__9144eecb"))
+      if (readReceipt(sessionId)?.id !== saved.id) throw new Error(uiText("ticket_the_message_receipt_has_changed_refresh_and_c_5517657b"))
+      const acknowledged: Delivery = { ...saved, phase: "activation" }
+      sessionStorage.setItem(receiptKey(sessionId), JSON.stringify(acknowledged))
+      notifyIngress()
+      // Persistence acknowledges the composer. Activation owns its separate
+      // recovery receipt and admission lock until the start request settles.
+      activation = execute(sessionId, acknowledged)
+      return { kind: "accepted", operationId, sessionId, navigated: false }
+    } catch (failure) {
+      const compatibilityConflict = observeSessionExecutionConflict(sessionId, failure)
+      if (!replay && deliveryId && isApiError(failure) && failure.status >= 400 && failure.status < 500) {
+        try { clearOwnedReceipt(sessionId, deliveryId) } catch { /* Preserve an unreadable recovery receipt. */ }
+      }
+      if (compatibilityConflict) return { kind: "blocked" }
+      updateError(captured, sessionId, getErrorMessage(failure) + uiText("ticket__draft_preserved_retrying_will_use_the_same_m_0c9ddb59"))
+      return { kind: "unconfirmed", operationId }
+    } finally {
+      if (activation) void activation.then(releaseAdmission, releaseAdmission)
+      else releaseAdmission()
+    }
+  }
+  const retryExecute = async () => {
+    const target = ticketIngressState(view()?.sessionId).executePending
+    if (!target || admittedSessions.has(target) || isSessionExecutionBlocked(target)) return false
+    const captured = view()
+    admittedSessions.add(target)
+    notifyIngress()
+    updateError(captured, target, null)
+    try {
+      const delivery = readReceipt(target)
+      if (delivery?.phase !== "activation") return false
+      return await execute(target, delivery)
+    } catch (failure) { updateError(captured, target, getErrorMessage(failure)); return false }
+    finally { admittedSessions.delete(target); notifyIngress() }
+  }
+  return { send, retryExecute }
+}

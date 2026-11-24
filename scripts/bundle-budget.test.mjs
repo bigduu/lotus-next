@@ -14,24 +14,16 @@ import {
 const temporaryDirectories = []
 
 const featureEntries = [
-  ["src/components/app/ProjectWorkBoard.tsx", "ProjectWorkBoard"],
-  ["src/components/app/BrowserPane.tsx", "BrowserPane"],
-  ["src/components/chat/ComposerEditor.tsx", "ComposerEditor"],
-  ["src/components/chat/Settings.tsx", "Settings"],
-  ["src/components/chat/StreamdownMarkdown.tsx", "StreamdownMarkdown"],
-  ["src/components/chat/StreamdownMermaid.tsx", "StreamdownMermaid"],
-  ["src/components/chat/Markdown.tsx", "Markdown"],
-  ["src/components/chat/CodeBlock.tsx", "CodeBlock"],
-  ["src/components/chat/MermaidChart.tsx", "MermaidChart"],
-  ["src/lib/export/renderPdf.tsx", "renderPdf"],
-]
-
-const vendorFeatureNames = [
-  "vendor-streamdown",
-  "vendor-streamdown-code",
-  "vendor-markdown",
-  "vendor-mermaid",
-  "vendor-highlighter",
+  ["src/solid/project-work/ProjectWorkBoard.tsx", "ProjectWorkBoard"],
+  ["src/solid/workbench/browser/BrowserPane.tsx", "BrowserPane"],
+  ["src/solid/composer/ComposerEditor.tsx", "ComposerEditor"],
+  ["src/solid/settings/SettingsPage.tsx", "SettingsPage"],
+  ["src/solid/markdown/AssistantMarkdown.tsx", "AssistantMarkdown"],
+  ["src/solid/markdown/highlight/highlightCode.ts", "highlightCode"],
+  ["src/solid/markdown/renderMermaid.ts", "renderMermaid"],
+  ["src/solid/chat/export/renderPdf.ts", "renderPdf"],
+  ["src/solid/chat/home/HomeDashboard.tsx", "HomeDashboard"],
+  ["src/solid/shell/project-drag/SidebarProjectDrag.tsx", "SidebarProjectDrag"],
 ]
 
 const createFixture = async ({
@@ -43,6 +35,10 @@ const createFixture = async ({
   leakedOwnedPackage,
   missingSettingsOwnedModule,
   missingSettingsOwnedPackage,
+  leakedRendererPackage,
+  leakedReactPackage,
+  missingMarkdownPackage,
+  missingSolidEntry = false,
 } = {}) => {
   const directory = await mkdtemp(path.join(tmpdir(), "lotus-next-bundle-budget-"))
   temporaryDirectories.push(directory)
@@ -53,46 +49,46 @@ const createFixture = async ({
       file: "assets/runtime.js",
       name: "rolldown-runtime",
     },
-    "_react.js": {
-      file: "assets/react.js",
-      name: "vendor-react",
+    "_web.js": {
+      file: "assets/web.js",
+      name: "web",
       imports: ["_runtime.js"],
     },
     "_vendor.js": {
       file: "assets/vendor.js",
       name: "vendor",
-      imports: ["_runtime.js", "_react.js", "index.html"],
+      imports: ["_runtime.js", "_web.js", "index.html"],
     },
     "index.html": {
       file: "assets/index.js",
       name: "index",
       src: "index.html",
       isEntry: true,
-      imports: ["_runtime.js", "_react.js"],
-      dynamicImports: ["src/Root.tsx", "src/components/app/ErrorBoundary.tsx"],
+      imports: ["_runtime.js", "_web.js"],
+      dynamicImports: ["src/solid/shell/SolidApp.tsx", "src/solid/bootstrap/Root.tsx"],
       css: ["assets/index.css"],
     },
-    "src/Root.tsx": {
-      file: "assets/Root.js",
-      name: "Root",
-      src: "src/Root.tsx",
+    "src/solid/shell/SolidApp.tsx": {
+      file: "assets/SolidApp.js",
+      name: "SolidApp",
+      src: "src/solid/shell/SolidApp.tsx",
       isDynamicEntry: true,
       imports: [
         "_runtime.js",
-        "_react.js",
+        "_web.js",
         "_vendor.js",
-        ...(leakSettings ? ["src/components/chat/Settings.tsx"] : []),
-        ...(leakProjectWork ? ["src/components/app/ProjectWorkBoard.tsx"] : []),
-        ...(leakBrowserPane ? ["src/components/app/BrowserPane.tsx"] : []),
+        ...(leakSettings ? ["src/solid/settings/SettingsPage.tsx"] : []),
+        ...(leakProjectWork ? ["src/solid/project-work/ProjectWorkBoard.tsx"] : []),
+        ...(leakBrowserPane ? ["src/solid/workbench/browser/BrowserPane.tsx"] : []),
       ],
-      dynamicImports: ["src/components/chat/Settings.tsx"],
+      dynamicImports: ["src/solid/settings/SettingsPage.tsx"],
     },
-    "src/components/app/ErrorBoundary.tsx": {
-      file: "assets/ErrorBoundary.js",
-      name: "ErrorBoundary",
-      src: "src/components/app/ErrorBoundary.tsx",
+    "src/solid/bootstrap/Root.tsx": {
+      file: "assets/SolidRoot.js",
+      name: "Root",
+      src: "src/solid/bootstrap/Root.tsx",
       isDynamicEntry: true,
-      imports: ["_runtime.js", "_react.js", "_vendor.js"],
+      imports: ["_runtime.js", "_web.js", "_vendor.js"],
     },
   }
 
@@ -102,21 +98,14 @@ const createFixture = async ({
       name,
       src: source,
       isDynamicEntry: true,
-      imports: ["_runtime.js", "_react.js"],
+      imports: ["_runtime.js", "_web.js"],
     }
   }
-  for (const name of vendorFeatureNames) {
-    manifest[`_${name}.js`] = {
-      file: `assets/${name}.js`,
-      name,
-      imports: ["_runtime.js"],
-    }
-  }
-  if (projectWorkCss) manifest["src/components/app/ProjectWorkBoard.tsx"].css = ["assets/ProjectWorkBoard.css"]
+  if (projectWorkCss) manifest["src/solid/project-work/ProjectWorkBoard.tsx"].css = ["assets/ProjectWorkBoard.css"]
 
   await writeFile(
     path.join(directory, "index.html"),
-    `<!doctype html><script type="module" src="/assets/index.js"></script><link rel="modulepreload" href="/assets/runtime.js"><link rel="modulepreload" href="/assets/react.js"><link rel="stylesheet" href="/assets/index.css">`,
+    `<!doctype html><script type="module" src="/assets/index.js"></script><link rel="modulepreload" href="/assets/runtime.js"><link rel="modulepreload" href="/assets/web.js"><link rel="stylesheet" href="/assets/index.css">`,
   )
   await writeFile(
     path.join(directory, "asset-manifest.json"),
@@ -132,21 +121,23 @@ const createFixture = async ({
   const chunks = Object.fromEntries([...assetFiles]
     .filter((file) => file.endsWith(".js"))
     .map((file) => [file, { modules: [], packages: [] }]))
-  chunks["assets/Settings.js"] = {
+  if (!missingSolidEntry) chunks["assets/index.js"].modules = ["src/solid/entry.tsx"]
+  chunks["assets/AssistantMarkdown.js"].packages = ["unified", "remark-parse", "rehype-sanitize"]
+    .filter((name) => name !== missingMarkdownPackage)
+  if (leakedRendererPackage) chunks["assets/AssistantMarkdown.js"].packages.push(leakedRendererPackage)
+  if (leakedReactPackage) chunks["assets/highlightCode.js"].packages.push(leakedReactPackage)
+  chunks["assets/SettingsPage.js"] = {
     modules: [
-      "src/components/chat/Settings.tsx",
-      "src/components/chat/settings/SettingsMetrics.tsx",
-      "src/components/chat/settings/SettingsPlugins.tsx",
+      "src/solid/settings/SettingsPage.tsx",
+      "src/solid/settings/metrics/SettingsMetrics.tsx",
+      "src/solid/settings/plugins/SettingsPlugins.tsx",
       "src/services/metrics/MetricsService.ts",
       "src/services/plugin/PluginService.ts",
     ].filter((module) => module !== missingSettingsOwnedModule),
-    packages: [
-      "@radix-ui/react-label",
-      "@radix-ui/react-switch",
-    ].filter((packageName) => packageName !== missingSettingsOwnedPackage),
+    packages: ["@kobalte/core"].filter((packageName) => packageName !== missingSettingsOwnedPackage),
   }
-  if (leakedOwnedModule) chunks["assets/Root.js"].modules.push(leakedOwnedModule)
-  if (leakedOwnedPackage) chunks["assets/Root.js"].packages.push(leakedOwnedPackage)
+  if (leakedOwnedModule) chunks["assets/SolidApp.js"].modules.push(leakedOwnedModule)
+  if (leakedOwnedPackage) chunks["assets/SolidApp.js"].packages.push(leakedOwnedPackage)
   await writeFile(
     path.join(directory, "bundle-ownership.json"),
     JSON.stringify({ version: 2, chunks }, null, 2),
@@ -168,12 +159,12 @@ describe("ordinary-chat production bundle budget", () => {
     const report = analyzeBundleBudget(await createFixture())
 
     expect(report.closureFiles).toEqual([
-      "assets/ErrorBoundary.js",
-      "assets/Root.js",
+      "assets/SolidApp.js",
+      "assets/SolidRoot.js",
       "assets/index.js",
-      "assets/react.js",
       "assets/runtime.js",
       "assets/vendor.js",
+      "assets/web.js",
     ])
     expect(report.cssFiles).toEqual(["assets/index.css"])
     expect(report.settingsIsOwnedByRoot).toBe(true)
@@ -185,7 +176,7 @@ describe("ordinary-chat production bundle budget", () => {
     // Freeze the pako level/header contract so the Node 22/24 CI matrix proves
     // identical deterministic gzip accounting rather than merely passing a
     // generous ceiling with different compressor output.
-    expect(report.javascript).toEqual({ rawBytes: 106, gzipBytes: 226 })
+    expect(report.javascript).toEqual({ rawBytes: 104, gzipBytes: 224 })
     expect(report.css).toEqual({ rawBytes: 17, gzipBytes: 37 })
     expect(findBundleBudgetViolations(report)).toEqual([])
   })
@@ -196,7 +187,7 @@ describe("ordinary-chat production bundle budget", () => {
     expect(findBundleBudgetViolations(report)).toContain(
       "Settings leaked into the ordinary-chat startup closure.",
     )
-    expect(report.forbiddenStartupModules).toContain("src/components/chat/Settings.tsx")
+    expect(report.forbiddenStartupModules).toContain("src/solid/settings/SettingsPage.tsx")
   })
 
   it("rejects an eager Project Work regression even when its optional chunk exists", async () => {
@@ -221,14 +212,14 @@ describe("ordinary-chat production bundle budget", () => {
   })
 
   it.each([
-    "src/components/app/ProjectWorkBoard.tsx",
-    "src/components/app/project-work/ProjectWorkPlanningControls.tsx",
-    "src/components/app/BrowserPane.tsx",
+    "src/solid/project-work/ProjectWorkBoard.tsx",
+    "src/solid/settings/SettingsPage.tsx",
+    "src/solid/workbench/browser/BrowserPane.tsx",
     "src/services/plugin/PluginService.ts",
     "src/services/metrics/MetricsService.ts",
-    "src/components/chat/streamdownConfig.ts",
-    "src/lib/export/pdfPaginator.ts",
-    "src/lib/mermaid/strictConfig.ts",
+    "src/solid/markdown/AssistantMarkdown.tsx",
+    "src/solid/chat/export/renderPdf.ts",
+    "src/solid/markdown/renderMermaid.ts",
     "src/shared/i18n/generated/frAutoOverrides.ts",
     "src/shared/i18n/generated/hiAutoOverrides.ts",
   ])("rejects optional application ownership leaked through a shared startup chunk: %s", async (module) => {
@@ -271,7 +262,7 @@ describe("ordinary-chat production bundle budget", () => {
   })
 
   it("requires Settings-only package ownership in the Settings feature closure", async () => {
-    const missing = "@radix-ui/react-switch"
+    const missing = "@kobalte/core"
     const report = analyzeBundleBudget(
       await createFixture({ missingSettingsOwnedPackage: missing }),
     )
@@ -280,6 +271,26 @@ describe("ordinary-chat production bundle budget", () => {
     expect(findBundleBudgetViolations(report).join("\n")).toContain(
       `Settings package ownership is incomplete: ${missing}.`,
     )
+  })
+
+  it("rejects a packed graph that bypasses the Solid composition root", async () => {
+    const directory = await createFixture({ missingSolidEntry: true })
+    expect(() => analyzeBundleBudget(directory)).toThrow(/must load the Solid composition root/)
+  })
+
+  it.each(["react", "@radix-ui/react-dialog", "streamdown", "@streamdown/code"])(
+    "rejects %s anywhere in the packaged JavaScript graph", async (leakedReactPackage) => {
+      const report = analyzeBundleBudget(await createFixture({ leakedReactPackage }))
+      expect(findBundleBudgetViolations(report)).toContain(`Solid artifact contains React packages: ${leakedReactPackage}.`)
+    },
+  )
+
+  it("requires first-pass Markdown parsing and sanitization without preloading heavy renderers", async () => {
+    const report = analyzeBundleBudget(await createFixture({ missingMarkdownPackage: "rehype-sanitize", leakedRendererPackage: "shiki" }))
+    expect(findBundleBudgetViolations(report)).toEqual([
+      "Assistant Markdown first-render closure is incomplete: rehype-sanitize.",
+      "Heavy plugins leaked into the plain assistant Markdown closure: shiki.",
+    ])
   })
 
   it("keeps the historical baseline and the bounded approved editor allowance explicit", () => {
@@ -315,7 +326,7 @@ describe("ordinary-chat production bundle budget", () => {
       settingsIsOwnedByRoot: false,
     }).join("\n")
 
-    expect(violations).toMatch(/must be exactly ErrorBoundary and Root/)
+    expect(violations).toMatch(/must be exactly Root and SolidApp/)
     expect(violations).toMatch(/Root must own Settings through one direct dynamic feature entry/)
   })
 })

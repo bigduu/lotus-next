@@ -1,5 +1,5 @@
 import { apiClient } from "@services/api"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import type { Cursor, ReadEnvelope, SnapshotRef, Work, WorkView } from "./types"
 import type { SprintFilter } from "./sprints"
 

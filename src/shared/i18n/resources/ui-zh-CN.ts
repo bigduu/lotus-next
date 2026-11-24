@@ -1961,6 +1961,7 @@ export const uiZhCn = {
   "matches_are_masked_before_being_sent_to_models_or_logs__c8a6d58b": "匹配的内容会在发往模型 / 日志前被掩码,避免密钥等敏感信息外泄。",
   "add_rule_83009fcf": "新增规则",
   "content_pattern_to_mask_d870245d": "要掩码的内容 / 模式",
+  "masking_match_type": "匹配类型",
   "masking_rules_5f1fa4a9": "掩码规则 (",
   "enable_rule_d23ee517": "启用规则",
   "preview_13d61fea": "预览",

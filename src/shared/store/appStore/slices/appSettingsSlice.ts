@@ -1,4 +1,4 @@
-import { StateCreator } from "zustand";
+import type { StateCreator } from "zustand/vanilla";
 import type { AppState } from "..";
 
 // SessionSlice previously held currentRequestController; cancellation is now

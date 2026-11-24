@@ -30,8 +30,8 @@ vi.mock("./v2Stream", () => ({
   onReconnected: mockState.onReconnected,
 }));
 
-vi.mock("@shared/store/appStore", () => ({
-  useAppStore: {
+vi.mock("@shared/store/appStore/state", () => ({
+  appStore: {
     getState: () => mockState.store,
   },
   selectShouldObserve: mockState.selectShouldObserve,

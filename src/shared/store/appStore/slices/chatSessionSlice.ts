@@ -1,7 +1,7 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { getCompletedAnswerHandoffs, invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers, reconcileCompletedAnswers } from "@/lib/completedAnswerHandoffRegistry";
 import { matchesCompletedAnswer } from "@/lib/completedAnswerHandoff";
-import { StateCreator } from "zustand";
+import type { StateCreator } from "zustand/vanilla";
 import { ChatItem, Message } from "@shared/types/chat";
 import { messageOccurrenceKey } from "@shared/types/chatMessages";
 import {
@@ -15,12 +15,12 @@ import { getApiErrorCode } from "@services/api/errors";
 import { ConversationClearError, readClearedConversation, requestConversationClear } from "@services/chat/conversationClear";
 import { isWorkChildSessionId, readSessionExecutionDetail } from "@services/chat/sessionExecutionCompatibility";
 import type { AppState } from "../";
-import { useProviderStore } from "./providerSlice";
+import { providerStore } from "./providerState";
 import { tokenBudgetRevision } from "./tokenBudgetSlice";
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget";
 import { applyExecutionEvent } from "./executionStateSlice";
 import { applyReplayableSessionEventToList, isSessionMetadataEvent } from "./sessionMetadataSlice";
-import i18n from "@shared/i18n";
+import i18n from "@shared/i18n/runtime";
 import { isReasoningEffort } from "@shared/utils/reasoningEffort";
 import { resolveAdmittedModelRef } from "@shared/types/providerConfig";
 import { debugLog } from "@shared/utils/debugFlags";
@@ -151,7 +151,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   addChat: async (chatData) => {
     const title = (chatData.title || i18n.t("chat.sidebar.newSession")).trim();
     const basePrompt = chatData.config?.baseSystemPrompt?.trim() || "";
-    const providerState = useProviderStore.getState();
+    const providerState = providerStore.getState();
     const providerSnapshot = providerState.providerSnapshot;
     const defaultChat = providerSnapshot?.defaults?.chat;
     const model = chatData.config?.model?.trim() || defaultChat?.model?.trim() || undefined;
@@ -161,7 +161,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     // selectedModelRef is session-scoped user selection and should not leak into new sessions.
     let modelRef: { provider: string; model: string } | undefined;
     let providerValue: string | undefined;
-    if (useProviderStore.getState().isProviderModelRefEnabled()) {
+    if (providerStore.getState().isProviderModelRefEnabled()) {
       // Prefer caller-provided model_ref (e.g. from EmptyTaskLauncher with explicit config)
       const callerModelRef = chatData.config?.model_ref;
       if (callerModelRef?.provider?.trim() && callerModelRef?.model?.trim()) {
@@ -355,7 +355,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       patch.model = updates.config.model ?? null;
     }
     if (updates.config && Object.prototype.hasOwnProperty.call(updates.config, "model_ref")) {
-      if (useProviderStore.getState().isProviderModelRefEnabled()) {
+      if (providerStore.getState().isProviderModelRefEnabled()) {
         patch.model_ref = updates.config.model_ref ?? null;
         if (updates.config.model_ref) {
           patch.provider = updates.config.model_ref.provider;
@@ -394,7 +394,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   changeSessionModel: async (sessionId, model) => {
     const chat = get().chats.find((item) => item.id === sessionId);
-    const { providerSnapshot, providerStatus } = useProviderStore.getState();
+    const { providerSnapshot, providerStatus } = providerStore.getState();
     const nextRef = providerStatus === "ready"
       ? resolveAdmittedModelRef(providerSnapshot, model)
       : undefined;
@@ -716,7 +716,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     let sessions = await listAllSessionPages({ kind: "root" });
     if (sessions.length === 0) {
       // Use provider defaults when creating the initial session on startup
-      const defaultModelRef = useProviderStore.getState().providerSnapshot?.defaults?.chat;
+      const defaultModelRef = providerStore.getState().providerSnapshot?.defaults?.chat;
       const defaultModel = defaultModelRef?.model?.trim();
       debugLog("[ChatSlice]", "loadChats.createInitialSession", {
         defaultModel: defaultModel ?? null,

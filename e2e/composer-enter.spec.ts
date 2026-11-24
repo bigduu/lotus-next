@@ -42,12 +42,19 @@ for (const running of [false, true]) {
     await expect(page.getByRole("banner")).toContainText(session.title)
     const input = page.getByRole("textbox", { name: "消息", exact: true })
     await expect(input).toBeVisible()
-    if (running) await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeVisible()
+    if (running) {
+      await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeVisible()
+      await expect(page.getByRole("button", { name: "加入队列", exact: true })).toBeDisabled()
+      const timing = page.getByRole("combobox", { name: "发送时机", exact: true })
+      await expect(timing).toHaveValue("after_round")
+      await expect(timing.locator("option:checked")).toHaveText("插话")
+      await expect(timing).toHaveAttribute("title", "当前工具调用完成后、下一次模型调用前发送")
+    }
 
     // Enter chooses the highlighted built-in slash command before the composer sees it.
     await input.fill("/goal")
     await expectComposerText(input, "/goal")
-    await expect(page.getByRole("button", { name: /^\/goal(?:\s|$)/ })).toBeVisible()
+    await expect(page.getByRole("option", { name: /^\/goal(?:\s|$)/ })).toBeVisible()
     await input.press("Enter")
     await expectComposerText(input, "")
     expect(requests).toHaveLength(0)

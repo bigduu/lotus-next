@@ -12,7 +12,7 @@ import { parseSessionPermissionMode, type SessionSummary } from "@services/chat/
 import { permissionHistoryFromMetadata } from "@services/chat/permissionDecision";
 import { apiClient } from "@services/api";
 import { getDefaultSystemPrompts } from "@shared/utils/defaultSystemPrompts";
-import i18n from "@shared/i18n";
+import i18n from "@shared/i18n/runtime";
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget";
 
 const DEFAULT_SYSTEM_PROMPT = getDefaultSystemPrompts()[0];

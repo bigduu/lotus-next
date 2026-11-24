@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { expect, test } from "@playwright/test"
-import { surfaceMotion } from "../src/components/ui/motion.js"
+import { surfaceMotion } from "../src/shared/theme/motion.js"
 
 // Exercise the production CSS cascade, including media-query specificity.
 // jsdom does not implement :active or prefers-reduced-motion.

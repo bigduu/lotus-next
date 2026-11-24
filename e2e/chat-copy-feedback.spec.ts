@@ -25,8 +25,13 @@ for (const theme of ["light", "dark"] as const) {
       const more = actions.getByRole("button", { name: "更多消息操作", exact: true })
       const copy = actions.getByRole("button", { name: "复制", exact: true })
       const mobile = testInfo.project.name === "phone-chromium"
+      const trigger = mobile ? more : copy
+      const message = page.locator('[data-message-row="copy-feedback-source"] .assistant-streamdown')
       await expect(actions).toHaveAttribute("data-copy-state", "idle")
+      await expect(message).toBeVisible()
       const originalActions = await actions.elementHandle()
+      const originalTrigger = await trigger.elementHandle()
+      const originalMessage = await message.elementHandle()
       const activateCopy = async (repeat = false) => {
         if (mobile) {
           await more.click()
@@ -51,13 +56,15 @@ for (const theme of ["light", "dark"] as const) {
       await activateCopy(true)
       await expect(actions).toHaveAttribute("data-copy-state", "copied")
       expect(await actions.evaluate((element, original) => element === original, originalActions)).toBe(true)
+      expect(await trigger.evaluate((element, original) => element === original, originalTrigger)).toBe(true)
+      expect(await message.evaluate((element, original) => element === original, originalMessage)).toBe(true)
       await expect.poll(() => page.evaluate("navigator.clipboard.readText()")).toBe(source)
       const screenshot = testInfo.outputPath(`copy-feedback-${theme}-${reducedMotion}.png`)
       await page.screenshot({ path: screenshot, animations: "disabled" })
       await testInfo.attach("Copy confirmation", { path: screenshot, contentType: "image/png" })
       await expect(actions).toHaveAttribute("data-copy-state", "idle", { timeout: 4000 })
       await expect(actions.locator('[data-copy-confirmation="true"]')).toHaveCount(0)
-      await expect(mobile ? more : copy).toBeFocused()
+      await expect(trigger).toBeFocused()
       expect(observation.pageErrors).toEqual([])
       expect(observation.consoleErrors).toEqual([])
       expect(observation.errorResponses).toEqual([])
@@ -65,63 +72,66 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("chat copy preserves selection and focus through fallback failure and retry", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "fallback focus and retry acceptance")
-  await page.addInitScript(() => {
-    localStorage.setItem("bodhi_onboarded_v1", "1")
-    localStorage.setItem("lotus_next_last_session", "all-surface-session")
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
-      writeText: () => Promise.reject(new Error("fixture clipboard denied")),
-    } })
+for (const role of ["assistant", "user"] as const) {
+  test(`chat copy preserves selection and focus through ${role} fallback failure and retry`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop-chromium", "fallback focus and retry acceptance")
+    await page.addInitScript(() => {
+      localStorage.setItem("bodhi_onboarded_v1", "1")
+      localStorage.setItem("lotus_next_last_session", "all-surface-session")
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+        writeText: () => Promise.reject(new Error("fixture clipboard denied")),
+      } })
+    })
+    const observation = await installArtifactRuntime(page, standaloneScenario, [{
+      id: "copy-failure-source", role, content: "原文 English", created_at: "2026-10-22T00:00:00Z",
+    }])
+    await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+    const actions = page.locator('[data-message-actions="copy-failure-source"]')
+    const copy = actions.getByRole("button", { name: "复制", exact: true })
+    const message = page.locator(`[data-message-row="copy-failure-source"] [data-message-role="${role}"]`)
+    // Wait for the settled assistant renderer before taking the input range.
+    const body = role === "assistant" ? message.locator(".assistant-streamdown") : message
+    const transcript = body.getByText("原文 English", { exact: true })
+    await expect(transcript).toBeVisible()
+    await copy.evaluate((button) => {
+      Object.defineProperty(button.ownerDocument, "execCommand", { configurable: true, value: () => false })
+    })
+    await copy.focus()
+    const selectedBefore = await transcript.evaluate((element) => {
+      const document = element.ownerDocument
+      const selection = document.getSelection()
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      return selection?.toString() ?? ""
+    })
+    expect(selectedBefore).toBe("原文 English")
+    await expect(copy).toBeFocused()
+    const selectedText = () => transcript.evaluate((element) => element.ownerDocument.getSelection()?.toString() ?? "")
+    await copy.press("Enter")
+    await expect(actions.getByRole("alert")).toHaveText("复制失败")
+    await expect(actions).toHaveAttribute("data-copy-state", "error")
+    await expect(copy).toBeEnabled()
+    await expect(copy).toBeFocused()
+    expect(await selectedText()).toBe(selectedBefore)
+    await expect(transcript).toHaveText("原文 English")
+    await expect(page.locator('textarea[readonly]')).toHaveCount(0)
+    await expect(actions.locator('[data-copy-confirmation="true"]')).toHaveCount(0)
+    await copy.evaluate((button) => {
+      Object.defineProperty(button.ownerDocument, "execCommand", { configurable: true, value: () => true })
+    })
+    await copy.press("Space")
+    await expect(actions).toHaveAttribute("data-copy-state", "copied")
+    await expect(actions.getByRole("alert")).toHaveCount(0)
+    await expect(copy).toBeFocused()
+    expect(await selectedText()).toBe(selectedBefore)
+    await expect(transcript).toHaveText("原文 English")
+    await expect(page.locator('textarea[readonly]')).toHaveCount(0)
+    expect(observation.pageErrors).toEqual([])
+    expect(observation.consoleErrors).toEqual([])
   })
-  const observation = await installArtifactRuntime(page, standaloneScenario, [{
-    id: "copy-failure-source", role: "assistant", content: "原文 English", created_at: "2026-10-22T00:00:00Z",
-  }])
-  await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
-  const actions = page.locator('[data-message-actions="copy-failure-source"]')
-  const copy = actions.getByRole("button", { name: "复制", exact: true })
-  const transcript = page.getByText("原文 English", { exact: true })
-  // Select the settled renderer, rather than the lazy plain-text placeholder
-  // that is replaced independently of the clipboard fallback.
-  await expect(page.locator(".assistant-streamdown")).toContainText("原文 English")
-  await expect(page.locator("[data-assistant-markdown-fallback]")).toHaveCount(0)
-  await copy.evaluate((button) => {
-    Object.defineProperty(button.ownerDocument, "execCommand", { configurable: true, value: () => false })
-  })
-  await copy.focus()
-  const selectedBefore = await transcript.evaluate((element) => {
-    const document = element.ownerDocument
-    const selection = document.getSelection()
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    return selection?.toString() ?? ""
-  })
-  expect(selectedBefore).toBe("原文 English")
-  await expect(copy).toBeFocused()
-  const selectedText = () => transcript.evaluate((element) => element.ownerDocument.getSelection()?.toString() ?? "")
-  await copy.press("Enter")
-  await expect(actions.getByRole("alert")).toHaveText("复制失败")
-  await expect(actions).toHaveAttribute("data-copy-state", "error")
-  await expect(copy).toBeFocused()
-  expect(await selectedText()).toBe(selectedBefore)
-  await expect(transcript).toHaveText("原文 English")
-  await expect(page.locator('textarea[readonly]')).toHaveCount(0)
-  await expect(actions.locator('[data-copy-confirmation="true"]')).toHaveCount(0)
-  await copy.evaluate((button) => {
-    Object.defineProperty(button.ownerDocument, "execCommand", { configurable: true, value: () => true })
-  })
-  await copy.press("Space")
-  await expect(actions).toHaveAttribute("data-copy-state", "copied")
-  await expect(actions.getByRole("alert")).toHaveCount(0)
-  await expect(copy).toBeFocused()
-  expect(await selectedText()).toBe(selectedBefore)
-  await expect(transcript).toHaveText("原文 English")
-  await expect(page.locator('textarea[readonly]')).toHaveCount(0)
-  expect(observation.pageErrors).toEqual([])
-  expect(observation.consoleErrors).toEqual([])
-})
+}
 
 test("chat copy leaves a newer caret chosen by the restored control's focus handler", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "collapsed selection ownership during fallback")

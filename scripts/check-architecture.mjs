@@ -10,7 +10,11 @@ const defaultRoot = path.resolve(scriptDirectory, "..");
 const runtimeResolver = "src/runtime/browserRuntime.ts";
 const runtimeContract = "src/runtime/runtimeConfig.ts";
 const preloadErrorPolicy = "src/runtime/preloadErrorPolicy.ts";
-const compositionRoot = "src/main.tsx";
+const compositionRoot = "src/solid/entry.tsx";
+const browserEntrySupport = "src/runtime/browserEntrySupport.ts";
+const applicationDocuments = new Map([
+  ["index.html", `/${compositionRoot}`],
+]);
 const httpOwner = "src/services/api/transport.ts";
 const apiCompositionOwner = "src/services/api/index.ts";
 const apiClientOwner = "src/services/api/client.ts";
@@ -29,6 +33,7 @@ const runtimeLocalImportAllowlist = new Map([
   [runtimeResolver, new Set(["./runtimeConfig", "./runtimeConfig.ts"])],
   [runtimeContract, new Set()],
   [preloadErrorPolicy, new Set()],
+  [browserEntrySupport, new Set(["./preloadErrorPolicy"])],
 ]);
 const runtimeCompositionApiOwners = new Map([
   ["installRuntimeConfig", new Set([compositionRoot, runtimeContract])],
@@ -67,9 +72,6 @@ const backendOverrideStorageKeys = new Set([
   "lotus_next_backend_endpoint_v1",
   "copilot_backend_base_url",
 ]);
-const nonRuntimeEndpointBindingOwners = new Set([
-  "src/components/chat/settings/metrics/ForwardEndpointsList.tsx",
-]);
 const rawEndpointOwners = new Set([
   runtimeResolver,
   runtimeContract,
@@ -77,7 +79,6 @@ const rawEndpointOwners = new Set([
   "src/shared/i18n/resources/zh-CN.ts",
 ]);
 const providerEndpointDebt = new Map([
-  ["src/components/chat/settings/providers/InstanceEditor.tsx", new Set(["https://api.openai.com/v1"])],
   [
     "src/lib/providerPresets.ts",
     new Set([
@@ -87,7 +88,7 @@ const providerEndpointDebt = new Map([
       "https://api.moonshot.cn/v1",
     ]),
   ],
-  ["src/shared/i18n/index.ts", new Set(["https://api.openai.com/v1"])],
+  ["src/shared/i18n/runtime.ts", new Set(["https://api.openai.com/v1"])],
   [
     "src/shared/i18n/resources/en-US.ts",
     new Set(["https://api.openai.com/v1", "https://api.anthropic.com/v1"]),
@@ -140,7 +141,7 @@ const expectedInventory = {
   },
   "import-meta-env": {
     "src/runtime/browserRuntime.ts": 5,
-    "src/shared/store/appStore/index.ts": 1,
+    "src/shared/store/appStore/state.ts": 1,
     "src/shared/store/appStore/slices/executionStateSlice/reducer.ts": 1,
     "src/shared/utils/debugFlags.ts": 2,
   },
@@ -177,18 +178,14 @@ const expectedInventory = {
     "src/services/api/index.ts": 1,
     "src/services/chat/v2Stream.ts": 1,
   },
-  "non-runtime-endpoint-binding": {
-    "src/components/chat/settings/metrics/ForwardEndpointsList.tsx": 1,
-  },
   "runtime-composition-api": {
-    "src/main.tsx": 4,
+    [compositionRoot]: 4,
     "src/runtime/browserRuntime.ts": 7,
     "src/runtime/runtimeConfig.ts": 5,
   },
   "provider-endpoint-debt": {
-    "src/components/chat/settings/providers/InstanceEditor.tsx": 1,
     "src/lib/providerPresets.ts": 4,
-    "src/shared/i18n/index.ts": 1,
+    "src/shared/i18n/runtime.ts": 1,
     "src/shared/i18n/resources/en-US.ts": 2,
     "src/shared/i18n/resources/zh-CN.ts": 2,
   },
@@ -471,7 +468,8 @@ const analyzeNonCodeSource = (file, source) => {
     return { inventory, violations };
   }
 
-  if (file === "index.html") {
+  const applicationEntry = applicationDocuments.get(file);
+  if (applicationEntry) {
     const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
     let compositionEntrypoints = 0;
     for (const match of source.matchAll(scriptPattern)) {
@@ -485,15 +483,15 @@ const analyzeNonCodeSource = (file, source) => {
       );
       const scriptSource = sourceMatch?.[1] ?? sourceMatch?.[2] ?? sourceMatch?.[3] ?? null;
       const scriptType = (typeMatch?.[1] ?? typeMatch?.[2] ?? typeMatch?.[3] ?? "").toLowerCase();
-      if (scriptSource === "/src/main.tsx" && scriptType === "module") {
+      if (scriptSource === applicationEntry && scriptType === "module") {
         compositionEntrypoints += 1;
-      } else if (scriptSource === "/src/main.tsx") {
+      } else if (scriptSource === applicationEntry) {
         violations.push(
-          `${file}: /src/main.tsx must be loaded by an executable type="module" script`,
+          `${file}: ${applicationEntry} must be loaded by an executable type="module" script`,
         );
       } else if (scriptSource) {
         violations.push(
-          `${file}: script source ${scriptSource} bypasses the canonical /src/main.tsx composition root`,
+          `${file}: script source ${scriptSource} bypasses the canonical ${applicationEntry} composition root`,
         );
       } else if (body.trim()) {
         violations.push(
@@ -503,7 +501,7 @@ const analyzeNonCodeSource = (file, source) => {
     }
     if (compositionEntrypoints !== 1) {
       violations.push(
-        `${file}: exactly one /src/main.tsx module script must own application bootstrap`,
+        `${file}: exactly one ${applicationEntry} module script must own application bootstrap`,
       );
     }
   }
@@ -2032,14 +2030,10 @@ const analyzeSource = (file, source) => {
     const endpointPropertyAccess =
       (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       resolvedPropertyName(node) === "endpoints";
-    let endpointBinding =
+    const endpointBinding =
       ts.isBindingElement(node) &&
       staticName(node.propertyName ?? node.name) === "endpoints" &&
       ts.isObjectBindingPattern(node.parent);
-    if (endpointBinding && nonRuntimeEndpointBindingOwners.has(file)) {
-      addCount(inventory, "non-runtime-endpoint-binding", file);
-      endpointBinding = false;
-    }
     const endpointProperty = endpointPropertyAccess || endpointBinding;
     if (endpointProperty) {
       addCount(inventory, "runtime-endpoint-read", file);
@@ -2120,20 +2114,18 @@ export const findArchitectureViolations = (sources) => {
   return violations;
 };
 
-export const verifyBootstrapOrder = (mainSource) => {
-  const file = "src/main.tsx";
+export const verifyBootstrapOrder = (mainSource, file = compositionRoot) => {
+  const runtimeDirectory = "../runtime";
+  const applicationImport = "./bootstrap/Root";
+  const companionImport = "./shell/SolidApp";
   const sourceFile = parseSource(file, mainSource);
   const failures = [];
   const safeStaticModules = new Set([
-    "react",
-    "react-dom/client",
-    "./index.css",
-    "./runtime/browserRuntime",
-    "./runtime/browserRuntime.ts",
-    "./runtime/preloadErrorPolicy",
-    "./runtime/preloadErrorPolicy.ts",
-    "./runtime/runtimeConfig",
-    "./runtime/runtimeConfig.ts",
+    "solid-js", "@solidjs/web", "./styles.css",
+    ...["browserRuntime", "preloadErrorPolicy", "runtimeConfig", "browserEntrySupport"].flatMap((name) => [
+      `${runtimeDirectory}/${name}`,
+      `${runtimeDirectory}/${name}.ts`,
+    ]),
   ]);
   const installCalls = [];
   const bootstrapInvocations = [];
@@ -2180,7 +2172,7 @@ export const verifyBootstrapOrder = (mainSource) => {
     return current === statement;
   };
 
-  const defaultBindingName = (element) => {
+  const resolveBindingName = (element, expected) => {
     if (
       !element ||
       !ts.isBindingElement(element) ||
@@ -2194,9 +2186,8 @@ export const verifyBootstrapOrder = (mainSource) => {
     return element.name.elements.length === 1 &&
       !binding.dotDotDotToken &&
       !binding.initializer &&
-      ts.isIdentifier(binding.propertyName) &&
-      binding.propertyName.text === "default" &&
-      ts.isIdentifier(binding.name)
+      ts.isIdentifier(binding.name) &&
+      (binding.propertyName ? ts.isIdentifier(binding.propertyName) && binding.propertyName.text === expected : binding.name.text === expected)
       ? binding.name.text
       : null;
   };
@@ -2209,8 +2200,8 @@ export const verifyBootstrapOrder = (mainSource) => {
     if (
       !ts.isArrayBindingPattern(declaration.name) ||
       declaration.name.elements.length !== 2 ||
-      defaultBindingName(declaration.name.elements[0]) !== "Root" ||
-      defaultBindingName(declaration.name.elements[1]) !== "ErrorBoundary"
+      resolveBindingName(declaration.name.elements[0], "SolidRoot") !== "SolidRoot" ||
+      resolveBindingName(declaration.name.elements[1], "SolidApp") !== "SolidApp"
     ) {
       return false;
     }
@@ -2237,71 +2228,44 @@ export const verifyBootstrapOrder = (mainSource) => {
           element.expression.kind === ts.SyntaxKind.ImportKeyword &&
           element.arguments.length === 1,
       ) &&
-      moduleNameFromCall(elements[0]) === "./Root.tsx" &&
-      moduleNameFromCall(elements[1]) === "./components/app/ErrorBoundary.tsx"
+      moduleNameFromCall(elements[0]) === applicationImport &&
+      moduleNameFromCall(elements[1]) === companionImport
     );
   };
 
   const isCanonicalRenderCall = (node) =>
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.name.text === "render" &&
-    ts.isCallExpression(node.expression.expression) &&
-    ts.isIdentifier(node.expression.expression.expression) &&
-    node.expression.expression.expression.text === "createRoot";
+    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "render";
 
   const nonWhitespaceJsxChildren = (node) =>
     node.children.filter((child) => !ts.isJsxText(child) || child.text.trim());
 
-  const isCanonicalRenderStatement = (statement) => {
-    if (!statement || !ts.isExpressionStatement(statement)) return false;
-    const renderCall = statement.expression;
-    if (
-      !isCanonicalRenderCall(renderCall) ||
-      renderCall.expression.expression.arguments.length !== 1 ||
-      !ts.isIdentifier(renderCall.expression.expression.arguments[0]) ||
-      renderCall.expression.expression.arguments[0].text !== "rootElement" ||
-      renderCall.arguments.length !== 1 ||
-      !ts.isJsxElement(renderCall.arguments[0])
-    ) {
-      return false;
-    }
-
-    const strictMode = renderCall.arguments[0];
-    const strictChildren = nonWhitespaceJsxChildren(strictMode);
-    if (
-      !ts.isIdentifier(strictMode.openingElement.tagName) ||
-      strictMode.openingElement.tagName.text !== "StrictMode" ||
-      !ts.isIdentifier(strictMode.closingElement.tagName) ||
-      strictMode.closingElement.tagName.text !== "StrictMode" ||
-      strictMode.openingElement.attributes.properties.length !== 0 ||
-      strictChildren.length !== 1 ||
-      !ts.isJsxElement(strictChildren[0])
-    ) {
-      return false;
-    }
-
-    const boundary = strictChildren[0];
-    const boundaryChildren = nonWhitespaceJsxChildren(boundary);
-    const [nameAttribute] = boundary.openingElement.attributes.properties;
-    return (
-      ts.isIdentifier(boundary.openingElement.tagName) &&
-      boundary.openingElement.tagName.text === "ErrorBoundary" &&
-      ts.isIdentifier(boundary.closingElement.tagName) &&
-      boundary.closingElement.tagName.text === "ErrorBoundary" &&
-      boundary.openingElement.attributes.properties.length === 1 &&
-      ts.isJsxAttribute(nameAttribute) &&
-      nameAttribute.name.text === "name" &&
-      Boolean(nameAttribute.initializer) &&
-      ts.isStringLiteral(nameAttribute.initializer) &&
-      nameAttribute.initializer.text === "Root" &&
-      boundaryChildren.length === 1 &&
-      ts.isJsxSelfClosingElement(boundaryChildren[0]) &&
-      ts.isIdentifier(boundaryChildren[0].tagName) &&
-      boundaryChildren[0].tagName.text === "Root" &&
-      boundaryChildren[0].attributes.properties.length === 0
-    );
+  const jsxTag = (tag, name) => ts.isIdentifier(tag) && tag.text === name;
+  const renderSolidApplication = (call) => {
+    if (call.arguments.length !== 2) return false;
+    const [owner, mount] = call.arguments;
+    if (!ts.isIdentifier(mount) || mount.text !== "root" || !ts.isArrowFunction(owner) || owner.parameters.length) return false;
+    const wrapper = ts.skipParentheses(owner.body);
+    if (!ts.isJsxElement(wrapper) || !jsxTag(wrapper.openingElement.tagName, "Errored")) return false;
+    const children = nonWhitespaceJsxChildren(wrapper);
+    const [shell] = children;
+    if (children.length !== 1 || !ts.isJsxSelfClosingElement(shell) || !jsxTag(shell.tagName, "SolidRoot")) return false;
+    const [renderApp] = shell.attributes.properties;
+    if (shell.attributes.properties.length !== 1 || !ts.isJsxAttribute(renderApp) || renderApp.name.text !== "renderApp") return false;
+    const callback = renderApp.initializer && ts.isJsxExpression(renderApp.initializer) && renderApp.initializer.expression;
+    if (!callback || !ts.isArrowFunction(callback) || callback.parameters.length !== 1) return false;
+    const [authority] = callback.parameters;
+    if (!ts.isIdentifier(authority.name) || authority.initializer || authority.dotDotDotToken) return false;
+    const app = callback.body;
+    if (!ts.isJsxSelfClosingElement(app) || !jsxTag(app.tagName, "SolidApp")) return false;
+    const [ownerAccess] = app.attributes.properties;
+    if (app.attributes.properties.length !== 1 || !ts.isJsxAttribute(ownerAccess) || ownerAccess.name.text !== "ownerAccess") return false;
+    const forwarded = ownerAccess.initializer && ts.isJsxExpression(ownerAccess.initializer) && ownerAccess.initializer.expression;
+    return forwarded && ts.isIdentifier(forwarded) && forwarded.text === authority.name.text;
   };
+
+  const isCanonicalRenderStatement = (statement) =>
+    Boolean(statement) && ts.isExpressionStatement(statement) &&
+    isCanonicalRenderCall(statement.expression) && renderSolidApplication(statement.expression);
 
   const hasOnlyExactNamedImport = (moduleName, importedName) => {
     const matchingImports = sourceFile.statements.filter(
@@ -2410,7 +2374,7 @@ export const verifyBootstrapOrder = (mainSource) => {
   }
 
   const rootImports = localDynamicImports.filter(({ moduleName }) =>
-    /^\.\/Root(?:\.tsx)?$/.test(moduleName),
+    moduleName === applicationImport,
   );
   if (rootImports.length !== 1) {
     failures.push(`${file}: Root must be loaded through the post-install dynamic boundary`);
@@ -2468,19 +2432,19 @@ export const verifyBootstrapOrder = (mainSource) => {
     const canonicalShape =
       bootstrapHasNoParameters &&
       [
-        ["react", "StrictMode"],
-        ["react-dom/client", "createRoot"],
-        ["./runtime/browserRuntime.ts", "resolveDefaultBrowserRuntimeConfig"],
-        ["./runtime/runtimeConfig.ts", "installRuntimeConfig"],
+        ["solid-js", "Errored"],
+        ["@solidjs/web", "render"],
+        [`${runtimeDirectory}/browserRuntime.ts`, "resolveDefaultBrowserRuntimeConfig"],
+        [`${runtimeDirectory}/runtimeConfig.ts`, "installRuntimeConfig"],
       ].every(([moduleName, importedName]) => hasOnlyExactNamedImport(moduleName, importedName)) &&
       Object.entries({
         Promise: 1,
-        createRoot: 2,
-        ErrorBoundary: 3,
+        render: 2,
+        Errored: 3,
+        SolidRoot: 2,
+        SolidApp: 2,
         installRuntimeConfig: 2,
         resolveDefaultBrowserRuntimeConfig: 2,
-        Root: 2,
-        StrictMode: 3,
       }).every(
         ([name, count]) =>
           identifierOccurrences.filter((identifier) => identifier.text === name).length === count,
@@ -2503,7 +2467,7 @@ export const verifyBootstrapOrder = (mainSource) => {
       isCanonicalRenderStatement(statements[2]);
     if (!canonicalShape) {
       failures.push(
-        `${file}: bootstrap must install runtime, load application modules, and render React as three reachable statements`,
+        `${file}: bootstrap must install runtime, load application modules, and render Solid as three reachable statements`,
       );
     }
   }
@@ -2535,7 +2499,7 @@ const collectSourceFiles = async (root) => {
       entry.isFile() &&
       !/\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/.test(entry.name) &&
       (codeExtensions.has(path.extname(entry.name)) ||
-        entry.name === "index.html" ||
+        applicationDocuments.has(entry.name) ||
         entry.name === ".env" ||
         entry.name.startsWith(".env."))
     ) {
@@ -2556,7 +2520,7 @@ export const verifyRepositoryArchitecture = async (root = defaultRoot) => {
   return [
     ...findArchitectureViolations(sources),
     ...compareInventory(buildInventory(sources), expectedInventory),
-    ...verifyBootstrapOrder(sources.get("src/main.tsx") ?? ""),
+    ...verifyBootstrapOrder(sources.get(compositionRoot) ?? ""),
   ];
 };
 

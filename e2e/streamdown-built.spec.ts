@@ -1,12 +1,13 @@
 import { expect, test } from "@playwright/test"
 import {
+  artifactFileForSource,
   installArtifactRuntime,
   standaloneScenario,
 } from "./support/artifactRuntime.js"
 
-const ASSISTANT_MARKER = "streamdown-built-artifact-marker"
+const ASSISTANT_MARKER = "markdown-built-artifact-marker"
 
-test("production artifact mounts Streamdown for a plain assistant response", async ({
+test("production artifact loads the Markdown parser for a plain assistant response", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "one desktop regression is sufficient")
@@ -24,8 +25,24 @@ test("production artifact mounts Streamdown for a plain assistant response", asy
       timestamp: "2026-09-03T00:00:00.000Z",
     },
   ])
+  const [parser, highlighter, mermaid] = await Promise.all([
+    artifactFileForSource("src/solid/markdown/AssistantMarkdown.tsx"),
+    artifactFileForSource("src/solid/markdown/highlight/highlightCode.ts"),
+    artifactFileForSource("src/solid/markdown/renderMermaid.ts"),
+  ])
+  let releaseParser!: () => void
+  const heldParser = new Promise<void>((resolve) => { releaseParser = resolve })
+  await page.route(`**/${parser}`, async (route) => {
+    await heldParser
+    await route.fallback()
+  })
 
-  await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+  try {
+    await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+    await expect(page.locator('[data-assistant-markdown-fallback="true"]', { hasText: ASSISTANT_MARKER })).toBeVisible()
+  } finally {
+    releaseParser()
+  }
   const renderer = page.locator(".assistant-streamdown", {
     hasText: ASSISTANT_MARKER,
   })
@@ -37,8 +54,61 @@ test("production artifact mounts Streamdown for a plain assistant response", asy
   ).toHaveCount(0)
   await page.waitForLoadState("networkidle")
 
+  const assets = observation.staticUrls.map((url) => new URL(url).pathname)
+  expect(assets).toContain(`/${parser}`)
+  expect(assets).not.toContain(`/${highlighter}`)
+  expect(assets).not.toContain(`/${mermaid}`)
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
   expect(observation.failedRequests).toEqual([])
   expect(observation.errorResponses).toEqual([])
+})
+
+test("folds a provider tool before the lazy Markdown parser is available", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "uses the same parser asset on all viewports")
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "en-US")
+  })
+  const input = "provider-private-fixture-input"
+  const output = "provider-completed-fixture-output"
+  const intro = "Prose remains readable during parser load"
+  const observation = await installArtifactRuntime(page, standaloneScenario, [{
+    role: "assistant",
+    content: `${intro}\n\n**🌐 Z.ai Built-in Tool: analyze_image**\n**Input:** ${input}\n**Output:** ${output}`,
+    timestamp: "2026-09-03T00:00:00.000Z",
+  }])
+  const parser = await artifactFileForSource("src/solid/markdown/AssistantMarkdown.tsx")
+  let releaseParser!: () => void
+  const heldParser = new Promise<void>((resolve) => { releaseParser = resolve })
+  await page.route(`**/${parser}`, async (route) => {
+    await heldParser
+    await route.fallback()
+  })
+
+  const transcript = page.locator("[data-message-list-content]")
+  const visibleProse = transcript.locator(".assistant-streamdown", { hasText: intro })
+  const toggle = page.getByRole("button", { name: "Built-in tool · analyze_image", exact: true })
+  try {
+    await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+    await expect(page.locator("[data-assistant-markdown-fallback]", { hasText: intro })).toBeVisible()
+    await expect(toggle).toHaveAttribute("aria-expanded", "false")
+    await expect(transcript).not.toContainText(input)
+    await expect(transcript).not.toContainText(output)
+  } finally {
+    releaseParser()
+  }
+
+  await expect(visibleProse).toBeVisible()
+  await expect(transcript).not.toContainText(input)
+  await expect(transcript).not.toContainText(output)
+  await toggle.click()
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+  const details = page.locator('[data-provider-tool="analyze_image"] .assistant-streamdown')
+  await expect(details).toContainText(input)
+  await expect(details).toContainText(output)
+  await toggle.click()
+  await expect(transcript).not.toContainText(input)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.failedRequests).toEqual([])
 })

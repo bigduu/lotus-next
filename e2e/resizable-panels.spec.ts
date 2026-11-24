@@ -17,6 +17,7 @@ async function openPanels(page: Page) {
   })
   const observation = await installArtifactRuntime(page, standaloneScenario)
   await page.goto(standaloneScenario.entryUrl)
+  await expect(page.locator(`[data-sidebar-session="${defaultSession}"] [aria-current="page"]`)).toHaveCount(1)
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   await expect(page.locator("#right-workbench")).toBeVisible()
   return observation
@@ -115,7 +116,7 @@ test("Escape, pointer cancellation, and global dialogs discard an unfinished res
   expect(await workbenchPreference(page)).toBe(stored)
 
   await startDrag()
-  await page.getByRole("button", { name: "新建会话", exact: true }).evaluate((button) => button.click())
+  await page.getByRole("button", { name: "新建会话", exact: true }).evaluate((button) => (button as HTMLElement).click())
   await page.mouse.move(100, 100)
   await page.mouse.up()
   expect(await workbenchPreference(page)).toBe(stored)

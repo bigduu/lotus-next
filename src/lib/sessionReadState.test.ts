@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { isSessionUnread, mergeReadMarker, parseReadState } from "./sessionReadState"
+import { isSessionUnread, mergeReadMarker, parseReadState } from "./sessionReadMarkers"
 
 describe("session read markers", () => {
   it("marks opened content read and detects later activity", () => {

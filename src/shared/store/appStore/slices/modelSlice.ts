@@ -1,8 +1,8 @@
 import { debugLog } from "@shared/utils/debugFlags";
-import { StateCreator } from "zustand";
+import type { StateCreator } from "zustand/vanilla";
 import { modelService, ProxyAuthRequiredError } from "@services/chat/ModelService";
 import { serviceFactory } from "@services/common/ServiceFactory";
-import { useBambooConfigStore } from "@shared/store/bambooConfigStore";
+import { bambooConfigStore } from "@shared/store/bambooConfigState";
 import type { ProviderModelRef } from "@shared/types/providerModelRef";
 import type { AppState } from "../";
 
@@ -54,7 +54,7 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
   // Keeping this for backward compatibility with Copilot model list
   loadConfigModel: async () => {
     try {
-      const config = await useBambooConfigStore.getState().loadConfig();
+      const config = await bambooConfigStore.getState().loadConfig();
       const configModel = typeof config?.model === "string" ? config.model : undefined;
       if (configModel) {
         set({ configModel });

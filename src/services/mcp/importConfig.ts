@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import {
   DEFAULT_HEALTHCHECK_INTERVAL_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,

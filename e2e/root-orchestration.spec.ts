@@ -1,6 +1,6 @@
 import { expectComposerText } from "./support/composer.js"
 import { expect, test, type Page } from "@playwright/test"
-import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { installArtifactRuntime, secureRemoteScenario, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 
 const sessionId = "all-surface-session"
@@ -225,6 +225,8 @@ test("restored Child composer keeps ordinary effort without a Root Ultra option"
   test.skip(testInfo.project.name !== "desktop-chromium", "session restore boundary")
   await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, childId)
   const observation = await installArtifactRuntime(page, standaloneScenario)
+  const ordinary: unknown[] = []
+  let modeWrites = 0
   const parent = { ...rootSession, subagent_count: 1 }
   const child = { ...rootSession, id: childId, title: "Review child", kind: "child",
     root_session_id: sessionId, parent_session_id: sessionId, spawn_depth: 1 }
@@ -235,7 +237,17 @@ test("restored Child composer keeps ordinary effort without a Root Ultra option"
       return route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
     }
     if (url.pathname === `/api/v1/sessions/${sessionId}`) return route.fulfill({ json: { session: parent } })
-    if (url.pathname === `/api/v1/sessions/${childId}`) return route.fulfill({ json: { session: child } })
+    if (url.pathname.startsWith(`/api/v1/sessions/${childId}/root-mode-operations/`)) {
+      modeWrites += 1
+      return route.abort()
+    }
+    if (url.pathname === `/api/v1/sessions/${childId}`) {
+      if (route.request().method() === "PATCH") {
+        ordinary.push(route.request().postDataJSON())
+        return route.fulfill({ status: 503, json: { error: { message: "Child save offline" } } })
+      }
+      return route.fulfill({ json: { session: child } })
+    }
     if (url.pathname === `/api/v1/history/${childId}`) return route.fulfill({ json: { session_id: childId, messages: [] } })
     if (url.pathname === `/api/v1/respond/${childId}/pending`) return route.fulfill({ json: { has_pending_question: false } })
     return route.fallback()
@@ -246,6 +258,10 @@ test("restored Child composer keeps ordinary effort without a Root Ultra option"
   await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toHaveAttribute("max", "6")
   await expect(page.getByText("Ultra", { exact: true })).toHaveCount(0)
   await expect(page.getByRole("checkbox", { name: "Root 仅编排模式" })).toHaveCount(0)
+  await selectThinking(page, "低")
+  await expect(page.getByRole("alert").filter({ hasText: "Child save offline" })).toBeVisible()
+  expect(ordinary).toEqual([{ reasoning_effort: "low" }])
+  expect(modeWrites).toBe(0)
   expect(observation.pageErrors).toEqual([])
 })
 
@@ -401,4 +417,199 @@ test("a legacy combined-chat marker remains fail closed", async ({ page }, testI
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await composer.fill("blocked legacy request"); await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expectComposerText(composer, "blocked legacy request"); expect(mutations).toBe(0)
+})
+
+test("selected Skill in Ultra warns before Bamboo decides the unchanged-mode request", async ({ page }, info) => {
+  test.skip(info.project.name === "tablet-chromium", "desktop and phone compose with Skills")
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+  }, sessionId)
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const skill = { id: "fixture-skill", name: "fixture-skill", description: "Fixture task", prompt: "Read the fixture.", tool_refs: ["Read"] }
+  const requests: Array<Record<string, unknown>> = []
+  let skillsReads = 0
+  let writes = 0
+  await page.route("**/api/v1/skills", (route) => {
+    skillsReads += 1
+    return route.fulfill({ json: { skills: [skill], total: 1 } })
+  })
+  await page.route(`**/api/v1/sessions/${sessionId}`, (route) => route.fulfill({ json: {
+    session: { ...rootSession, root_orchestration_only: true, thinking_mode: "ultra",
+      root_mode_transition_epoch: 0, root_mode_birth_token: birthToken },
+  } }))
+  await page.route(`**/api/v1/sessions/${sessionId}/root-mode-operations/**`, (route) => {
+    writes += 1
+    return route.abort()
+  })
+  await page.route(`**/api/v1/execute/${sessionId}`, (route) => {
+    writes += 1
+    return route.abort()
+  })
+  await page.route("**/api/v1/chat", (route) => {
+    requests.push(route.request().postDataJSON())
+    return route.fulfill({ status: 409, json: { error: {
+      code: "root_orchestration_incompatible_mode", message: "Selected Skill conflicts with active Root mode",
+    } } })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
+  await expect.poll(() => skillsReads).toBe(1)
+  const composer = page.getByRole("textbox", { name: "消息", exact: true })
+  await composer.fill("/fixture-skill")
+  await page.getByRole("option", { name: /\/fixture-skill/ }).click()
+  const warning = page.getByRole("alert").filter({ hasText: "已选 Skill 与 Ultra 编排不兼容" })
+  await expect(warning).toContainText("Bamboo 会在发送时校验")
+  expect(requests).toHaveLength(0)
+  await composer.fill("Apply the selected Skill")
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  const rejection = page.getByRole("alert").filter({ hasText: "Bamboo 已拒绝此请求，内容已保留" })
+  await expect(rejection).toContainText("Selected Skill conflicts with active Root mode")
+  await expect(rejection).not.toContainText("Bamboo 已拒绝此模式切换")
+  expect(requests).toHaveLength(1)
+  expect(requests[0]).toMatchObject({ session_id: sessionId, selected_skill_ids: [skill.id] })
+  expect(requests[0]).not.toHaveProperty("root_orchestration_only")
+  expect(requests[0]).not.toHaveProperty("thinking_mode")
+  await expectComposerText(composer, "Apply the selected Skill")
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
+  await page.getByRole("button", { name: "移除技能" }).click()
+  await expect(warning).toHaveCount(0)
+  expect(writes).toBe(0)
+  expect(skillsReads).toBe(1)
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("a held Root mode change fences Goal and queued guidance through an unconfirmed reload", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "one authority and command boundary journey")
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+  }, sessionId)
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => { release = resolve })
+  let durable = false
+  let running = false
+  let epoch = 0
+  let selects = 0
+  let recoveries = 0
+  const refusedWrites: string[] = []
+  const summary = () => ({
+    ...rootSession, is_running: running, last_run_status: running ? "running" : "completed",
+    root_orchestration_only: durable, thinking_mode: durable ? "ultra" : "standard",
+    root_mode_transition_epoch: epoch, root_mode_birth_token: birthToken,
+  })
+  await page.route("**/api/v1/sessions?*", (route) => {
+    const sessions = new URL(route.request().url()).searchParams.get("kind") === "child" ? [] : [summary()]
+    return route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
+  })
+  await page.route(`**/api/v1/sessions/${sessionId}`, (route) => route.fulfill({
+    json: { session: summary() }, headers: { ETag: '"1"' },
+  }))
+  await page.route(`**/api/v1/sessions/${sessionId}/root-mode-operations/**`, async (route) => {
+    const recovering = new URL(route.request().url()).pathname.endsWith("/recover")
+    if (recovering) recoveries += 1
+    else {
+      selects += 1
+      await hold
+    }
+    return route.fulfill({ status: 503, json: { error: {
+      code: "root_mode_outcome_unconfirmed", message: "Fixture outcome unavailable",
+    } } })
+  })
+  await page.route(/\/api\/v1\/(?:chat|execute\/[^/?]+|sessions\/[^/?]+\/guidance)$/, (route) => {
+    if (route.request().method() === "GET") return route.fallback()
+    refusedWrites.push(new URL(route.request().url()).pathname)
+    return route.abort()
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  const composer = page.getByRole("textbox", { name: "消息", exact: true })
+  const column = page.locator("[data-composer-column]")
+  await expectModeStatus(page, "服务器已确认普通模式")
+  try {
+    await selectThinking(page, "Ultra")
+    await expect.poll(() => selects).toBe(1)
+    await expectModeStatus(page, "等待服务器确认…")
+    await expect(column.getByRole("alert")).toHaveCount(0)
+    await composer.fill("/goal finish the bounded task")
+    await composer.press("Enter")
+    await expectComposerText(composer, "/goal finish the bounded task")
+    expect(refusedWrites).toEqual([])
+  } finally {
+    release()
+  }
+
+  await expect(page.getByRole("button", { name: "恢复切换" })).toBeVisible()
+  await expectModeStatus(page, "权限结果未知")
+  expect(recoveries).toBe(1)
+  durable = true
+  epoch = 1
+  running = true
+  await page.reload()
+  await expectModeStatus(page, "权限结果未知")
+  await expect(page.getByRole("button", { name: "恢复切换" })).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "服务器已确认 Ultra 编排" })).toHaveCount(0)
+  await composer.fill("Keep queued guidance in this draft")
+  await expect(page.getByRole("button", { name: "加入队列", exact: true })).toBeVisible()
+  await composer.press("Enter")
+  await expectComposerText(composer, "Keep queued guidance in this draft")
+  expect(selects).toBe(1)
+  expect(recoveries).toBe(2)
+  expect(refusedWrites).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("can reread unavailable Root authority without sending or changing mode", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "one authoritative detail retry is sufficient")
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+  }, sessionId)
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  let available = false
+  let writes = 0
+  await page.route(`**/api/v1/sessions/${sessionId}`, (route) => available
+    ? route.fulfill({ json: { session: { ...rootSession, root_orchestration_only: true, thinking_mode: "ultra",
+        root_mode_transition_epoch: 0, root_mode_birth_token: birthToken } } })
+    : route.fulfill({ status: 503, json: { error: { message: "authority unavailable" } } }))
+  await page.route(/\/api\/v1\/(?:chat|execute\/[^/?]+|sessions\/[^/?]+\/root-mode-operations\/[^/?]+)$/, (route) => {
+    if (route.request().method() === "GET") return route.fallback()
+    writes += 1
+    return route.abort()
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  const picker = modelEffortPicker(page)
+  await expect(picker).toContainText("未确认")
+  await expect(page.getByRole("alert").filter({ hasText: "authority unavailable" })).toBeVisible()
+  await picker.click()
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toBeDisabled()
+  await page.keyboard.press("Escape")
+  available = true
+  await page.getByRole("button", { name: "重新读取", exact: true }).click()
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
+  await expect(picker).toContainText("Ultra")
+  await picker.click()
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toBeEnabled()
+  expect(writes).toBe(0)
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("opening the composer as a remote reader does not load owner Skills", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "one owner authority boundary is sufficient")
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+  }, sessionId)
+  const observation = await installArtifactRuntime(page, secureRemoteScenario)
+  let skillsReads = 0
+  await page.route("**/api/v1/skills", (route) => {
+    skillsReads += 1
+    return route.fulfill({ status: 403, json: { error: { message: "Owner access required" } } })
+  })
+  await page.goto(secureRemoteScenario.entryUrl)
+  await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
+  await page.getByRole("textbox", { name: "消息", exact: true }).fill("/compact")
+  await expect(page.getByRole("option", { name: /\/compact/ })).toBeVisible()
+  expect(skillsReads).toBe(0)
+  expect(observation.pageErrors).toEqual([])
 })

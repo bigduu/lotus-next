@@ -1,4 +1,4 @@
-import { uiLanguage } from "@shared/i18n/ui"
+import { uiLanguage } from "@shared/i18n/text"
 import type { TokenBudgetUsage as AgentTokenBudgetUsage } from "@services/chat/AgentService";
 
 /**

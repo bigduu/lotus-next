@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -1180,7 +1181,7 @@ describe("architecture boundary fixtures", () => {
 
   it("allows only the canonical composition script in index.html", () => {
     const allowed = new Map([
-      ["index.html", `<main id="root"></main><script type="module" src="/src/main.tsx"></script>`],
+      ["index.html", `<main id="root"></main><script type="module" src="/src/solid/entry.tsx"></script>`],
     ]);
     const bypasses = new Map([
       [
@@ -1193,14 +1194,14 @@ describe("architecture boundary fixtures", () => {
     const violations = findArchitectureViolations(bypasses).join("\n");
     expect(violations).toMatch(/\/bypass\.js.*bypasses/);
     expect(violations).toMatch(/https:\/\/evil\.example\/app\.js.*bypasses/);
-    expect(violations).toMatch(/exactly one \/src\/main\.tsx/);
+    expect(violations).toMatch(/exactly one \/src\/solid\/entry\.tsx/);
   });
 
   it.each(["text/plain", "application/json", "importmap", "text/javascript"])(
     "rejects the canonical composition source with non-module type %s",
     (type) => {
       const sources = new Map([
-        ["index.html", `<script type="${type}" src="/src/main.tsx"></script>`],
+        ["index.html", `<script type="${type}" src="/src/solid/entry.tsx"></script>`],
       ]);
 
       expect(findArchitectureViolations(sources).join("\n")).toMatch(
@@ -1329,10 +1330,10 @@ describe("architecture boundary fixtures", () => {
   it("includes env files and index.html in the real repository walk", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "lotus-next-architecture-"));
     try {
-      await mkdir(path.join(root, "src"));
+      await mkdir(path.join(root, "src/solid"), { recursive: true });
       await writeFile(
-        path.join(root, "src/main.tsx"),
-        `const bootstrap = async () => { installRuntimeConfig(runtime); await import("./Root.tsx"); }; void bootstrap();`,
+        path.join(root, "src/solid/entry.tsx"),
+        `const bootstrap = async () => { installRuntimeConfig(runtime); await import("./bootstrap/Root"); }; void bootstrap();`,
       );
       await writeFile(path.join(root, ".env.production"), "VITE_DEVICE_TOKEN=unsafe\n");
       await writeFile(path.join(root, "src/transport.mts"), `fetch("https://backend.example/v1");`);
@@ -1399,128 +1400,75 @@ describe("architecture boundary fixtures", () => {
     expect(failures).toMatch(/browser-http-transport-composition.*has 2 occurrence.*expected 1/);
   });
 
-  it("allows runtime installation before a dynamic Root import", () => {
-    expect(
-      verifyBootstrapOrder(`
-        import { StrictMode } from "react";
-        import { createRoot } from "react-dom/client";
-        import { resolveDefaultBrowserRuntimeConfig } from "./runtime/browserRuntime.ts";
-        import { isSettingsFeaturePreloadError } from "./runtime/preloadErrorPolicy.ts";
-        import { installRuntimeConfig } from "./runtime/runtimeConfig.ts";
-        void isSettingsFeaturePreloadError;
-        const bootstrap = async () => {
-          installRuntimeConfig(resolveDefaultBrowserRuntimeConfig());
-          const [{ default: Root }, { default: ErrorBoundary }] = await Promise.all([
-            import("./Root.tsx"),
-            import("./components/app/ErrorBoundary.tsx"),
-          ]);
-          createRoot(rootElement).render(
-            <StrictMode><ErrorBoundary name="Root"><Root /></ErrorBoundary></StrictMode>,
-          );
-        };
-        void bootstrap();
-      `),
-    ).toEqual([]);
+  it("enforces the runtime boundary on the Solid source entry", async () => {
+    const entry = "src/solid/entry.tsx";
+    const source = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", entry), "utf8");
+
+    expect(verifyBootstrapOrder(source, entry)).toEqual([]);
+    expect(verifyBootstrapOrder(`import "./shell/SolidApp";\n${source}`, entry).join("\n")).toMatch(/unsafe static application import/);
+    const tooEarly = source.replace("  installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())", "")
+      .replace("  render(() =>", "  installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())\n  render(() =>");
+    expect(verifyBootstrapOrder(tooEarly, entry).join("\n")).toMatch(/dynamic application import precedes runtime installation/);
+    const wrongAuthority = source.replace("ownerAccess={ownerAccess}", "ownerAccess={true}");
+    expect(verifyBootstrapOrder(wrongAuthority, entry).join("\n")).toMatch(/render Solid as three reachable statements/);
+  });
+
+  it("checks the Solid document for a single executable source entry", () => {
+    expect(fixtureMessages("index.html", '<script type="module" src="/src/solid/entry.tsx"></script>')).toBe("");
+    expect(fixtureMessages("index.html", '<script type="module" src="/src/main.tsx"></script>')).toMatch(/bypasses the canonical/);
+    expect(fixtureMessages("index.html", '<script>start()</script>')).toMatch(/inline application scripts/);
+  });
+
+  const bootstrapEntry = "src/solid/entry.tsx";
+  const install = "installRuntimeConfig(resolveDefaultBrowserRuntimeConfig());";
+  const imports = `const [{ SolidRoot }, { SolidApp }] = await Promise.all([import("./bootstrap/Root"), import("./shell/SolidApp")]);`;
+  const mount = `render(() => <Errored><SolidRoot renderApp={(access) => <SolidApp ownerAccess={access} />} /></Errored>, root);`;
+  const invoke = "void bootstrap();";
+  const canonicalBootstrap = `
+    import { Errored } from "solid-js";
+    import { render } from "@solidjs/web";
+    import { resolveDefaultBrowserRuntimeConfig } from "../runtime/browserRuntime.ts";
+    import { isSettingsFeaturePreloadError } from "../runtime/preloadErrorPolicy.ts";
+    import { installRuntimeConfig } from "../runtime/runtimeConfig.ts";
+    void isSettingsFeaturePreloadError;
+    const bootstrap = async () => { ${install} ${imports} ${mount} };
+    ${invoke}
+  `;
+  it("allows runtime installation before the two dynamic application imports", () => {
+    expect(verifyBootstrapOrder(canonicalBootstrap, bootstrapEntry)).toEqual([]);
   });
 
   it.each([
-    [
-      `import Application from "./Root";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application import/,
-    ],
-    [
-      `import "@app/App";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application import/,
-    ],
-    [
-      `import "@pages/Home";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application import/,
-    ],
-    [
-      `import "/src/services/api/index.ts";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application import/,
-    ],
-    [
-      `import "@services";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application import/,
-    ],
-    [
-      `import "./runtime/otherPolicy.ts";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application import/,
-    ],
-    [
-      `import ReactDOM from "react-dom";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application import/,
-    ],
-    [
-      `export * from "./services/api";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unsafe static application re-export/,
-    ],
-    [
-      `const bootstrap = async () => { await import('./Root.tsx'); installRuntimeConfig(runtime); };\nvoid bootstrap();`,
-      /precedes runtime installation/,
-    ],
-    [
-      `const bootstrap = async () => { if (false) installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /unconditional statement/,
-    ],
-    [
-      `const bootstrap = async () => { installRuntimeConfig(runtime); if (false) await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /precedes runtime installation/,
-    ],
-    [
-      `const bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nfalse && bootstrap();`,
-      /once and unconditionally/,
-    ],
-    [
-      `const early = import('/src/services/api/index.ts');\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /precedes runtime installation/,
-    ],
-    [
-      `const bootstrap = async () => { installRuntimeConfig(runtime); await import(path); await import('./Root.tsx'); };\nvoid bootstrap();`,
-      /static module name/,
-    ],
-    [
-      `const bootstrap = async () => { return; installRuntimeConfig(runtime); const [Root] = await Promise.all([import('./Root.tsx')]); createRoot(root).render(Root); };\nvoid bootstrap();`,
-      /three reachable statements/,
-    ],
-    [
-      `const bootstrap = async () => { installRuntimeConfig(runtime); const [Root] = await Promise.all([import('./Root.tsx')]); createRoot(root).render(Root); };\nvoid bootstrap();\nvoid bootstrap();`,
-      /exactly once and unconditionally/,
-    ],
-    [
-      `const eager = import.meta.glob('./**/*.tsx', { eager: true });\nconst bootstrap = async () => { installRuntimeConfig(runtime); const [Root] = await Promise.all([import('./Root.tsx')]); createRoot(root).render(Root); };\nvoid bootstrap();`,
-      /import\.meta\.glob bypasses/,
-    ],
-    [
-      `const bootstrap = async () => { installRuntimeConfig(runtime); const modules = Promise.all([import('./Root.tsx')]); createRoot(root).render(null); };\nvoid bootstrap();`,
-      /three reachable statements/,
-    ],
-    [
-      `const bootstrap = async () => { installRuntimeConfig(runtime); const [Root] = await Promise.all([import('./Root.tsx')]); false && createRoot(root).render(Root); };\nvoid bootstrap();`,
-      /three reachable statements/,
-    ],
-    [
-      `const bootstrap = async () => { installRuntimeConfig(runtime); const [Root] = await Promise.all([import('./Root.tsx')]); createRoot(root).render(Root); };\nvoid bootstrap();\nconst run = bootstrap;\nvoid run();`,
-      /exactly once and unconditionally/,
-    ],
-    [
-      `createRoot(root).render(null);\nconst bootstrap = async () => { installRuntimeConfig(runtime); const [Root] = await Promise.all([import('./Root.tsx')]); createRoot(root).render(Root); };\nvoid bootstrap();`,
-      /three reachable statements/,
-    ],
-    [
-      `import { StrictMode } from 'react'; import { createRoot } from 'react-dom/client'; import { resolveDefaultBrowserRuntimeConfig } from './runtime/browserRuntime.ts'; import { installRuntimeConfig } from './runtime/runtimeConfig.ts'; const bootstrap = async () => { installRuntimeConfig(resolveDefaultBrowserRuntimeConfig()); const [{ default: Root }, { default: ErrorBoundary }] = await Promise.all([import('./Root.tsx'), import('./components/app/ErrorBoundary.tsx')]); createRoot(rootElement).render(null); }; void bootstrap();`,
-      /three reachable statements/,
-    ],
-    [
-      `import { StrictMode } from 'react'; import { createRoot } from 'react-dom/client'; import { resolveDefaultBrowserRuntimeConfig } from './runtime/browserRuntime.ts'; import { installRuntimeConfig } from './runtime/runtimeConfig.ts'; const bootstrap = async (createRoot) => { installRuntimeConfig(resolveDefaultBrowserRuntimeConfig()); const [{ default: Root }, { default: ErrorBoundary }] = await Promise.all([import('./Root.tsx'), import('./components/app/ErrorBoundary.tsx')]); createRoot(rootElement).render(<StrictMode><ErrorBoundary name="Root"><Root /></ErrorBoundary></StrictMode>); }; void bootstrap();`,
-      /three reachable statements/,
-    ],
-    [
-      `import { StrictMode } from 'react'; import { createRoot } from 'react-dom/client'; import { createRoot as mountEarly } from 'react-dom/client'; import { resolveDefaultBrowserRuntimeConfig } from './runtime/browserRuntime.ts'; import { installRuntimeConfig } from './runtime/runtimeConfig.ts'; mountEarly(rootElement).render(null); const bootstrap = async () => { installRuntimeConfig(resolveDefaultBrowserRuntimeConfig()); const [{ default: Root }, { default: ErrorBoundary }] = await Promise.all([import('./Root.tsx'), import('./components/app/ErrorBoundary.tsx')]); createRoot(rootElement).render(<StrictMode><ErrorBoundary name="Root"><Root /></ErrorBoundary></StrictMode>); }; void bootstrap();`,
-      /three reachable statements/,
-    ],
-  ])("rejects an unsafe bootstrap ordering", (source, expectedMessage) => {
-    expect(verifyBootstrapOrder(source).join("\n")).toMatch(expectedMessage);
+    ['import Application from "./bootstrap/Root";', /unsafe static application import/],
+    ['import "@app/App";', /unsafe static application import/],
+    ['import "@pages/Home";', /unsafe static application import/],
+    ['import "/src/services/api/index.ts";', /unsafe static application import/],
+    ['import "@services";', /unsafe static application import/],
+    ['import "../runtime/otherPolicy.ts";', /unsafe static application import/],
+    ['import RuntimeRenderer from "unexpected-renderer";', /unsafe static application import/],
+    ['export * from "../services/api";', /unsafe static application re-export/],
+    ["const early = import('/src/services/api/index.ts');", /precedes runtime installation/],
+    ["const eager = import.meta.glob('./**/*.tsx', { eager: true });", /import\.meta\.glob bypasses/],
+    [mount, /three reachable statements/],
+    ['import { render as mountEarly } from "@solidjs/web"; mountEarly(() => null, root);', /three reachable statements/],
+  ])("rejects extra composition-root code %s", (extra, expectedMessage) => {
+    expect(verifyBootstrapOrder(`${extra}\n${canonicalBootstrap}`, bootstrapEntry).join("\n")).toMatch(expectedMessage);
+  });
+
+  it.each([
+    [`${install} ${imports}`, `${imports} ${install}`, /precedes runtime installation/],
+    [install, `if (false) ${install}`, /unconditional statement/],
+    [imports, 'if (false) await import("./bootstrap/Root");', /precedes runtime installation/],
+    [imports, `await import(path); ${imports}`, /static module name/],
+    [install, `return; ${install}`, /three reachable statements/],
+    [imports, imports.replace("const [{ SolidRoot }, { SolidApp }]", "const modules").replace("await ", ""), /three reachable statements/],
+    [mount, `false && ${mount}`, /three reachable statements/],
+    [mount, 'render(() => null, root);', /three reachable statements/],
+    ["async () =>", "async (render) =>", /three reachable statements/],
+    [invoke, "false && bootstrap();", /once and unconditionally/],
+    [invoke, `${invoke} ${invoke}`, /exactly once and unconditionally/],
+    [invoke, `${invoke} const run = bootstrap; void run();`, /exactly once and unconditionally/],
+  ])("rejects a malformed bootstrap statement %s", (before, after, expectedMessage) => {
+    expect(verifyBootstrapOrder(canonicalBootstrap.replace(before, after), bootstrapEntry).join("\n")).toMatch(expectedMessage);
   });
 });

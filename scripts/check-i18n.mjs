@@ -17,6 +17,8 @@ for (const key of new Set([...Object.keys(english), ...Object.keys(chinese)])) {
   else if (placeholders(english[key]) !== placeholders(chinese[key])) problems.push(`Interpolation mismatch: ${key}`)
   if (typeof english[key] === "string" && /[、。；（）「」]/.test(english[key])) problems.push(`Chinese punctuation in English UI key: ${key}`)
 }
+const localeSwitcherPaths = new Set(["src/solid/settings/SettingsGeneral.tsx"])
+const bootstrapFallbackPath = "src/runtime/browserEntrySupport.ts"
 const permittedNativeNames = new Set(["简体中文", "繁體中文", "日本語"])
 const walk = (directory) => {
   for (const item of readdirSync(directory, { withFileTypes: true })) {
@@ -41,8 +43,8 @@ const walk = (directory) => {
       }
       if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isJsxText(node)) && /\p{Script=Han}/u.test(node.text)) {
         const text = node.text.trim()
-        // Catastrophic pre-React startup deliberately remains dependency-free and bilingual.
-        if (path !== "src/main.tsx" && !(path === "src/components/chat/Settings.tsx" && permittedNativeNames.has(text))) report(node, `Unlocalized application literal ${JSON.stringify(text)}`)
+        // Fatal startup fallback deliberately remains dependency-free and bilingual.
+        if (path !== bootstrapFallbackPath && !(localeSwitcherPaths.has(path) && permittedNativeNames.has(text))) report(node, `Unlocalized application literal ${JSON.stringify(text)}`)
       }
       if (ts.isTemplateExpression(node) && /\p{Script=Han}/u.test(node.head.text + node.templateSpans.map((s) => s.literal.text).join(""))) report(node, "Unlocalized template literal")
       ts.forEachChild(node, visit)

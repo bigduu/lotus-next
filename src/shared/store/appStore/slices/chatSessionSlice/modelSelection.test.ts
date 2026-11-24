@@ -5,7 +5,7 @@ import { clearSessionCompatibilityObservations, getSessionCompatibilitySnapshot,
   readSessionExecutionDetail } from "@services/chat/sessionExecutionCompatibility";
 import type { AppState } from "../..";
 import { createChatSlice } from "../chatSessionSlice";
-import { useProviderStore } from "../providerSlice";
+import { providerStore } from "../providerState";
 import { sessionSummaryToChatItem } from "./messageMapping";
 
 const summary = (id: string, isRunning = false): SessionSummary => ({
@@ -99,10 +99,10 @@ afterEach(() => {
 
 describe("session model selection", () => {
   const nextModel = { provider: "relay", model: "grok-4.7" };
-  const initialProviderState = useProviderStore.getState();
+  const initialProviderState = providerStore.getState();
 
   beforeEach(() => {
-    useProviderStore.setState({
+    providerStore.setState({
       providerStatus: "ready",
       providerSnapshot: {
         default_provider_instance_id: "easycli",
@@ -114,7 +114,7 @@ describe("session model selection", () => {
       },
     });
   });
-  afterEach(() => useProviderStore.setState(initialProviderState, true));
+  afterEach(() => providerStore.setState(initialProviderState, true));
 
   it("persists the provider-qualified model before changing the displayed session", async () => {
     let resolvePatch!: () => void;
@@ -165,7 +165,7 @@ describe("session model selection", () => {
   it("rejects a stale choice after its provider is disabled", async () => {
     const patch = vi.spyOn(agentClient, "patchSession");
     const store = storeWithSessions(summary("target"));
-    useProviderStore.getState().providerSnapshot!.instances[1].enabled = false;
+    providerStore.getState().providerSnapshot!.instances[1].enabled = false;
     await expect(store.getState().changeSessionModel("target", nextModel)).rejects.toThrow();
     expect(patch).not.toHaveBeenCalled();
   });

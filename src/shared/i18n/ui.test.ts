@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import i18n, { changeLocale, i18nReady } from "./index"
+import i18n, { changeLocale, i18nReady } from "./runtime"
 import { APP_LOCALE_STORAGE_KEY, resolveInitialLocale } from "./types"
-import { uiText, uiList } from "./ui"
+import { uiText, uiList } from "./text"
 import { uiEnUs } from "./resources/ui-en-US"
 import { uiZhCn } from "./resources/ui-zh-CN"
 import { groupChats } from "@/lib/groupChats"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
-import { WEEKDAY_OPTIONS } from "@/components/chat/settings/schedules/scheduleModel"
+import { WEEKDAY_OPTIONS } from "@/lib/settings/scheduleModel"
 import { TASK_TEMPLATES } from "@/lib/taskTemplates"
 
 const placeholders = (value: string) => [...value.matchAll(/{{\s*([^},]+)[^}]*}}/g)].map((match) => match[1]).sort()

@@ -290,7 +290,7 @@ test("a completion alongside settings close settles the accumulated answer once"
   const suffix = `\n\n${ending}`
   f.emit({ type: "token", content: suffix })
   f.persistResponse(item("settings-final-answer", "assistant", prefix.join("\n\n") + suffix))
-  await settings.getByRole("button", { name: "返回聊天", exact: true }).evaluate((button) => button.click())
+  await settings.getByRole("button", { name: "返回聊天", exact: true }).evaluate((button) => (button as HTMLElement).click())
   f.complete()
 
   const settled = page.locator(".assistant-streamdown").filter({ hasText: ending })

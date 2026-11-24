@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "@solidjs/web",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.solid.tsbuildinfo"
+  },
+  "include": ["src/solid", "e2e/solid/productEntry.tsx"],
+  "exclude": []
+}

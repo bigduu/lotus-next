@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { isTauriEnvironment } from "../../utils/environment";
 
 type TauriInternals = {

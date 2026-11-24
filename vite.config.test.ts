@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest"
 
+import { configureSolidApplication } from "./vite.solid.config"
+
 import {
   assertSafePublicBuildEnvironment,
-  classifyVendorChunk,
-  developmentDependencyOptimization,
   developmentProxy,
   portableArtifactBase,
 } from "./vite.config"
@@ -68,58 +68,24 @@ describe("public Vite build environment", () => {
     expect(portableArtifactBase).toBe("./")
   })
 
-  it("keeps Streamdown's lazy development chunks stable across optimizer updates", () => {
-    expect(developmentDependencyOptimization).toEqual({
-      exclude: ["streamdown"],
-      include: [
-        "@streamdown/cjk",
-        "@streamdown/code",
-        "@streamdown/mermaid",
-        "streamdown > debug",
-        "streamdown > extend",
-        "streamdown > style-to-js",
-      ],
-    })
-  })
 })
 
-describe("vendor chunk ownership", () => {
-  it.each([
-    ["/repo/node_modules/streamdown/dist/index.js", "vendor-streamdown"],
-    ["/repo/node_modules/@streamdown/cjk/dist/index.js", "vendor-streamdown"],
-    ["/repo/node_modules/streamdown/node_modules/marked/lib/marked.esm.js", "vendor-streamdown"],
-    ["/repo/node_modules/@streamdown/code/dist/index.js", "vendor-streamdown-code"],
-    ["/repo/node_modules/@shikijs/core/dist/index.mjs", "vendor-streamdown-code"],
-    ["/repo/node_modules/shiki/dist/index.mjs", "vendor-streamdown-code"],
-    ["/repo/node_modules/oniguruma-to-es/dist/index.js", "vendor-streamdown-code"],
-    ["/repo/node_modules/@streamdown/mermaid/dist/index.js", "vendor-mermaid"],
-    ["/repo/node_modules/mermaid/dist/mermaid.esm.mjs", "vendor-mermaid"],
-    ["/repo/node_modules/d3-scale/src/index.js", "vendor-mermaid"],
-    ["/repo/node_modules/internmap/src/index.js", "vendor-mermaid"],
-    ["C:\\repo\\node_modules\\cytoscape\\dist\\cytoscape.esm.mjs", "vendor-mermaid"],
-    ["/repo/node_modules/vfile/index.js", "vendor-markdown"],
-    ["/repo/node_modules/parse5/dist/index.js", "vendor-markdown"],
-    ["/repo/node_modules/react-syntax-highlighter/dist/esm/prism-async-light.js", "vendor-highlighter"],
-  ])("keeps %s in the lazy %s graph", (id, chunk) => {
-    expect(classifyVendorChunk(id)).toBe(chunk)
+describe("Solid build entry boundaries", () => {
+  const environment = { mode: "production", command: "build" } as const
+
+  it("builds the canonical index alone for application and candidate dist", () => {
+    const application = configureSolidApplication(environment, "application")
+    const candidate = configureSolidApplication(environment, "candidate")
+    expect(application.build?.rollupOptions?.input).toEqual(["index.html"])
+    expect(candidate.build?.rollupOptions?.input).toEqual(["index.html"])
+    expect(application.build?.outDir).toBe("dist")
+    expect(candidate.build?.outDir).toBe("dist-solid-artifact")
   })
 
-  it("does not put application modules into a vendor group", () => {
-    expect(classifyVendorChunk("/repo/src/components/chat/StreamdownMarkdown.tsx")).toBeUndefined()
-  })
-
-  it("leaves cross-renderer URL metadata in a neutral shared chunk", () => {
-    expect(
-      classifyVendorChunk("/repo/node_modules/html-url-attributes/index.js"),
-    ).toBeUndefined()
-  })
-
-  it.each([
-    "/repo/node_modules/@radix-ui/react-switch/dist/index.mjs",
-    "/repo/node_modules/@radix-ui/react-label/dist/index.mjs",
-    "/repo/node_modules/html2canvas/dist/html2canvas.esm.js",
-    "/repo/node_modules/jspdf/dist/jspdf.es.min.js",
-  ])("leaves optional-feature package %s with its owning dynamic graph", (id) => {
-    expect(classifyVendorChunk(id)).toBeUndefined()
+  it("includes the component gallery in the local preview", () => {
+    const preview = configureSolidApplication(environment, "preview")
+    expect(preview.build?.rollupOptions?.input).toEqual(["index.html", "solid-preview.html"])
+    expect(preview.server?.host).toBe("127.0.0.1")
+    expect(preview.build?.outDir).toBe("dist-solid-preview")
   })
 })

@@ -160,30 +160,51 @@ for (const method of ["button", "icon", "escape"] as const) {
 }
 
 
-test("keyboard focus returns to Refresh when a delayed final directory page removes Load more", async ({ page }, info) => {
-  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
-  const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
-  const base = observation([], 0), directory = { scope: base.scope,
-    capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
-    management_access: { kind: "current_user", requires_session_attachment: false }, sessions: [], next_after: "root-a", legacy_links: {},
-    owner_authorization: base.owner_authorization }
-  await page.route("**/api/v1/supervisor/default/sessions**", async (route) => {
-    const url = new URL(route.request().url())
-    if (url.searchParams.has("after")) {
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      return route.fulfill({ json: { ...directory, next_after: null } })
+for (const moveFocus of [false, true]) {
+  const testName = moveFocus
+    ? "keyboard focus stays on the control chosen while the final directory page is pending"
+    : "keyboard focus returns to Refresh when a delayed final directory page removes Load more"
+  test(testName, async ({ page }, info) => {
+    await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+    const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
+    const base = observation([], 0), directory = { scope: base.scope,
+      capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
+      management_access: { kind: "current_user", requires_session_attachment: false }, sessions: [], next_after: "root-a", legacy_links: {},
+      owner_authorization: base.owner_authorization }
+    let pageReads = 0
+    const heldPage = Promise.withResolvers<void>()
+    await page.route("**/api/v1/supervisor/default/sessions**", async (route) => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.has("after")) {
+        pageReads += 1
+        await heldPage.promise
+        return route.fulfill({ json: { ...directory, next_after: null } })
+      }
+      return route.fulfill({ json: directory })
+    })
+    await page.goto(standaloneScenario.entryUrl)
+    if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
+    const row = page.locator("aside").first().getByRole("button", { name: "Supervisor", exact: true }).locator("..")
+    await row.getByRole("button", { name: "会话操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "管理会话", exact: true }).click()
+    const managed = page.getByRole("dialog", { name: "受管会话", exact: true })
+    const more = managed.getByRole("button", { name: "加载更多会话", exact: true })
+    const focusTarget = managed.getByRole("button", { name: moveFocus ? "Supervisor 管理" : "重新读取", exact: true })
+    await expect(more).toBeVisible()
+    await more.focus()
+    try {
+      await page.keyboard.press("Enter")
+      await expect(more).toBeDisabled()
+      await expect(more).toBeFocused()
+      await expect.poll(() => pageReads).toBe(1)
+      await page.keyboard.press("Enter")
+      if (moveFocus) await focusTarget.focus()
+    } finally {
+      heldPage.resolve()
     }
-    return route.fulfill({ json: directory })
+    await expect(more).toHaveCount(0)
+    await expect(focusTarget).toBeFocused()
+    expect(pageReads).toBe(1)
+    expect(runtime.pageErrors).toEqual([])
   })
-  await page.goto(standaloneScenario.entryUrl)
-  if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
-  const row = page.locator("aside").first().getByRole("button", { name: "Supervisor", exact: true }).locator("..")
-  await row.getByRole("button", { name: "会话操作", exact: true }).click()
-  await page.getByRole("menuitem", { name: "管理会话", exact: true }).click()
-  const managed = page.getByRole("dialog", { name: "受管会话", exact: true })
-  const more = managed.getByRole("button", { name: "加载更多会话", exact: true })
-  await expect(more).toBeVisible(); await more.focus(); await page.keyboard.press("Enter")
-  await expect(more).toHaveCount(0)
-  await expect(managed.getByRole("button", { name: "重新读取", exact: true })).toBeFocused()
-  expect(runtime.pageErrors).toEqual([])
-})
+}
