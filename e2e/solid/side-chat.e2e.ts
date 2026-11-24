@@ -239,6 +239,42 @@ test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the s
   expect(observation.errorResponses).toEqual([])
 })
 
+test("collapsing Side Chat preserves the position of older replies", async ({ page, baseURL }) => {
+  const entryUrl = new URL("/", baseURL).href
+  const source = "all-surface-session"
+  const turns = Array.from({ length: 12 }, (_, index) => ({
+    id: "turn-" + index,
+    message: "Question " + index,
+    answer: ("A previous reply from Side Chat. ").repeat(16),
+    status: "completed",
+  }))
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  await installArtifactRuntime(page, {
+    ...standaloneScenario, entryUrl, origin: new URL(entryUrl).origin,
+  }, [], { serveStaticFromLocalServer: true, sessionFeatures: ["session_side_chat"] })
+  await page.route("**/api/v1/sessions/" + source + "/side-chat", (route) => route.fulfill({ json: {
+    source_generation: "a".repeat(64),
+    side_chat: { id: "side-fixture", model: { provider: "fixture", model: "fixture-model" }, turns },
+  } }))
+
+  await page.goto(entryUrl)
+  const open = page.getByRole("button", { name: "打开侧聊", exact: true })
+  await open.click()
+  const panel = page.getByRole("region", { name: "侧聊", exact: true })
+  const transcript = panel.locator(".overflow-y-auto")
+  await expect(panel.getByRole("article")).toHaveCount(turns.length)
+  await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBeGreaterThan(800)
+  await transcript.evaluate((node) => {
+    node.scrollTop = 80
+    node.dispatchEvent(new Event("scroll"))
+  })
+  await page.getByRole("button", { name: "收起工作面板", exact: true }).click()
+  await expect(panel).toBeHidden()
+  await open.click()
+  await expect(panel.getByRole("article")).toHaveCount(turns.length)
+  await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(80)
+})
+
 test("Solid Side Chat reveals a virtualized source without jumping back to the latest message", async ({ page, baseURL, isMobile }) => {
   const entryUrl = new URL("/", baseURL).href
   const source = "all-surface-session"

@@ -1,5 +1,6 @@
-import { BookText, Bot, ChevronLeft, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, WifiOff, Workflow } from "@lucide/solid"
+import { BookText, Bot, ChevronLeft, Container, Download, FileDown, FolderClosed, ListChecks, MessageSquarePlus, Monitor, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RotateCcw, Server, WifiOff, Workflow } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, onSettled, Show } from "solid-js"
+import { Dynamic } from "@solidjs/web"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api/errors"
 import { SIDE_CHAT_FEATURE } from "@services/chat/sideChat"
@@ -18,6 +19,7 @@ import { sessionHasLiveWork } from "@/lib/sessionBackgroundTasks"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import type { ChatItem } from "@shared/types/chatMessages"
 import type { ChatImageAttachment } from "@/lib/chatImageAttachments"
+import { Badge } from "../ui/badge"
 import { Button } from "../ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "../ui/responsive-dialog"
@@ -149,6 +151,11 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     return !currentSession() && worktree?.projectId === newSession()?.projectId ? worktree?.path ?? null : null
   }
   const displayWorkspace = () => chat.currentChat?.config?.workspacePath ?? selectedWorktreePath()
+  const remotePlacement = () => {
+    const session = chat.currentChat
+    const placement = session?.id === currentSession() ? session?.placement : null
+    return placement?.host && placement.kind !== "local" ? placement : null
+  }
     ?? (newSession() ? projects()[newSession()!.projectId]?.project_path : undefined) ?? pickedWorkspace()
   const runTimeline = createRunInteractionTimeline({ chat, workspace: displayWorkspace })
   const readingAnchors = new Map<string, HistoryReadingAnchor>()
@@ -798,9 +805,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           onDelete={setSessionToDelete}
           onError={openError}
         />}
-        workbench={<Show when={workbenchState().open} fallback={<aside id="right-workbench" hidden />}>
+        workbench={<Show when={workbenchState().open || visibleWorkbenchTools().includes("side-chat")} fallback={<aside id="right-workbench" hidden />}>
           <Loading fallback={<aside id="right-workbench" hidden />}>
-            <RightWorkbench docked={docked()} expanded={taskExpanded()} pageVisible={!settingsOpen()} width="100%"
+            <RightWorkbench visible={workbenchState().open} docked={docked()} expanded={taskExpanded()} pageVisible={!settingsOpen()} width="100%"
               activeTab={visibleWorkbenchTab()}
               openToolTabs={visibleWorkbenchTools()}
               workEnabled={workEnabled()}
@@ -906,6 +913,14 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             <h1 class="min-w-0 flex-1 truncate text-sm font-semibold">
               {chat.currentChat?.title || text("new_session_c57c30bc")}
             </h1>
+            <Show when={remotePlacement()}>{(placement) => (
+              <Badge variant="outline" class="max-w-36 min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 sm:px-2 dark:text-blue-400"
+                title={text("running_on_caee1687", { v0: placement().kind, v1: placement().host })}>
+                <Dynamic component={placement().kind === "ssh" ? Server : placement().kind === "docker" ? Container : Monitor}
+                  class="shrink-0" aria-hidden="true" />
+                <span class="sr-only sm:not-sr-only sm:truncate">{placement().kind} · {placement().host}</span>
+              </Badge>
+            )}</Show>
             <Show when={currentSession()}>
               <Button size="icon" variant="ghost" title={displayWorkspace() ?? undefined}
                 aria-label={text("select_working_directory_18240aa3")} onClick={() => setWorkspaceOpen(true)}>
