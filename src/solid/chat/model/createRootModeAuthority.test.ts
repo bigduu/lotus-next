@@ -249,6 +249,20 @@ describe("recoverable Root mode operations", () => {
     expect(appStore.setState).not.toHaveBeenCalled()
   })
 
+  it("recognizes Child from canonical detail before the session index supplies kind", async () => {
+    vi.mocked(agentClient.getSession).mockResolvedValueOnce({ session: {
+      id: sessionId, kind: "child", root_orchestration_only: null,
+    } } as Awaited<ReturnType<typeof agentClient.getSession>>)
+    await mount()
+    expect(value.child).toBe(true)
+    expect(value.isRoot).toBe(false)
+    expect(value.authority).toBeNull()
+    expect(value.error).toBeNull()
+    await settle(() => value.change(true))
+    expect(agentClient.getSession).toHaveBeenCalledExactlyOnceWith(sessionId)
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+  })
+
   it("keeps Child read-only without loading Root authority", async () => {
     await mount("child")
     await settle(() => value.change(true))

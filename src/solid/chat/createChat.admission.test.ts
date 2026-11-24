@@ -582,7 +582,7 @@ describe("Solid send admission and Root mode", () => {
     // A draft selected in another pane must not override this bound session.
     appStore.setState({ selectedModel: { provider: "test-provider", model: "grok-4.7" } })
     const existing = session(sessionId)
-    feedSessions([{ ...existing,
+    feedSessions([{ ...existing, kind: "child", rootSessionId: "parent-session", parentSessionId: "parent-session",
       config: { ...existing.config,
         model: "gpt-5.6-luna",
         model_ref: { provider: "easycli", model: "gpt-5.6-luna" },
@@ -612,6 +612,8 @@ describe("Solid send admission and Root mode", () => {
     expect(submit()).toHaveBeenCalledWith(
       expect.objectContaining({
         session_id: sessionId,
+        root_orchestration_only: undefined,
+        thinking_mode: undefined,
         model: "gpt-5.6-luna",
         model_ref: { provider: "easycli", model: "gpt-5.6-luna" },
       }),
