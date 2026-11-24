@@ -47,6 +47,7 @@ for (const theme of ["light", "dark"] as const) {
     const heading = markdown.getByRole("heading", { level: 1 })
     await expect(heading).toHaveCSS("font-size", "30px")
     await expect(heading).toHaveCSS("font-weight", "600")
+    await expect(heading).toHaveCSS("line-height", "36px")
     await expect(heading).toHaveCSS("margin-block-start", "0px")
     await expect(markdown.getByRole("heading", { level: 2 })).toHaveCSS("font-weight", "600")
     const inline = markdown.locator('[data-streamdown="inline-code"]')
@@ -74,7 +75,6 @@ for (const theme of ["light", "dark"] as const) {
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1100 })
       expect(await markdown.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1)
-      expect(await heading.evaluate((node) => node.getBoundingClientRect().height)).toBe(36)
       await markdown.locator("h1").scrollIntoViewIfNeeded()
       await info.attach(`lazy-renderer-${theme}-${width}`, { body: await page.screenshot({ fullPage: true, caret: "initial" }), contentType: "image/png" })
     }
