@@ -1,6 +1,7 @@
 import { createMemo, createSignal, onSettled, type Accessor } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import type { Message } from "@shared/types/chatMessages"
+import { getErrorMessage } from "@services/api/errors"
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { createUiText } from "../../shell/uiText"
@@ -12,7 +13,7 @@ import type { createRootModeAuthority } from "../model/createRootModeAuthority"
 export type MessageTarget = { key: string; message: Message; text: string }
 type EditDraft = { target: MessageTarget; text: string }
 type Action = "edit" | "fork" | "delete" | "regenerate"
-export type MessageNotice = { text: string; error: boolean }
+export type MessageNotice = { text: string; error: boolean; details?: string; ifVacant?: true }
 
 function sameTarget(current: MessageTarget | undefined, expected: MessageTarget): boolean {
   return Boolean(current && current.key === expected.key && current.message.id === expected.message.id
@@ -83,7 +84,7 @@ export function createMessageActions(options: {
   const publish = (value: MessageNotice) => {
     const external = options.onNotice()
     if (external) external(value)
-    else if (mounted) setNotice(value)
+    else if (mounted) setNotice((previous) => value.ifVacant ? previous ?? value : value)
   }
   const focusRow = (key: string) => {
     if (focusFrame !== undefined) cancelAnimationFrame(focusFrame)
@@ -114,7 +115,7 @@ export function createMessageActions(options: {
         options.onForking()?.(true)
         const id = await chat.fork(target.message.id, { isOriginCurrent: () => owns(origin) })
         if (id && appStore.getState().currentSessionId === id) {
-          publish({ text: text("forked_into_a_new_session_from_here_b0abc6b8"), error: false })
+          publish({ text: text("forked_into_a_new_session_from_here_b0abc6b8"), error: false, ifVacant: true })
         } else if (!id && owns(origin)) {
           publish({ text: text("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"), error: true })
         }
@@ -128,8 +129,9 @@ export function createMessageActions(options: {
         }
         publish({ text: text("operation_failed_0c3b4cf7"), error: true })
       }
-    } catch {
-      if (owns(origin)) publish({ text: text("operation_failed_0c3b4cf7"), error: true })
+    } catch (error) {
+      if (owns(origin)) publish({ text: text("operation_failed_0c3b4cf7"), error: true,
+        details: action === "fork" ? getErrorMessage(error) : undefined })
     } finally {
       active = null
       if (action === "fork") options.onForking()?.(false)

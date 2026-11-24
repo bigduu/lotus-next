@@ -18,7 +18,7 @@ const summary = (sessionId: string, title: string) => ({
 const original = summary(id, "Main conversation")
 const nextSession = summary(other, "Another conversation")
 const forkSession = summary(branched, "Forked conversation")
-async function prepare(page: Page, baseURL: string) {
+async function prepare(page: Page, baseURL: string, modelChoice = false) {
   const origin = new URL(baseURL).origin
   const entryUrl = origin + "/"
   const requests: Array<{ path: string; body?: unknown }> = []
@@ -33,6 +33,12 @@ async function prepare(page: Page, baseURL: string) {
   }, id)
   const observation = await installArtifactRuntime(page, { ...standaloneScenario, origin, entryUrl }, messages, {
     serveStaticFromLocalServer: true, sessionFeatures: ["session_side_chat"],
+    ...(modelChoice ? { providerInstancesResponse: {
+      instances: [{ id: "fixture-provider", type: "openai", label: "Fixture provider", enabled: true,
+        config: { model: "fixture-model", runtime_models: ["fixture-model", "alternate-model"] } }],
+      default_provider_instance_id: "fixture-provider", defaults: { chat: original.model_ref },
+      features: { provider_model_ref: true },
+    } } : {}),
   })
   await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0,
     features: ["session_side_chat"] } }))
@@ -181,3 +187,59 @@ test("late fork acknowledgement keeps the newly selected current session", async
   await expect(page.getByRole("heading", { name: nextSession.title, exact: true })).toBeVisible()
   expect(fixture.observation.pageErrors).toEqual([])
 })
+
+for (const destinationError of [false, true]) {
+  test(`a successful fork preserves destination notification ownership with a model error=${destinationError}`, async ({ page, baseURL, isMobile }) => {
+    const fixture = await prepare(page, baseURL!, destinationError)
+    let releaseDestination!: () => void
+    const waiting = new Promise<void>((resolve) => { releaseDestination = resolve })
+    const forkedText = "The destination transcript is loaded."
+    const detail = "Destination model diagnostic"
+    await page.route(`**/api/v1/sessions/${id}/fork`, (route) => {
+      fixture.requests.push({ path: "fork", body: route.request().postDataJSON() })
+      fixture.sessions.push(forkSession)
+      return route.fulfill({ json: { session: { id: branched } } })
+    })
+    await page.route((url) => url.pathname === `/api/v1/sessions/${branched}`, (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback()
+      fixture.requests.push({ path: "model", body: route.request().postDataJSON() })
+      return route.fulfill({ status: 400, json: { message: detail } })
+    })
+    await page.route((url) => url.pathname === `/api/v1/history/${branched}`, async (route) => {
+      await waiting
+      return route.fulfill({ json: { session_id: branched, messages: [
+        { id: "forked-message", role: "user", content: forkedText, created_at: time },
+      ] } })
+    })
+    const success = page.getByRole("status").filter({ hasText: "已从这里分叉到新会话" })
+    const modelError = page.getByRole("alert").filter({ hasText: "模型保存失败，请重试" })
+    try {
+      if (isMobile) await (await openMenu(page, answer)).getByRole("menuitem", { name: "从这里分叉", exact: true }).click()
+      else await actions(page, answer).getByRole("button", { name: "从这里分叉", exact: true }).click()
+      await expect(page.getByRole("heading", { name: forkSession.title, exact: true })).toBeVisible()
+      await expect(success).toHaveCount(0)
+      if (destinationError) {
+        await page.getByTestId("model-effort-picker").click()
+        await page.getByTestId("model-picker-model").click()
+        await page.getByRole("button", { name: "alternate-model", exact: true }).click()
+        await expect(modelError).toBeVisible()
+        await modelError.locator("..").getByText("显示详情", { exact: true }).click()
+        await expect(page.getByText(detail, { exact: true })).toBeVisible()
+      }
+    } finally {
+      releaseDestination()
+    }
+    await expect(page.getByText(forkedText, { exact: true })).toBeVisible()
+    await expect(page.getByRole("status").filter({ hasText: "分叉中…" })).toHaveCount(0)
+    if (destinationError) {
+      await expect(modelError).toBeVisible()
+      await expect(page.getByText(detail, { exact: true })).toBeVisible()
+      await expect(success).toHaveCount(0)
+    } else await expect(success).toBeVisible()
+    expect(fixture.requests).toEqual([
+      { path: "fork", body: { up_to_message_id: answer } },
+      ...(destinationError ? [expect.objectContaining({ path: "model" })] : []),
+    ])
+    expect(fixture.observation.pageErrors).toEqual([])
+  })
+}

@@ -26,6 +26,7 @@ import { createChat } from "../chat/createChat"
 import { createExternalSnapshot } from "../chat/snapshots"
 import type { PendingSideChatIntent, SideChatIntent } from "@/lib/sideChatIntent"
 import { ChatViewport } from "../chat/ChatViewport"
+import type { MessageNotice } from "../chat/message-actions/createMessageActions"
 import { ComposerPanel } from "../chat/ComposerPanel"
 import { ConversationClearDialog } from "../chat/ConversationClearDialog"
 import { createEnvironment } from "../chat/environment/createEnvironment"
@@ -116,7 +117,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   let paletteNavigationVersion = 0
   let settingsReturnFocus: () => HTMLElement | null = () => null
   let shell!: HTMLDivElement
-  const [notice, setNotice] = createSignal<ToastNotice | null>(null)
+  const [notice, setNotice] = createSignal<(ToastNotice & { scope?: object }) | null>(null)
   let noticeId = 0
   const reportNotice = (value: { text: string; error: boolean }) => {
     setNotice({ id: ++noticeId, message: value.text, kind: value.error ? "error" : "info" })
@@ -154,6 +155,16 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const sessionView = createMemo(() => ({ id: currentSession() }), {
     equals: (previous, next) => previous?.id === next.id,
   })
+  let modelFailureScope: ReturnType<typeof sessionView> | null = null
+  const currentNotice = () => {
+    const value = notice()
+    return value?.scope && value.scope !== sessionView() ? null : value
+  }
+  const reportMessageNotice = (value: MessageNotice) => {
+    const scope = sessionView()
+    if (value.ifVacant && (currentNotice() || modelFailureScope === scope)) return
+    setNotice({ id: ++noticeId, message: value.text, kind: value.error ? "error" : "info", details: value.details, scope })
+  }
   const [forking, setForking] = createSignal<ReturnType<typeof sessionView> | null>(null)
   const showHome = () => !currentSession() && !chat.sending && !chat.pendingUserText
     && chat.pendingUserImages.length === 0 && chat.pendingUserMessages.length === 0
@@ -982,7 +993,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             <ChatViewport chat={chat} theme={theme().themeMode}
               pageVisible={!settingsOpen()} onOpenActor={selectWorkbenchActor}
               onOpenLink={openLink} onPreviewImage={setImage}
-              rootAuthority={rootAuthority} onMessageNotice={reportNotice}
+              rootAuthority={rootAuthority} onMessageNotice={reportMessageNotice}
               onForking={(active) => setForking((previous) => active ? session : previous === session ? null : previous)}
               attachments={[...runTimeline(), ...(workEnabled() ? supervisorApprovals.entries().map((entry) => ({
                 key: entry.key, afterMessageId: entry.afterMessageId,
@@ -1017,6 +1028,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
             onOpenWorkflowRuns={(id) => { if (id === currentSession()) setWorkflowSession(id) }}
             onOpenSideChat={sideChatScope() ? openSideChat : undefined}
+            onModelFailureChange={(active) => { modelFailureScope = active ? sessionView() : null }}
             onPreviewImage={setImage} onAttachmentsChange={setDraftAttachments} captureSessionCreated={() => {
               const intent = newSession()
               return (id) => sessionCreated(id, intent)
@@ -1138,7 +1150,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             getReturnFocusTarget={() => !settingsOpen() && paletteNavigationVersion === navigationVersion ? paletteReturnFocus() : null} />
         </Loading>
       </Show>
-      <Toasts toast={notice()} forking={forking() === sessionView()} onDismiss={() => setNotice(null)}
+      <Toasts toast={currentNotice()} forking={forking() === sessionView()} onDismiss={() => setNotice(null)}
         onRestoreFocus={() => { if (!settingsOpen()) focusComposer() }} />
     </div>
   )

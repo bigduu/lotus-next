@@ -63,6 +63,7 @@ export function ComposerPanel(props: {
   captureSessionCreated: () => (sessionId: string) => void
   onPreviewImage: (url: string) => void
   onAttachmentsChange?: (attachments: readonly ChatImageAttachment[]) => void
+  onModelFailureChange?: (active: boolean) => void
   pageVisible?: boolean
 }) {
   const text = createUiText()
@@ -145,6 +146,8 @@ export function ComposerPanel(props: {
     disabled: () => interactionBlocked() || running() || submitting() || props.chat.submissionPending ||
       queue.busy || queue.hasUnconfirmed || props.ingress.busy || props.ingress.pending || commands.busy,
   })
+  createEffect(() => [draftKey(), props.pageVisible !== false && models.modelError !== null] as const,
+    ([, active]) => { props.onModelFailureChange?.(active) })
   const submissionUnavailable = () => interactionBlocked() || models.busy ||
     (props.semantic && (!props.canSendIngress || props.ingress.busy || props.ingress.activationPending))
   const blocked = () => submissionUnavailable() || models.rootAdmissionBlocked
