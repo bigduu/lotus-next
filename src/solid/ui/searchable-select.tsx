@@ -33,12 +33,19 @@ export interface SearchableSelectProps<T, V> {
 export function SearchableSelect<T, V>(props: SearchableSelectProps<T, V>) {
   const [open, setOpen] = createSignal(false)
   const [query, setQuery] = createSignal("")
+  const [reviewedKeys, setReviewedKeys] = createSignal("")
+  const itemKeys = createMemo(() => JSON.stringify(props.items.map((item) => props.getKey(item))))
   let searchInput: HTMLInputElement | undefined
 
   const changeOpen = (next: boolean) => {
     if (next && props.disabled) return
+    if (next) setReviewedKeys(itemKeys())
     setOpen(next)
     if (!next) setQuery("")
+  }
+  const search = (value: string) => {
+    setReviewedKeys(itemKeys())
+    setQuery(value)
   }
   createEffect(() => props.disabled, (disabled) => {
     if (disabled) changeOpen(false)
@@ -90,14 +97,15 @@ export function SearchableSelect<T, V>(props: SearchableSelectProps<T, V>) {
           searchInput?.focus()
         }}
       >
-        <Command shouldFilter={false} label={props.searchAriaLabel ?? uiText("search_44ce7ae9")} defaultValue={selectedKey()}>
+        <Command shouldFilter={false} label={props.searchAriaLabel ?? uiText("search_44ce7ae9")} defaultValue={selectedKey()}
+          autoHighlight={reviewedKeys() === itemKeys()}>
           <div class="relative m-1 mb-1.5">
             <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <CommandInput
               ref={(node) => { searchInput = node }}
               placeholder={props.searchPlaceholder ?? uiText("search_a249f60c")}
               value={query()}
-              onValueChange={setQuery}
+              onValueChange={search}
               class="h-8 rounded-md border border-input bg-background pl-8 pr-8 text-xs shadow-xs"
             />
             <Show when={query()}>
@@ -105,7 +113,7 @@ export function SearchableSelect<T, V>(props: SearchableSelectProps<T, V>) {
                 type="button"
                 aria-label={props.clearLabel ?? uiText("clear_search_b6f00afa")}
                 onClick={() => {
-                  setQuery("")
+                  search("")
                   searchInput?.focus()
                 }}
                 class="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -118,20 +126,20 @@ export function SearchableSelect<T, V>(props: SearchableSelectProps<T, V>) {
             <Show when={visibleItems().length === 0}>
               <p role="status" class="px-3 py-6 text-center text-xs text-muted-foreground">{props.emptyText ?? uiText("no_matching_options_e4a57cc0")}</p>
             </Show>
-            <For each={visibleItems()}>{(item) => {
-              const selected = () => props.getValue(item) === props.value
+            <For each={visibleItems()} keyed={(item) => props.getKey(item)}>{(item) => {
+              const selected = () => props.getValue(item()) === props.value
               return (
                 <CommandItem
                   {...{ [props.optionDataAttr ?? "data-searchable-option"]: "" }}
-                  value={props.getKey(item)}
+                  value={props.getKey(item())}
                   onSelect={() => {
-                    props.onChange(props.getValue(item))
+                    props.onChange(props.getValue(item()))
                     changeOpen(false)
                   }}
                   class="w-full gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-accent"
                 >
                   <Check aria-hidden="true" class={cn("size-4 shrink-0 text-primary", selected() ? "opacity-100" : "opacity-0")} />
-                  <span class={cn("truncate", selected() && "font-medium")}>{props.getLabel(item)}</span>
+                  <span class={cn("truncate", selected() && "font-medium")}>{props.getLabel(item())}</span>
                 </CommandItem>
               )
             }}</For>

@@ -33,6 +33,7 @@ type CommandProps = ComponentProps<"div"> & {
   label?: string
   defaultValue?: string
   shouldFilter?: boolean
+  autoHighlight?: boolean
 }
 
 function Command(props: CommandProps) {
@@ -59,7 +60,8 @@ function Command(props: CommandProps) {
     const current = highlighted()
     const available = enabled()
     if (current && available.includes(current)) return current
-    return available.find((option) => option.value() === props.defaultValue) ?? available[0]
+    return available.find((option) => option.value() === props.defaultValue)
+      ?? (props.autoHighlight !== false ? available[0] : undefined)
   })
 
   const state: CommandState = {
@@ -99,7 +101,7 @@ function Command(props: CommandProps) {
       return
     }
     const selected = active()
-    const index = selected ? available.indexOf(selected) : 0
+    const index = selected ? available.indexOf(selected) : -1
     let nextIndex: number
     switch (event.key) {
       case "Home":
@@ -129,7 +131,7 @@ function Command(props: CommandProps) {
       <div
         data-slot="command"
         class={cn("flex w-full flex-col overflow-hidden bg-popover text-popover-foreground", props.class)}
-        {...omit(props, "label", "class", "defaultValue", "shouldFilter", "children", "onKeyDown")}
+        {...omit(props, "label", "class", "defaultValue", "shouldFilter", "autoHighlight", "children", "onKeyDown")}
         onKeyDown={onKeyDown}
       >
         <span id={state.labelId} class="sr-only">{props.label}</span>
