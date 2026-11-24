@@ -22,6 +22,31 @@ export function describeRunFailure(detail: string | null): RunFailureGuidance | 
     }
   }
 
+  const failure = detail.replace(/^Turn \d+ failed terminally: /i, "")
+  const providerFailure = failure.replace(/^(?:LLM (?:error|overflow): )?(?:API error: )?/i, "")
+  const status = providerFailure.match(/^(?:(?:Anthropic|Gemini) API error: |Bodhi\/(?:OpenAI|Anthropic|Gemini) proxy )?HTTP (400|401|403)\b/i)?.[1]
+    ?? providerFailure.match(/^Anthropic upstream request failed \(HTTP (400|401|403)\):/i)?.[1]
+  if (status === "401" || status === "403" || /^(?:LLM error: )?Authentication error:/i.test(failure)) {
+    return {
+      title: uiText("run_failure_model_access_rejected"),
+      action: uiText("run_failure_model_access_rejected_action"),
+    }
+  }
+
+  if (status === "400") {
+    return {
+      title: uiText("run_failure_model_request_rejected"),
+      action: uiText("run_failure_model_request_rejected_action"),
+    }
+  }
+
+  if (/^Empty assistant response from LLM\b/i.test(failure)) {
+    return {
+      title: uiText("run_failure_model_empty_response"),
+      action: uiText("run_failure_model_empty_response_action"),
+    }
+  }
+
   if (/\blast_http_status=429\b|\bHTTP\s+429\b/i.test(detail)) {
     return {
       title: uiText("model_service_rate_limited_8b54cf50"),
@@ -33,6 +58,13 @@ export function describeRunFailure(detail: string | null): RunFailureGuidance | 
     return {
       title: uiText("model_service_connection_timed_out_ecde837c"),
       action: uiText("the_model_response_could_not_be_established_check_the_p_c6ee27c5"),
+    }
+  }
+
+  if (/^Stream timed out:\s*phase=(?:first_semantic|transport_idle|semantic_idle)\b/i.test(failure)) {
+    return {
+      title: uiText("run_failure_model_response_timed_out"),
+      action: uiText("run_failure_model_response_timed_out_action"),
     }
   }
 
