@@ -6,7 +6,7 @@ The General settings page restores the existing language preference. The applica
 
 A valid saved locale wins over `navigator.language`. Existing browser detection recognizes Chinese variants, French, Japanese and Hindi; other browsers default to `en-US`. `en-US` remains the missing-key fallback. Simplified Chinese application copy remains available. The other existing locale choices/resources are preserved, with English fallback for newly covered keys that have no translation in those languages. This change only supplies English and Simplified Chinese application catalogs.
 
-Locale changes subscribe existing components without remounting the composer. Successful selections are saved; storage failures do not prevent switching. The newest concurrent lazy selection wins. Failed resource loads can be retried. React startup waits for locale initialization; `document.documentElement.lang` follows the chosen locale. The dependency-free catastrophic startup screen in `src/main.tsx` independently selects English/Chinese and retains raw diagnostics.
+Locale changes subscribe existing components without remounting the composer. Successful selections are saved; storage failures do not prevent switching. The newest concurrent lazy selection wins. Failed resource loads can be retried. Solid startup waits for locale initialization; `document.documentElement.lang` follows the chosen locale. The dependency-free catastrophic startup screen in `src/runtime/browserEntrySupport.ts` independently selects English/Chinese and retains raw diagnostics.
 
 ## Coverage checklist
 
@@ -30,7 +30,7 @@ Started from main `a02163700edff8c2fd50977b3e3858be53960998`, after composer #21
 Intentionally retained locations:
 
 - `src/components/chat/Settings.tsx`: native-language autonyms in the selector (`简体中文`, `繁體中文`, `日本語`).
-- `src/main.tsx`: dependency-free bilingual catastrophic-startup copy, before React or locale resources are available.
+- `src/runtime/browserEntrySupport.ts`: dependency-free bilingual catastrophic-startup copy, before Solid or locale resources are available.
 - `src/services/tickets/testFixtures.ts`, `src/test`, and test files: representative raw Chinese user/backend data used to assert preservation.
 - `src/lib/taskTemplates.ts`: existing English model instructions remain identical; only UI titles/descriptions use the locale catalog.
 - Chat/message/ticket views and service failure paths: runtime names, prompts, code, tool payloads, backend errors, operation IDs, permissions and artifact content remain raw. Existing English protocol/product terms and identifiers are retained.

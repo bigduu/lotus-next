@@ -1,0 +1,237 @@
+import { createSignal, flush, Show } from "solid-js"
+import { render as renderSolid, type ComponentProps } from "@solidjs/web"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { McpImportFailure } from "@services/mcp/importConfig"
+import { McpImportDialog, type McpImportCompletion } from "./McpImportDialog"
+
+vi.mock("../../ui/responsive-dialog", () => import("../test/ResponsiveDialog"))
+
+const disposers: Array<() => void> = []
+const schedule = setTimeout
+
+async function settle(action: () => unknown = () => undefined) {
+  await action()
+  await new Promise<void>((resolve) => schedule(resolve, 0))
+  flush()
+}
+const source = JSON.stringify({ mcpServers: { incoming: { command: "fixture", disabled: true, env: { TOKEN: "PRIVATE_IMPORT_MARKER" } } } })
+const result: McpImportCompletion = { result: { mode: "merge", added: 1, updated: 0, removed: 0, server_ids: ["incoming"] }, refreshed: true }
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+const button = (text: string) => [...document.querySelectorAll("button")].find((element) => element.textContent?.trim() === text)!
+const click = async (text: string) => settle(() => { button(text).click() })
+const check = async () => settle(() => { document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click() })
+const mode = async (value: "merge" | "replace") => settle(() => { document.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!.click() })
+const fill = async (value = source) => settle(() => {
+  const input = document.querySelector("textarea")!
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value)
+  input.dispatchEvent(new Event("input", { bubbles: true }))
+})
+const file = async (pending: Promise<string>, name = "import.json", contents = "fixture") => settle(() => {
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+  const selected = new File([contents], name, { type: "application/json" })
+  Object.defineProperty(selected, "text", { value: () => pending })
+  Object.defineProperty(input, "files", { configurable: true, value: [selected] })
+  input.dispatchEvent(new Event("change", { bubbles: true }))
+})
+async function mount(overrides: Partial<ComponentProps<typeof McpImportDialog>> = {}) {
+  const container = document.body.appendChild(document.createElement("div"))
+  const [open, setOpen] = createSignal(true)
+  const props = {
+    existingIds: ["existing", "keep"], listConfirmed: true, listRevision: 1,
+    onClose: vi.fn(() => setOpen(false)), onReturnFocus: vi.fn(),
+    onImport: vi.fn().mockResolvedValue(result),
+    onReconcile: vi.fn().mockResolvedValue({ ...result, reconciled: true }),
+    onReload: vi.fn().mockResolvedValue(true), ...overrides,
+  }
+  const [currentProps, setProps] = createSignal<ComponentProps<typeof McpImportDialog>>(props)
+  const dispose = renderSolid(() => <Show when={open()}><McpImportDialog {...currentProps()} /></Show>, container)
+  disposers.push(() => { dispose(); container.remove() })
+  await settle()
+  return {
+    props,
+    render: (next = props) => settle(() => { setProps(next); setOpen(true) }),
+    closeOwner: () => settle(() => setOpen(false)),
+  }
+}
+afterEach(() => {
+  for (const dispose of disposers.splice(0)) dispose()
+})
+
+describe("McpImportDialog", () => {
+  it("defaults to Merge, previews only safe metadata, and reports authoritative counts", async () => {
+    const storage = vi.spyOn(localStorage, "setItem")
+    const logs = [vi.spyOn(console, "log"), vi.spyOn(console, "warn"), vi.spyOn(console, "error")]
+    const { props } = await mount()
+    expect(document.querySelector<HTMLInputElement>('input[value="merge"]')?.checked).toBe(true)
+    expect(document.activeElement).toBe(button("取消"))
+    expect(button("导入").disabled).toBe(true)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    await fill()
+    const preview = document.querySelector('[aria-label="导入预览"]')!
+    expect(preview.textContent).toContain("incoming")
+    expect(preview.textContent).not.toContain("PRIVATE_IMPORT_MARKER")
+    expect(document.body.textContent).toContain("不递归合并字段")
+    await click("导入")
+    expect(props.onImport).toHaveBeenCalledExactlyOnceWith({ ...JSON.parse(source), mode: "merge" }, ["existing", "keep"])
+    // The explicit mode belongs to the API payload, not the pasted root object.
+    expect(vi.mocked(props.onImport).mock.calls[0][0].mode).toBe("merge")
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("新增 1 · 更新 0 · 删除 0")
+    expect(document.body.textContent).not.toContain("PRIVATE_IMPORT_MARKER")
+    expect(storage.mock.calls.flat().join(" ")).not.toContain("PRIVATE_IMPORT_MARKER")
+    for (const log of logs) expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE_IMPORT_MARKER")
+  })
+
+  it("binds Replace confirmation to input, mode and inventory revision, including changes back to an old ID set", async () => {
+    const { props, render } = await mount()
+    await fill(); await mode("replace")
+    expect(document.querySelector('[aria-label="将删除的服务器"]')?.textContent).toContain("keep")
+    expect(button("导入").disabled).toBe(true)
+    await check(); expect(button("导入").disabled).toBe(false)
+    await fill(`${source} `); expect(button("导入").disabled).toBe(true)
+    await check(); await mode("merge"); await mode("replace"); expect(button("导入").disabled).toBe(true)
+    await check(); await render({ ...props, existingIds: [...props.existingIds, "another"], listRevision: 2 })
+    expect(button("导入").disabled).toBe(true)
+    await render({ ...props, listRevision: 3 }); expect(button("导入").disabled).toBe(true)
+    expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it("requires explicit Replace confirmation even when no IDs will be removed", async () => {
+    const { props } = await mount({ existingIds: [] })
+    await fill(); await mode("replace")
+    expect(button("导入").disabled).toBe(true)
+    await check(); await click("导入")
+    expect(props.onImport).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(props.onImport).mock.calls[0][0].mode).toBe("replace")
+  })
+
+  it("fences rapid submit/dismiss and ignores programmatic draft edits during the request", async () => {
+    const pending = deferred<McpImportCompletion>()
+    const onImport = vi.fn().mockReturnValue(pending.promise)
+    const { props } = await mount({ onImport })
+    await fill()
+    await settle(() => { button("导入").click(); button("导入").click() })
+    await fill('{"mcpServers":{"other":{"command":"other"}}}')
+    await settle(() => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })) })
+    expect(onImport).toHaveBeenCalledTimes(1); expect(props.onClose).not.toHaveBeenCalled()
+    expect(button("取消").disabled).toBe(true)
+    await settle(() => { pending.resolve(result) })
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("incoming")
+  })
+
+  it("lets typed input supersede a pending file and discards files after closing/reopening", async () => {
+    const { props, render } = await mount()
+    const oldFile = deferred<string>(); await file(oldFile.promise)
+    expect(button("导入").disabled).toBe(true)
+    await fill()
+    await settle(() => { oldFile.resolve('{"mcpServers":{"old":{"command":"old"}}}') })
+    expect(document.querySelector("textarea")?.value).toBe(source)
+    const closingFile = deferred<string>(); await file(closingFile.promise)
+    await click("取消"); await render()
+    await settle(() => { closingFile.resolve(source) })
+    expect(document.querySelector("textarea")?.value).toBe("")
+    expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it("accepts only the latest selected file and invalidates an existing Replace confirmation", async () => {
+    await mount(); await fill(); await mode("replace"); await check()
+    const first = deferred<string>(); const second = deferred<string>()
+    await file(first.promise); await file(second.promise, "newer.json")
+    await settle(() => { second.resolve(source) })
+    await settle(() => { first.resolve('{"mcpServers":{"old":{"command":"old"}}}') })
+    expect(document.querySelector("textarea")?.value).toBe(source)
+    expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false)
+    expect(button("导入").disabled).toBe(true)
+  })
+
+  it("does not expose parser details or allow invalid JSON to mutate", async () => {
+    const { props } = await mount()
+    await fill('{"mcpServers": PRIVATE_IMPORT_MARKER}')
+    expect(document.querySelector('[role="alert"]')?.textContent).not.toContain("PRIVATE_IMPORT_MARKER")
+    expect(button("导入").disabled).toBe(true); expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it.each(["scope/server", "x?y", "x#y", "..", "encoded%2Fid", "white space", "trailing\n"])("blocks unsafe map IDs before submitting from the dialog", async (id) => {
+    const { props } = await mount()
+    await fill(JSON.stringify({ mcpServers: { [id]: { command: "fixture", env: { TOKEN: "PRIVATE_IMPORT_MARKER" } } } }))
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("第 1 项：服务器 ID 只能包含字母、数字、- 和 _，不能包含空白。")
+    expect(button("导入").disabled).toBe(true)
+    await click("导入")
+    expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it.each(["", " \t\n"])("explains an empty or whitespace file only after its current read completes", async (contents) => {
+    const { props } = await mount()
+    const pending = deferred<string>()
+    await file(pending.promise, "empty.json", contents)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(button("导入").disabled).toBe(true)
+    await settle(() => { pending.resolve(contents) })
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("完整 JSON 配置")
+    expect(button("导入").disabled).toBe(true)
+    await click("导入")
+    expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it.each(["", " \t\n"])("explains a cleared or whitespace draft but resets to neutral after reopening", async (contents) => {
+    const { props, render } = await mount()
+    await fill(); await fill(contents)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("完整 JSON 配置")
+    expect(button("导入").disabled).toBe(true)
+    await click("取消"); await render()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it("automatically reconciles an uncertain response against the actual list", async () => {
+    const onImport = vi.fn().mockRejectedValue(new McpImportFailure("uncertain"))
+    const onReconcile = vi.fn().mockResolvedValue({ ...result, reconciled: true })
+    await mount({ onImport, onReconcile })
+    await fill(); await click("导入")
+    expect(onReconcile).toHaveBeenCalledExactlyOnceWith({ ...JSON.parse(source), mode: "merge" }, ["existing", "keep"])
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("导入已确认")
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("已自动核对实际服务器列表，导入项已显示")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(document.body.textContent).not.toContain("刷新当前列表")
+    expect(onImport).toHaveBeenCalledTimes(1)
+  })
+
+  it("offers another read-only reconciliation when the actual list is temporarily unavailable", async () => {
+    const onImport = vi.fn().mockRejectedValue(new McpImportFailure("uncertain"))
+    const onReconcile = vi.fn()
+      .mockRejectedValueOnce(new McpImportFailure("uncertain"))
+      .mockResolvedValueOnce({ ...result, reconciled: true })
+    await mount({ onImport, onReconcile })
+    await fill(); await click("导入")
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("暂时无法确认")
+    expect(button("导入").disabled).toBe(true)
+    expect(button("关闭")).toBeDefined()
+    await click("再次核对")
+    expect(onReconcile).toHaveBeenCalledTimes(2)
+    expect(onImport).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("导入已确认")
+  })
+
+  it("keeps the draft retryable when the refreshed list confirms nothing changed", async () => {
+    const onImport = vi.fn().mockRejectedValue(new McpImportFailure("uncertain"))
+    const onReconcile = vi.fn().mockRejectedValue(new McpImportFailure("not_applied"))
+    await mount({ onImport, onReconcile })
+    await fill(); await click("导入")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("本次配置没有生效")
+    expect(button("导入").disabled).toBe(false)
+    expect(document.body.textContent).not.toContain("刷新当前列表")
+  })
+
+  it("discards a late completed import after unmount rather than applying it to a new dialog", async () => {
+    const pending = deferred<McpImportCompletion>()
+    const { closeOwner, render } = await mount({ onImport: vi.fn().mockReturnValue(pending.promise) })
+    await fill(); await click("导入")
+    await closeOwner(); await render()
+    await settle(() => { pending.resolve(result) })
+    expect(document.querySelector("textarea")?.value).toBe("")
+    expect(document.querySelector('[aria-label="导入结果"]')).toBeNull()
+  })
+});

@@ -1,6 +1,6 @@
 import { isRetryRunId, type UpstreamRetrySelection } from "./upstreamRetry";
 import type { PublicRunDiagnostic } from "./runDiagnostic"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { setBackendFeatures } from "@/lib/backendFeatures"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 import { debugLog } from "@shared/utils/debugFlags";
@@ -459,6 +459,16 @@ export interface ChangeEvent {
   event: AgentEvent;
 }
 
+export function readTaskListDelta(event: AgentEvent): TaskListDelta | null {
+  const { session_id, item_id, status, tool_calls_count, version } = event;
+  if (event.type !== "task_list_item_progress" || !session_id || !item_id ||
+    typeof tool_calls_count !== "number" || typeof version !== "number" ||
+    (status !== "pending" && status !== "in_progress" && status !== "completed" && status !== "blocked")) {
+    return null;
+  }
+  return { session_id, item_id, status, tool_calls_count, version };
+}
+
 /** Callbacks for {@link AgentClient.subscribeToAccountStream}. */
 export interface AccountStreamHandlers {
   onChange: (change: ChangeEvent) => void;
@@ -746,8 +756,17 @@ const parseMessageHistory = (sessionId: string, value: unknown): MessageHistoryR
   return response as unknown as MessageHistoryResponse;
 };
 
+export interface HistoryPageRequest {
+  limit: number;
+  before_message_id?: string;
+}
+
 export interface HistoryResponse {
   session_id: string;
+  total_message_count?: number;
+  history_start_index?: number;
+  /** Present on an opt-in page. Null means the beginning was reached. */
+  next_before_message_id?: string | null;
   /** Present on identity-bound history; null means no persisted token snapshot. */
   bound_token_usage?: TokenBudgetUsage | null;
   /** Requested only for identity-bound clear verification. */
@@ -2052,32 +2071,11 @@ export class AgentClient {
           );
         }
         break;
-      case "task_list_item_progress":
-        if (
-          event.session_id &&
-          event.item_id &&
-          event.status &&
-          event.tool_calls_count !== undefined &&
-          event.version !== undefined
-        ) {
-          const status = event.status;
-          const isTaskStatus =
-            status === "pending" ||
-            status === "in_progress" ||
-            status === "completed" ||
-            status === "blocked";
-          if (!isTaskStatus) {
-            break;
-          }
-          handlers.onTaskListItemProgress?.({
-            session_id: event.session_id,
-            item_id: event.item_id,
-            status,
-            tool_calls_count: event.tool_calls_count,
-            version: event.version,
-          });
-        }
+      case "task_list_item_progress": {
+        const delta = readTaskListDelta(event);
+        if (delta) handlers.onTaskListItemProgress?.(delta);
         break;
+      }
       case "task_list_completed":
         if (
           event.session_id &&
@@ -2311,15 +2309,20 @@ export class AgentClient {
   /**
    * Get chat history
    */
-  async getHistory(sessionId: string, sinceMessageId?: string, signal?: AbortSignal): Promise<HistoryResponse> {
+  async getHistory(sessionId: string, sinceMessageId?: string, signal?: AbortSignal, page?: HistoryPageRequest): Promise<HistoryResponse> {
     debugLog("[AgentClient]", "history.request", { sessionId, sinceMessageId });
     // Delta mode: when a cursor is supplied, the backend returns only messages
     // appended after it (`is_delta: true`), so a client that already has most
     // of the history only transfers the tail.
-    const path = sinceMessageId
-      ? `history/${encodeURIComponent(sessionId)}?since_message_id=${encodeURIComponent(sinceMessageId)}`
-      : `history/${encodeURIComponent(sessionId)}`;
-    const response = await apiClient.get<HistoryResponse>(path, { cache: "no-store", ...(signal ? { signal } : {}) });
+    const path = `history/${encodeURIComponent(sessionId)}`;
+    const query = sinceMessageId ? `since_message_id=${encodeURIComponent(sinceMessageId)}`
+      : page?.before_message_id ? `limit=${page.limit}&before_message_id=${encodeURIComponent(page.before_message_id)}` : undefined;
+    // Keep the initial request on the same route and let older Bamboo versions
+    // ignore the new representation preference.
+    const headers = page && !query ? { Accept: `application/json; bamboo-history-limit=${page.limit}` } : undefined;
+    const response = await apiClient.get<HistoryResponse>(query ? `${path}?${query}` : path, {
+      cache: "no-store", ...(signal ? { signal } : {}), ...(headers ? { headers } : {}),
+    });
     debugLog("[AgentClient]", "history.response", summarizeHistoryResponse(response));
     return response;
   }

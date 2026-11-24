@@ -102,6 +102,18 @@ async function expectBodiesOutsideProcesses(transcript: Locator, expected: strin
   expect(order).toEqual(["process", "body", "process", "body"])
 }
 
+async function expectMessageSurfaces(transcript: Locator) {
+  const surfaces = await transcript.evaluate((element) => [...element.querySelectorAll('[data-message-role]')].map((node) => {
+    const style = node.ownerDocument.defaultView!.getComputedStyle(node)
+    return { role: node.getAttribute("data-message-role"), background: style.backgroundColor,
+      fontSize: style.fontSize, fontWeight: style.fontWeight, maxWidth: style.maxWidth }
+  }))
+  expect(surfaces.some((surface) => surface.role === "user" && surface.maxWidth === "85%" && surface.background !== "rgba(0, 0, 0, 0)")).toBe(true)
+  const assistants = surfaces.filter((surface) => surface.role === "assistant")
+  expect(assistants.length).toBeGreaterThan(0)
+  for (const assistant of assistants) expect(assistant).toMatchObject({ background: "rgba(0, 0, 0, 0)", fontSize: "16px", fontWeight: "400", maxWidth: "none" })
+}
+
 function deferred() {
   let resolve!: () => void
   const promise = new Promise<void>((release) => { resolve = release })
@@ -531,6 +543,7 @@ for (const reducedMotion of [false, true]) {
     await expect(transcript.locator('[data-message-role="assistant"]').nth(1)).toContainText(secondBody)
     await expect(transcript.locator("[data-process-shimmer]")).toHaveCount(0)
     await expectBodiesOutsideProcesses(transcript, [firstBody, secondBody])
+    await expectMessageSurfaces(transcript)
     expect(subscriptions).toBe(1)
     expect(observation.pageErrors).toEqual([])
     expect(observation.consoleErrors).toEqual([])
@@ -539,6 +552,7 @@ for (const reducedMotion of [false, true]) {
 }
 
 test("completed history merges tools and reasoning while preserving each assistant body", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" })
   const firstReasoning = "Saved initial reasoning remains complete."
   const secondReasoning = "Saved latest reasoning remains complete."
   const thirdReasoning = "Saved reasoning after the body remains complete."
@@ -568,15 +582,31 @@ test("completed history merges tools and reasoning while preserving each assista
   await expect(divider).toHaveAttribute("aria-expanded", "false")
   // The folded middle stays mounted for disclosure; only the conclusion is visible.
   await expect(divider).toHaveAccessibleName("处理了 12秒 · 3 次工具调用")
+  const fold = transcript.locator("[data-turn-collapse]")
+  await expect(fold.locator(".turn-collapse-content")).toHaveAttribute("inert", "")
   const visibleAssistantBodies = transcript.locator('[data-message-role="assistant"]:visible')
   await expect(visibleAssistantBodies).toHaveCount(1)
   await expect(visibleAssistantBodies).toContainText(secondBody)
   expect(await visibleAssistantBodies.evaluate(
     (element) => element.closest("[data-turn-collapse]") === null && element.closest("[data-process-activity]") === null,
   )).toBe(true)
+  await expectMessageSurfaces(transcript)
+  const actions = transcript.locator("[data-message-actions]")
+  await expect(actions).toHaveCount(2)
+  expect(await actions.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-message-actions"))))
+    .toEqual(["saved-user", "saved-body-two"])
+  for (const [id, role, follows] of [["saved-user", "user", true], ["saved-body-two", "assistant", false]] as const) {
+    const row = transcript.locator(`[data-message-row="${id}"]`)
+    expect(await row.evaluate((element, { role, follows }) => {
+      const body = element.querySelector(`[data-message-role="${role}"]`)!
+      const buttons = element.querySelector("[data-message-actions]")!
+      return !!(buttons.compareDocumentPosition(body) & (follows ? Node.DOCUMENT_POSITION_FOLLOWING : Node.DOCUMENT_POSITION_PRECEDING))
+    }, { role, follows })).toBe(true)
+  }
 
   // Expanding the divider restores the original processes and the intermediate body.
   await divider.click()
+  await expect(fold.locator(".turn-collapse-content")).not.toHaveAttribute("inert", "")
   const processes = transcript.locator("[data-process-activity]")
   await expect(processes).toHaveCount(2)
   for (let index = 0; index < 2; index += 1) {
@@ -587,6 +617,21 @@ test("completed history merges tools and reasoning while preserving each assista
   await expect(processes.first().locator("[data-process-brief]")).toHaveText(secondReasoning)
   await expect(processes.nth(1).locator("[data-process-brief]")).toHaveText(thirdReasoning)
   await expect(transcript.locator("[data-process-shimmer]")).toHaveCount(0)
+  const firstProcess = processes.first()
+  await firstProcess.locator("[data-process-toggle]").click()
+  const size = () => transcript.evaluate((element) => {
+    const user = element.querySelector('[data-history-entry-key="message-saved-user"]')!.getBoundingClientRect()
+    const owner = element.querySelector('[data-history-entry-key="collapsed-turn-saved-body-two"]')!.getBoundingClientRect()
+    const final = element.querySelector('[data-history-entry-key="message-saved-body-two"]')!.getBoundingClientRect()
+    return { userHeight: user.height, ownerHeight: owner.height, nextOffset: final.top - owner.top }
+  })
+  const before = await size()
+  await firstProcess.locator("[data-tool-call-entry-toggle]").first().click()
+  await expect(firstProcess.locator("[data-tool-call-entry-detail]").first()).toBeVisible()
+  await expect.poll(async () => (await size()).nextOffset).toBeGreaterThan(before.nextOffset)
+  const after = await size()
+  expect(after.userHeight).toBe(before.userHeight)
+  expect(after.ownerHeight).toBeGreaterThan(before.ownerHeight)
   await expandProcessDetails(processes.first())
   const firstThoughts = processes.first().getByRole("region", { name: "思考过程", exact: true })
   await expect(firstThoughts).toHaveCount(2)
@@ -597,9 +642,9 @@ test("completed history merges tools and reasoning while preserving each assista
   await expandProcessDetails(processes.nth(1))
   await expect(processes.nth(1).getByRole("region", { name: "思考过程", exact: true })).toHaveText(thirdReasoning)
   await expect(processes.nth(1).locator("[data-tool-call-entry-detail]")).toContainText("Saved third tool result.")
-  const fold = transcript.locator("[data-turn-collapse]")
   await expect(fold.locator(`[data-message-row="saved-body-one"]`)).toContainText(firstBody)
   await expect(fold.locator('[data-message-role="assistant"]')).toHaveCount(1)
+  await expect(fold.locator("[data-message-actions]")).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
 })
@@ -701,6 +746,7 @@ for (const motion of ["normal", "reduced", "VDI"] as const) {
     await expect(content).toHaveAttribute("inert", "")
     await expect(content).toHaveCSS("visibility", "hidden")
     await expect(toggle).toHaveCSS("font-variant-numeric", "tabular-nums")
+    await expect(toggle).toHaveClass(/rounded-sm text-xs/)
     const transition = await content.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).transitionProperty)
     if (motion === "normal") expect(transition).toContain("grid-template-rows")
     else expect(transition).toBe("none")
@@ -712,8 +758,14 @@ for (const motion of ["normal", "reduced", "VDI"] as const) {
     await expect(content).not.toHaveAttribute("inert", "")
     const chevron = toggle.locator(".process-activity-icon")
     await expect(chevron).toHaveCSS("rotate", "90deg")
+    await expect(chevron).toHaveCSS("width", "14px")
+    await expect(chevron).toHaveCSS("transition-property", motion === "normal" ? "rotate" : "none")
     await expect(chevron).toHaveCSS("transition-duration", motion === "normal" ? "0.22s" : "0s")
     const reasoningToggle = process.locator("[data-reasoning-toggle]")
+    await expect(reasoningToggle).toHaveClass(/rounded-sm text-xs/)
+    const reasoningChevron = reasoningToggle.locator(".reasoning-chevron")
+    await expect(reasoningChevron).toHaveCSS("width", "14px")
+    await expect(reasoningChevron).toHaveClass(/duration-\(--motion-normal\).*ease-\(--motion-ease\)/)
     await reasoningToggle.focus()
     await page.keyboard.press("Space")
     const reasoningId = await reasoningToggle.getAttribute("aria-controls")

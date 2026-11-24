@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { expect, test, type Locator, type Page, type TestInfo, type WebSocketRoute } from "@playwright/test"
 import { uiEnUs } from "../src/shared/i18n/resources/ui-en-US.js"
 import { uiZhCn } from "../src/shared/i18n/resources/ui-zh-CN.js"
+import type { TaskList } from "../src/services/chat/AgentService.js"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -25,7 +26,11 @@ function session(id: string, title: string, running: boolean) {
   }
 }
 
-async function prepare(page: Page, info: TestInfo, { multipleSessions = false, running = true } = {}) {
+async function prepare(page: Page, info: TestInfo, { multipleSessions = false, running = true, tasks }: {
+  multipleSessions?: boolean
+  running?: boolean
+  tasks?: ReadonlyMap<string, TaskList>
+} = {}) {
   const phone = info.project.name === "phone-chromium"
   const locale = phone ? "zh-CN" : "en-US"
   const theme = phone ? "dark" : "light"
@@ -93,7 +98,7 @@ async function prepare(page: Page, info: TestInfo, { multipleSessions = false, r
     if (id && path === `/api/v1/history/${id}`) return route.fulfill({ json: { session_id: id, messages: [
       { id: `fixture-history-${id}`, role: "user", content: "Synthetic context feedback acceptance", created_at: at },
     ] } })
-    if (id && path === `/api/v1/task/${id}`) return route.fulfill({ json: { session_id: id, items: [] } })
+    if (id && path === `/api/v1/task/${id}`) return route.fulfill({ json: tasks?.get(id) ?? { session_id: id, items: [] } })
     if (id && path === `/api/v1/respond/${id}/pending`) return route.fulfill({ json: { has_pending_question: false } })
     if (id && path === `/api/v1/actors/${id}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(id, 0) })
     return route.fallback()
@@ -134,60 +139,237 @@ async function prepare(page: Page, info: TestInfo, { multipleSessions = false, r
     )).toBe(String(seq))
   }
   const barrier = () => emitChange({ type: "task_list_updated", session_id: primary })
+  const reconnect = async () => {
+    const previousSocket = socket!
+    channels.clear()
+    await previousSocket.close({ code: 4000, reason: "Synthetic connection drop" })
+    await expect.poll(() => socket !== previousSocket && channels.has("feed")).toBe(true)
+  }
   return { page, info, phone, theme, locale, observation, requests, clientFrames, events, protocolErrors, channels, barrier,
-    copy, emit, emitChange, status, budget, summary,
+    copy, emit, emitChange, reconnect, status, budget, summary,
     notice: page.getByTestId("context-compression-notice"),
   }
 }
 
 type Fixture = Awaited<ReturnType<typeof prepare>>
 
-test("Session DAG draws a live fork and join and expands the grouped task steps", async ({ page }, info) => {
+async function observeCompletionChecks(page: Page) {
+  await page.addInitScript(() => {
+    type AnimatedElement = {
+      matches(selector: string): boolean
+      closest(selector: string): unknown
+      getAttribute(name: string): string | null
+      setAttribute(name: string, value: string): void
+    }
+    const { Element: { prototype } } = globalThis as unknown as {
+      Element: { prototype: { animate(this: AnimatedElement, ...args: unknown[]): unknown } }
+    }
+    const original = prototype.animate
+    prototype.animate = function (...args) {
+      if (this.matches("svg.lucide-check") && this.closest("#right-workbench")) {
+        const count = Number(this.getAttribute("data-e2e-check-plays") ?? "0") + 1
+        this.setAttribute("data-e2e-check-plays", String(count))
+      }
+      return original.apply(this, args)
+    }
+  })
+}
+
+test("Session DAG opens in the workbench, fits a large graph and shows live task details", async ({ page }, info) => {
+  await observeCompletionChecks(page)
   const f = await prepare(page, info)
+  await page.emulateMedia({ reducedMotion: "no-preference" })
+  const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
   const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
-  await expect(card).toHaveCount(0)
+  await expect(shortcut).toHaveCount(0)
   const task = { notes: "", status: "completed", depends_on: [] }
   const items = [
     { ...task, id: "prepare", description: "Prepare the evidence" },
     { ...task, id: "review", description: "Review each component", depends_on: ["prepare"] },
     { ...task, id: "bamboo", description: "Check Bamboo source", parent_id: "review", depends_on: ["review"] },
     { ...task, id: "lotus", description: "Check Lotus source", status: "in_progress", parent_id: "review", depends_on: ["review"] },
+    { ...task, id: "notes", description: "Review the notes", status: "pending", parent_id: "review" },
+    { ...task, id: "config", description: "Check configuration", status: "pending", parent_id: "review", depends_on: ["review"] },
     { ...task, id: "report", description: "Combine the findings", status: "pending", depends_on: ["bamboo", "lotus"] },
+    { ...task, id: "verify", description: "Verify the findings", status: "pending", depends_on: ["report"] },
+    { ...task, id: "send", description: "Send the report", status: "pending", depends_on: ["verify"] },
+    { ...task, id: "archive", description: "Archive the report", status: "pending", depends_on: ["send"] },
+    { ...task, id: "handoff", description: "Record the handoff", status: "pending", depends_on: ["archive"] },
+    { ...task, id: "close", description: "Close the review", status: "pending", depends_on: ["handoff"] },
   ]
   f.emit({ type: "task_list_updated", task_list: { session_id: primary, title: "Evidence review", items, created_at: at, updated_at: at }, version: 3 })
+  await expect(shortcut).toBeVisible()
+  await expect(card).toHaveCount(0)
+  await shortcut.click()
+  const workbench = page.locator("#right-workbench")
+  const tab = workbench.getByRole("tab", { name: f.copy("session_task_dag_title"), exact: true })
+  await expect(tab).toHaveAttribute("aria-selected", "true")
   await expect(card).toBeVisible()
-  await expect(card.getByRole("button").first()).toContainText(f.phone ? "已完成 3 / 5" : "3 of 5 complete")
-  await card.getByRole("button").first().click()
+  await expect(card.getByText(f.phone ? "已完成 3 / 12" : "3 of 12 complete", { exact: true })).toBeVisible()
   const graph = card.getByRole("region", { name: f.copy("session_task_dag_dependencies"), exact: true })
-  await expect(graph.locator("path[marker-end]")).toHaveCount(5)
-  await graph.getByRole("button", { name: /Review each component/ }).click()
+  await expect(graph.locator("path[marker-end]")).toHaveCount(11)
+  await expect(graph.locator("path[stroke-dasharray]")).toHaveCount(1)
+  const prepareNode = graph.getByRole("button", { name: /Prepare the evidence/ })
+  const reviewNode = graph.getByRole("button", { name: /Review each component/ })
+  const savedCheck = prepareNode.locator("svg.lucide-check")
+  await expect(savedCheck).toHaveCount(1)
+  expect(await savedCheck.getAttribute("data-e2e-check-plays")).toBeNull()
+  const [first, second, canvas] = await Promise.all([prepareNode.boundingBox(), reviewNode.boundingBox(), graph.boundingBox()])
+  expect(first!.y).toBeLessThan(second!.y)
+  expect(first!.x).toBeGreaterThanOrEqual(canvas!.x)
+  expect(first!.x + first!.width).toBeLessThanOrEqual(canvas!.x + canvas!.width)
+  const zoom = (key: "session_task_dag_zoom_in" | "session_task_dag_zoom_out" | "session_task_dag_fit") =>
+    card.getByRole("button", { name: f.copy(key), exact: true }).click()
+  await zoom("session_task_dag_zoom_in")
+  await expect(card.getByText("125%", { exact: true })).toBeVisible()
+  await zoom("session_task_dag_zoom_out")
+  await expect(card.getByText("100%", { exact: true })).toBeVisible()
+
+  if (info.project.name === "desktop-chromium") {
+    const separator = page.getByRole("separator", { name: f.copy("resize_workbench"), exact: true })
+    const before = (await workbench.boundingBox())!
+    const handle = (await separator.boundingBox())!
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(handle.x - 115, handle.y + handle.height / 2, { steps: 6 })
+    await page.mouse.up()
+    await expect.poll(async () => (await workbench.boundingBox())!.width).toBeGreaterThan(before.width + 95)
+
+    const viewport = (await graph.boundingBox())!
+    const beforePan = await graph.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }))
+    expect(viewport.height).toBeGreaterThan(400)
+    await page.mouse.move(viewport.x + viewport.width - 25, viewport.y + viewport.height - 25)
+    await page.mouse.down()
+    await page.mouse.move(viewport.x + viewport.width - 85, viewport.y + viewport.height - 135, { steps: 6 })
+    await page.mouse.up()
+    await expect.poll(() => graph.evaluate((element) => element.scrollLeft)).toBeGreaterThan(beforePan.x + 30)
+    await expect.poll(() => graph.evaluate((element) => element.scrollTop)).toBeGreaterThan(beforePan.y + 50)
+
+    await card.getByRole("button", { name: f.copy("session_task_dag_expand") }).click()
+    const expanded = page.getByRole("dialog", { name: f.copy("workbench_c2730bc7"), exact: true })
+    await expect(expanded).toBeVisible()
+    await expect.poll(async () => (await expanded.boundingBox())!.width).toBe(page.viewportSize()!.width)
+  }
+
+  await zoom("session_task_dag_fit")
+  await expect.poll(() => graph.evaluate((element) =>
+    element.scrollWidth - element.clientWidth <= 1 && element.scrollHeight - element.clientHeight <= 1,
+  )).toBe(true)
+  await reviewNode.click()
   const steps = card.getByRole("list", { name: f.copy("session_task_dag_steps"), exact: true })
-  await expect(steps.getByRole("listitem")).toHaveCount(2)
+  await expect(steps.getByRole("listitem")).toHaveCount(4)
   const lotus = steps.getByRole("listitem").filter({ hasText: "Check Lotus source" })
   await expect(lotus).toContainText(f.copy("ticket_in_progress_5026a63b"))
-  f.emit({ type: "task_list_item_progress", session_id: primary, item_id: "lotus",
-    status: "completed", tool_calls_count: 1, version: 4 })
+  const completion = { type: "task_list_item_progress", session_id: primary, item_id: "lotus",
+    status: "completed", tool_calls_count: 1, version: 4 }
+  f.emit(completion)
   await expect(lotus).toContainText(f.copy("completed_f28461bb"))
-  await expect(card.getByRole("button").first()).toContainText(f.phone ? "已完成 4 / 5" : "4 of 5 complete")
+  const check = graph.getByRole("button", { name: /Check Lotus source/ }).locator("svg.lucide-check")
+  await expect(check).toHaveAttribute("data-e2e-check-plays", "1")
+  await f.emitChange(completion)
+  await expect(check).toHaveAttribute("data-e2e-check-plays", "1")
+  await expect(card.getByText(f.phone ? "已完成 4 / 12" : "4 of 12 complete", { exact: true })).toBeVisible()
+  await zoom("session_task_dag_fit")
   await capture(f, "session-task-dag")
+  if (info.project.name === "desktop-chromium") {
+    await card.getByRole("button", { name: f.copy("session_task_dag_restore") }).click()
+    await expect(workbench).not.toHaveAttribute("aria-modal", "true")
+    await expect(steps).toBeVisible()
+    await capture(f, "session-task-dag-docked")
+  }
+  await card.getByRole("button", { name: f.copy("project_work_close_details"), exact: true }).focus()
+  await page.keyboard.press("Enter")
+  await expect(reviewNode).toBeFocused()
+  await expect(steps).toHaveCount(0)
   await verifyIsolation(f)
 })
 
-test("Session DAG catches up from the durable feed while the viewer is idle", async ({ page }, info) => {
+test("Session DAG keeps task states current on the idle feed and after reconnect with reduced motion", async ({ page }, info) => {
+  await observeCompletionChecks(page)
   const f = await prepare(page, info, { running: false })
+  await page.emulateMedia({ reducedMotion: "reduce" })
   const card = page.getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
-  await expect(card).toHaveCount(0)
-  const task = { id: "review", description: "Review the saved evidence", status: "completed", notes: "", depends_on: [] }
+  const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
+  await expect(shortcut).toHaveCount(0)
+  await page.getByRole("button", { name: f.copy("open_side_panel_732ea38b"), exact: true }).click()
+  await page.getByRole("button", { name: `${f.copy("session_task_dag_title")} ${f.copy("session_task_dag_description")}`, exact: true }).click()
+  await expect(card.getByText(f.copy("session_task_dag_empty"))).toBeVisible()
+
+  const task = { id: "review", description: "Review the saved evidence", status: "pending", notes: "", depends_on: [] }
   const saved = { session_id: primary, title: "Remote plan", items: [task], created_at: at, updated_at: at }
   await f.emitChange({ type: "task_list_updated", task_list: saved, version: 5 })
-  await expect(card).toBeVisible()
+  const review = card.getByRole("button", { name: /Review the saved evidence/ })
+  await expect(review).toContainText(f.copy("session_task_dag_pending"))
   const completed = f.phone ? "已完成 1 / 1" : "1 of 1 complete"
-  await expect(card.getByRole("button").first()).toContainText(completed)
+  const progress = { type: "task_list_item_progress", session_id: primary, item_id: task.id, tool_calls_count: 1 }
+  const reviewCheck = review.locator("svg.lucide-check")
+  await f.emitChange({ ...progress, status: "in_progress", version: 6 })
+  await expect(review).toContainText(f.copy("ticket_in_progress_5026a63b"))
+  await f.emitChange({ ...progress, status: "blocked", version: 7 })
+  await f.emitChange({ ...progress, status: "completed", version: 6 })
+  await expect(review).toContainText(f.copy("session_task_dag_blocked"))
+  await expect(reviewCheck).toHaveCount(0)
+  await f.emitChange({ ...progress, status: "completed", version: 8 })
+  await expect(review).toContainText(f.copy("completed_f28461bb"))
+  await expect(reviewCheck).toHaveCount(1)
+  expect(await reviewCheck.getAttribute("data-e2e-check-plays")).toBeNull()
+  await f.emitChange({ type: "task_list_updated", task_list: saved, version: 4 })
+  await f.emitChange({ ...progress, status: "in_progress", version: 5 })
+  await expect(card.getByText(completed, { exact: true })).toBeVisible()
 
-  const older = { ...saved, items: [{ ...task, status: "pending" }] }
-  await f.emitChange({ type: "task_list_updated", task_list: older, version: 4 })
-  await expect(card.getByRole("button").first()).toContainText(completed)
+  const followUp = { ...task, id: "follow-up", description: "Follow up on the evidence", status: "blocked", depends_on: [task.id] }
+  await page.route(`**/api/v1/task/${primary}`, (route) => route.fulfill({
+    json: { ...saved, items: [{ ...task, status: "completed" }, followUp], version: 9 },
+  }))
+  await f.reconnect()
+  await expect(card.getByRole("button", { name: /Follow up on the evidence/ }))
+    .toContainText(f.copy("session_task_dag_blocked"))
+  await expect(card.getByText(f.phone ? "已完成 1 / 2" : "1 of 2 complete", { exact: true })).toBeVisible()
   expect(f.clientFrames).not.toContainEqual(expect.objectContaining({ type: "subscribe", ch: `agent.${primary}` }))
+  await verifyIsolation(f)
+})
+
+test("only the visible Session hydrates its task shortcut after navigation and Settings", async ({ page }, info) => {
+  const saved: TaskList = { session_id: primary, title: "Review plan", created_at: at, updated_at: at,
+    items: [{ id: "review", description: "Review the visible session", status: "in_progress", depends_on: [], notes: "" }] }
+  const f = await prepare(page, info, { multipleSessions: true, tasks: new Map([[primary, saved]]) })
+  const shortcut = page.getByRole("button", { name: f.copy("session_task_dag_open"), exact: true })
+  const dag = page.locator("#right-workbench").getByRole("region", { name: f.copy("session_task_dag_title"), exact: true })
+  const requests = () => f.requests.filter(({ method, path }) => method === "GET" && path.startsWith("/api/v1/task/"))
+    .map(({ path }) => path.split("/").at(-1))
+  const select = async (title: string) => {
+    if (f.phone) await page.getByRole("banner").getByRole("button", { name: f.copy("menu_4ce4cafd"), exact: true }).click()
+    await page.getByRole("button", { name: title, exact: true }).click()
+    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible()
+  }
+  await expect(shortcut).toBeVisible()
+  await expect.poll(requests).toEqual([primary])
+  await expect(dag).toHaveCount(0)
+  await shortcut.click()
+  await expect(dag.getByRole("button", { name: /Review the visible session/ })).toBeVisible()
+  await page.locator("#right-workbench").getByRole("button", { name: f.copy("collapse_workbench_739b282d"), exact: true }).click()
+  await expect(dag).toHaveCount(0)
+
+  await select("Idle comparison B")
+  await expect(shortcut).toHaveCount(0)
+  await expect.poll(requests).toEqual([primary, comparison])
+  await select("Compression main")
+  await expect(shortcut).toBeVisible()
+  await expect.poll(requests).toEqual([primary, comparison, primary])
+
+  await page.keyboard.press("Control+k")
+  const search = page.getByPlaceholder(f.copy("search_sessions_or_actions_b2a0f9e8"), { exact: true })
+  const settingsTitle = f.copy("system_settings_68ea5dd4")
+  await search.fill(settingsTitle)
+  await search.press("Enter")
+  const settings = page.getByRole("main", { name: settingsTitle, exact: true })
+  await expect(settings).toBeVisible()
+  await expect(shortcut).toHaveCount(0)
+  await f.emitChange({ type: "session_history_committed", session_id: primary })
+  expect(requests()).toEqual([primary, comparison, primary])
+  await settings.getByRole("button", { name: f.copy("back_to_chat_5b8ac6b1"), exact: true }).click()
+  await expect(shortcut).toBeVisible()
+  await expect.poll(requests).toEqual([primary, comparison, primary, primary])
   await verifyIsolation(f)
 })
 
@@ -296,13 +478,19 @@ async function verifyIsolation(f: Fixture) {
 
 test("pre-start failure and deferral remain visible without a summary animation", async ({ page }, info) => {
   const f = await prepare(page, info)
-  f.budget(94)
-  await expectUsage(f, 94)
+  const usage = page.getByRole("button", { name: f.copy("context_usage_06d7b2e3"), exact: true })
+  await expect(usage).toHaveCount(0)
   await expect(f.notice).toHaveCount(0)
   f.status(`failed_candidate_plan:${privateDetail}`)
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
   await expect(f.notice.locator("svg")).toHaveCount(0)
-  f.emit({ type: "token", content: "Synthetic answer continues." })
+  const answer = "Synthetic answer continues."
+  f.emit({ type: "token", content: answer })
+  await expect(page.locator(".assistant-streamdown")).toContainText(answer)
+  await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
+  await expect(usage).toHaveCount(0)
+  f.budget(94)
+  await expectUsage(f, 94)
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_failed_candidate"))
   f.status("deferred_tool_protocol")
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_deferred_tool"))
@@ -341,14 +529,16 @@ test("started progress and completion wait for actual whole-prompt budget", asyn
   await verifyIsolation(f)
 })
 
-test("an empty summary tells the user to lower reasoning effort", async ({ page }, info) => {
+test("an empty summary confirms the conversation was kept", async ({ page }, info) => {
   const f = await prepare(page, info)
   f.status("started")
   await expect(f.notice).toHaveText(f.copy("context_compression_notice_running"))
   f.status("failed_empty_summary")
-  await expect(f.notice).toHaveText(f.copy("context_compression_notice_empty_summary"))
+  await expect(f.notice).toHaveText(f.locale === "zh-CN"
+    ? "本次未能压缩上下文。聊天记录已保留。"
+    : "Context compression could not finish. Your conversation history was preserved.")
   await expect(f.notice.locator("svg")).toHaveCount(0)
-  await capture(f, "empty-summary-reasoning-guidance")
+  await capture(f, "empty-summary-history-preserved")
   await verifyIsolation(f)
 })
 

@@ -1,7 +1,7 @@
 import { workbenchPanel } from "./support/workbench.js"
 import { devices, expect, test } from "@playwright/test"
 import { readFile } from "node:fs/promises"
-import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { artifactFileForSource, installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 test("browser workbench shares one session across human input, DOM, screenshot, and reopen", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "phone-chromium", "The phone workbench does not expose the browser")
@@ -16,6 +16,15 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
     localStorage.setItem("lotus_next_last_session", "all-surface-session")
   })
   const observation = await installArtifactRuntime(page, standaloneScenario)
+  const browserAsset = await artifactFileForSource("src/solid/workbench/browser/BrowserPane.tsx")
+  let browserAssetRequests = 0
+  let releaseBrowserAsset!: () => void
+  const heldBrowserAsset = new Promise<void>((resolve) => { releaseBrowserAsset = resolve })
+  await page.route(`**/${browserAsset}`, async (route) => {
+    browserAssetRequests += 1
+    await heldBrowserAsset
+    await route.fallback()
+  })
   await page.route("**/api/v1/task/all-surface-session", (route) =>
     route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
   )
@@ -135,7 +144,14 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
     path: emptyScreenshot,
     contentType: "image/png",
   })
-  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+  expect(browserAssetRequests).toBe(0)
+  try {
+    await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+    await expect(panel.getByRole("status").filter({ hasText: /^加载中…$/ })).toBeVisible()
+    await expect.poll(() => browserAssetRequests).toBe(1)
+  } finally {
+    releaseBrowserAsset()
+  }
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   await expect(browser.getByText("还没有打开网页")).toBeVisible()
   await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
@@ -485,7 +501,7 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
   await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
   await page.getByRole("menuitem", { name: "检查器" }).click()
   const tablist = panel.getByRole("tablist", { name: "工作面板标签页" })
-  const order = () => tablist.locator('[role="tab"]').allTextContents()
+  const order = () => tablist.getByRole("tab").allTextContents()
   await expect.poll(order).toEqual(["Alpha", "Beta", "检查器"])
   const inspectorHandle = panel.getByRole("button", { name: "调整检查器标签页顺序" })
   await inspectorHandle.focus()

@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { compareRfc3339Instants } from "@shared/utils/compareRfc3339Instants"
 import { apiClient } from "@services/api"
 import type { ActorTreeData, ActorTreeNode } from "./actorTreeView"

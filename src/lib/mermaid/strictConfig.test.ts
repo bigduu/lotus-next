@@ -7,7 +7,7 @@ import {
   MERMAID_STRICT_CONFIG,
   initializeTrustedMermaid,
 } from "./strictConfig"
-import { useThemeStore } from "@shared/store/themeStore"
+import { themeStore } from "@shared/store/themeState"
 
 const originalTextLength = Object.getOwnPropertyDescriptor(
   SVGElement.prototype,
@@ -43,7 +43,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  useThemeStore.setState({ themeMode: "dark" })
+  themeStore.setState({ themeMode: "dark" })
   initializeTrustedMermaid("app")
 })
 
@@ -113,7 +113,7 @@ describe("trusted Mermaid security policy", () => {
   })
 
   it("restores the resolved light application theme after a PDF export", () => {
-    useThemeStore.setState({ themeMode: "light" })
+    themeStore.setState({ themeMode: "light" })
     initMermaidForExport()
     restoreMermaidAppConfig()
     expect(mermaid.mermaidAPI.getConfig()).toMatchObject({

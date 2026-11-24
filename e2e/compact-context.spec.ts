@@ -24,7 +24,8 @@ test("compacts from the composer without posting a turn and preserves failed dra
     }
     if (compactCalls === 2) {
       await route.fulfill({ status: 422, json: { error: {
-        code: "context_summary_empty", type: "api_error", message: "The model returned no summary.",
+        code: "context_summary_empty", type: "api_error",
+        message: "The model returned no summary. Lower the reasoning effort for the model used for context compression, then try again.",
       } } })
       return
     }
@@ -38,7 +39,7 @@ test("compacts from the composer without posting a turn and preserves failed dra
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
   const input = page.getByRole("textbox", { name: "消息", exact: true })
-  const command = page.getByRole("button", { name: /^\/compact(?:\s|$)/ })
+  const command = page.getByRole("option", { name: /^\/compact(?:\s|$)/ })
   await input.fill("/co")
   await expect(command).toBeEnabled()
   if (testInfo.project.name === "desktop-chromium") {
@@ -56,8 +57,9 @@ test("compacts from the composer without posting a turn and preserves failed dra
   await error.locator("../..").getByRole("button", { name: "关闭", exact: true }).click()
 
   await input.press("Enter")
-  const emptySummary = page.getByRole("alert").filter({ hasText: "调低本次压缩所用模型的推理强度" })
+  const emptySummary = page.getByRole("alert").filter({ hasText: "本次未能压缩上下文。聊天记录已保留。" })
   await expect(emptySummary).toBeVisible()
+  await expect(emptySummary).not.toContainText("Lower the reasoning effort")
   await expectComposerText(input, "/compact")
   expect(posts).toEqual([endpoint, endpoint])
   await emptySummary.locator("../..").getByRole("button", { name: "关闭", exact: true }).click()

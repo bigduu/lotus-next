@@ -9,7 +9,7 @@ import {
   recordSessionUserInput,
   sessionOrderSnapshot,
   sessionSortTime,
-} from "./sidebarSessionOrder"
+} from "./sidebarSessionOrderState"
 
 const chat = (id: string, createdAt: number) => ({ id, createdAt })
 const ids = (chats: Array<{ id: string }>) => chats.map((entry) => entry.id)

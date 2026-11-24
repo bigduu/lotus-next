@@ -4,7 +4,64 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 
 const artifact = JSON.parse(readFileSync("dist/lotus-next-manifest.json", "utf8"))
 const assets = JSON.parse(readFileSync("dist/asset-manifest.json", "utf8")) as Record<string, { src?: string; file: string; isDynamicEntry?: boolean }>
-const workChunk = Object.values(assets).find((entry) => entry.src === "src/components/app/ProjectWorkBoard.tsx")
+const workChunk = assets["src/solid/project-work/ProjectWorkBoard.tsx"]
+
+test("Project Work retries a failed board asset without reloading or issuing commands", async ({ page }, info) => {
+  const retryChunk = assets["src/solid/project-work/ProjectWorkBoard.tsx?project-work-retry"]
+  expect(workChunk.isDynamicEntry).toBe(true)
+  expect(retryChunk.isDynamicEntry).toBe(true)
+  expect(retryChunk.file).not.toBe(workChunk.file)
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
+  })
+  const project = { id: "project-board-retry", name: "Project Board Retry", status: "active", revision: 1,
+    resource_revision: 1, workspace_bindings: [], project_path: "/fixture/project-board-retry",
+    project_path_status: "configured", workspace_count: 0, schema_version: 3,
+    sidebar: { sections: [], session_sections: {}, hidden_legacy: false },
+    created_at: "2026-10-17T00:00:00Z", updated_at: "2026-10-17T00:00:00Z" }
+  const observed = await installArtifactRuntime(page, standaloneScenario)
+  await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [project] } }))
+  await page.route("**/api/v1/projects/project-board-retry", (route) => route.fulfill({ json: project }))
+  const boardReads: unknown[] = []
+  await page.route("**/api/v1/tickets/project-board", (route) => {
+    boardReads.push(route.request().postDataJSON())
+    return route.fulfill({ json: { snapshot: { commit: "retry-fixture", seq: 1, authority_epoch: 1 }, index_seq: 1,
+      coverage: "authoritative_scope", truncated: false, omitted_count: 0, next_cursor: null,
+      data: { project_id: project.id, rows: [], counts: { todo: 0, doing: 0, testing: 0, done: 0, blocked: 0, cancelled: 0, total: 0 } },
+    } })
+  })
+  await page.route("**/api/v1/tickets/sprints/list", (route) => route.fulfill({ status: 404, json: {} }))
+  const commands: string[] = []
+  const loads: string[] = []
+  let navigations = 0
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations += 1 })
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname
+    if (path === `/${retryChunk.file}` || path === `/${workChunk.file}`) loads.push(path.slice(1))
+    if (request.method() === "POST" && /\/tickets\/(?:sprints\/)?commands?(?:\/|$)/.test(path)) commands.push(path)
+  })
+  await page.route(`**/${workChunk.file}`, (route) => route.abort("failed"))
+  await page.goto(standaloneScenario.entryUrl)
+  if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
+  const projectActions = page.getByRole("button", { name: "Project Board Retry 项目操作", exact: true })
+  await expect(projectActions).toBeVisible()
+  expect(loads).toEqual([])
+  await projectActions.click()
+  await page.getByRole("menuitem", { name: "项目工作", exact: true }).click()
+  const dialog = page.getByRole("dialog")
+  await expect(dialog.getByRole("alert")).toContainText("无法加载 Work 详情")
+  expect(loads).toEqual([workChunk.file])
+  expect(boardReads).toEqual([])
+  expect(navigations).toBe(1)
+  await dialog.getByRole("button", { name: "重试", exact: true }).click()
+  await expect(dialog.getByTestId("project-work-board")).toBeVisible()
+  await expect.poll(() => boardReads.length).toBe(1)
+  expect(loads).toEqual([workChunk.file, retryChunk.file])
+  expect(commands).toEqual([])
+  expect(navigations).toBe(1)
+  expect(observed.pageErrors).toEqual([])
+})
 
 for (const colorScheme of ["light", "dark"] as const) {
   test(`project Work board remains read-only and responsive in ${colorScheme}`, async ({ page }, info) => {
@@ -120,6 +177,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       await openWork()
       await expect(dialog.getByRole("heading")).toContainText("Project Board")
       await expect(dialog.getByTestId("project-work-loading")).toBeVisible()
+      await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true)
       await expect.poll(() => workLoads.length).toBe(1)
       expect(workReads()).toEqual([])
       const loadedWork = page.waitForResponse((response) => response.url().endsWith(workChunk!.file))

@@ -27,17 +27,17 @@ const sessions = snapshots.flatMap(({ nodes }) => nodes.map((node) => ({
   root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
 })))
 
-async function prepare(page: Page, legacyTarget?: string, content: "short" | "history" | "wide" = "short") {
-  await page.addInitScript(({ rootId, legacyTarget, origin }) => {
+async function prepare(page: Page, legacyTarget?: string, content: "short" | "history" | "wide" = "short", initialId = rootId) {
+  await page.addInitScript(({ rootId, initialId, legacyTarget, origin }) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
-    localStorage.setItem("lotus_next_last_session", rootId)
+    localStorage.setItem("lotus_next_last_session", initialId)
     if (legacyTarget) {
       const key = "lotus-next.workbench.v1:" + encodeURIComponent(origin + "/api/v1") + ":" + encodeURIComponent(rootId)
       localStorage.setItem(key, JSON.stringify({ version: 1, state: {
         open: true, tab: "session", tools: ["session"], order: ["tool:session"], secondSid: legacyTarget,
       } }))
     }
-  }, { rootId, legacyTarget, origin: standaloneScenario.origin })
+  }, { rootId, initialId, legacyTarget, origin: standaloneScenario.origin })
   const observation = await installArtifactRuntime(page, standaloneScenario)
   const projected: string[] = []
   let releaseNested!: () => void
@@ -58,6 +58,10 @@ async function prepare(page: Page, legacyTarget?: string, content: "short" | "hi
     if (snapshot) return route.fulfill({ json: snapshot })
     const chosen = sessions.find((item) => path === "/api/v1/sessions/" + item.id)
     if (chosen) return route.fulfill({ json: { session: chosen }, headers: { ETag: '"1"' } })
+    const main = initialId !== rootId && sessions.find((item) => path === "/api/v1/history/" + item.id)
+    if (main) return route.fulfill({ json: { session_id: main.id, messages: [
+      { id: main.id + "-main", role: "user", content: main.title + " main transcript", created_at: at },
+    ] } })
     const history = sessions.find((item) => path === "/api/v1/sessions/" + item.id + "/history")
     if (history) {
       expect(url.searchParams.get("projection")).toBe("messages")
@@ -88,6 +92,24 @@ async function prepare(page: Page, legacyTarget?: string, content: "short" | "hi
 }
 
 const frame = (value: unknown) => value as { type?: string; ch?: string }
+
+test("a restored nested Child returns to its immediate parent in the main transcript", async ({ page }) => {
+  const { observation, projected, releaseNested } = await prepare(page, undefined, "short", nestedId)
+  releaseNested()
+  const parent = page.getByRole("button", { name: "子代理 · 返回父会话", exact: true })
+  const transcript = page.locator("[data-chat-layout] [data-message-list-content]")
+  await expect(page.getByRole("heading", { name: "Nested writer", exact: true })).toBeVisible()
+  await expect(transcript).toContainText("Nested writer main transcript")
+  await parent.click()
+  await expect(page.getByRole("heading", { name: "Search branch", exact: true })).toBeVisible()
+  await expect(transcript).toContainText("Search branch main transcript")
+  await parent.click()
+  await expect(page.getByRole("heading", { name: "Current root", exact: true })).toBeVisible()
+  await expect(transcript).toContainText("Current root main transcript")
+  await expect(parent).toHaveCount(0)
+  expect(projected).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+})
 
 test("reads and quickly switches only between subagents in the active tree", async ({ page }, info) => {
   const { observation, projected, releaseNested } = await prepare(page)

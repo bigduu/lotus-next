@@ -333,8 +333,8 @@ export class SettingsService {
    * Read one typed configuration section with its CAS revision.
    *
    * The section endpoints are used instead of `POST /bamboo/config` because a
-   * whole-config write rewrites unrelated section files (see the
-   * `model_limits.json` clobber documented on `useSystemConfig`).
+   * whole-config write rewrites unrelated section files, including
+   * `model_limits.json` when the patch omits `model_limits`.
    */
   async getTypedSection<T>(section: string): Promise<TypedSectionEnvelope<T>> {
     return apiClient.get<TypedSectionEnvelope<T>>(

@@ -522,7 +522,7 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   startRuntime,
 }) => {
   const { surface, observation } = await startRuntime(embeddedScenario)
-  const settingsArtifact = await artifactFileForSource("src/components/chat/Settings.tsx")
+  const settingsArtifact = await artifactFileForSource("src/solid/settings/SettingsPage.tsx")
   const settingsPath = `${embeddedScenario.appPath}${settingsArtifact}`
 
   await expectCanonicalRuntime(observation, embeddedScenario)
@@ -548,7 +548,7 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await expect(surface.getByText("OpenAI · 默认", { exact: true })).toHaveCount(0)
 
   await surface.getByRole("button", { name: "新增", exact: true }).click()
-  const providerType = surface.getByRole("combobox", { name: "提供方类型" })
+  const providerType = surface.getByRole("combobox", { name: "提供方类型", exact: true })
   await providerType.click()
   const selectContent = surface.locator('[data-slot="select-content"]')
   await expect(selectContent).toBeVisible()

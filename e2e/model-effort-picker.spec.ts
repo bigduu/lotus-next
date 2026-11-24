@@ -162,15 +162,23 @@ async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>,
 test("saved-session restoration completes before the picker test edits its draft", async ({ page }) => {
   const draft = "Preserve this draft while changing model and effort"
   const input = page.getByRole("textbox", { name: "消息", exact: true })
+  const toolbar = page.locator("[data-composer-toolbar]")
+  const savedPermission = toolbar.getByRole("region", { name: "会话权限", exact: true })
   let restorationChecks = 0
   const { observation, patches } = await setup(page, async () => {
     restorationChecks += 1
-    await expect(modelEffortPicker(page)).toBeVisible()
+    await expect(toolbar.getByRole("combobox", { name: "权限模式", exact: true })).toBeVisible()
+    await expect(savedPermission).toHaveCount(0)
+    await expect(toolbar.getByTestId("model-effort-picker")).toBeVisible()
     await expect(page.getByRole("banner")).not.toContainText(mainTitle)
     await expect(page.getByRole("status").filter({ hasText: "下次创建时使用普通模式" })).toHaveText("下次创建时使用普通模式")
     await expectComposerText(input, "")
   })
   expect(restorationChecks).toBe(1)
+  await expect(savedPermission.getByRole("combobox", { name: "权限模式", exact: true })).toBeVisible()
+  await expect(toolbar.getByTestId("model-effort-picker")).toBeVisible()
+  await expect(page.getByRole("banner").getByRole("combobox", { name: "权限模式", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("banner").getByTestId("model-effort-picker")).toHaveCount(0)
   await input.fill(draft)
   await expectComposerText(input, draft)
   await selectEffort(page, "高")
@@ -186,7 +194,7 @@ test("short model and effort labels align with the composer toolbar without a sp
   const picker = modelEffortPicker(page)
   const geometry = await picker.evaluate((trigger) => {
     const composer = trigger.closest("[data-composer-surface]")!
-    const permission = composer.querySelector('[role="combobox"]')!
+    const permission = composer.querySelector('[aria-haspopup="listbox"][data-slot="select-trigger"]')!
     const send = composer.querySelector('button[aria-label="发送消息"]')!
     const [model, effort] = [...trigger.querySelectorAll("span")]
     const text = trigger.ownerDocument.createRange()
@@ -473,11 +481,16 @@ test("a pending Ultra selection keeps the composer geometry stable", async ({ pa
     return { x, y, width, height }
   }))
   await picker.click()
+  const slider = page.getByRole("slider", { name: "推理强度", exact: true })
   try {
-    await page.getByRole("slider", { name: "推理强度", exact: true }).press("End")
+    await slider.press("End")
     await expect.poll(() => operations.length).toBe(1)
     await expect(surfaces.getByRole("alert")).toHaveCount(0)
     await expect(surfaces.getByRole("status").filter({ hasText: "等待服务器确认" })).toHaveCount(1)
+    await expect(slider).toBeFocused()
+    await expect(slider).toBeDisabled()
+    await page.keyboard.press("Home")
+    expect(operations).toHaveLength(1)
     const pendingSamples = await surfaces.evaluateAll(async (elements) => {
       const view = elements[0]!.ownerDocument.defaultView!
       const samples = []
@@ -497,6 +510,9 @@ test("a pending Ultra selection keeps the composer geometry stable", async ({ pa
     release()
   }
   await expect(picker).toContainText("Ultra")
+  await expect(slider).toBeEnabled()
+  await expect(slider).toBeFocused()
+  await expect(slider).toHaveAttribute("aria-valuetext", "Ultra")
   await expect(surfaces.getByRole("alert")).toHaveCount(0)
   for (let index = 0; index < before.length; index++) {
     expect(await surfaces.nth(index).boundingBox()).toEqual(before[index]!)

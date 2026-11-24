@@ -121,25 +121,22 @@ export const BUNDLE_BUDGET = Object.freeze({
   cssGzipBytes: 18_500,
 })
 
-const immediateBootstrapNames = new Set(["ErrorBoundary", "Root"])
-
 const optionalFeatureEntries = Object.freeze([
-  { label: "ProjectWorkBoard", source: "src/components/app/ProjectWorkBoard.tsx" },
-  { label: "BrowserPane", source: "src/components/app/BrowserPane.tsx" },
-  { label: "ComposerEditor", source: "src/components/chat/ComposerEditor.tsx" },
-  { label: "Settings", source: "src/components/chat/Settings.tsx" },
-  { label: "StreamdownMarkdown", source: "src/components/chat/StreamdownMarkdown.tsx" },
-  { label: "StreamdownMermaid", source: "src/components/chat/StreamdownMermaid.tsx" },
-  { label: "Markdown", source: "src/components/chat/Markdown.tsx" },
-  { label: "CodeBlock", source: "src/components/chat/CodeBlock.tsx" },
-  { label: "MermaidChart", source: "src/components/chat/MermaidChart.tsx" },
-  { label: "renderPdf", source: "src/lib/export/renderPdf.tsx" },
-  { label: "vendor-streamdown", name: "vendor-streamdown" },
-  { label: "vendor-streamdown-code", name: "vendor-streamdown-code" },
-  { label: "vendor-markdown", name: "vendor-markdown" },
-  { label: "vendor-mermaid", name: "vendor-mermaid" },
-  { label: "vendor-highlighter", name: "vendor-highlighter" },
+  { label: "ProjectWorkBoard", source: "src/solid/project-work/ProjectWorkBoard.tsx" },
+  { label: "BrowserPane", source: "src/solid/workbench/browser/BrowserPane.tsx" },
+  { label: "ComposerEditor", source: "src/solid/composer/ComposerEditor.tsx" },
+  { label: "Settings", source: "src/solid/settings/SettingsPage.tsx" },
+  { label: "AssistantMarkdown", source: "src/solid/markdown/AssistantMarkdown.tsx" },
+  { label: "highlightCode", source: "src/solid/markdown/highlight/highlightCode.ts" },
+  { label: "renderMermaid", source: "src/solid/markdown/renderMermaid.ts" },
+  { label: "renderPdf", source: "src/solid/chat/export/renderPdf.ts" },
+  { label: "HomeDashboard", source: "src/solid/chat/home/HomeDashboard.tsx" },
+  { label: "SidebarProjectDrag", source: "src/solid/shell/project-drag/SidebarProjectDrag.tsx" },
 ])
+const immediateBootstrapNames = new Set(["Root", "SolidApp"])
+const reactPackagePattern = /^(?:(?:@[^/]+\/)?(?:react(?:-.*)?|.+-react)|streamdown|@streamdown\/[^/]+)$/
+const solidMarkdownCore = ["unified", "remark-parse", "rehype-sanitize"]
+const deferredMarkdownPackages = /^(?:@shikijs\/[^/]+|shiki|mermaid|jspdf|html2canvas)$/
 
 const forbiddenStartupModulePaths = Object.freeze([
   "src/components/app/ProjectWorkBoard.tsx",
@@ -186,17 +183,14 @@ const forbiddenStartupPackages = Object.freeze([
 ])
 
 const requiredSettingsOwnedModules = Object.freeze([
-  "src/components/chat/Settings.tsx",
-  "src/components/chat/settings/SettingsMetrics.tsx",
-  "src/components/chat/settings/SettingsPlugins.tsx",
+  "src/solid/settings/SettingsPage.tsx",
+  "src/solid/settings/metrics/SettingsMetrics.tsx",
+  "src/solid/settings/plugins/SettingsPlugins.tsx",
   "src/services/metrics/MetricsService.ts",
   "src/services/plugin/PluginService.ts",
 ])
 
-const requiredSettingsOwnedPackages = Object.freeze([
-  "@radix-ui/react-label",
-  "@radix-ui/react-switch",
-])
+const requiredSettingsOwnedPackages = ["@kobalte/core"]
 
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
 
@@ -318,6 +312,9 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   if (entry.src !== "index.html") {
     throw new Error(`Expected index.html entry; received ${String(entry.src)}.`)
   }
+  if (!readChunkOwnership(entry.file).modules.includes("src/solid/entry.tsx")) {
+    throw new Error("The production artifact must load the Solid composition root.")
+  }
 
   const htmlJavaScriptKeys = htmlAssetsWithExtension(html, "js").map((asset) =>
     findManifestKeyByAsset(manifest, asset),
@@ -370,7 +367,8 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   const startupOwnership = closureFiles.map(readChunkOwnership)
   const startupModules = [...new Set(startupOwnership.flatMap(({ modules }) => modules))].sort()
   const startupPackages = [...new Set(startupOwnership.flatMap(({ packages }) => packages))].sort()
-  const settingsClosure = collectStaticClosure(manifest, [settings.key])
+  const settingsRoots = [settings.key, ...(manifest[settings.key].dynamicImports ?? [])]
+  const settingsClosure = collectStaticClosure(manifest, settingsRoots)
   const settingsOwnership = [...settingsClosure]
     .map((key) => manifest[key].file)
     .map(readChunkOwnership)
@@ -383,7 +381,9 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   const forbiddenStartupModules = startupModules.filter(
     (module) =>
       forbiddenStartupModulePaths.includes(module) ||
-      forbiddenStartupModulePrefixes.some((prefix) => module.startsWith(prefix)),
+      forbiddenStartupModulePrefixes.some((prefix) => module.startsWith(prefix)) ||
+      optionalFeatureEntries.some((entry) => entry.source === module) ||
+      ["src/solid/settings/", "src/solid/chat/export/"].some((prefix) => module.startsWith(prefix)),
   )
   const leakedStartupPackages = startupPackages.filter((packageName) =>
     forbiddenStartupPackages.includes(packageName),
@@ -394,8 +394,13 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
   const missingSettingsOwnedPackages = requiredSettingsOwnedPackages.filter(
     (packageName) => !settingsOwnedPackages.includes(packageName),
   )
+  const assistantMarkdown = optionalFeatures.find((feature) => feature.label === "AssistantMarkdown")
+  const assistantMarkdownPackages = assistantMarkdown
+    ? [...new Set([...collectStaticClosure(manifest, [assistantMarkdown.key])]
+      .flatMap((key) => readChunkOwnership(manifest[key].file).packages))].sort()
+    : []
   const rootKey = Object.entries(manifest).find(([, manifestEntry]) =>
-    manifestEntry.src === "src/Root.tsx"
+    manifestEntry.src === "src/solid/shell/SolidApp.tsx"
   )?.[0]
 
   return {
@@ -406,6 +411,8 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
     closureFiles: [...closureFiles].sort(),
     cssFiles: [...cssFiles].sort(),
     immediateDynamicNames,
+    reactPackages: [...new Set(Object.keys(ownership.chunks).flatMap((file) =>
+      readChunkOwnership(file).packages.filter((pkg) => reactPackagePattern.test(pkg))))].sort(),
     rootKey,
     settingsIsOwnedByRoot:
       Boolean(rootKey && settings) && (manifest[rootKey].dynamicImports ?? []).includes(settings.key),
@@ -414,6 +421,8 @@ export function analyzeBundleBudget(distDirectory = defaultDistDirectory) {
     settingsOwnedModules: [...settingsOwnedModules].sort(),
     settingsOwnedPackages,
     forbiddenStartupModules,
+    missingMarkdownCore: solidMarkdownCore.filter((pkg) => !assistantMarkdownPackages.includes(pkg)),
+    leakedMarkdownPackages: assistantMarkdownPackages.filter((pkg) => deferredMarkdownPackages.test(pkg)),
     leakedStartupPackages,
     missingSettingsOwnedModules,
     missingSettingsOwnedPackages,
@@ -433,10 +442,19 @@ export function findBundleBudgetViolations(report) {
     [...immediateBootstrapNames].some((name) => !immediateNames.has(name))
   ) {
     violations.push(
-      `HTML entry immediate dynamic owners must be exactly ErrorBoundary and Root; received ${[
+      `HTML entry immediate dynamic owners must be exactly ${[...immediateBootstrapNames].join(" and ")}; received ${[
         ...immediateNames,
       ].sort().join(", ")}.`,
     )
+  }
+  if (report.reactPackages?.length) {
+    violations.push(`Solid artifact contains React packages: ${report.reactPackages.join(", ")}.`)
+  }
+  if (report.missingMarkdownCore?.length) {
+    violations.push(`Assistant Markdown first-render closure is incomplete: ${report.missingMarkdownCore.join(", ")}.`)
+  }
+  if (report.leakedMarkdownPackages?.length) {
+    violations.push(`Heavy plugins leaked into the plain assistant Markdown closure: ${report.leakedMarkdownPackages.join(", ")}.`)
   }
   if (!report.settingsIsOwnedByRoot) {
     violations.push("Root must own Settings through one direct dynamic feature entry.")

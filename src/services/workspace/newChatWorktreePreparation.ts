@@ -1,5 +1,5 @@
 import { projectService } from "@services/project/ProjectService"
-import { useAppStore } from "@shared/store/appStore"
+import { appStore } from "@shared/store/appStore/state"
 import type { ProjectManifest, WorkspaceBindingRequest } from "@services/project/types"
 import { worktreeService } from "./WorktreeService"
 import { createWorktreeSelection, type NewChatWorktreeSelection } from "./newChatWorktreeTypes"
@@ -53,7 +53,7 @@ export class NewChatWorktreePreparation {
       create: (id, request) => worktreeService.create(id, request),
       // Publish the authoritative ACK through the existing revision-aware store
       // action, even if navigation prevents the pending message from sending.
-      bindWorkspace: (id, revision, request) => useAppStore.getState().bindWorkspace(id, revision, request),
+      bindWorkspace: (id, revision, request) => appStore.getState().bindWorkspace(id, revision, request),
     },
   ) {}
 

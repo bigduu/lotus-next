@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-solid-preview
+dist-solid-artifact
 playwright-report
 test-results
 browser-inventory.json

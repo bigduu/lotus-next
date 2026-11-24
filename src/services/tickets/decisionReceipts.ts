@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import type { ResponseCommand } from "./types"
 
 const prefix = (session: string) => `lotus-next.ticket-decision.${encodeURIComponent(session)}.`

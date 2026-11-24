@@ -18,8 +18,8 @@ vi.mock("@/lib/notify", () => ({
   notifyPermission: mocks.canNotify,
 }))
 
-vi.mock("@shared/store/appStore", () => ({
-  useAppStore: { getState: () => ({ backgroundBash: {}, setBashCompleted: mocks.setBashCompleted }) },
+vi.mock("@shared/store/appStore/state", () => ({
+  appStore: { getState: () => ({ backgroundBash: {}, setBashCompleted: mocks.setBashCompleted }) },
 }))
 
 vi.mock("./v2Stream", () => ({ subscribeAgent: mocks.subscribeAgent }))

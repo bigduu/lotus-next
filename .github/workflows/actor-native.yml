@@ -143,7 +143,7 @@ jobs:
           root = Path.cwd()
           out = root / 'test-results-actor-native'
           manifest = json.loads((out / 'binary-identity.json').read_text())
-          hook = root / 'src/hooks/useActorSnapshot.ts'
+          hook = root / 'src/solid/workbench/subagents/createActorSnapshot.ts'
           builder = root / '.e2e-actor-bamboo/crates/app/bamboo-server/src/app_state/builder.rs'
           original = hook.read_bytes()
           sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -283,8 +283,8 @@ jobs:
               controls = [
                   ('no_subscribe', b'    const subscription = subscribeActor(interestedActorId, {',
                    b'    if (interestedActorId !== rootId) return // Negative control: omit Child Actor interest\n    const subscription = subscribeActor(interestedActorId, {'),
-                  ('clear_gap', b'      snapshotRef.current = snapshot\n',
-                   b'      workerGap.current = null // Negative control: wrongly clear Actor continuity on tree refresh\n      snapshotRef.current = snapshot\n')]
+                  ('clear_gap', b'      snapshotRef = snapshot\n',
+                   b'      workerGap = null // Negative control: wrongly clear Actor continuity on tree refresh\n      snapshotRef = snapshot\n')]
               for name, before, after in controls:
                   assert original.count(before) == 1, 'one reviewed mutation location'
                   hook.write_bytes(original.replace(before, after))

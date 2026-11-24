@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, vi } from "vitest"
-import { changeLocale, i18nReady } from "../shared/i18n"
+import { changeLocale, i18nReady } from "../shared/i18n/runtime"
 import { resolveDefaultBrowserRuntimeConfig } from "../runtime/browserRuntime"
 import { installRuntimeConfig } from "../runtime/runtimeConfig"
 

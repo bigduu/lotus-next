@@ -5,10 +5,13 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 const rootId = "all-surface-session", at = "2026-10-16T00:00:00Z"
 const cursor = (revision: number) => `at1-${"a".repeat(64)}-${revision}`
 const user = (id: string) => ({ id, role: "user", content: id, created_at: at })
-const spawn = (id: string, childId: string) => [{
+const spawn = (id: string, childId: string, compact = false) => [{
   id, role: "assistant", content: "", created_at: at,
-  tool_calls: [{ id, function: { name: "sub_agent", arguments: JSON.stringify({ action: "create", title: childId }) } }],
-}, { id: `${id}-result`, role: "tool", tool_call_id: id, content: JSON.stringify({ child_session_id: childId, parent_session_id: rootId }), tool_success: true, created_at: at }]
+  tool_calls: [{ id, function: { name: "sub_agent", arguments: JSON.stringify(compact
+    ? { intent: "chat", message: "Bounded assignment" }
+    : { action: "create", title: childId }) } }],
+}, { id: `${id}-result`, role: "tool", tool_call_id: id, content: JSON.stringify(compact
+  ? { actor_id: childId } : { child_session_id: childId, parent_session_id: rootId }), tool_success: true, created_at: at }]
 
 async function fixture(page: Page) {
   await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, rootId)
@@ -32,7 +35,7 @@ async function fixture(page: Page) {
     subagent_count: node.role === "root" ? 3 : 0,
     ...(node.role === "root" ? { root_orchestration_only: true, thinking_mode: "ultra", root_mode_transition_epoch: 1, root_mode_birth_token: "a".repeat(64) } : {}),
   }))
-  const history: unknown[] = [user("First turn"), ...spawn("create-1", "actor-0"), ...spawn("create-2", "actor-1"),
+  const history: unknown[] = [user("First turn"), ...spawn("create-1", "actor-0"), ...spawn("create-2", "actor-1", true),
     { id: "answer-1", role: "assistant", content: "First turn answer", created_at: at },
     user("Second turn"), ...spawn("create-3", "actor-2")]
   let socket: WebSocketRoute | undefined, sockets = 0, sequence = 0, reads = 0, denied = false
@@ -70,12 +73,14 @@ async function fixture(page: Page) {
       truncated: false, total_message_count: 1,
       messages: [{ id: "child-transcript", role: "assistant", content: "Child transcript", created_at: at }],
     } })
-    if (path === "/api/v1/runs/active") return route.fulfill({ json: { sessions: [{ session_id: rootId, run_id: "fixture-parent", started_at: at, round_count: 1, last_critical_events: [], running_child_session_ids: rows.slice(1).map((row) => row.id) }] } })
+    if (path === "/api/v1/runs/active") return route.fulfill({ json: { sessions: rows[0].is_running
+      ? [{ session_id: rootId, run_id: "fixture-parent", started_at: at, round_count: 1, last_critical_events: [], running_child_session_ids: rows.slice(1).map((row) => row.id) }] : [] } })
     return route.fallback()
   })
   return { snapshot, history, observation, channels, requests,
     get reads() { return reads }, get sockets() { return sockets },
     setDenied(value: boolean) { denied = value },
+    finishRun() { rows[0].is_running = false },
     emit(event: object) { socket!.send(JSON.stringify({ ch: `agent.${rootId}`, seq: ++sequence, event })) },
     refresh(reason = "changed") { socket!.send(JSON.stringify({ ch: treeChannel, seq: Number(snapshot.stream_cursor!.split("-").at(-1)), control: { type: "actor_snapshot_required", reason, cursor: snapshot.stream_cursor } })) },
     reconnect() { socket!.close() },
@@ -171,6 +176,65 @@ test("a denied snapshot shows unconfirmed states and an explicit retry", async (
   await expect(page.locator("[data-subagent-error]")).toHaveCount(0)
 })
 
+test("an expanded child follows its creating activity from live output to recorded history", async ({ page }) => {
+  const state = await fixture(page)
+  state.history.splice(1)
+  await page.goto(standaloneScenario.entryUrl)
+  const transcript = page.locator("[data-message-list-content]")
+  await expect(transcript.getByText("First turn", { exact: true })).toBeVisible()
+  await expect.poll(() => state.channels.has(`agent.${rootId}`)).toBe(true)
+
+  const birthCall = "handoff-create"
+  state.emit({ type: "tool_start", tool_call_id: birthCall, tool_name: "sub_agent", arguments: { action: "create" } })
+  state.emit({ type: "tool_complete", tool_call_id: birthCall, result: { success: true, result: JSON.stringify({ child_session_id: "actor-0" }) } })
+  state.emit({ type: "token", content: "Birth answer" })
+
+  const card = transcript.locator('[data-subagent-id="actor-0"]')
+  const toggle = card.locator("[data-subagent-toggle]")
+  await expect(transcript.locator('[data-process-activity] + [data-subagent-group] [data-subagent-id="actor-0"]')).toBeVisible()
+  await expect(transcript.locator('[data-history-entry-key] [data-subagent-id="actor-0"]')).toHaveCount(0)
+  await expect(card).toHaveCount(1)
+  await toggle.click()
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+  await expect(transcript.getByText("Birth answer", { exact: true })).toBeVisible()
+  expect(await card.evaluate((node) => {
+    const answer = [...node.closest("[data-message-list-content]")!.querySelectorAll('[data-message-role="assistant"]')]
+      .find((body) => body.textContent === "Birth answer")
+    return !!answer && !!(node.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING)
+  })).toBe(true)
+
+  state.history.push(...spawn(birthCall, "actor-0"), {
+    id: "birth-summary", role: "assistant", phase: "final_answer", content: "Birth answer", created_at: at,
+  })
+  state.finishRun()
+  state.emit({ type: "complete", content: "" })
+  state.emit({ type: "message_appended", session_id: rootId })
+  const fold = transcript.locator('[data-history-entry-key="collapsed-turn-birth-summary"]')
+  await expect(fold.locator('[data-subagent-id="actor-0"]')).toHaveCount(1)
+  await expect(card).toHaveCount(1)
+  await fold.locator("[data-turn-toggle]").click()
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+  const persistedCard = await card.elementHandle()
+
+  const actor = state.snapshot.nodes[1]
+  Object.assign(actor, { logical_state: "active", revision: { session_metadata_version: 8, actor_directory_revision: 3 },
+    activation: { activation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", attempt: 2, status: "running" } })
+  state.snapshot.stream_cursor = cursor(2)
+  state.refresh()
+  await expect(card).toHaveAttribute("data-subagent-status", "running")
+  expect(await card.evaluate((element, original) => element === original, persistedCard)).toBe(true)
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+  await toggle.click()
+  Object.assign(actor, { logical_state: "cold", activation: { ...actor.activation!, status: "cancelled" } })
+  actor.revision.session_metadata_version += 1
+  state.snapshot.stream_cursor = cursor(3)
+  state.refresh()
+  await expect(card).toHaveAttribute("data-subagent-status", "cancelled")
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  await expect(fold.locator('[data-subagent-id="actor-0"]')).toHaveCount(1)
+  expect(state.observation.pageErrors).toEqual([])
+})
+
 test("child expansion survives virtual row removal and opens the original transcript only on demand", async ({ page }, testInfo) => {
   const state = await fixture(page)
   await page.goto(standaloneScenario.entryUrl)
@@ -190,7 +254,7 @@ test("child expansion survives virtual row removal and opens the original transc
   await content.evaluate((node) => { node.parentElement!.scrollTop = node.parentElement!.scrollHeight })
   await expect(card).toHaveCount(0)
   // Release the existing bottom pin through actual reader input.
-  await content.locator("..").hover({ position: { x: 12, y: 12 } })
+  await content.locator("..").hover({ position: { x: 32, y: 12 } })
   await page.mouse.wheel(0, -100000)
   await expect(toggle).toHaveAttribute("aria-expanded", "true")
   await expect(card.locator("[data-subagent-details]")).toBeVisible()
@@ -199,9 +263,13 @@ test("child expansion survives virtual row removal and opens the original transc
   expect(bounds!.x).toBeGreaterThanOrEqual(0)
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
   await page.screenshot({ path: testInfo.outputPath("subagent-expanded-stable.png"), animations: "disabled" })
+  const mainHeading = page.locator('header[role="banner"] h1')
+  const activeTitle = await mainHeading.textContent()
   await card.getByRole("button", { name: /打开 .* 的会话/ }).click()
-  await expect(page.getByText("Child transcript", { exact: true })).toBeVisible()
+  await expect(page.locator("#right-workbench").getByText("Child transcript", { exact: true })).toBeVisible()
+  await expect(mainHeading).toHaveText(activeTitle!)
   expect(childReads()).toBeGreaterThan(0)
+  expect(state.requests.some((url) => new URL(url).pathname === "/api/v1/history/actor-0")).toBe(false)
   expect(state.observation.pageErrors).toEqual([])
 })
 

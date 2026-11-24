@@ -40,22 +40,9 @@ const missing = [
   "dist/bundle-ownership.json",
   `dist/${ARTIFACT_MANIFEST_FILE}`,
 ].filter((file) => !paths.includes(file))
-const lazyJavaScriptChunks = [
-  ["Settings", /^dist\/assets\/Settings-[^/]+\.js$/],
-  ["StreamdownMarkdown", /^dist\/assets\/StreamdownMarkdown-[^/]+\.js$/],
-  ["StreamdownMermaid", /^dist\/assets\/StreamdownMermaid-[^/]+\.js$/],
-  ["vendor-streamdown", /^dist\/assets\/vendor-streamdown-(?!code-)[^/]+\.js$/],
-  ["vendor-streamdown-code", /^dist\/assets\/vendor-streamdown-code-[^/]+\.js$/],
-  ["vendor-mermaid", /^dist\/assets\/vendor-mermaid-[^/]+\.js$/],
-  ["vendor-markdown", /^dist\/assets\/vendor-markdown-[^/]+\.js$/],
-  ["vendor-highlighter", /^dist\/assets\/vendor-highlighter-[^/]+\.js$/],
-]
 
 if (!paths.some((file) => file.startsWith("dist/assets/"))) {
   missing.push("dist/assets/*")
-}
-for (const [chunkName, pattern] of lazyJavaScriptChunks) {
-  if (!paths.some((file) => pattern.test(file))) missing.push(`dist/assets/${chunkName}-*.js`)
 }
 
 const entryHtml = readFileSync(new URL("../dist/index.html", import.meta.url), "utf8")
@@ -72,18 +59,6 @@ if (nonPortableEntryReferences.length > 0) {
 }
 if (!entryHtml.includes('="./assets/')) {
   process.stderr.write("Packaged entrypoint does not reference its entry assets relatively.\n")
-  process.exit(1)
-}
-const eagerlyPreloaded = lazyJavaScriptChunks
-  .map(([chunkName]) => chunkName)
-  .filter((chunkName) => entryHtml.includes(chunkName))
-
-if (eagerlyPreloaded.length > 0) {
-  process.stderr.write(
-    `Lazy feature chunks leaked into the initial HTML:\n${eagerlyPreloaded
-      .map((chunkName) => `  - ${chunkName}`)
-      .join("\n")}\n`,
-  )
   process.exit(1)
 }
 
@@ -106,20 +81,33 @@ if (bundleViolations.length > 0) {
   process.exit(1)
 }
 
+for (const { file } of bundleReport.optionalFeatures) {
+  if (!paths.includes(`dist/${file}`)) missing.push(`dist/${file}`)
+}
+const lazyAssetNames = bundleReport.optionalFeatures.map(({ file }) => file)
+const eagerlyPreloaded = lazyAssetNames.filter((name) => entryHtml.includes(name))
+
+if (eagerlyPreloaded.length > 0) {
+  process.stderr.write(
+    `Lazy feature chunks leaked into the initial HTML:\n${eagerlyPreloaded
+      .map((chunkName) => `  - ${chunkName}`)
+      .join("\n")}\n`,
+  )
+  process.exit(1)
+}
+
 const assetManifest = JSON.parse(
   readFileSync(new URL("../dist/asset-manifest.json", import.meta.url), "utf8"),
 )
 const isAssetRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value)
-const streamdownEntry = Object.entries(assetManifest).find(
-  ([, record]) =>
-    isAssetRecord(record) && record.src === "src/components/chat/StreamdownMarkdown.tsx",
+const markdownSource = "src/solid/markdown/AssistantMarkdown.tsx"
+const markdownEntry = Object.entries(assetManifest).find(
+  ([, record]) => isAssetRecord(record) && record.src === markdownSource && record.isDynamicEntry === true,
 )?.[0]
 
-if (!streamdownEntry) {
-  process.stderr.write(
-    "Production asset manifest has no StreamdownMarkdown dynamic entry.\n",
-  )
+if (!markdownEntry) {
+  process.stderr.write(`Production asset manifest has no dynamic entry for ${markdownSource}.\n`)
   process.exit(1)
 }
 
@@ -138,23 +126,6 @@ function collectStaticAssetImports(current) {
     }
   }
   return record.imports
-}
-
-function collectStaticAssetClosure(entry) {
-  const closure = new Set()
-  const pending = [entry]
-
-  while (pending.length > 0) {
-    const current = pending.pop()
-    if (!current || closure.has(current)) continue
-    closure.add(current)
-
-    for (const imported of collectStaticAssetImports(current)) {
-      if (!closure.has(imported)) pending.push(imported)
-    }
-  }
-
-  return closure
 }
 
 function findStaticAssetCycle(entry) {
@@ -183,55 +154,12 @@ function findStaticAssetCycle(entry) {
   return visit(entry)
 }
 
-if (streamdownEntry) {
-  const firstAssistantClosure = collectStaticAssetClosure(streamdownEntry)
-  const closureFiles = [...firstAssistantClosure]
-    .map((key) => assetManifest[key]?.file)
-    .filter((file) => typeof file === "string" && file.endsWith(".js"))
-    .map((file) => `dist/${file}`)
-  const closureChunkPatterns = new Map([
-    ["vendor-streamdown", /^dist\/assets\/vendor-streamdown-(?!code-)[^/]+\.js$/],
-    ["vendor-markdown", /^dist\/assets\/vendor-markdown-[^/]+\.js$/],
-    ["vendor-streamdown-code", /^dist\/assets\/vendor-streamdown-code-[^/]+\.js$/],
-    ["vendor-mermaid", /^dist\/assets\/vendor-mermaid-[^/]+\.js$/],
-    ["vendor-highlighter", /^dist\/assets\/vendor-highlighter-[^/]+\.js$/],
-  ])
-  const hasClosureChunk = (chunkName) => {
-    const pattern = closureChunkPatterns.get(chunkName)
-    return pattern ? closureFiles.some((file) => pattern.test(file)) : false
-  }
-  const requiredLazyCore = ["vendor-streamdown", "vendor-markdown"]
-  const missingLazyCore = requiredLazyCore.filter((chunkName) => !hasClosureChunk(chunkName))
-  if (missingLazyCore.length > 0) {
-    process.stderr.write(
-      `Streamdown first-render closure is incomplete:\n${missingLazyCore
-        .map((chunkName) => `  - ${chunkName}`)
-        .join("\n")}\n`,
-    )
-    process.exit(1)
-  }
-
-  const staticImportCycle = findStaticAssetCycle(streamdownEntry)
-  if (staticImportCycle) {
-    process.stderr.write(
-      `Streamdown first-render closure contains a static import cycle:\n  - ${staticImportCycle.join("\n  - ")}\n`,
-    )
-    process.exit(1)
-  }
-
-  const expensiveFirstAssistantChunks = [
-    "vendor-streamdown-code",
-    "vendor-mermaid",
-    "vendor-highlighter",
-  ].filter(hasClosureChunk)
-  if (expensiveFirstAssistantChunks.length > 0) {
-    process.stderr.write(
-      `Expensive plugins leaked into the plain assistant Markdown closure:\n${expensiveFirstAssistantChunks
-        .map((chunkName) => `  - ${chunkName}`)
-        .join("\n")}\n`,
-    )
-    process.exit(1)
-  }
+const staticImportCycle = findStaticAssetCycle(markdownEntry)
+if (staticImportCycle) {
+  process.stderr.write(
+    `Assistant Markdown first-render closure contains a static import cycle:\n  - ${staticImportCycle.join("\n  - ")}\n`,
+  )
+  process.exit(1)
 }
 
 if (

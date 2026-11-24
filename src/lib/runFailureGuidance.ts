@@ -1,4 +1,4 @@
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 export type RunFailureGuidance = {
   title: string
   action: string
@@ -7,6 +7,13 @@ export type RunFailureGuidance = {
 /** Explain known run failures without hiding the original diagnostic. */
 export function describeRunFailure(detail: string | null): RunFailureGuidance | null {
   if (!detail) return null
+
+  if (/\b(?:The model returned no summary|Context compression could not finish\. Your conversation history was preserved)\./i.test(detail)) {
+    return {
+      title: uiText("context_compression_run_interrupted"),
+      action: uiText("context_compression_run_history_preserved"),
+    }
+  }
 
   if (/Native canonical Session Source scope changed/i.test(detail)) {
     return {

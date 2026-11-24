@@ -10,7 +10,7 @@ const target = `${root}/first-chat`
 const selection = { repository: "/repo/zenith", root, name: "first-chat", branch: "chat/first-chat" }
 const sectionInZenith = { id: "section:00000000-0000-4000-8000-0000000000a1", name: "Section chat" }
 
-async function install(page: Page, mode: "success" | "bind-conflict" | "uncertain" | "delayed" | "chat-delayed" = "success",
+async function install(page: Page, mode: "success" | "bind-conflict" | "uncertain" | "delayed" | "chat-delayed" | "chat-unconfirmed" = "success",
   options: { section?: { id: string; name: string }; projectDefault?: boolean; defaultRoot?: string | null } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
@@ -90,7 +90,8 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
     if (path === "/api/v1/chat") {
       chats.push(request.postDataJSON())
       order.push("chat")
-      if (mode === "chat-delayed") await chatGate
+      if (mode === "chat-delayed" || mode === "chat-unconfirmed") await chatGate
+      if (mode === "chat-unconfirmed") return route.abort("failed")
       return route.fulfill({ json: { session_id: "all-surface-session", status: "success" } })
     }
     if (path === "/api/v1/execute/all-surface-session") {
@@ -186,6 +187,41 @@ test("new-chat mode is draft-only, then creates, binds and sends the explicit wo
   expect(state.chats[0]).toMatchObject({ project_id: "project-a", workspace_path: target })
   expect(state.chats[0].session_id).toBeUndefined()
   expect(state.order).toEqual(["create", "bind", "chat", "execute"])
+  expect(state.sidebarWrites).toEqual([])
+  expect(state.observation.pageErrors).toEqual([])
+})
+
+test("an in-flight worktree keeps the submitted draft and attachments separate from new edits", async ({ page }) => {
+  const state = await install(page, "delayed")
+  await configure(page)
+  await closeSettings(page)
+  const editor = page.getByRole("textbox", { name: "消息", exact: true })
+  const image = (name: string) => ({
+    name, mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jEboAAAAASUVORK5CYII=", "base64"),
+  })
+  const picker = page.locator('input[type="file"]')
+  await picker.setInputFiles(image("before.png"))
+  await expect(page.getByRole("img", { name: "before.png" })).toBeVisible()
+  await submit(page, "Frozen first request")
+  await expect.poll(() => state.creates.length).toBe(1)
+  await editor.press("Enter")
+  expect(state.chats).toEqual([])
+  await editor.fill("A newer draft")
+  await picker.setInputFiles(image("after.png"))
+  await expect(page.getByRole("img", { name: "after.png" })).toBeVisible()
+  state.releaseCreate()
+  await expect.poll(() => state.executes.length).toBe(1)
+  expect(state.creates).toEqual([selection])
+  expect(state.bindings).toEqual([{ body: { path: target }, revision: '"1"' }])
+  expect(state.chats).toEqual([expect.objectContaining({
+    message: "Frozen first request", workspace_path: target,
+    images: [expect.objectContaining({ name: "before.png" })],
+  })])
+  await expectComposerText(editor, "A newer draft")
+  const composer = editor.locator('xpath=ancestor::*[@data-composer-surface][1]')
+  await expect(composer.getByRole("img", { name: "before.png" })).toBeVisible()
+  await expect(composer.getByRole("img", { name: "after.png" })).toBeVisible()
   expect(state.observation.pageErrors).toEqual([])
 })
 
@@ -346,3 +382,32 @@ test("a section-scoped new chat keeps its durable assignment when leaving during
   await expectComposerText(page.getByRole("textbox", { name: "消息", exact: true }), "")
   expect(state.observation.pageErrors).toEqual([])
 })
+
+for (const outcome of ["accepted", "unconfirmed"] as const) {
+  test(`a ${outcome} prepared send leaves its replacement draft untouched`, async ({ page }) => {
+    const state = await install(page, outcome === "accepted" ? "chat-delayed" : "chat-unconfirmed")
+    await configure(page)
+    await closeSettings(page)
+    await submit(page, "Original prepared request")
+    await expect.poll(() => state.chats.length).toBe(1)
+
+    await revealSidebar(page)
+    await page.getByRole("button", { name: "在 Zenith 中新建会话", exact: true }).click()
+    const editor = page.getByRole("textbox", { name: "消息", exact: true })
+    await editor.fill("Replacement draft")
+    state.releaseChat()
+
+    await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled()
+    if (outcome === "accepted") await expect.poll(() => state.executes.length).toBe(1)
+    else expect(state.executes).toEqual([])
+    await expect(page.getByRole("heading", { name: "开始新任务", exact: true })).toBeVisible()
+    await expectComposerText(editor, "Replacement draft")
+    await revealComposerSettings(page)
+    await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("当前工作区")
+    expect(state.creates).toEqual([selection])
+    expect(state.bindings).toEqual([{ body: { path: target }, revision: '"1"' }])
+    expect(state.chats).toEqual([expect.objectContaining({ message: "Original prepared request", workspace_path: target })])
+    expect(state.sidebarWrites).toEqual([])
+    expect(state.observation.pageErrors).toEqual([])
+  })
+}

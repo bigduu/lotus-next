@@ -1,0 +1,273 @@
+import { createRoot, flush } from "solid-js"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { appStore } from "@shared/store/appStore/state"
+import { ApiError, RequestTimeoutError } from "@services/api/errors"
+import { agentClient, type RootModeOperationInput, type RootModeOperationResponse } from "@services/chat/AgentService"
+import { beginRootModeOperation, finishRootModeOperation, getRootModeFenceState, readRootModeFence } from "@/lib/rootModeTransitionState"
+import { createRootModeAuthority } from "./createRootModeAuthority"
+
+vi.mock("@shared/store/appStore/state", () => ({ appStore: { setState: vi.fn() } }))
+vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
+  getSession: vi.fn(), selectRootMode: vi.fn(), recoverRootMode: vi.fn(),
+} }))
+
+const sessionId = "root/session"
+const birthToken = "a".repeat(64)
+let enabled = false
+let epoch = 0
+let dispose: (() => void) | undefined
+let value: ReturnType<typeof createRootModeAuthority>
+const receipt = (operation: RootModeOperationInput, status: "committed" | "fenced" | "rejected_incompatible" = "committed"): RootModeOperationResponse => ({
+  status, operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
+  resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: enabled,
+  thinking_mode_at_completion: enabled ? "ultra" : "standard",
+  root_tool_authority_revision: 1,
+})
+const apiError = (status: number, code: string) => new ApiError(code, status, "Error", JSON.stringify({ error: { code, message: code } }))
+async function settle(change?: () => unknown) {
+  const result = change?.()
+  flush()
+  await result
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  flush()
+}
+const mount = async (kind?: "root" | "child") => {
+  createRoot((cleanup) => {
+    dispose = cleanup
+    value = createRootModeAuthority(() => sessionId, () => kind)
+  })
+  await settle()
+}
+
+beforeEach(() => {
+  localStorage.clear()
+  enabled = false
+  epoch = 0
+  vi.mocked(appStore.setState).mockClear()
+  vi.mocked(agentClient.getSession).mockReset().mockImplementation(async () => ({ session: {
+    id: sessionId, kind: "root", root_orchestration_only: enabled,
+    thinking_mode: enabled ? "ultra" : "standard",
+    root_mode_transition_epoch: epoch, root_mode_birth_token: birthToken,
+  } }) as Awaited<ReturnType<typeof agentClient.getSession>>)
+  vi.mocked(agentClient.selectRootMode).mockReset().mockImplementation(async (_id, operation) => {
+    enabled = operation.enabled; epoch = operation.expectedEpoch + 1
+    return receipt(operation)
+  })
+  vi.mocked(agentClient.recoverRootMode).mockReset().mockImplementation(async (_id, operation) => {
+    epoch = operation.expectedEpoch + 1
+    return receipt(operation, "fenced")
+  })
+})
+afterEach(() => {
+  dispose?.()
+  dispose = undefined
+  vi.restoreAllMocks()
+})
+
+describe("recoverable Root mode operations", () => {
+  it.each([undefined, "standard", "max"])("fails closed for missing or contradictory canonical mode %s", async (mode) => {
+    vi.mocked(agentClient.getSession).mockResolvedValueOnce({ session: { id: sessionId, kind: "root", root_orchestration_only: true,
+      thinking_mode: mode, root_mode_birth_token: birthToken, root_mode_transition_epoch: 0 } } as Awaited<ReturnType<typeof agentClient.getSession>>)
+    await mount("root")
+    expect(value.confirmed).toBeNull()
+    expect(value.error).toContain("独立 Ultra")
+    await settle(() => value.change(false))
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+  })
+
+  it("does not accept a terminal receipt without canonical mode proof", async () => {
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
+      const response = receipt(operation)
+      return { ...response, thinking_mode_at_completion: undefined } as unknown as RootModeOperationResponse
+    })
+    vi.mocked(agentClient.recoverRootMode).mockRejectedValueOnce(new Error("old backend"))
+    await mount("root"); await settle(() => value.change(true))
+    expect(value.selected).toBeNull()
+    expect(getRootModeFenceState(sessionId)).toBe("uncertain")
+  })
+
+  it("requires current GET epoch to reach the verified terminal epoch", async () => {
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
+      enabled = true // GET still returns epoch 0, older than this receipt.
+      return receipt(operation)
+    })
+    await mount("root")
+    let result!: Awaited<ReturnType<typeof value.change>>
+    await settle(async () => { result = await value.change(true) })
+    expect(result.status).toBe("committed"); expect(result.authority).toBeNull()
+    expect(value.confirmed).toBeNull(); expect(value.error).toContain("早于已确认")
+    expect(getRootModeFenceState(sessionId)).toBe("clear") // The operation itself is terminal.
+    epoch = 1; await settle(() => value.retry())
+    expect(value.confirmed).toBe(true)
+  })
+  it("persists identity before a mode-only select and reads the committed authority", async () => {
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
+      expect(readRootModeFence(sessionId)).toMatchObject({ kind: "pending", operations: [operation] })
+      enabled = true; epoch = 1
+      return receipt(operation)
+    })
+    await mount("root")
+    await settle(() => value.change(true))
+    expect(agentClient.selectRootMode).toHaveBeenCalledOnce()
+    expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
+    expect(getRootModeFenceState(sessionId)).toBe("clear")
+    expect(value.selected).toBe(true)
+  })
+
+  it("recovers a lost select response with the same identity without resending selection", async () => {
+    vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new RequestTimeoutError())
+    await mount("root")
+    await settle(() => value.change(true))
+    const operation = vi.mocked(agentClient.selectRootMode).mock.calls[0][1]
+    expect(agentClient.recoverRootMode).toHaveBeenCalledWith(sessionId, operation)
+    expect(agentClient.selectRootMode).toHaveBeenCalledOnce()
+    expect(getRootModeFenceState(sessionId)).toBe("clear")
+    expect(value.selected).toBe(false)
+    expect(value.error).toContain("安全撤销")
+  })
+
+  it.each([
+    [503, "root_mode_authority_unavailable"], [503, "root_mode_outcome_unconfirmed"],
+    [409, "root_mode_authority_unavailable"], [409, "root_mode_operation_conflict"],
+    [412, "root_mode_precondition_failed"],
+  ])("keeps %s %s fenced until a verified recovery terminal", async (status, code) => {
+    vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(apiError(status, code))
+    vi.mocked(agentClient.recoverRootMode).mockRejectedValue(apiError(status, code))
+    await mount("root")
+    await settle(() => value.change(true))
+    expect(getRootModeFenceState(sessionId)).toBe("uncertain")
+    expect(value.selected).toBeNull()
+    expect(value.recoverable).toBe(true)
+    vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => {
+      enabled = true; epoch = 1
+      return receipt(operation)
+    })
+    await settle(() => value.retry())
+    expect(getRootModeFenceState(sessionId)).toBe("clear")
+    expect(value.selected).toBe(true)
+  })
+
+  it("clears only an explicit birth mismatch and reloads the new lifetime", async () => {
+    vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(apiError(412, "root_mode_birth_mismatch"))
+    await mount("root")
+    await settle(() => value.change(true))
+    expect(getRootModeFenceState(sessionId)).toBe("clear")
+    expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
+    expect(value.error).toContain("会话身份已改变")
+  })
+
+  it("rejects a successor response with another operation identity", async () => {
+    vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new RequestTimeoutError())
+    vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => ({
+      status: "fenced_by_successor", operation_id: `${operation.expectedEpoch}:00000000-0000-0000-0000-000000000000`,
+      expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, current_thinking_mode: "ultra", root_tool_authority_revision: 2,
+    }))
+    await mount("root")
+    await settle(() => value.change(true))
+    expect(getRootModeFenceState(sessionId)).toBe("uncertain")
+    vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => {
+      enabled = true; epoch = 2
+      return { status: "fenced_by_successor", operation_id: operation.operationId,
+        expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, current_thinking_mode: "ultra", root_tool_authority_revision: 2 }
+    })
+    await settle(() => value.retry())
+    expect(getRootModeFenceState(sessionId)).toBe("clear")
+    expect(value.selected).toBe(true)
+  })
+
+  it("refreshes this tab after another tab clears its operation marker", async () => {
+    await mount("root")
+    const operation = beginRootModeOperation(sessionId, 0, birthToken, true)!
+    await settle()
+    expect(value.selected).toBeNull()
+    enabled = true; epoch = 1
+    expect(finishRootModeOperation(sessionId, operation)).toBe(true)
+    window.dispatchEvent(new StorageEvent("storage", { key: `lotus-next.root-mode-operation.v2.${encodeURIComponent(sessionId)}.${operation.operationId}` }))
+    await settle()
+    expect(value.selected).toBe(true)
+    expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
+  })
+
+  it("refreshes an external removal even when this tab never observed the pending marker", async () => {
+    await mount("root")
+    enabled = true; epoch = 1
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: `lotus-next.root-mode-operation.v2.${encodeURIComponent(sessionId)}.0:550e8400-e29b-41d4-a716-446655440000`,
+      oldValue: "completed elsewhere", newValue: null,
+    }))
+    await settle()
+    expect(value.selected).toBe(true)
+    expect(agentClient.getSession).toHaveBeenCalledTimes(2)
+    expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
+  })
+
+  it("finishes duplicate recovery when another tab already removed the same marker", async () => {
+    const operation = beginRootModeOperation(sessionId, 0, birthToken, true)!
+    let complete!: (response: RootModeOperationResponse) => void
+    vi.mocked(agentClient.recoverRootMode).mockReturnValueOnce(new Promise((resolve) => { complete = resolve }))
+    await mount("root")
+    enabled = true; epoch = 1
+    expect(finishRootModeOperation(sessionId, operation)).toBe(true)
+    await settle(() => complete(receipt(operation)))
+    expect(getRootModeFenceState(sessionId)).toBe("clear")
+    expect(value.selected).toBe(true)
+  })
+
+  it("keeps legacy combined-chat markers fail closed without attempting recovery", async () => {
+    localStorage.setItem(`lotus-next.root-mode-transition.v1.${sessionId}`, JSON.stringify({ id: "legacy", requested: false }))
+    await mount("root")
+    expect(value.unsafe).toBe(true)
+    expect(value.recoverable).toBe(false)
+    expect(value.error).toContain("旧版聊天")
+    expect(agentClient.recoverRootMode).not.toHaveBeenCalled()
+  })
+
+  it("does not send a mode operation when storage cannot persist its marker", async () => {
+    await mount("root")
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("quota denied") })
+    await settle(() => value.change(true))
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+    expect(value.error).toContain("切换未发送")
+  })
+
+  it("discards a canonical read that finishes after the Solid owner is disposed", async () => {
+    type SessionResponse = Awaited<ReturnType<typeof agentClient.getSession>>
+    let respond!: (response: SessionResponse) => void
+    vi.mocked(agentClient.getSession).mockReturnValueOnce(new Promise<SessionResponse>((resolve) => { respond = resolve }))
+    await mount("root")
+    expect(value.loading).toBe(true)
+    expect(agentClient.getSession).toHaveBeenCalledOnce()
+
+    dispose?.()
+    dispose = undefined
+    await settle(() => respond({ session: {
+      id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra",
+      root_mode_transition_epoch: 1, root_mode_birth_token: birthToken,
+    } } as SessionResponse))
+
+    expect(value.authority).toBeNull()
+    expect(appStore.setState).not.toHaveBeenCalled()
+  })
+
+  it("recognizes Child from canonical detail before the session index supplies kind", async () => {
+    vi.mocked(agentClient.getSession).mockResolvedValueOnce({ session: {
+      id: sessionId, kind: "child", root_orchestration_only: null,
+    } } as Awaited<ReturnType<typeof agentClient.getSession>>)
+    await mount()
+    expect(value.child).toBe(true)
+    expect(value.isRoot).toBe(false)
+    expect(value.authority).toBeNull()
+    expect(value.error).toBeNull()
+    await settle(() => value.change(true))
+    expect(agentClient.getSession).toHaveBeenCalledExactlyOnceWith(sessionId)
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+  })
+
+  it("keeps Child read-only without loading Root authority", async () => {
+    await mount("child")
+    await settle(() => value.change(true))
+    expect(value.child).toBe(true)
+    expect(agentClient.getSession).not.toHaveBeenCalled()
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+  })
+})

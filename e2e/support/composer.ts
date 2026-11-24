@@ -12,6 +12,7 @@ export async function composerText(editor: Locator): Promise<string> {
     }
     const text = (node: TextNode): string => {
       if (node.nodeType === 3) return node.textContent ?? ""
+      if (node.getAttribute?.("data-draft-completion") === "") return ""
       // ProseMirror's final BR is a caret placeholder, not a draft newline.
       if (node.nodeName === "BR") return node.getAttribute?.("class")?.includes("ProseMirror-trailingBreak") ? "" : "\n"
       return Array.from(node.childNodes, text).join("")

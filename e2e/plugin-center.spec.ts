@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
-import { NOVA_PLUGIN } from "../src/components/chat/settings/plugins/officialPlugins.js"
+import { NOVA_PLUGIN } from "../src/lib/settings/officialPlugins.js"
 
 // Built-artifact browser acceptance with fixture APIs. This does not certify
 // package downloads, native Nova.app installation or OS permission readiness.

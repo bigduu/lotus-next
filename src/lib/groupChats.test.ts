@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { groupChats, groupChatsByProject } from "./groupChats"
-import type { SessionOrder } from "./sidebarSessionOrder"
+import type { SessionOrder } from "./sidebarSessionOrderState"
 
 function chat(id: string, date: string, extra: Partial<ChatItem> = {}): ChatItem {
   return {

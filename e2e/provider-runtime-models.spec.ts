@@ -25,7 +25,8 @@ test("new provider offers only the three general provider types", async ({ page 
 
   await page.getByRole("button", { name: "新增", exact: true }).click()
   await page.getByRole("combobox", { name: "提供方类型", exact: true }).click()
-  await expect(page.getByRole("option")).toHaveText(["Anthropic", "OpenAI", "Google Gemini"])
+  await expect(page.getByRole("listbox", { name: "提供方类型", exact: true }).getByRole("option"))
+    .toHaveText(["Anthropic", "OpenAI", "Google Gemini"])
   await testInfo.attach("provider-types", { body: await page.screenshot(), contentType: "image/png" })
   expect(observation.pageErrors).toEqual([])
 })

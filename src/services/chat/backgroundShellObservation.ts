@@ -1,5 +1,5 @@
 import { isNotifyEnabled, notify, notifyPermission } from "@/lib/notify"
-import { useAppStore } from "@shared/store/appStore"
+import { appStore } from "@shared/store/appStore/state"
 import type { AgentEvent } from "./AgentService"
 import { subscribeAgent } from "./v2Stream"
 
@@ -53,14 +53,14 @@ export function recordBackgroundShellOutcome(sessionId: string, bashId: string, 
   if (wasPending && status !== "killed" && isNotifyEnabled() && notifyPermission() === "granted") {
     observation?.awaitingNotifications.add(`bash:${bashId}`)
   }
-  useAppStore.getState().setBashCompleted(bashId, status, exitCode)
+  appStore.getState().setBashCompleted(bashId, status, exitCode)
   if (wasPending && observation) closeFinishedObservation(sessionId, observation)
 }
 
 /** Keep known background results on the shared session channel after a pane releases its turn. */
 export function observeBackgroundShells(sessionId: string, bashIds: readonly string[]): void {
   if (bashIds.length === 0) return
-  const done = useAppStore.getState().backgroundBash
+  const done = appStore.getState().backgroundBash
   const remaining = bashIds.filter((bashId) => !Object.hasOwn(done, bashId))
   if (remaining.length === 0) return
 

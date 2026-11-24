@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import type { NovaAppSetupReport } from "../src/services/plugin/types.js"
-import { NOVA_PLUGIN } from "../src/components/chat/settings/plugins/officialPlugins.js"
+import { NOVA_PLUGIN } from "../src/lib/settings/officialPlugins.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 // Built frontend and fixture HTTP responses only. This does not install a

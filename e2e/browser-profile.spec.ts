@@ -66,6 +66,7 @@ async function fixture(page: Page, { legacy = false, cleanOnly = false, delayOpe
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("button", { name: "Profile A", exact: true })).toHaveAttribute("aria-current", "page")
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   const panel = workbenchPanel(page)
   await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()

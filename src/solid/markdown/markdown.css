@@ -1,0 +1,7 @@
+.assistant-streamdown [data-solid-code-token] {
+  color: var(--lotus-code-color-light, inherit);
+}
+
+.dark .assistant-streamdown [data-solid-code-token] {
+  color: var(--lotus-code-color-dark, inherit);
+}

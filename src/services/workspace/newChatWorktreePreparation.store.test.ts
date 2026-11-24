@@ -7,7 +7,7 @@ import { worktreeService } from "./WorktreeService"
 import { NewChatWorktreePreparation } from "./newChatWorktreePreparation"
 
 const runtime = vi.hoisted(() => ({ store: null as { getState(): ProjectSlice } | null }))
-vi.mock("@shared/store/appStore", () => ({ useAppStore: { getState: () => runtime.store!.getState() } }))
+vi.mock("@shared/store/appStore/state", () => ({ appStore: { getState: () => runtime.store!.getState() } }))
 const path = "/trees/task"
 const manifest = (revision: number, bound = false): ProjectManifest => ({
   id: "p1", name: "Project one", status: "active", revision, resource_revision: 1,

@@ -29,6 +29,7 @@ test("selects a child repository, creates a checkout, and opens Project-owned an
   ]
   const creates: unknown[] = []
   const bindings: unknown[] = []
+  const chats: unknown[] = []
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -69,6 +70,10 @@ test("selects a child repository, creates a checkout, and opens Project-owned an
       expect(request.headers()["if-match"]).toBe('"1"')
       project = { ...project, revision: 2, workspace_count: 2, workspace_bindings: [request.postDataJSON()] }
       return route.fulfill({ json: project })
+    }
+    if (path === "/api/v1/chat" && request.method() === "POST") {
+      chats.push(request.postDataJSON())
+      return route.fulfill({ json: { session_id: "all-surface-session", status: "success" } })
     }
     await route.fallback()
   })
@@ -128,6 +133,17 @@ test("selects a child repository, creates a checkout, and opens Project-owned an
   await page.getByRole("option", { name: "新建对话", exact: true }).click()
   await revealComposerSettings(page)
   await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("新建 worktree")
+  if (await page.getByRole("dialog", { name: "更多", exact: true }).isVisible()) await page.keyboard.press("Escape")
+
+  await openManager()
+  await checkout.getByRole("button", { name: "打开并新建会话", exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.getByRole("textbox", { name: "消息", exact: true }).fill("Inspect this existing checkout")
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  await expect.poll(() => chats).toEqual([expect.objectContaining({
+    project_id: "project-a", workspace_path: target, message: "Inspect this existing checkout",
+  })])
   expect(creates).toHaveLength(1)
+  expect(bindings).toEqual([{ path: target }])
   expect(observation.pageErrors).toEqual([])
 })

@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import i18n, { changeLocale, i18nReady } from "./index"
+import i18n, { changeLocale, i18nReady } from "./runtime"
 import { APP_LOCALE_STORAGE_KEY, resolveInitialLocale } from "./types"
-import { uiText, uiList } from "./ui"
+import { uiText, uiList } from "./text"
 import { uiEnUs } from "./resources/ui-en-US"
 import { uiZhCn } from "./resources/ui-zh-CN"
 import { groupChats } from "@/lib/groupChats"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
-import { WEEKDAY_OPTIONS } from "@/components/chat/settings/schedules/scheduleModel"
+import { WEEKDAY_OPTIONS } from "@/lib/settings/scheduleModel"
 import { TASK_TEMPLATES } from "@/lib/taskTemplates"
 
 const placeholders = (value: string) => [...value.matchAll(/{{\s*([^},]+)[^}]*}}/g)].map((match) => match[1]).sort()
@@ -105,5 +105,16 @@ describe("English UI localization", () => {
     await changeLocale("zh-CN")
     expect(WEEKDAY_OPTIONS[0].label).toBe("一")
     expect(TASK_TEMPLATES.find((item) => item.taskPrompt)?.taskPrompt).toBe(prompt)
+  })
+
+  it.each([
+    "The model returned no summary. Lower the reasoning effort for the model used for context compression, then try again.",
+    "Context compression could not finish. Your conversation history was preserved.",
+  ])("localizes an interrupted reply after compression fails: %s", async (detail) => {
+    await changeLocale("zh-CN")
+    expect(describeRunFailure(`Turn 1 failed terminally: ${detail}`)).toEqual({
+      title: "回复因上下文压缩中断",
+      action: "你的消息和聊天记录已保留。",
+    })
   })
 })

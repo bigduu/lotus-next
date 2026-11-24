@@ -1,4 +1,4 @@
-import { StateCreator } from "zustand";
+import type { StateCreator } from "zustand/vanilla";
 import { TokenUsage } from "@shared/types/tokenBudget";
 
 export interface TokenBudgetState {
