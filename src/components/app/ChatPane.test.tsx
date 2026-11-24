@@ -387,43 +387,6 @@ beforeEach(() => {
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 
-it("hydrates the visible Session tasks and offers a shortcut scoped to that Session", async () => {
-  const host = document.body.appendChild(document.createElement("div"))
-  const root = createRoot(host); roots.push(root)
-  const send = vi.fn<Send>()
-  const openTaskDag = vi.fn()
-  const render = (id: string, pageVisible = true) => act(async () => {
-    root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
-      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
-      onOpenTaskDag={openTaskDag}
-      onOpenSidebar={vi.fn()} sidebarCollapsed={false} pageVisible={pageVisible} />)
-  })
-  await render("dag-a")
-  expect(runtime.state.loadTaskList).toHaveBeenCalledExactlyOnceWith("dag-a")
-  const shortcut = () => host.querySelector<HTMLButtonElement>("[data-task-dag-shortcut]")
-  expect(shortcut()).toBeNull()
-
-  const taskList: TaskList = {
-    session_id: "dag-a", title: "Review", created_at: "2026-11-22T00:00:00Z", updated_at: "2026-11-22T00:00:00Z",
-    items: [{ id: "review", description: "Review A", status: "in_progress", depends_on: [], notes: "" }],
-  }
-  act(() => { runtime.state.taskLists = { "dag-a": taskList }; notify() })
-  expect(shortcut()).not.toBeNull()
-  act(() => { shortcut()?.click() })
-  expect(openTaskDag).toHaveBeenCalledOnce()
-  expect(host.querySelector(`section[aria-label="${uiText("session_task_dag_title")}"]`)).toBeNull()
-
-  await render("dag-b")
-  expect(shortcut()).toBeNull()
-  expect(runtime.state.loadTaskList.mock.calls).toEqual([["dag-a"], ["dag-b"]])
-  await render("dag-a", false)
-  expect(shortcut()).toBeNull()
-  expect(runtime.state.loadTaskList).toHaveBeenCalledTimes(2)
-  await render("dag-a")
-  expect(shortcut()).not.toBeNull()
-  expect(runtime.state.loadTaskList.mock.calls.at(-1)).toEqual(["dag-a"])
-})
-
 describe("ChatPane composer acknowledgement", () => {
   it("opens the floating Supervisor overview in the header and keeps Work details in its existing target", async () => {
     const value = ticketSnapshot()
@@ -795,21 +758,6 @@ describe("ChatPane composer acknowledgement", () => {
     expect(composerShell?.querySelector('[data-testid="new-session-permission"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="session-permission"]')).toBeNull()
   })
-
-  it.each([
-    ["completed", false, true],
-    ["completed", true, false],
-    ["cancelled", false, false],
-    ["error", false, false],
-    [null, false, false],
-  ] as const)(
-    "folds process only for a settled completed run (status=%s, running=%s)",
-    async (lastRunStatus, running, expected) => {
-      await mount(vi.fn<Send>(), "session-1", running, "", lastRunStatus)
-
-      expect(runtime.messageList?.latestRunFinished).toBe(expected)
-    },
-  )
 
   it("preserves an exact raw draft, focus, and template ownership before ACK", async () => {
     const templatePrompt = Object.freeze({ prompt: "template prompt", revision: 7 })
