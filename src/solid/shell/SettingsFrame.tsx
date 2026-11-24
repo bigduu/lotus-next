@@ -20,11 +20,17 @@ export function SettingsFrame(props: { onClose: () => void; children: JSX.Elemen
         event.preventDefault()
         props.onClose()
       }}>
-      <header class="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b px-4">
-        <h1 id={titleId} ref={(element) => { title = element }} tabindex={-1} class="text-sm font-semibold outline-none">
+      <header class="flex shrink-0 items-center gap-4 border-b p-4 sm:px-6"
+        style={{ "border-bottom-color": "color-mix(in oklab, var(--border) 70%, transparent)" }}>
+        <Button type="button" size="sm" variant="ghost" onClick={props.onClose}>
+          <ArrowLeft aria-hidden="true" />
+          {text("back_to_chat_5b8ac6b1")}
+        </Button>
+        <div class="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+        <h1 id={titleId} ref={(element) => { title = element }} tabindex={-1}
+          class="min-w-0 text-base font-semibold tracking-tight outline-none sm:text-lg">
           {text("system_settings_68ea5dd4")}
         </h1>
-        <Button size="sm" variant="ghost" onClick={props.onClose}><ArrowLeft class="size-4" />{text("back_to_chat_5b8ac6b1")}</Button>
       </header>
       {props.children}
     </main>

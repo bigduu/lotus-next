@@ -1,5 +1,5 @@
 import { Monitor, Moon, Sun } from "@lucide/solid"
-import { createMemo, createSignal, createUniqueId, For, onSettled } from "solid-js"
+import { createMemo, createSignal, createUniqueId, For, onSettled, Show } from "solid-js"
 import { changeLocale } from "@shared/i18n/runtime"
 import { isSupportedAppLocale } from "@shared/i18n/types"
 import { themeStore } from "@shared/store/themeState"
@@ -22,7 +22,7 @@ function Stat(props: { label: string; value: number | undefined }) {
   </div>
 }
 
-export function SettingsGeneral() {
+export function SettingsGeneral(props: { ownerAccess: boolean }) {
   const uiText = createUiText()
   const locale = createUiLocale()
   const [languageError, setLanguageError] = createSignal(false)
@@ -239,12 +239,14 @@ export function SettingsGeneral() {
             )}</For>
           </div>
         </section>
-        <section class="settings-row">
-          <h3 class="text-sm font-medium">{uiText("default_model_1e2933c6")}</h3>
-          <p class="settings-description settings-description-wide">
-            {uiText("configure_defaults_under_providers_default_model_prefer_c7136d2f")}
-          </p>
-        </section>
+        <Show when={props.ownerAccess}>
+          <section class="settings-row">
+            <h3 class="text-sm font-medium">{uiText("default_model_1e2933c6")}</h3>
+            <p class="settings-description settings-description-wide">
+              {uiText("configure_defaults_under_providers_default_model_prefer_c7136d2f")}
+            </p>
+          </section>
+        </Show>
       </div>
 
       <section>

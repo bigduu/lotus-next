@@ -22,11 +22,12 @@ export function createEnvironment(options: {
     const current = override()
     return current?.visit === visit() ? current.preference : "auto"
   }
-  const hasRoom = () => width() >= AUTO_SHOW_MIN_WIDTH
-  const open = () => preference() === "open" || (preference() === "auto" && hasRoom())
-  const visible = () => !!visit().id && options.pageVisible() && open() && !options.sidePaneOpen()
+  const floating = () => width() >= AUTO_SHOW_MIN_WIDTH
+  const open = () => preference() === "open" || (preference() === "auto" && floating())
+  const disabled = () => !visit().id || !options.pageVisible() || options.sidePaneOpen()
+  const visible = () => !disabled() && open()
   const requestsHistory = () => visible() && preference() === "open"
-  const reservedWidth = () => visible() && hasRoom() ? ENVIRONMENT_OCCUPIED_WIDTH : 0
+  const reservedWidth = () => visible() && floating() ? ENVIRONMENT_OCCUPIED_WIDTH : 0
 
   createEffect(layout, (element) => {
     if (!element) return
@@ -53,8 +54,11 @@ export function createEnvironment(options: {
   })
 
   const toggle = () => {
-    const currentVisit = visit()
-    if (currentVisit.id) setOverride({ visit: currentVisit, preference: open() ? "closed" : "open" })
+    if (!disabled()) setOverride({ visit: visit(), preference: open() ? "closed" : "open" })
+  }
+
+  const dismiss = () => {
+    if (visible()) setOverride({ visit: visit(), preference: "closed" })
   }
 
   const loadEarlier = () => {
@@ -62,7 +66,7 @@ export function createEnvironment(options: {
     if (currentVisit.id && visible()) setOverride({ visit: currentVisit, preference: "open" })
   }
 
-  return { controlsId, bindLayout, preference, visible, requestsHistory, reservedWidth, toggle, loadEarlier }
+  return { controlsId, bindLayout, layoutWidth: width, preference, floating, visible, disabled, requestsHistory, reservedWidth, toggle, dismiss, loadEarlier }
 }
 
 export type EnvironmentController = ReturnType<typeof createEnvironment>

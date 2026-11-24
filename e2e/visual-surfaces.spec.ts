@@ -195,14 +195,16 @@ test("neutral defaults and saved jade choices remain selectable across responsiv
     const transcriptElement = element.querySelector("[data-message-list-content]")!
     const transcript = transcriptElement.getBoundingClientRect()
     const viewport = transcriptElement.parentElement!
-    const viewportStyle = element.ownerDocument.defaultView!.getComputedStyle(viewport)
+    const view = element.ownerDocument.defaultView!
+    const viewportStyle = view.getComputedStyle(viewport)
     const availableWidth = viewport.clientWidth - parseFloat(viewportStyle.paddingLeft) - parseFloat(viewportStyle.paddingRight)
+    const widthCap = 52 * parseFloat(view.getComputedStyle(element.ownerDocument.documentElement).fontSize)
     const composer = element.querySelector("[data-composer-surface]")!.getBoundingClientRect()
-    return { width: transcript.width, availableWidth, overflow: viewport.scrollWidth - viewport.clientWidth,
+    return { width: transcript.width, expectedWidth: Math.min(availableWidth, widthCap), overflow: viewport.scrollWidth - viewport.clientWidth,
       leftDifference: Math.abs(transcript.left - composer.left), widthDifference: Math.abs(transcript.width - composer.width) }
   })
   expect(geometry.width).toBeGreaterThan(0)
-  expect(Math.abs(geometry.width - geometry.availableWidth)).toBeLessThanOrEqual(1)
+  expect(Math.abs(geometry.width - geometry.expectedWidth)).toBeLessThanOrEqual(1)
   expect(geometry.overflow).toBeLessThanOrEqual(1)
   expect(geometry.leftDifference).toBeLessThanOrEqual(1)
   expect(geometry.widthDifference).toBeLessThanOrEqual(1)

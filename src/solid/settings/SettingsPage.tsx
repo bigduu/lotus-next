@@ -58,7 +58,7 @@ type Tab = (typeof groups)[number]["tabs"][number]
 export type SettingsTab = Tab["id"]
 
 const renderTab: Record<SettingsTab, (owner: boolean) => JSX.Element> = {
-  general: () => <SettingsGeneral />,
+  general: (owner) => <SettingsGeneral ownerAccess={owner} />,
   providers: () => <SettingsProviders />,
   "model-limits": () => <SettingsModelLimits />,
   retry: () => <SettingsRetry />,

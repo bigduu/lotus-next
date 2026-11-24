@@ -119,3 +119,71 @@ for (const mode of ["idle", "running", "monitoring"] as const) {
     expect(observation.protocolErrors).toEqual([]);
   });
 }
+
+test("a dense remote header keeps its title and Workbench reachable without scrolling the chat sideways", async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "Explicit phone and desktop width transition");
+  const id = "all-surface-session";
+  const entryUrl = new URL("/", baseURL).href;
+  const session = {
+    id, title: "Remote release checklist", kind: "root", root_session_id: id,
+    created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
+    model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
+    permission_mode: "default", thinking_mode: "standard", root_orchestration_only: false,
+    root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64), last_run_status: "completed", is_running: false,
+    placement: { kind: "ssh", host: "fixture-runner.example" },
+  };
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.addInitScript((selected) => {
+    localStorage.setItem("lotus_next_last_session", selected);
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "en-US");
+  }, id);
+  const history = [{ id: "layout-note", role: "assistant", content: "The release checklist is ready for review.", created_at: session.created_at }];
+  await installArtifactRuntime(page, { ...standaloneScenario, origin: new URL(entryUrl).origin, entryUrl }, history, {
+    serveStaticFromLocalServer: true,
+  });
+  await page.route("**/api/v1/sessions?*", (route) => {
+    const sessions = new URL(route.request().url()).searchParams.get("kind") === "child" ? [] : [session];
+    return route.fulfill({ json: { sessions, total: sessions.length, features: ["session_side_chat"] } });
+  });
+  await page.route(`**/api/v1/sessions/${id}`, (route) => route.fulfill({ json: { session }, headers: { ETag: '"1"' } }));
+  await page.route(`**/api/v1/task/${id}`, (route) => route.fulfill({ json: {
+    session_id: id, title: "Fixture plan", version: 1,
+    items: [{ id: "prepare", description: "Prepare the workspace", status: "pending", depends_on: [], notes: "" }],
+  } }));
+  await page.goto(entryUrl);
+  const header = page.getByRole("banner");
+  const title = header.getByRole("heading", { name: session.title, exact: true });
+  const placement = header.getByTitle("Running on ssh · fixture-runner.example", { exact: true });
+  const more = header.getByRole("button", { name: "More", exact: true });
+  const launcher = header.getByRole("button", { name: "Open side panel", exact: true });
+  await expect(header.getByRole("button", { name: "Open Side Chat", exact: true })).toBeVisible();
+  await expect(placement).toBeVisible();
+  await expect.poll(() => title.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(40);
+  await expect(launcher).toBeInViewport({ ratio: 1 });
+  await more.focus();
+  await page.keyboard.press("Tab");
+  await expect(launcher).toBeFocused();
+  await expect.poll(() => page.locator("#chat-panel").evaluate((element) => element.scrollLeft)).toBe(0);
+  const screenshot = info.outputPath("dense-remote-header-320.png");
+  await page.screenshot({ path: screenshot, animations: "disabled" });
+  await info.attach("dense-remote-header-320", { path: screenshot, contentType: "image/png" });
+  await more.click();
+  await expect(page.getByRole("menuitem", { name: "Select working directory", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open subagent tree", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Open session task DAG", exact: true }).click();
+  const workbench = page.locator("#right-workbench");
+  await expect(workbench.getByRole("button", { name: /Prepare the workspace/ })).toBeVisible();
+  await workbench.getByRole("button", { name: "Collapse workbench", exact: true }).click();
+  await page.setViewportSize({ width: 1100, height: 900 });
+  const dag = header.getByRole("button", { name: "Open session task DAG", exact: true });
+  await expect(dag).toBeVisible();
+  await dag.press("Enter");
+  await expect(workbench.getByRole("button", { name: /Prepare the workspace/ })).toBeVisible();
+  await expect(dag).toHaveCount(0);
+  await expect(header.getByRole("button", { name: "Collapse side panel", exact: true })).toBeFocused();
+  await workbench.getByRole("button", { name: "Collapse workbench", exact: true }).click();
+  await page.getByRole("button", { name: "New Session", exact: true }).click();
+  await expect(page.getByTestId("home-dashboard")).toBeVisible();
+  await expect(launcher).toHaveCount(0);
+});
