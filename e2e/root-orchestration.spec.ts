@@ -402,3 +402,63 @@ test("a legacy combined-chat marker remains fail closed", async ({ page }, testI
   await composer.fill("blocked legacy request"); await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expectComposerText(composer, "blocked legacy request"); expect(mutations).toBe(0)
 })
+
+test("selected Skill in Ultra warns before Bamboo decides the unchanged-mode request", async ({ page }, info) => {
+  test.skip(info.project.name === "tablet-chromium", "desktop and phone compose with Skills")
+  await page.addInitScript((id) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", id)
+  }, sessionId)
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const skill = { id: "fixture-skill", name: "fixture-skill", description: "Fixture task", prompt: "Read the fixture.", tool_refs: ["Read"] }
+  const requests: Array<Record<string, unknown>> = []
+  let skillsReads = 0
+  let writes = 0
+  await page.route("**/api/v1/skills", (route) => {
+    skillsReads += 1
+    return route.fulfill({ json: { skills: [skill], total: 1 } })
+  })
+  await page.route(`**/api/v1/sessions/${sessionId}`, (route) => route.fulfill({ json: {
+    session: { ...rootSession, root_orchestration_only: true, thinking_mode: "ultra",
+      root_mode_transition_epoch: 0, root_mode_birth_token: birthToken },
+  } }))
+  await page.route(`**/api/v1/sessions/${sessionId}/root-mode-operations/**`, (route) => {
+    writes += 1
+    return route.abort()
+  })
+  await page.route(`**/api/v1/execute/${sessionId}`, (route) => {
+    writes += 1
+    return route.abort()
+  })
+  await page.route("**/api/v1/chat", (route) => {
+    requests.push(route.request().postDataJSON())
+    return route.fulfill({ status: 409, json: { error: {
+      code: "root_orchestration_incompatible_mode", message: "Selected Skill conflicts with active Root mode",
+    } } })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
+  await expect.poll(() => skillsReads).toBe(1)
+  const composer = page.getByRole("textbox", { name: "消息", exact: true })
+  await composer.fill("/fixture-skill")
+  await page.getByRole("option", { name: /\/fixture-skill/ }).click()
+  const warning = page.getByRole("alert").filter({ hasText: "已选 Skill 与 Ultra 编排不兼容" })
+  await expect(warning).toContainText("Bamboo 会在发送时校验")
+  expect(requests).toHaveLength(0)
+  await composer.fill("Apply the selected Skill")
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+  const rejection = page.getByRole("alert").filter({ hasText: "Bamboo 已拒绝此请求，内容已保留" })
+  await expect(rejection).toContainText("Selected Skill conflicts with active Root mode")
+  await expect(rejection).not.toContainText("Bamboo 已拒绝此模式切换")
+  expect(requests).toHaveLength(1)
+  expect(requests[0]).toMatchObject({ session_id: sessionId, selected_skill_ids: [skill.id] })
+  expect(requests[0]).not.toHaveProperty("root_orchestration_only")
+  expect(requests[0]).not.toHaveProperty("thinking_mode")
+  await expectComposerText(composer, "Apply the selected Skill")
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
+  await page.getByRole("button", { name: "移除技能" }).click()
+  await expect(warning).toHaveCount(0)
+  expect(writes).toBe(0)
+  expect(skillsReads).toBe(1)
+  expect(observation.pageErrors).toEqual([])
+})

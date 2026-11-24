@@ -557,6 +557,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
     applyGlobalAccentToDocument(getGlobalAccentColors(state.themeMode, state.globalAccentPreset, state.customGlobalAccentColor))
   })
   onSettled(() => {
+    if (props.ownerAccess) void appStore.getState().loadSkills()
     const sync = () => {
       const enabled = String(isVdiSafeModeEnabled())
       document.body.setAttribute("data-vdi-safe", enabled)

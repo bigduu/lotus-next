@@ -348,6 +348,11 @@ export function ComposerPanel(props: {
           {(notice) => <WorktreePreparationNotice message={notice.message}
             onDismiss={() => setWorktreeNotice(null)} onRestoreFocus={focusEditor} />}
         </Show>
+        <Show when={commands.selectedSkill && models.thinkingMode === "ultra" && !models.root.child}>
+          <p role="alert" class="mx-2 mb-2 text-xs text-destructive">
+            {text("the_selected_skill_is_incompatible_with_ultra_orchestra_fd2e7fa6")}
+          </p>
+        </Show>
         <ChatRunStatus chat={props.chat} rootUnsafe={props.rootAuthority.unsafe}
           retryDisabled={models.busy || submitting() || queue.busy || commands.busy || props.ingress.busy}
           onContinueEditing={() => document.getElementById(inputId)?.focus()} />
