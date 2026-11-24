@@ -81,6 +81,7 @@ beforeEach(() => {
 
 afterEach(() => {
   harness.dispose()
+  vi.useRealTimers()
   vi.resetAllMocks()
   if (originalCreateObjectURL) Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL)
   else Reflect.deleteProperty(URL, "createObjectURL")
@@ -127,6 +128,53 @@ it("opens the first URL in one tab request without leaving a blank page", async 
   expect(browserService.createTab).toHaveBeenCalledExactlyOnceWith("sid", 7, "https://example.test/first")
   expect(browserService.navigate).not.toHaveBeenCalled()
   expect(browser.state?.tabs).toHaveLength(1)
+})
+
+const staleEpoch = () => new ApiError("stale epoch", 409, "Conflict", JSON.stringify({ error: { code: "stale_epoch" } }))
+
+it("waits for its own first-tab mutation before polling and displays the new frame", async () => {
+  vi.useFakeTimers()
+  const opened = tabbedState(8, "tab-a")
+  vi.mocked(browserService.get).mockResolvedValueOnce(emptyState(7)).mockRejectedValue(staleEpoch())
+  vi.mocked(browserService.frame).mockResolvedValueOnce({
+    blob: new Blob(["first frame"], { type: "image/jpeg" }),
+    frame_seq: 1, page_epoch: 8, active_tab_id: "tab-a", viewport: opened.viewport,
+  }).mockImplementation(() => new Promise(() => {}))
+  let releaseOpen!: (value: BrowserState) => void
+  vi.mocked(browserService.createTab).mockImplementation(() => new Promise((resolve) => { releaseOpen = resolve }))
+
+  await harness.show()
+  let opening!: Promise<BrowserState | null>
+  await settleBrowser(() => { opening = browser.openUrlInNewTab(opened.url) })
+  expect(browserService.createTab).toHaveBeenCalledExactlyOnceWith("sid", 7, opened.url)
+  await settleBrowser(() => vi.advanceTimersByTimeAsync(1500))
+  expect(browserService.get).toHaveBeenCalledTimes(1)
+  expect(browserService.frame).not.toHaveBeenCalled()
+
+  await settleBrowser(async () => { releaseOpen(opened); await opening })
+  expect(browser.frame).toMatchObject({ page_epoch: 8, active_tab_id: "tab-a", frame_seq: 1 })
+  expect(browser.error).toBeNull()
+})
+
+it("continues polling after a stale state read while an external actor opens the first tab", async () => {
+  vi.useFakeTimers()
+  const opened = tabbedState(8, "tab-a")
+  vi.mocked(browserService.get).mockResolvedValueOnce(emptyState(7)).mockRejectedValueOnce(staleEpoch()).mockResolvedValue(opened)
+  vi.mocked(browserService.frame).mockResolvedValueOnce({
+    blob: new Blob(["first frame"], { type: "image/jpeg" }),
+    frame_seq: 1, page_epoch: 8, active_tab_id: "tab-a", viewport: opened.viewport,
+  }).mockImplementation(() => new Promise(() => {}))
+
+  await harness.show()
+  await settleBrowser(() => vi.advanceTimersByTimeAsync(500))
+  expect(browserService.get).toHaveBeenCalledTimes(2)
+  expect(browserService.frame).not.toHaveBeenCalled()
+  expect(browser.error).toBeNull()
+
+  await settleBrowser(() => vi.advanceTimersByTimeAsync(1000))
+  expect(browserService.get).toHaveBeenCalledTimes(3)
+  expect(browserService.createTab).not.toHaveBeenCalled()
+  expect(browser.frame).toMatchObject({ page_epoch: 8, active_tab_id: "tab-a", frame_seq: 1 })
 })
 
 it("restarts frame polling from zero after navigation changes the page epoch", async () => {

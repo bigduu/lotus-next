@@ -265,13 +265,19 @@ export function createBrowserSession(readSessionId: Accessor<string | null>, rea
             await new Promise((resolve) => setTimeout(resolve, Math.min(2000, 500 * (emptyStateReadFailures + 1))))
             if (!isCurrent()) return
             if (browserState?.tabs?.length !== 0) continue
+            // The first-tab write publishes its own state. Reading while it
+            // changes the host epoch can return a conflict from Bamboo.
+            if (actionsByScope.has(scope)) {
+              await actionQueue.catch(() => undefined)
+              continue
+            }
             const version = stateVersion
             let refreshed: BrowserState
             try {
               refreshed = await browserService.get(sessionId, controller.signal)
             } catch (cause) {
               if (!isCurrent()) return
-              if (isTransientStateReadError(cause)) {
+              if (isTransientStateReadError(cause) || conflictCode(cause) === "stale_epoch") {
                 emptyStateReadFailures += 1
                 if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) {
                   setErrorCause({ cause, profileOutcomeUnknown: profileFailures.get(sessionId) instanceof BrowserProfileOutcomeUnknown, source: "empty-state-read" })
