@@ -125,6 +125,70 @@ test("real-lane Settings helpers navigate the built page and responsive categori
   expect(observation.pageErrors).toEqual([]);
 });
 
+test("open-access guests can change local settings without loading owner controls", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Notification, "permission", { value: "granted" });
+    localStorage.setItem("bodhi_onboarded_v1", "1");
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN");
+    localStorage.setItem("copilot_ui_theme_v1", "system");
+    localStorage.setItem("lotus_experience_mode_v1", "advanced");
+  });
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], {
+    bootstrapRequestState: "unauthenticated",
+  });
+  await page.goto(standaloneScenario.entryUrl);
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+  const earlierRequests = observation.apiUrls.length;
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = settingsSurface(page);
+  const categories = settings.locator("#settings-category option");
+  await expect(categories).toHaveCount(3);
+  expect(await categories.evaluateAll((options) => options.map((option) => option.getAttribute("value"))))
+    .toEqual(["general", "notifications", "system"]);
+
+  await expect(settings.locator(".settings-nav-item[aria-current=page]")).toHaveCSS("border-radius", "10px");
+  await expect(settings.locator("#app-language")).toHaveCSS("border-radius", "10px");
+  await expect(settings.locator(".settings-choice[aria-pressed=true]", { hasText: "跟随系统" }))
+    .toHaveCSS("border-radius", "10px");
+
+  await selectSettingsCategory(settings, "system", "系统");
+  await expect(settings.getByText("前端版本", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "清除本地缓存", exact: true })).toBeVisible();
+  const vdi = settings.getByRole("switch", { name: "图形兼容模式", exact: true });
+  await vdi.check();
+  await expect(page.locator("body")).toHaveAttribute("data-vdi-safe", "true");
+  await expect(settings.getByRole("button", { name: "重置应用", exact: true })).toHaveCount(0);
+  await expect(settings.getByRole("region", { name: "Tailscale 远程访问" })).toHaveCount(0);
+
+  await selectSettingsCategory(settings, "notifications", "通知");
+  const reminder = settings.getByRole("switch", { name: "任务完成提醒", exact: true });
+  await reminder.click();
+  await expect(reminder).toBeChecked();
+  await expect(settings.getByRole("button", { name: "发送测试通知", exact: true })).toBeVisible();
+  await expect(settings.getByRole("region", { name: "通知偏好(服务端)" })).toHaveCount(0);
+  await expect(settings.getByRole("region", { name: "通知渠道" })).toHaveCount(0);
+
+  await selectSettingsCategory(settings, "system", "系统");
+  await expect(vdi).toBeChecked();
+  await selectSettingsCategory(settings, "notifications", "通知");
+  await expect(reminder).toBeChecked();
+  const ownerEndpoints = new Set([
+    "/api/v1/bamboo/config",
+    "/api/v1/bamboo/access/status",
+    "/api/v1/bamboo/tailscale",
+    "/api/v1/bamboo/config/notifications",
+    "/api/v1/notifications/preferences",
+  ]);
+  const ownerRequests = observation.apiUrls.slice(earlierRequests)
+    .filter((request) => ownerEndpoints.has(new URL(request).pathname));
+  expect(ownerRequests).toEqual([]);
+  expect(observation.errorResponses).toEqual([]);
+  expect(observation.pageErrors).toEqual([]);
+});
+
 // This is a DOM contract check for the explicitly supported old modal layout,
 // not evidence that a historical package passed real-Bamboo acceptance.
 test("published baseline Settings helper retains the explicit modal contract", async ({ page }) => {
