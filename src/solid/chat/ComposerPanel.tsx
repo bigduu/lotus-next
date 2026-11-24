@@ -411,7 +411,8 @@ export function ComposerPanel(props: {
       <div ref={(element) => { surface = element }} data-composer-surface=""
         class="min-w-0 rounded-3xl border border-transparent bg-card p-1.5">
         <Show when={attachments().length}>
-          <div class="flex flex-wrap gap-2 px-2 py-1.5">
+          <div data-composer-attachments=""
+            class="flex max-h-[clamp(5.25rem,calc(35dvh-2rem),16rem)] flex-wrap content-start gap-2 overflow-y-auto overscroll-contain scroll-py-1 px-2 py-1.5">
             <For each={attachments()}>{(attachment) => (
               <div class="relative">
                 <button type="button" onClick={() => props.onPreviewImage(attachment.url)}
