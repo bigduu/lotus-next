@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 
-const styles = readFileSync(path.resolve(process.cwd(), "src/app-styles.css"), "utf8")
 const layoutStyles = readFileSync(path.resolve(process.cwd(), "src/lib/markdown/layout.css"), "utf8")
 const componentLayerMarker = "@layer components {"
 const componentLayerStart = layoutStyles.indexOf(componentLayerMarker)
@@ -12,15 +11,7 @@ const componentRules = layoutStyles.slice(
   componentLayerEnd,
 )
 
-describe("assistant Streamdown production styles", () => {
-  it.each(["streamdown", "@streamdown/code", "@streamdown/mermaid", "@streamdown/cjk"])(
-    "keeps the Tailwind v4 source for %s in the shared utility stylesheet",
-    (packageName) => {
-      expect(styles).toContain(`@source "../node_modules/${packageName}/dist/*.js"`)
-      expect(layoutStyles).not.toContain(`node_modules/${packageName}/dist/*.js`)
-    },
-  )
-
+describe("assistant Markdown production styles", () => {
   it("keeps table, code, URL, CJK and reduced-motion behavior responsive", () => {
     expect(layoutStyles).toContain('.assistant-streamdown [data-streamdown="link"]')
     expect(layoutStyles).toContain('.assistant-streamdown [data-streamdown="table-wrapper"]')
@@ -73,8 +64,4 @@ describe("assistant Streamdown production styles", () => {
     style.remove()
   })
 
-  it("does not add the out-of-scope math plugin source", () => {
-    expect(styles).not.toContain("@streamdown/math")
-    expect(layoutStyles).not.toContain("@streamdown/math")
-  })
 })

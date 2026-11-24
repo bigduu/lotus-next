@@ -1,5 +1,0 @@
-@import "tailwindcss" source("./");
-@import "./app-styles.css";
-
-/* The Solid preview owns its own CSS entry and is outside the published app. */
-@source not "./solid";

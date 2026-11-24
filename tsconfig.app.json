@@ -11,9 +11,7 @@
       "@/*": ["./src/*"],
       "@services/*": ["./src/services/*"],
       "@shared/*": ["./src/shared/*"],
-      "@pages/*": ["./src/pages/*"],
-      "@components/*": ["./src/components/*"],
-      "@app/*": ["./src/app/*"]
+      "@pages/*": ["./src/pages/*"]
     },
 
     /* Bundler mode */
@@ -22,7 +20,8 @@
     "verbatimModuleSyntax": false,
     "moduleDetection": "force",
     "noEmit": true,
-    "jsx": "react-jsx",
+    "jsx": "preserve",
+    "jsxImportSource": "@solidjs/web",
 
     /* Linting — relaxed to match lotus's ported sources. */
     "noUnusedLocals": false,

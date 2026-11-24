@@ -130,11 +130,7 @@ export const portableArtifactBase = "./"
 
 export const sourceAliases = {
   "@": path.resolve(__dirname, "./src"),
-  // Mirror lotus's aliases so ported backend/service/store modules resolve
-  // verbatim without import rewrites.
   "@services": path.resolve(__dirname, "./src/services"),
   "@shared": path.resolve(__dirname, "./src/shared"),
   "@pages": path.resolve(__dirname, "./src/pages"),
-  "@components": path.resolve(__dirname, "./src/components"),
-  "@app": path.resolve(__dirname, "./src/app"),
 }
