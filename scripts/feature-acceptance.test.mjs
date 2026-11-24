@@ -195,6 +195,18 @@ describe("feature workflow phase policy", () => {
     expect(actor).toContain("on:\n  workflow_call:")
     expect(actor).not.toMatch(/^  (?:pull_request|push|workflow_dispatch):/m)
   })
+  it("applies each frontend Actor control at a unique location in the current controller", () => {
+    const source = "src/solid/workbench/subagents/createActorSnapshot.ts"
+    expect(actor).toContain(`hook = root / '${source}'`)
+    const controller = readFileSync(source, "utf8")
+    for (const [control, needle] of [
+      ["no_subscribe", "    const subscription = subscribeActor(interestedActorId, {"],
+      ["clear_gap", "      snapshotRef = snapshot\n"],
+    ]) {
+      expect(actor).toContain(`('${control}', b'${needle.replace("\n", "\\n")}'`)
+      expect(controller.split(needle)).toHaveLength(2)
+    }
+  })
   it("preserves each runtime evidence attempt when failed jobs are rerun", () => {
     for (const [workflow, name] of [
       [job("real-bamboo"), "real-bamboo-verification-browser"],
