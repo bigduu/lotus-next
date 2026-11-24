@@ -157,10 +157,10 @@ export function DefaultsEditor(props: { verifyFirstModel?: boolean; onModelReady
       setDraft(next)
     }
   })
-  createEffect(snapshot, (current) => {
+  createEffect(() => [snapshot(), props.verifyFirstModel] as const, ([current, supportsVerification]) => {
     const revision = ++resolvedRead
     setResolvedModels({})
-    if (!current?.defaults?.chat || !props.verifyFirstModel) return
+    if (!current?.defaults?.chat || !supportsVerification) return
     void apiClient.get<ResolvedFields>("execute/defaults", { cache: "no-store" }).then((result) => {
       if (!disposed && revision === resolvedRead) setResolvedModels(result)
     }).catch(() => undefined)

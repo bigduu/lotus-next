@@ -901,6 +901,18 @@ describe("Editable provider model combobox", () => {
 })
 
 describe("Provider defaults authoritative refresh", () => {
+  it("loads inherited models when setup capability arrives after the provider snapshot", async () => {
+    setStore({})
+    const [supported, setSupported] = createSignal(false)
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({ fast_model: "effective-fast" })
+    const container = await mount(() => <DefaultsEditor verifyFirstModel={supported()} />)
+    expect(get).not.toHaveBeenCalled()
+
+    await settle(() => setSupported(true))
+    expect(get).toHaveBeenCalledExactlyOnceWith("execute/defaults", { cache: "no-store" })
+    expect(container.textContent).toContain("当前继承模型 · effective-fast")
+  })
+
   it("verifies the single admitted model before saving the first chat preference", async () => {
     const model = "new-chat"
     const admitted = { ...instance, config: { ...instance.config, runtime_models: [model] } }
