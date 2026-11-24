@@ -264,9 +264,12 @@ export function ComposerPanel(props: {
         if (typeof negotiated === "boolean") liveBootstrapResume = negotiated
         else {
           liveBootstrapResume = await negotiated
+          const draftChanged = draft.contentRevision !== appStore.getState().getInputState(key).contentRevision ||
+            attachmentRevision !== submittedAttachmentRevision
+          // Worktree preparation already committed to a frozen request. New
+          // edits stay in the composer while that request proceeds.
           if (!origin.isCurrent() || blocked() || semantic !== props.semantic || useQueue !== queuedSend() ||
-            draft.contentRevision !== appStore.getState().getInputState(key).contentRevision ||
-            attachmentRevision !== submittedAttachmentRevision) return
+            (!origin.prepare && draftChanged)) return
         }
       }
       const result = semantic && key
