@@ -1,15 +1,13 @@
 import { describe, expect, it } from "vitest"
 
-import { localImagePath, nativeImageUrl, safeAssistantUrlTransform } from "./streamdownConfig"
-
-const transform = (url: string, key: string) => safeAssistantUrlTransform(url, key, {} as never)
+import { localImagePath, nativeImageUrl, safeAssistantUrlTransform } from "./assistantMarkdownSafety"
 
 describe("assistant Markdown URL policy", () => {
   it("recognizes local raster paths without intercepting app assets", () => {
     expect(localImagePath("/Users/example/picture.png")).toBe("/Users/example/picture.png")
     expect(localImagePath("/assets/logo.png")).toBeNull()
-    expect(transform("file:///Users/example/secret.svg", "src")).toBeNull()
-    expect(transform("file:///Users/example/picture.png", "src")).toBeNull()
+    expect(safeAssistantUrlTransform("file:///Users/example/secret.svg", "src")).toBeNull()
+    expect(safeAssistantUrlTransform("file:///Users/example/picture.png", "src")).toBeNull()
     const mac = nativeImageUrl("file:///Users/example/picture%20one.png")
     expect(localImagePath(mac!)).toBe("/Users/example/picture one.png")
     const winFile = nativeImageUrl("file:///C:/Users/example/picture.png")
@@ -28,7 +26,7 @@ describe("assistant Markdown URL policy", () => {
     ["../relative/image.png", "src"],
     ["#section", "href"],
   ])("allows the intentional %s %s surface", (url, key) => {
-    expect(transform(url, key)).toBe(url)
+    expect(safeAssistantUrlTransform(url, key)).toBe(url)
   })
 
   it.each([
@@ -46,6 +44,6 @@ describe("assistant Markdown URL policy", () => {
     ["https://example.com\njavascript:alert(1)", "href"],
     ["https://example.com", "data-url"],
   ])("rejects unsafe or out-of-schema %s %s", (url, key) => {
-    expect(transform(url, key)).toBeNull()
+    expect(safeAssistantUrlTransform(url, key)).toBeNull()
   })
 })

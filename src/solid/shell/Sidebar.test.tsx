@@ -12,7 +12,7 @@ import { createStoreSelector } from "../state/createStoreSelector"
 import { appStore } from "@shared/store/appStore/state"
 import { uiText } from "@shared/i18n/text"
 import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, setSessionSection, SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
-import { SESSION_ORDER_STORAGE_KEY, clearSessionOrder, parseSessionOrder, recordSessionUserInput } from "@/lib/sidebarSessionOrder"
+import { SESSION_ORDER_STORAGE_KEY, clearSessionOrder, parseSessionOrder, recordSessionUserInput } from "@/lib/sidebarSessionOrderState"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
 const dragHarness = vi.hoisted(() => ({ current: null as SidebarProjectDragProps | null }))

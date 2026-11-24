@@ -5,7 +5,7 @@ import { agentClient, type ChatResponse, type TruncateSessionMessagesResponse } 
 import { appStore } from "@shared/store/appStore/state"
 import { providerStore } from "@shared/store/appStore/slices/providerState"
 import { getUsedModels } from "@shared/utils/usedModels"
-import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
+import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { peekPendingTemplatePrompt, setPendingTemplatePrompt } from "@/lib/taskTemplates"
 import type { SendSubmissionResult } from "./createChat"
 import { settleChat } from "./chatInteractionTestHarness"

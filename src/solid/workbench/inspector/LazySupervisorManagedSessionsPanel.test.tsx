@@ -1,7 +1,7 @@
 import { render, type ComponentProps } from "@solidjs/web"
 import { createSignal, flush } from "solid-js"
 import { afterEach, expect, it, vi } from "vitest"
-import { uiText } from "@shared/i18n/ui"
+import { uiText } from "@shared/i18n/text"
 import { LazySupervisorManagedSessionsPanel } from "./LazySupervisorManagedSessionsPanel"
 
 type Props = ComponentProps<typeof LazySupervisorManagedSessionsPanel>

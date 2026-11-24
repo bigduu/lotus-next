@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { beginRootModeOperation, finishRootModeOperation, readRootModeFence, type RootModeOperation } from "./rootModeTransitionFence"
+import { beginRootModeOperation, finishRootModeOperation, readRootModeFence, type RootModeOperation } from "./rootModeTransitionState"
 
 const sessionId = "root"
 const birthToken = "a".repeat(64)
