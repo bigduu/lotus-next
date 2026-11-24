@@ -14,7 +14,7 @@ import {
   type ProjectSidebarSection,
 } from "@/lib/projectSidebarPreferences"
 import { isSessionUnread, sessionReadMarkersSnapshot, subscribeSessionReadMarkers } from "@/lib/sessionReadMarkers"
-import { sessionOrderSnapshot, subscribeSessionOrder } from "@/lib/sidebarSessionOrderState"
+import { sessionOrderSnapshot, sessionSortTime, subscribeSessionOrder } from "@/lib/sidebarSessionOrderState"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { cn } from "@/lib/utils"
 import { mergeStateFor } from "@/lib/worktreeMergeState"
@@ -169,10 +169,28 @@ export function Sidebar(props: Props) {
   })
 
   const query = createMemo(() => search().trim().toLowerCase())
+  const matchesQuery = (chat: ChatItem) => {
+    const value = query()
+    return !value || chat.title.toLowerCase().includes(value) || chat.id.toLowerCase().includes(value)
+  }
   const projectMode = () => grouping() === "project"
   const rootChats = createMemo(() => props.chats.filter((chat) => !chat.parentSessionId && !isDefaultSupervisor(chat)))
   const mergeStates = createWorktreeMergeStates(rootChats)
   const supervisor = createMemo(() => props.chats.find(isDefaultSupervisor))
+  const runningIds = createMemo(() => {
+    const ids = new Set<string>()
+    for (const chat of rootChats()) {
+      if (props.isRunning(chat)) ids.add(chat.id)
+    }
+    return ids
+  }, { equals: (previous, next) => previous?.size === next.size && [...previous].every((id) => next.has(id)) })
+  const priorityChats = createMemo(() => {
+    const ids = runningIds()
+    if (!ids.size) return []
+    const sessionOrder = order()
+    return rootChats().filter((chat) => ids.has(chat.id) && matchesQuery(chat))
+      .sort((left, right) => sessionSortTime(right, sessionOrder) - sessionSortTime(left, sessionOrder))
+  })
   const groups = createMemo(() => {
     locale()
     if (!projectMode()) return groupChats(rootChats(), new Date(), order())
@@ -195,15 +213,24 @@ export function Sidebar(props: Props) {
     projectGroups.sort((left, right) => Number(pinned.has(right.key)) - Number(pinned.has(left.key)))
     return pinnedSessions ? [pinnedSessions, ...projectGroups] : projectGroups
   })
-  const activeGroup = createMemo(() => groups().find((group) => group.chats.some((chat) => chat.id === props.currentSessionId)))
-  const older = createMemo(() => projectMode() ? [] : groups().filter((group) => group.key !== "__pinned").slice(5))
-  const olderCount = createMemo(() => older().reduce((count, group) => count + group.chats.length, 0))
-  const shownGroups = createMemo(() => {
-    const value = query()
-    if (!value) return groups().filter((group) => !older().includes(group))
+  const regularGroups = createMemo(() => {
+    const ids = runningIds()
+    if (!ids.size) return groups()
+    // Derive visible buckets from the full groups so running work keeps its
+    // project order and drag rank when it returns.
     return groups().map((group) => ({
       ...group,
-      chats: group.chats.filter((chat) => chat.title.toLowerCase().includes(value) || chat.id.toLowerCase().includes(value)),
+      chats: group.chats.filter((chat) => !ids.has(chat.id)),
+    })).filter((group) => group.chats.length || (projectMode() && Object.hasOwn(props.projects, group.key)))
+  })
+  const activeGroup = createMemo(() => regularGroups().find((group) => group.chats.some((chat) => chat.id === props.currentSessionId)))
+  const older = createMemo(() => projectMode() ? [] : regularGroups().filter((group) => group.key !== "__pinned").slice(5))
+  const olderCount = createMemo(() => older().reduce((count, group) => count + group.chats.length, 0))
+  const shownGroups = createMemo(() => {
+    if (!query()) return regularGroups().filter((group) => !older().includes(group))
+    return regularGroups().map((group) => ({
+      ...group,
+      chats: group.chats.filter(matchesQuery),
     })).filter((group) => group.chats.length > 0)
   })
   const projectKey = (id: string) => `project:${id}`
@@ -285,8 +312,9 @@ export function Sidebar(props: Props) {
     }
   }
   const enclosingProject = () => {
-    const key = activeGroup()?.key
-    return projectMode() && key && key !== "__pinned" && key !== NO_PROJECT_GROUP_KEY ? key : null
+    if (!projectMode()) return null
+    const key = groups().find((group) => group.chats.some((chat) => chat.id === props.currentSessionId))?.key
+    return key && key !== "__pinned" && key !== NO_PROJECT_GROUP_KEY ? key : null
   }
   const openNew = (projectId?: string | null, sectionId?: string | null) => {
     props.onNewChat(projectId, sectionId)
@@ -316,7 +344,7 @@ export function Sidebar(props: Props) {
 
   const SessionBucket = (bucket: {
     chats: ChatItem[]
-    disclosureKey: string
+    disclosureKey?: string
     projectId?: string
     section?: ProjectSidebarSection | { id: null; name: string }
     sections?: readonly ProjectSidebarSection[]
@@ -325,7 +353,7 @@ export function Sidebar(props: Props) {
     const drag = untrack(() => bucket.drag)
     const previewKey = () => `preview:${bucket.disclosureKey}`
     const expanded = () => disclosures().get(previewKey()) === true
-    const hasPreview = () => projectMode() && bucket.disclosureKey !== "__pinned" && !query()
+    const hasPreview = () => projectMode() && bucket.disclosureKey !== undefined && bucket.disclosureKey !== "__pinned" && !query()
       && bucket.chats.length > PROJECT_PREVIEW_COUNT
     const visible = () => hasPreview() && !expanded() ? bucket.chats.slice(0, PROJECT_PREVIEW_COUNT) : bucket.chats
     return (
@@ -347,7 +375,7 @@ export function Sidebar(props: Props) {
               mergeState={mergeStateFor(mergeStates(), entry().config?.workspacePath)}
               active={props.currentSessionId === entry().id}
               unread={props.currentSessionId !== entry().id && isSessionUnread(entry(), readMarkers())}
-              running={props.isRunning(entry())}
+              running={runningIds().has(entry().id)}
               projectId={sessionProjectId()}
               sectionId={sessionSection()}
               sections={sessionSections()}
@@ -410,7 +438,7 @@ export function Sidebar(props: Props) {
     return (
       <Disclosure label={group().label} expanded={expanded()} disabled={!!query()} onToggle={toggle}
         projectId={project()?.id} projectBusy={props.sections.busy().has(group().key)} contextMenu={context}
-        detail={text("project_sessions", { count: groups().find((item) => item.key === group().key)?.chats.length ?? group().chats.length })}
+        detail={text("project_sessions", { count: regularGroups().find((item) => item.key === group().key)?.chats.length ?? group().chats.length })}
         wrapHeader={project() ? (header) => <DropTarget target={{ projectId: group().key, sectionId: null }}
           disabled={dragDisabled(group().key)} data-project-drop={group().key} title={text("sidebar_project_drop_hint")}
           class="rounded-md feedback-motion switch-feedback">{header}</DropTarget> : undefined}
@@ -615,6 +643,12 @@ export function Sidebar(props: Props) {
           </Button>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          <Show when={priorityChats().length > 0}>
+            <section aria-label={text("sidebar_priority")} class="mb-2">
+              <h2 class="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">{text("sidebar_priority")}</h2>
+              <SessionBucket chats={priorityChats()} />
+            </section>
+          </Show>
           <Show when={projectMode() && Object.values(props.projects).some((project) =>
             project.sidebar === undefined && getProjectSections(props.sections.preferences(), project.id, project.section).length
           )}>

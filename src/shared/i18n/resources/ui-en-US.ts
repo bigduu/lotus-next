@@ -905,6 +905,7 @@ export const uiEnUs = {
   "sidebar_sections_saved_refresh_failed": "Sections were saved, but the latest data could not be loaded. Reload the page before making more changes.",
   "sidebar_sections_save_failed": "Sections were not saved. Check the connection and try again. Existing local data is kept.",
   "sidebar_sections_saving": "Saving sections…",
+  "sidebar_priority": "Priority",
   "sidebar_section_remove": "Remove section",
   "sidebar_section_remove_hint": "Sessions stay in their project and move to No section.",
   "sidebar_cross_project_drop_unavailable": "Cross-project moves are not supported. Drop within the session’s project.",

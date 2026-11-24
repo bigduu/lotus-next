@@ -903,6 +903,7 @@ export const uiZhCn = {
   "sidebar_sections_saved_refresh_failed": "分区已保存，但暂时无法读取最新数据。请重新加载页面后再修改。",
   "sidebar_sections_save_failed": "分区未保存，请检查连接后重试。现有本地数据会保留。",
   "sidebar_sections_saving": "正在保存分区…",
+  "sidebar_priority": "优先",
   "sidebar_section_remove": "移除分区",
   "sidebar_section_remove_hint": "会话保留在原项目中，并移到无分区。",
   "sidebar_cross_project_drop_unavailable": "暂不支持跨项目移动，请拖到会话所属项目内。",
