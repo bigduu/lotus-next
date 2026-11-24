@@ -119,3 +119,78 @@ for (const ackWhileAway of [false, true]) test(`#383 pending images survive anot
   expect(chats).toHaveLength(2); expect(executions).toEqual([a, b])
   expect(navigations).toBe(1); expect(runtime.pageErrors).toEqual([])
 })
+
+test("shows every acknowledged message in one session and retires each only when its canonical row arrives", async ({ page }) => {
+  const id = "all-surface-session"
+  const first = "First acknowledged message"
+  const second = "Second acknowledged message"
+  const at = "2026-10-20T00:00:00Z"
+  await page.addInitScript((sessionId) => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "en-US")
+    localStorage.setItem("lotus_next_last_session", sessionId)
+  }, id)
+  const runtime = await installArtifactRuntime(page, standaloneScenario)
+  let socket: WebSocketRoute | undefined
+  let connections = 0
+  await page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    connections += 1
+    ws.onMessage((raw) => {
+      const frame = JSON.parse(String(raw))
+      if (frame.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+    })
+  })
+  const posts: Array<{ session_id: string; message: string }> = []
+  let executions = 0
+  const persisted: Array<{ id: string; role: string; content: string; created_at: string }> = []
+  await page.route("**/api/v1/chat", (route) => {
+    posts.push(route.request().postDataJSON())
+    return route.fulfill({ json: { session_id: id, message_id: `ack-${posts.length}`, status: "success" } })
+  })
+  await page.route(`**/api/v1/execute/${id}`, (route) => {
+    executions += 1
+    return route.fulfill({ status: 400, json: { error: "Fixture execution refusal" } })
+  })
+  await page.route(`**/api/v1/history/${id}**`, (route) => route.fulfill({
+    json: { session_id: id, messages: persisted },
+  }))
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
+  const editor = page.getByRole("textbox", { name: "Messages", exact: true })
+  const send = page.getByRole("button", { name: "Send message", exact: true })
+  const pending = page.locator("[data-pending-user-message]")
+  await editor.fill(first)
+  await send.click()
+  await expect(pending).toHaveText([first])
+  await expect(editor).toHaveAttribute("aria-busy", "false")
+
+  await editor.fill(second)
+  await send.click()
+  await expect(pending).toHaveText([first, second])
+  await expect.poll(() => executions).toBe(2)
+  await expect(editor).toHaveAttribute("aria-busy", "false")
+  await expect.poll(() => connections).toBeGreaterThan(0)
+  const reconnect = async () => {
+    const before = connections
+    await socket!.close({ code: 1012, reason: "Refresh canonical message projection" })
+    await expect.poll(() => connections).toBeGreaterThan(before)
+  }
+
+  // An independently hydrated second ACK must not retire the first caption.
+  persisted.push({ id: "ack-2", role: "user", content: second, created_at: at })
+  await reconnect()
+  await expect(page.locator('[data-message-row="ack-2"]')).toHaveText(second)
+  await expect(pending).toHaveText([first])
+  persisted.unshift({ id: "ack-1", role: "user", content: first, created_at: at })
+  await reconnect()
+  await expect(page.locator('[data-message-row="ack-1"]')).toHaveText(first)
+  await expect(pending).toHaveCount(0)
+  expect(posts).toEqual([
+    expect.objectContaining({ session_id: id, message: first }),
+    expect.objectContaining({ session_id: id, message: second }),
+  ])
+  expect(executions).toBe(2)
+  expect(runtime.pageErrors).toEqual([])
+})
