@@ -239,7 +239,7 @@ test("Solid Side Chat keeps its selection, stop, retry and draft scoped to the s
   expect(observation.errorResponses).toEqual([])
 })
 
-test("collapsing Side Chat preserves the position of older replies", async ({ page, baseURL }) => {
+test("collapsing Side Chat preserves the position of older replies", async ({ page, baseURL }, testInfo) => {
   const entryUrl = new URL("/", baseURL).href
   const source = "all-surface-session"
   const turns = Array.from({ length: 12 }, (_, index) => ({
@@ -254,7 +254,7 @@ test("collapsing Side Chat preserves the position of older replies", async ({ pa
   }, [], { serveStaticFromLocalServer: true, sessionFeatures: ["session_side_chat"] })
   await page.route("**/api/v1/sessions/" + source + "/side-chat", (route) => route.fulfill({ json: {
     source_generation: "a".repeat(64),
-    side_chat: { id: "side-fixture", model: { provider: "fixture", model: "fixture-model" }, turns },
+    side_chat: { id: "side-fixture", model: { provider: "fixture", model: "fixture-model" }, preview: "", turns },
   } }))
 
   await page.goto(entryUrl)
@@ -273,6 +273,9 @@ test("collapsing Side Chat preserves the position of older replies", async ({ pa
   await open.click()
   await expect(panel.getByRole("article")).toHaveCount(turns.length)
   await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(80)
+  await testInfo.attach("side-chat-reopened-at-reading-position", {
+    body: await page.screenshot({ animations: "disabled" }), contentType: "image/png",
+  })
 })
 
 test("Solid Side Chat reveals a virtualized source without jumping back to the latest message", async ({ page, baseURL, isMobile }) => {

@@ -149,6 +149,7 @@ test("Environment follows the actual pane width, session visit and workbench vis
 
   await selectSession(page, second.title, isMobile)
   await expect(placement).toBeVisible()
+  await expect(placement.getByText("ssh · fixture-runner.example", { exact: true })).toHaveCSS("position", "static")
   if (isMobile) {
     await expect(open(page)).toHaveAttribute("aria-expanded", "false")
     await open(page).click()

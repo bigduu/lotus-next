@@ -946,11 +946,11 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               {chat.currentChat?.title || text("new_session_c57c30bc")}
             </h1>
             <Show when={remotePlacement()}>{(placement) => (
-              <Badge variant="outline" class="max-w-36 min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 sm:px-2 dark:text-blue-400"
+              <Badge variant="outline" class="max-w-24 min-w-0 shrink border-transparent bg-blue-500/15 px-1.5 font-normal text-blue-600 sm:max-w-36 sm:px-2 dark:text-blue-400"
                 title={text("running_on_caee1687", { v0: placement().kind, v1: placement().host })}>
                 <Dynamic component={placement().kind === "ssh" ? Server : placement().kind === "docker" ? Container : Monitor}
                   class="shrink-0" aria-hidden="true" />
-                <span class="sr-only sm:not-sr-only sm:truncate">{placement().kind} · {placement().host}</span>
+                <span class="min-w-0 truncate">{placement().kind} · {placement().host}</span>
               </Badge>
             )}</Show>
             <Show when={currentSession()}>
