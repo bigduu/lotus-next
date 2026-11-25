@@ -220,6 +220,15 @@ describe("Solid PermissionModeControl", () => {
     expect(patch).not.toHaveBeenCalled()
   })
 
+  it("keeps the hidden native permission select in single-row mode", async () => {
+    await mount()
+    const nativeSelect = selector().closest('[data-slot="select"]')?.querySelector("select")
+
+    expect(nativeSelect?.multiple).toBe(false)
+    expect(nativeSelect?.size).toBe(1)
+    expect(nativeSelect?.options).toHaveLength(4)
+  })
+
   it("uses the same themed choices for the next session without mutating existing sessions", async () => {
     const refresh = vi.fn(async () => {})
     const originalRefresh = newSessionPermissionStore.getState().refresh
