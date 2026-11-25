@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test"
-import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { artifactFileForSource, installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 const invalid = "flowchart LR\nA[Broken --> B[Done]"
 const repaired = "flowchart LR\nA[Repaired] -->|请求| B[Done]"
@@ -10,6 +10,12 @@ const documentSource = [
   `\`\`\`mermaid\n${invalid}\n\`\`\``,
   "尾部正文保持原样。",
 ].join("\n\n")
+
+const recoveryDiagrams = [
+  "flowchart LR\nA[First diagram] -->|请求| B[Done]",
+  "flowchart LR\nA[Second diagram] -->|请求| B[Done]",
+] as const
+const recoveryContent = ["Mermaid module recovery", ...recoveryDiagrams.map((source) => `\`\`\`mermaid\n${source}\n\`\`\``)].join("\n\n")
 
 function diagramImage(figure: Locator) {
   return figure.getByRole("img", { name: "Mermaid 图表", exact: true })
@@ -52,6 +58,71 @@ async function inspectDiagram(figure: Locator) {
     } finally {
       frame.remove()
     }
+  })
+}
+
+for (const permanentFailure of [false, true]) {
+  test(permanentFailure ? "Mermaid module recovery stops after persistent failures" : "Mermaid recovers a missing module in place", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop-chromium", "Focused built Mermaid module recovery")
+    const [original, alternate] = await Promise.all([
+      artifactFileForSource("src/solid/markdown/renderMermaid.ts"),
+      artifactFileForSource("src/solid/markdown/recoverMermaidRenderer.ts"),
+    ])
+    expect(original).not.toBe(alternate)
+    await page.addInitScript(() => {
+      localStorage.setItem("bodhi_onboarded_v1", "1")
+      localStorage.setItem("lotus_next_last_session", "all-surface-session")
+    })
+    const observation = await installArtifactRuntime(page, standaloneScenario, [{
+      id: "diagram-module-recovery", role: "assistant", content: recoveryContent, created_at: "2026-10-24T00:00:00Z",
+    }])
+    const requests: string[] = []
+    await page.route((url) => url.pathname === `/${original}` || url.pathname === `/${alternate}`, async (route) => {
+      const asset = new URL(route.request().url()).pathname.slice(1)
+      requests.push(asset)
+      if (asset === original || permanentFailure) {
+        if (permanentFailure && asset === alternate && requests.length === 4) {
+          // A slow failure may outlast the shared preload reload cooldown.
+          await new Promise<void>((resolve) => setTimeout(resolve, 10_100))
+        }
+        return route.fulfill({ status: 404, headers: { "cache-control": "no-store" } })
+      }
+      return route.fallback()
+    })
+    let navigations = 0
+    page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations += 1 })
+    await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+
+    const markdown = page.locator(".assistant-streamdown").filter({ hasText: "Mermaid module recovery" })
+    const diagrams = markdown.locator("figure[data-mermaid-state]")
+    if (permanentFailure) {
+      await expect.poll(() => navigations).toBe(2)
+      await expect(diagrams).toHaveCount(2)
+      for (const [index, source] of recoveryDiagrams.entries()) {
+        const diagram = diagrams.nth(index)
+        await expect(diagram).toHaveAttribute("data-mermaid-state", "error", { timeout: 15_000 })
+        await expect(diagram.locator("[data-mermaid-source]")).toHaveText(source)
+        await expect(diagram.getByRole("button", { name: "重新渲染", exact: true })).toBeEnabled()
+      }
+      expect(requests).toEqual([original, alternate, original, alternate])
+      expect(navigations).toBe(2)
+    } else {
+      await expect(diagrams).toHaveCount(2)
+      for (const [index, source] of recoveryDiagrams.entries()) {
+        const diagram = diagrams.nth(index)
+        await expect(diagram).toHaveAttribute("data-mermaid-state", "ready")
+        expect((await inspectDiagram(diagram)).labels).toContain(index === 0 ? "First diagram" : "Second diagram")
+        await diagram.getByRole("button", { name: "编辑源码", exact: true }).click()
+        const editor = diagram.getByRole("textbox", { name: "Mermaid 源码", exact: true })
+        await expect(editor).toHaveValue(`${source}\n`)
+        await editor.press("Escape")
+      }
+      expect(requests).toEqual([original, alternate])
+      expect(navigations).toBe(1)
+    }
+    expect(observation.httpRequests.filter((request) => ["POST", "PATCH", "PUT", "DELETE"].includes(request.method)
+      && !request.url.endsWith("/provider-catalog/fetch-models"))).toEqual([])
+    expect(observation.pageErrors).toEqual([])
   })
 }
 
@@ -144,6 +215,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(target).toHaveAttribute("data-mermaid-state", "error")
       await expect(target.locator("[data-mermaid-source]")).toHaveText(invalid)
       await expect(strayError).toHaveCount(0)
+      expect(observation.staticUrls.some((url) => /\/recoverMermaidRenderer-[^/]+\.js$/.test(url))).toBe(false)
       expect(observation.httpRequests.filter((request) => ["POST", "PATCH", "PUT", "DELETE"].includes(request.method)
         && !request.url.endsWith("/provider-catalog/fetch-models"))).toEqual([])
       expect(observation.pageErrors).toEqual([])

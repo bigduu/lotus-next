@@ -1,4 +1,4 @@
-import { isLocalFeaturePreloadError } from "./preloadErrorPolicy"
+import { isClaimedLocalPreloadError, isLocalFeaturePreloadError, mayBeLocalWebKitPreloadError } from "./preloadErrorPolicy"
 
 export function installAssetRecovery() {
   // Vite surfaces a failed dynamic-import preload — a code-split chunk or its CSS
@@ -11,13 +11,7 @@ export function installAssetRecovery() {
   // assets; a short timestamp guard prevents a reload loop if the asset is truly
   // gone (then the error is allowed to surface).
   let preloadReloadAttempted = false
-  window.addEventListener('vite:preloadError', (event) => {
-    const preloadEvent = event as Event & { payload?: unknown }
-    if (isLocalFeaturePreloadError(preloadEvent.payload)) {
-      // These features own a local, shell-preserving error surface. Not preventing the
-      // event lets Vite reject the import promise into that ErrorBoundary.
-      return
-    }
+  const reloadAfterFailure = (event?: Event) => {
     const GUARD_KEY = 'bodhi_preload_reload_at'
     const now = Date.now()
     let last = 0
@@ -29,7 +23,7 @@ export function installAssetRecovery() {
     if (now - last < 10_000) {
       return // already reloaded recently — let it surface instead of looping
     }
-    event.preventDefault()
+    event?.preventDefault()
     preloadReloadAttempted = true
     try {
       window.sessionStorage.setItem(GUARD_KEY, String(now))
@@ -37,6 +31,19 @@ export function installAssetRecovery() {
       // sessionStorage unavailable (private mode): the module flag still guards.
     }
     window.location.reload()
+  }
+  window.addEventListener('vite:preloadError', (event) => {
+    const { payload } = event as Event & { payload?: unknown }
+    if (isLocalFeaturePreloadError(payload)) return
+    if (mayBeLocalWebKitPreloadError(payload)) {
+      // WebKit omits the failed URL. Let the local import catch claim this
+      // exact error before deciding whether the app still needs to reload.
+      window.setTimeout(() => {
+        if (!isClaimedLocalPreloadError(payload)) reloadAfterFailure()
+      }, 0)
+      return
+    }
+    reloadAfterFailure(event)
   })
 }
 
