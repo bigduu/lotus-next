@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url"
 
 export const ARTIFACT_MANIFEST_FILE = "lotus-next-manifest.json"
 export const ARTIFACT_MANIFEST_SCHEMA_VERSION = 1
+export const BOOTSTRAP_REQUIREMENTS_FILE = "lotus-next-bootstrap-requirements.json"
 export const LOTUS_NEXT_PACKAGE_NAME = "@bigduu/lotus-next"
 
 const manifestKeys = [
@@ -245,6 +246,30 @@ export const buildArtifactManifest = ({
   }
 }
 
+const bootstrapRequirementsBytes = ({ packageName, packageVersion, sourceRevision, sourceDirty }) => {
+  const requirementsSourcePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../src/services/bootstrap/bootstrapRequirements.json",
+  )
+  const declaration = {
+    schemaVersion: 1,
+    packageName,
+    packageVersion,
+    sourceRevision,
+    sourceDirty,
+    bootstrap: JSON.parse(readFileSync(requirementsSourcePath, "utf8")),
+  }
+  return `${JSON.stringify(declaration, null, 2)}\n`
+}
+
+export const verifyBootstrapRequirements = ({ distDirectory, artifactManifest }) => {
+  const requirementsPath = path.join(distDirectory, BOOTSTRAP_REQUIREMENTS_FILE)
+  assertRegularFile(requirementsPath, "Bootstrap requirements")
+  if (readFileSync(requirementsPath, "utf8") !== bootstrapRequirementsBytes(artifactManifest)) {
+    throw new Error("Bootstrap requirements do not match the exact package, source and runtime contract.")
+  }
+}
+
 export const writeArtifactManifest = ({
   distDirectory,
   packageJsonPath,
@@ -253,12 +278,19 @@ export const writeArtifactManifest = ({
 }) => {
   const packageIdentity = readPackageIdentity(packageJsonPath)
   const sourceIdentity = resolveSourceIdentity(repositoryDirectory, environment)
-  const manifest = buildArtifactManifest({
-    distDirectory,
+  const identity = {
     ...packageIdentity,
     sourceRevision: sourceIdentity.revision,
     sourceDirty: sourceIdentity.dirty,
-  })
+  }
+  assertArtifactDirectory(distDirectory)
+  const requirementsPath = path.join(distDirectory, BOOTSTRAP_REQUIREMENTS_FILE)
+  if (lstatSync(requirementsPath, { throwIfNoEntry: false })) {
+    assertRegularFile(requirementsPath, "Existing Bootstrap requirements")
+  }
+  writeFileSync(requirementsPath, bootstrapRequirementsBytes(identity), { mode: 0o644 })
+
+  const manifest = buildArtifactManifest({ distDirectory, ...identity })
   const manifestPath = path.join(distDirectory, ARTIFACT_MANIFEST_FILE)
   if (existsSync(manifestPath)) {
     assertRegularFile(manifestPath, "Existing universal artifact manifest")

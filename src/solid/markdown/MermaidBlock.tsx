@@ -1,8 +1,39 @@
 import { createEffect, createSignal, createUniqueId, Match, Show, Switch, untrack } from "solid-js"
 import type { MermaidTheme } from "../../lib/mermaid/strictConfig"
+import { importWithLocalPreloadRecovery } from "../../runtime/preloadErrorPolicy"
 import type { MarkdownText } from "./text"
 
 type MermaidRender = { kind: "loading" } | { kind: "ready"; url: string } | { kind: "error"; message: string }
+type RenderMermaid = typeof import("./renderMermaid").renderMermaid
+
+let rendererLoad: Promise<RenderMermaid | undefined> | undefined
+const MERMAID_RELOAD_KEY = "lotus_mermaid_preload_reload_attempted"
+
+function reloadMermaidPageOnce() {
+  try {
+    if (sessionStorage.getItem(MERMAID_RELOAD_KEY)) return
+    sessionStorage.setItem(MERMAID_RELOAD_KEY, "1")
+  } catch {
+    // A persistent flag is required to retry safely across navigation.
+    return
+  }
+  window.location.reload()
+}
+
+function loadMermaidRenderer() {
+  // Browsers retain a failed module import for the lifetime of the document.
+  // Share one alternate entry across all diagram cards.
+  return rendererLoad ??= importWithLocalPreloadRecovery(() => import("./renderMermaid"))
+    .catch(() => importWithLocalPreloadRecovery(() => import("./recoverMermaidRenderer")))
+    .then((module) => {
+      if (!module) return undefined
+      try { sessionStorage.removeItem(MERMAID_RELOAD_KEY) } catch { /* storage is optional */ }
+      return module.renderMermaid
+    }, (error: unknown) => {
+      reloadMermaidPageOnce()
+      throw error
+    })
+}
 
 const BUTTON_CLASS = "inline-flex h-8 items-center justify-center gap-1 rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground"
 
@@ -38,9 +69,13 @@ export function MermaidBlock(props: { original: string; theme: MermaidTheme; tex
       const controller = new AbortController()
       let imageUrl: string | undefined
       setState({ kind: "loading" })
-      void import("./renderMermaid").then(({ renderMermaid }) => renderMermaid(source, theme, controller.signal)).then(
+      void loadMermaidRenderer().then((render) => {
+        // Vite can resolve without exports when its preload handler is reloading the page.
+        if (!render || controller.signal.aborted) return
+        return render(source, theme, controller.signal)
+      }).then(
         (svg) => {
-          if (controller.signal.aborted) return
+          if (svg === undefined || controller.signal.aborted) return
           // Render the strict SVG as an image document to isolate its styles
           // and keep Mermaid content out of the application's DOM.
           imageUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }))

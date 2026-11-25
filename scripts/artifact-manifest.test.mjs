@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import {
   mkdtempSync,
@@ -12,13 +13,18 @@ import path from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
+import bootstrapRequirements from "../src/services/bootstrap/bootstrapRequirements.json" with { type: "json" }
 import {
   ARTIFACT_MANIFEST_FILE,
+  BOOTSTRAP_REQUIREMENTS_FILE,
+  LOTUS_NEXT_PACKAGE_NAME,
   assertPackageVersion,
   assertResourcePath,
   buildArtifactManifest,
   calculateResourcesSha256,
   verifyArtifactManifest,
+  verifyBootstrapRequirements,
+  writeArtifactManifest,
 } from "./artifact-manifest.mjs"
 
 const revision = "0123456789abcdef0123456789abcdef01234567"
@@ -57,6 +63,92 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+describe("packaged Bootstrap requirements", () => {
+  function createPackage() {
+    const root = mkdtempSync(path.join(tmpdir(), "lotus-next-bootstrap-"))
+    temporaryDirectories.push(root)
+    const distDirectory = path.join(root, "dist")
+    mkdirSync(distDirectory)
+    writeFileSync(path.join(distDirectory, "index.html"), "<!doctype html>\n")
+    const packageJsonPath = path.join(root, "package.json")
+    writeFileSync(packageJsonPath, JSON.stringify({
+      name: LOTUS_NEXT_PACKAGE_NAME,
+      version: "2026.9.12",
+      files: ["dist"],
+    }))
+
+    const repositoryDirectory = process.cwd()
+    const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryDirectory,
+      encoding: "utf8",
+    }).trim()
+    writeArtifactManifest({
+      distDirectory,
+      packageJsonPath,
+      repositoryDirectory,
+      environment: { LOTUS_NEXT_SOURCE_REVISION: sourceRevision, LOTUS_NEXT_SOURCE_DIRTY: "false" },
+    })
+    return { root, distDirectory, sourceRevision }
+  }
+
+  it("includes the exact source-bound resource in the npm archive and v1 manifest", () => {
+    const { root, sourceRevision } = createPackage()
+    const args = ["pack", "--ignore-scripts", "--json"]
+    const npmExecPath = process.env.npm_execpath
+    const output = npmExecPath
+      ? execFileSync(process.execPath, [npmExecPath, ...args], { cwd: root })
+      : execFileSync("npm", args, { cwd: root })
+    const [pack] = JSON.parse(output.toString())
+    expect(pack.files.map(({ path: filename }) => filename)).toContain(
+      `dist/${BOOTSTRAP_REQUIREMENTS_FILE}`,
+    )
+    execFileSync("tar", ["-xzf", pack.filename], { cwd: root })
+    const distDirectory = path.join(root, "package", "dist")
+    const proof = JSON.parse(readFileSync(path.join(distDirectory, BOOTSTRAP_REQUIREMENTS_FILE), "utf8"))
+    expect(proof).toEqual({
+      schemaVersion: 1,
+      packageName: LOTUS_NEXT_PACKAGE_NAME,
+      packageVersion: pack.version,
+      sourceRevision,
+      sourceDirty: false,
+      bootstrap: bootstrapRequirements,
+    })
+    const artifactManifest = verifyArtifactManifest({
+      distDirectory,
+      expectedPackageName: pack.name,
+      expectedPackageVersion: pack.version,
+      expectedSourceRevision: sourceRevision,
+      expectedSourceDirty: false,
+    })
+    expect(artifactManifest.resources.map(({ path: filename }) => filename)).toContain(
+      BOOTSTRAP_REQUIREMENTS_FILE,
+    )
+    verifyBootstrapRequirements({ distDirectory, artifactManifest })
+  })
+
+  it.each([
+    ["missing declaration", null],
+    ["unsupported schema", { schemaVersion: 2 }],
+    ["another version", { packageVersion: "2026.9.11" }],
+    ["another source", { sourceRevision: revision }],
+    ["changed contract", { bootstrap: {} }],
+  ])("rejects %s even with a consistent resource inventory", (_label, change) => {
+    const { distDirectory, sourceRevision } = createPackage()
+    const proofPath = path.join(distDirectory, BOOTSTRAP_REQUIREMENTS_FILE)
+    if (change) {
+      const proof = JSON.parse(readFileSync(proofPath, "utf8"))
+      writeFileSync(proofPath, `${JSON.stringify({ ...proof, ...change }, null, 2)}\n`)
+    } else {
+      rmSync(proofPath)
+    }
+    generateFixtureManifest(distDirectory, { sourceRevision })
+    const artifactManifest = verifyArtifactManifest({ distDirectory })
+    expect(() => verifyBootstrapRequirements({ distDirectory, artifactManifest })).toThrow(
+      /Bootstrap requirements|ENOENT/,
+    )
+  })
 })
 
 describe("universal artifact manifest", () => {

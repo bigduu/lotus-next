@@ -5,35 +5,12 @@ import {
   RequestCancelledError,
   RequestTimeoutError,
 } from "../api/errors";
+import bootstrapRequirements from "./bootstrapRequirements.json";
 
 const BOOTSTRAP_RELATIVE_PATH = "bootstrap";
 const PASSWORD_VERIFY_RELATIVE_PATH = "bamboo/access/verify";
 
-const EXPECTED_SCHEMA_VERSION = 1;
-const EXPECTED_SERVER_PRODUCT = "bamboo";
-const EXPECTED_API_NAME = "bamboo.agent";
-const EXPECTED_API_BASE_PATH = "/api/v1";
-const SUPPORTED_API_VERSION = 1;
-const EXPECTED_REALTIME_NAME = "bamboo.v2";
-const EXPECTED_REALTIME_PATH = "/v2/stream";
-const SUPPORTED_REALTIME_VERSION = 2;
-const EXPECTED_JSON_SUBPROTOCOL = "bamboo.v2";
-const EXPECTED_PASSWORD_VERIFY_PATH = "/api/v1/bamboo/access/verify";
-const EXPECTED_DEVICE_PAIR_PATH = "/v2/pair";
 const MAX_U32 = 0xffff_ffff;
-
-const REQUIRED_REALTIME_CAPABILITIES = [
-  "auth.ws_hello_ack.v1",
-  "realtime.account_feed.v1",
-  "realtime.agent_events.v1",
-  "realtime.application_heartbeat.v1",
-  "realtime.feed_cursor.v1",
-  "realtime.feed_reset.v1",
-  "realtime.stop_control.v1",
-] as const;
-
-const PASSWORD_CAPABILITY = "auth.password_cookie.v1";
-const DEVICE_CAPABILITY = "auth.device_bearer.v1";
 
 export type BootstrapAuthPolicy = "open" | "credential_required" | "repair_required";
 export type BootstrapRequestState = "local_bypass" | "authenticated" | "unauthenticated";
@@ -300,48 +277,52 @@ export function classifyServerBootstrapDocument(
   const invalidReason = validateInternalSemantics(document);
   if (invalidReason) return { kind: "invalid", reason: invalidReason };
 
-  if (document.schema_version !== EXPECTED_SCHEMA_VERSION) {
+  const requirements = bootstrapRequirements;
+  if (document.schema_version !== requirements.schema_version) {
     return { kind: "incompatible", reason: "schema-version" };
   }
-  if (document.server.product !== EXPECTED_SERVER_PRODUCT) {
+  if (document.server.product !== requirements.server.product) {
     return { kind: "incompatible", reason: "server-product" };
   }
   if (
-    document.api.name !== EXPECTED_API_NAME ||
-    document.api.canonical_base_path !== EXPECTED_API_BASE_PATH ||
-    !rangeContains(document.api.min_version, document.api.max_version, SUPPORTED_API_VERSION)
+    document.api.name !== requirements.api.name ||
+    document.api.canonical_base_path !== requirements.api.canonical_base_path ||
+    !rangeContains(document.api.min_version, document.api.max_version, requirements.api.version)
   ) {
     return { kind: "incompatible", reason: "api-contract" };
   }
   if (
-    document.realtime.name !== EXPECTED_REALTIME_NAME ||
-    document.realtime.path !== EXPECTED_REALTIME_PATH ||
+    document.realtime.name !== requirements.realtime.name ||
+    document.realtime.path !== requirements.realtime.path ||
     !rangeContains(
       document.realtime.min_version,
       document.realtime.max_version,
-      SUPPORTED_REALTIME_VERSION,
+      requirements.realtime.version,
     ) ||
     !document.realtime.subprotocols.some(
-      ({ name, encoding }) => name === EXPECTED_JSON_SUBPROTOCOL && encoding === "json",
+      ({ name, encoding }) =>
+        name === requirements.realtime.subprotocol.name &&
+        encoding === requirements.realtime.subprotocol.encoding,
     )
   ) {
     return { kind: "incompatible", reason: "realtime-contract" };
   }
 
   const capabilities = new Set(document.capabilities);
-  if (REQUIRED_REALTIME_CAPABILITIES.some((capability) => !capabilities.has(capability))) {
+  if (requirements.capabilities.some((capability) => !capabilities.has(capability))) {
     return { kind: "incompatible", reason: "missing-capability" };
   }
   if (
     document.auth.password_enabled &&
-    (!capabilities.has(PASSWORD_CAPABILITY) ||
-      document.auth.verify_path !== EXPECTED_PASSWORD_VERIFY_PATH)
+    (!capabilities.has(requirements.auth.password_enabled.capability) ||
+      document.auth.verify_path !== requirements.auth.password_enabled.verify_path)
   ) {
     return { kind: "incompatible", reason: "password-contract" };
   }
   if (
     document.auth.device_auth_enabled &&
-    (!capabilities.has(DEVICE_CAPABILITY) || document.auth.pair_path !== EXPECTED_DEVICE_PAIR_PATH)
+    (!capabilities.has(requirements.auth.device_auth_enabled.capability) ||
+      document.auth.pair_path !== requirements.auth.device_auth_enabled.pair_path)
   ) {
     return { kind: "incompatible", reason: "device-contract" };
   }
