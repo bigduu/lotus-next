@@ -8,7 +8,7 @@ import { SupervisorEntry } from "./SupervisorEntry"
 vi.mock("@lucide/solid", () => {
   const Icon = (props: Pick<JSX.IntrinsicElements["svg"], "class" | "aria-hidden">) =>
     <svg class={props.class} aria-hidden={props["aria-hidden"]} />
-  return { AlertCircle: Icon, CircleDot: Icon, MoreHorizontal: Icon, Pencil: Icon, RotateCcw: Icon,
+  return { AlertCircle: Icon, CircleDot: Icon, LoaderCircle: Icon, MoreHorizontal: Icon, Pencil: Icon, RotateCcw: Icon,
     X: Icon, Check: Icon, ChevronRight: Icon, Circle: Icon }
 })
 
@@ -66,7 +66,11 @@ it("marks a supervisor whose last run failed, and stays quiet when it did not", 
 
   const running = mount(chat({ isRunning: true, lastRunStatus: "error", lastRunError: "earlier failure" }))
   expect(running.querySelector("[data-session-run-failure]")).toBeNull()
-  expect(running.querySelector("[data-session-running]")?.textContent).toBe(uiText("running_1f0eb99b"))
+  const runningButton = running.querySelector("button")!
+  expect(runningButton.firstElementChild?.querySelector("[data-session-running]")).not.toBeNull()
+  expect(runningButton.textContent).toBe("Supervisor")
+  const statusId = runningButton.getAttribute("aria-describedby")!.split(" ")[1]!
+  expect(document.getElementById(statusId)?.textContent).toBe(uiText("running_1f0eb99b"))
 
   const completed = mount(chat({ lastRunStatus: "completed" }))
   expect(completed.querySelector("[data-session-run-failure]")).toBeNull()

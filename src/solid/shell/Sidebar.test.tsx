@@ -30,7 +30,7 @@ vi.mock("@lucide/solid", () => {
   const Icon = () => <svg aria-hidden="true" />
   const glyphs = [
     "AlertCircle", "Archive", "ArchiveRestore", "CalendarDays", "ChevronRight", "Circle", "CircleDot", "Cog",
-    "FolderClosed", "FolderOpen", "GitBranch", "List", "MoreHorizontal", "PanelLeftClose", "Pencil", "Pin",
+    "FolderClosed", "FolderOpen", "GitBranch", "List", "LoaderCircle", "MoreHorizontal", "PanelLeftClose", "Pencil", "Pin",
     "PinOff", "Plus", "RotateCcw", "Search", "SquarePen", "Trash2", "X",
   ]
   return Object.fromEntries(glyphs.map((name) => [name, Icon]))
@@ -230,7 +230,7 @@ afterEach(() => {
 })
 
 describe("Sidebar running session priority", () => {
-  it("moves live roots above pinned and older dates and returns them to their original groups", () => {
+  it("adds live root shortcuts while keeping pinned and older sessions in place", async () => {
     const [running, setRunning] = createSignal<string[]>([])
     render({
       isRunning: (entry) => running().includes(entry.id),
@@ -240,40 +240,52 @@ describe("Sidebar running session priority", () => {
       ],
     })
     const priority = () => container.querySelector('section[aria-label="优先"]')
+    const shortcut = (id: string) => priority()?.querySelector<HTMLButtonElement>(`[data-sidebar-session-shortcut="${id}"]`)
+    const pinnedRow = row("running-pinned")
+    expect(pinnedRow).not.toBeNull()
     expect(priority()).toBeNull()
     expect(row("old-root")).toBeNull()
 
     run(() => setRunning(["old-root", "running-pinned", "child"]))
-    expect([...container.querySelectorAll("[data-session]")].slice(0, 3).map((entry) => entry.getAttribute("data-session")))
-      .toEqual(["running-pinned", "old-root", "idle-pinned"])
-    expect(priority()?.contains(row("old-root"))).toBe(true)
-    expect(container.querySelectorAll('[data-session="running-pinned"]')).toHaveLength(1)
+    expect([...priority()!.querySelectorAll("[data-sidebar-session-shortcut]")].map((entry) => entry.textContent))
+      .toEqual(["running-pinned", "old-root"])
+    expect(row("running-pinned")).toBe(pinnedRow)
+    expect(row("old-root")).toBeNull()
     expect(row("child")).toBeNull()
 
+    click("更早")
+    const olderRow = row("old-root")
+    expect(olderRow).not.toBeNull()
+    expect(priority()?.contains(olderRow)).toBe(false)
+    await settle(() => shortcut("old-root")!.click())
+    expect(props.onSelect).toHaveBeenCalledWith("old-root")
+    expect(props.onClose).toHaveBeenCalledOnce()
+
+    run(() => setRunning([]))
+    expect(priority()).toBeNull()
+    expect(row("running-pinned")).toBe(pinnedRow)
+    expect(row("old-root")).toBe(olderRow)
+
+    run(() => setRunning(["old-root", "running-pinned"]))
     search(" OLD-ROOT ")
-    expect(priority()?.contains(row("old-root"))).toBe(true)
+    expect(shortcut("old-root")).toBeDefined()
+    expect(row("old-root")).not.toBeNull()
+    expect(shortcut("running-pinned")).toBeNull()
     expect(row("running-pinned")).toBeNull()
     search("day-0")
     expect(priority()).toBeNull()
     expect(row("day-0")).not.toBeNull()
-    search("")
-
-    run(() => setRunning([]))
-    expect(priority()).toBeNull()
-    expect(row("running-pinned")).not.toBeNull()
-    expect(row("old-root")).toBeNull()
-    click("更早")
-    expect(row("old-root")).not.toBeNull()
   })
 
-  it("shows all running sessions in Project view beyond the regular preview limit", () => {
+  it("offers shortcuts beyond the project preview without expanding the original bucket", () => {
     localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
     render({
       chats: Array.from({ length: 9 }, (_, index) => chat(`running-${index}`, index, { isRunning: true })),
       currentSessionId: null,
     })
-    expect(container.querySelectorAll('section[aria-label="优先"] [data-session]')).toHaveLength(9)
-    expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
+    expect(container.querySelectorAll('section[aria-label="优先"] [data-sidebar-session-shortcut]')).toHaveLength(9)
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+    expect(row("running-0")).toBeNull()
   })
 })
 

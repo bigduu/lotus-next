@@ -580,7 +580,8 @@ test("local Stop remains unconfirmed and detached late frames cannot overwrite u
 test("compression feedback follows its session through sidebar navigation", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-chromium", "Desktop sidebar navigation")
   const f = await prepare(page, info, { multipleSessions: true })
-  const active = page.getByRole("button", { name: /Background compression A$/ })
+  const active = page.locator(`[data-sidebar-session="${background}"]`)
+    .getByRole("button", { name: "Background compression A", exact: true })
   const idle = page.getByRole("button", { name: "Idle comparison B", exact: true })
   await active.click()
   await expect.poll(() => f.channels.has("agent." + background)).toBe(true)

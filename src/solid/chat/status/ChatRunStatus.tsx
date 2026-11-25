@@ -146,5 +146,11 @@ export function ChatRunStatus(props: {
     <Show when={chat.upstreamRetryStatus}>{(status) =>
       <p role="status" class="mx-4 mb-2 text-xs text-muted-foreground">{text(upstreamStatus[status()])}</p>
     }</Show>
+    <Show when={chat.backgroundCommandStopStatus === "stopping"}>
+      <p role="status" class="mx-4 mb-2 text-xs text-muted-foreground">{text("background_command_stopping")}</p>
+    </Show>
+    <Show when={chat.backgroundCommandStopStatus === "unconfirmed"}>
+      <p role="alert" class="mx-4 mb-2 text-xs text-destructive">{text("background_command_stop_unconfirmed")}</p>
+    </Show>
   </>
 }

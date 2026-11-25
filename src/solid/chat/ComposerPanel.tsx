@@ -111,8 +111,9 @@ export function ComposerPanel(props: {
     return id ? state.tokenUsages[id] ?? props.chat.currentChat?.config?.tokenUsage : undefined
   })
   const value = () => inputs()[draftKey()]?.content ?? ""
+  const monitoredCommand = () => transcriptWorkWait(props.chat).monitoredCommand
   const running = () => props.chat.currentChat?.isRunning === true
-    || (props.chat.sending && props.chat.streaming !== null) || transcriptWorkWait(props.chat).monitoredCommand
+    || (props.chat.sending && props.chat.streaming !== null) || monitoredCommand()
   const liveRetry = createLiveBootstrapRetry({
     sessionId: () => props.chat.currentSessionId,
     running,
@@ -493,8 +494,9 @@ export function ComposerPanel(props: {
             <Show when={queuedSend() && !loopDraft()}><GuidanceTimingControl queue={queue} compact={compactToolbar()} disabled={blocked() || submitting()} /></Show>
             <Show when={running() || (props.chat.sending && !props.chat.submissionPending)}>
               <Button size="icon" class="size-8 rounded-full" type="button"
-                aria-label={text("stop_generation_9ad0aac3")} onClick={() => {
-                  liveRetry.cancelForStop()
+                aria-label={text(monitoredCommand() ? "stop_background_command" : "stop_generation_9ad0aac3")}
+                disabled={props.chat.backgroundCommandStopStatus === "stopping"} onClick={() => {
+                  if (!monitoredCommand()) liveRetry.cancelForStop()
                   void props.chat.stop()
                 }}>
                 <Square class="size-4" fill="currentColor" />

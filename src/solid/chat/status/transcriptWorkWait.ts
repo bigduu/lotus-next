@@ -1,4 +1,4 @@
-import { backgroundExecWaitActive } from "@/lib/chat/runtimeNotices"
+import { runtimeNoticeFromMetadata } from "@/lib/chat/runtimeNotices"
 import { isTerminalRunStatus } from "@shared/store/appStore/slices/executionStateSlice/reducer"
 import type { createChat } from "../createChat"
 
@@ -11,16 +11,16 @@ export function transcriptWorkWait(chat: WorkWaitChat) {
   const canPresent = session?.isRunning !== true && !isTerminalRunStatus(session?.lastRunStatus)
     && !chat.pendingQuestion && !chat.pendingApproval
   const last = session?.messages.at(-1)
-  const monitoredCommand = canPresent && suspended && (activity === undefined || activity === "waiting_bash")
-    && Boolean(last && backgroundExecWaitActive([{
-      metadata: { runtime_kind: "metadata" in last ? last.metadata?.runtime_kind : undefined },
-      content: "content" in last ? last.content : undefined,
-    }]))
+  const notice = canPresent && suspended && (activity === undefined || activity === "waiting_bash") && last
+    ? runtimeNoticeFromMetadata("metadata" in last ? last.metadata : undefined, "content" in last ? last.content : undefined)
+    : null
+  const monitoredCommand = notice?.runtimeKind === "background_exec_wait"
   const command = monitoredCommand || (canPresent && activity === "waiting_bash")
   const delegation = canPresent && (activity === "waiting_children"
     || (activity === undefined && (session?.runningChildCount ?? 0) > 0))
   return {
     monitoredCommand,
+    execSessionId: monitoredCommand ? notice.execSessionId ?? null : null,
     command,
     yielded: delegation || command,
     delegationHint: delegation && (suspended || activity === "waiting_children") && !command,

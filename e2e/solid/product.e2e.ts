@@ -100,7 +100,8 @@ for (const mode of ["idle", "running", "monitoring"] as const) {
     await expect(workbench).toBeHidden();
     await composer.fill("从 Solid 发送");
     if (queued) {
-      await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeVisible();
+      const stopLabel = mode === "monitoring" ? "停止后台命令" : "停止生成";
+      await expect(page.getByRole("button", { name: stopLabel, exact: true })).toBeVisible();
       await page.getByRole("combobox", { name: "发送时机" }).selectOption("after_run");
     } else {
       await page.locator('input[type="file"]').setInputFiles({
