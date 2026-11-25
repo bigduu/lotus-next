@@ -70,12 +70,13 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
     await expect(heading).toHaveText("New Session")
     await expect.poll(() => feed !== undefined).toBe(true)
     expect(await arrivals()).toEqual([])
-    const oldHeight = await heading.evaluate((element) => element.getBoundingClientRect().height)
+    const headingHeight = () => heading.evaluate((element) => (element as HTMLElement).offsetHeight)
+    const oldHeight = await headingHeight()
     const generatedTitle = "查看 Lotus 模型选择器改动"
     Object.assign(session, { title: generatedTitle, title_version: 1, title_generated: true })
     send(1, 1, generatedTitle, true)
     await expect(heading).toHaveText(generatedTitle)
-    expect(await heading.evaluate((element) => element.getBoundingClientRect().height)).toBe(oldHeight)
+    expect(await headingHeight()).toBe(oldHeight)
     if (reducedMotion === "no-preference") {
       await expect.poll(arrivals).toContain(generatedTitle)
     }
