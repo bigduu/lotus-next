@@ -6,7 +6,7 @@ import { Button } from "../ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu"
 import { Input } from "../ui/input"
-import { SessionRunningBadge } from "./SessionRunningBadge"
+import { SessionRunningIndicator } from "./SessionRunningIndicator"
 import { createUiText } from "./uiText"
 
 const ManagedSessionsDialog = lazy(() => import("../workbench/inspector/SupervisorManagedSessions"), {
@@ -124,9 +124,13 @@ export function SupervisorEntry(props: Props) {
           aria-describedby={`${descriptionId} ${statusId}${failed() ? ` ${failureId}` : ""}`}
           aria-busy={props.busy ? "true" : undefined} disabled={props.disabled}
           class={cn("min-w-0 flex-1 justify-start gap-2", props.unread && "font-semibold")} onClick={props.onSelect}>
-          <CircleDot class="size-4 shrink-0" aria-hidden="true" />
+          <span class="flex size-4 shrink-0 items-center justify-center">
+            <Show when={props.running} fallback={<CircleDot class="size-4" aria-hidden="true" />}>
+              <SessionRunningIndicator />
+            </Show>
+          </span>
           <span class="min-w-0 flex-1 truncate text-left" title={title()}>{title()}</span>
-          <Show when={props.running} fallback={
+          <Show when={!props.running}>
             <Show when={failed()} fallback={
               <Show when={props.unread}><span aria-hidden="true" class="size-1.5 shrink-0 rounded-full bg-primary" /></Show>
             }>
@@ -135,8 +139,6 @@ export function SupervisorEntry(props: Props) {
                 <AlertCircle class="size-3.5 text-destructive" />
               </span>
             </Show>
-          }>
-            <SessionRunningBadge label={text("running_1f0eb99b")} />
           </Show>
         </Button>
         <span id={statusId} class="sr-only">{status()}</span>
