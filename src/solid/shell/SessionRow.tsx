@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu"
 import { createSidebarContextMenu } from "./createSidebarContextMenu"
-import { SessionRunningBadge } from "./SessionRunningBadge"
+import { SessionRunningIndicator } from "./SessionRunningIndicator"
 import { createUiText } from "./uiText"
 import { WorktreeStateBadge } from "./WorktreeStateBadge"
 
@@ -136,17 +136,18 @@ export function SessionRow(props: {
           )}
         >
           <span title={failureDetail()} data-session-run-failure={runFailed() ? "" : undefined}
-            class="flex size-3.5 shrink-0 items-center justify-center">
-            {runFailed() ? (
+            class="relative flex size-3.5 shrink-0 items-center justify-center">
+            {running() ? (
+              <SessionRunningIndicator />
+            ) : runFailed() ? (
               <AlertCircle aria-hidden="true" class="size-3.5 text-destructive" />
-            ) : props.unread ? (
-              <span aria-hidden="true" title={text("new_messages_ce3b9bb1")} class="size-1.5 rounded-full bg-primary" />
             ) : null}
+            <Show when={props.unread && !runFailed()}>
+              <span aria-hidden="true" title={text("new_messages_ce3b9bb1")}
+                class={cn("size-1.5 rounded-full bg-primary", running() && "absolute -right-0.5 -top-0.5")} />
+            </Show>
           </span>
           <span class="min-w-0 flex-1 truncate">{props.chat.title || text("new_session_c57c30bc")}</span>
-          <Show when={running()}>
-            <SessionRunningBadge label={text("running_1f0eb99b")} />
-          </Show>
         </button>
         <Show when={props.unread}>
           <span id={unreadId} class="sr-only">{text("unread_messages_519491f4")}</span>

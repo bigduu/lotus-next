@@ -9,7 +9,7 @@ import { SessionRow } from "./SessionRow"
 vi.mock("@lucide/solid", () => {
   const Icon = (props: Pick<JSX.IntrinsicElements["svg"], "class">) => <svg class={props.class} />
   return {
-    AlertCircle: Icon, Check: Icon, Copy: Icon, GitBranch: Icon, GitMerge: Icon, List: Icon,
+    AlertCircle: Icon, Check: Icon, Copy: Icon, GitBranch: Icon, GitMerge: Icon, List: Icon, LoaderCircle: Icon,
     MoreHorizontal: Icon, Pencil: Icon, Pin: Icon, PinOff: Icon, RotateCcw: Icon, Sparkles: Icon, Trash2: Icon,
   }
 })
@@ -96,11 +96,15 @@ it("lets a live run outrank a stale failure and keeps the unread signal", () => 
   const retrying = chat("retrying", { isRunning: true, lastRunStatus: "error", lastRunError: "earlier failure" })
   const failed = chat("both", { lastRunStatus: "error", lastRunError: "boom" })
   const view = mount(() => <>
-    <SessionRow chat={retrying} active={false} unread={false} {...actions} />
+    <SessionRow chat={retrying} active={false} unread {...actions} />
     <SessionRow chat={failed} active={false} unread {...actions} />
   </>)
   expect(view.indicator("retrying")).toBeNull()
-  expect(view.row("retrying").querySelector("[data-session-running]")?.textContent).toBe(uiText("running_1f0eb99b"))
+  expect(view.slot("retrying").querySelector("[data-session-running]")).not.toBeNull()
+  expect(view.slot("retrying").querySelector(".rounded-full.bg-primary")).not.toBeNull()
+  const liveDescriptions = view.row("retrying").querySelector("button")!.getAttribute("aria-describedby")!.split(" ")
+  expect(liveDescriptions.map((id) => document.getElementById(id)?.textContent))
+    .toEqual([uiText("unread_messages_519491f4"), uiText("running_1f0eb99b")])
 
   const row = view.row("both")
   expect(row.querySelector("[data-session-run-failure]")).not.toBeNull()
@@ -174,8 +178,11 @@ it("shows the running indicator for work in flight even when the backend reports
   const view = mount(() => <SessionRow chat={chat("s", { isRunning: state().isRunning })}
     active={false} unread={false} running={state().running} {...actions} />)
   const indicator = () => view.row("s").querySelector("[data-session-running]")
-  expect(indicator()?.textContent).toBe("运行中")
+  expect(indicator()).not.toBeNull()
+  expect(indicator()?.getAttribute("aria-hidden")).toBe("true")
   const button = view.row("s").querySelector("button")!
+  expect(button.textContent).toBe("s")
+  expect(button.firstElementChild?.contains(indicator())).toBe(true)
   expect(document.getElementById(button.getAttribute("aria-describedby")!)?.textContent).toBe("运行中")
 
   setState({ running: false, isRunning: true })
