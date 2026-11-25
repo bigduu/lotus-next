@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test"
+import { expect, test, type Locator, type Page, type WebSocketRoute } from "@playwright/test"
 import type { PatchProjectRequest, ProjectManifest } from "../../src/services/project"
 import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
 
@@ -8,6 +8,8 @@ const root = "all-surface-session"
 const movable = "drag-movable"
 const leader = "drag-leader"
 const follower = "drag-follower"
+const betaRecent = "drag-sibling"
+const betaOlder = "drag-beta-older"
 const sourceSection = "source"
 const destination = "destination"
 const at = "2026-11-22T00:00:00Z"
@@ -20,7 +22,7 @@ function manifest(id: string, name: string, sidebar: NonNullable<ProjectManifest
   }
 }
 
-async function fixture(page: Page, baseURL: string | undefined) {
+async function fixture(page: Page, baseURL: string | undefined, runningSession?: string) {
   const entryUrl = new URL("/", baseURL).href
   const projects = {
     [alphaId]: manifest(alphaId, "Drag Project Alpha", {
@@ -30,14 +32,15 @@ async function fixture(page: Page, baseURL: string | undefined) {
     }),
     [betaId]: manifest(betaId, "Drag Project Beta", { sections: [], session_sections: {}, hidden_legacy: false }),
   }
-  const sessions = [
+  const sessionRows: [id: string, title: string, projectId: string, seconds: number][] = [
     [root, "Alpha current", alphaId, 4], [movable, "Alpha movable", alphaId, 1],
     [leader, "Destination leader", alphaId, 3], [follower, "Destination follower", alphaId, 2],
-    ["drag-sibling", "Beta independent", betaId, 5],
-  ].map(([id, title, projectId, age]) => ({
+    [betaRecent, "Beta independent", betaId, 5], [betaOlder, "Beta previous", betaId, 2],
+  ]
+  const sessions = sessionRows.map(([id, title, projectId, seconds]) => ({
     id, title, title_version: 1, kind: "root", root_session_id: id, project_id: projectId,
-    pinned: false, is_running: false, model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
-    created_at: `2026-11-22T00:00:0${age}Z`, updated_at: at, message_count: 0, subagent_count: 0,
+    pinned: false, is_running: id === runningSession, model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
+    created_at: `2026-11-22T00:00:0${seconds}Z`, updated_at: at, last_activity_at: at, message_count: 0, subagent_count: 0,
     permission_mode: "default", root_orchestration_only: false, thinking_mode: "standard",
     root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
   }))
@@ -89,7 +92,7 @@ async function fixture(page: Page, baseURL: string | undefined) {
     }
     return route.fallback()
   })
-  return { entryUrl, observed, projects, writes, holdNextWrite: (hold: Promise<void>) => { nextWrite = hold } }
+  return { entryUrl, observed, projects, sessions, writes, holdNextWrite: (hold: Promise<void>) => { nextWrite = hold } }
 }
 
 const section = (page: Page, id: string, projectId = alphaId) =>
@@ -168,6 +171,86 @@ test("Solid sidebar drag writes project membership and persists explicit row ran
   expect(writes).toHaveLength(1)
   expect(observed.pageErrors).toEqual([])
 })
+
+for (const { label, projectId, sectionId, recent, older, queued } of [
+  { label: "Project", projectId: betaId, sectionId: "none", recent: betaRecent, older: betaOlder, queued: false },
+  { label: "Project", projectId: betaId, sectionId: "none", recent: betaRecent, older: betaOlder, queued: true },
+  { label: "Section", projectId: alphaId, sectionId: destination, recent: leader, older: follower, queued: true },
+]) {
+  test(`Solid sidebar promotes ${label} rows after acknowledged ${queued ? "queued" : "ordinary"} user input`, async ({ page, baseURL, isMobile }, info) => {
+    if (!isMobile) await page.setViewportSize({ width: 1280, height: 960 })
+    const { entryUrl, observed, sessions, writes } = await fixture(page, baseURL, queued ? recent : undefined)
+    const session = sessions.find(({ id }) => id === recent)!
+    const bucket = section(page, sectionId, projectId)
+    const ordered = () => bucket.locator("[data-sidebar-session]").evaluateAll((rows) => rows.map((item) => item.getAttribute("data-sidebar-session")))
+    const assistantAt = "2026-11-22T00:01:00Z"
+    const assistantReply = "A background assistant reply"
+    let feed: WebSocketRoute | undefined
+    await page.routeWebSocket(/.*/, (socket) => {
+      socket.onMessage((message) => {
+        const frame = JSON.parse(String(message)) as { type: string; ch?: string }
+        if (frame.type === "hello") socket.send(JSON.stringify({ type: "welcome" }))
+        if (frame.type === "ping") socket.send(JSON.stringify({ type: "pong" }))
+        if (frame.type === "subscribe" && frame.ch === "feed") feed = socket
+      })
+    })
+    await page.route(`**/api/v1/history/${recent}**`, (route) => route.fulfill({ json: { session_id: recent,
+      messages: session.message_count ? [{ id: "assistant-reply", role: "assistant", content: assistantReply, created_at: assistantAt }] : [],
+    } }))
+    const acknowledged = Promise.withResolvers<void>()
+    const message = `Continue this ${label} conversation`
+    const submissions: unknown[] = []
+    await page.route(queued ? `**/api/v1/sessions/${recent}/guidance` : "**/api/v1/chat", async (route) => {
+      if (route.request().method() === "GET" && queued) return route.fulfill({ json: { messages: [] } })
+      if (route.request().method() !== "POST") return route.fallback()
+      const body = route.request().postDataJSON()
+      submissions.push(body)
+      await acknowledged.promise
+      return route.fulfill(queued
+        ? { status: 202, json: { id: body.id, activation_pending: false } }
+        : { status: 201, json: { session_id: recent, message_id: "submitted-input", status: "success" } })
+    })
+    await page.route(`**/api/v1/execute/${recent}`, (route) => route.fulfill({ json: { status: "started", session_id: recent, run_id: "fixture-run" } }))
+
+    try {
+      await page.goto(entryUrl)
+      await openSidebar(page, isMobile)
+      await expect.poll(ordered).toEqual([recent, older])
+      await gestureDrop(page, handle(page, "session", older), row(bucket, recent), bucket, isMobile, 0.2)
+      await expect.poll(ordered).toEqual([older, recent])
+
+      await expect.poll(() => Boolean(feed)).toBe(true)
+      Object.assign(session, { updated_at: assistantAt, last_activity_at: assistantAt, message_count: 1 })
+      feed!.send(JSON.stringify({ ch: "feed", seq: 1, event: { seq: 1, ts: assistantAt, session_id: recent,
+        event: { type: "session_history_committed", session_id: recent } } }))
+      await expect(row(bucket, recent).getByText("Unread messages", { exact: true })).toHaveCount(1)
+      await expect.poll(ordered).toEqual([older, recent])
+
+      await row(bucket, recent).getByRole("button", { name: session.title, exact: true }).click()
+      await expect(page.getByText(assistantReply, { exact: true })).toBeVisible()
+      if (queued) await page.getByRole("combobox", { name: "Send timing" }).selectOption("after_run")
+      const composer = page.locator("[data-composer-editor]")
+      await composer.fill(message)
+      await composer.press("Enter")
+      await expect.poll(() => submissions).toEqual([expect.objectContaining(queued
+        ? { text: message, mode: "after_run" }
+        : { message, session_id: recent })])
+      if (isMobile) await page.getByRole("button", { name: "Menu", exact: true }).click()
+      await expect.poll(ordered).toEqual([older, recent])
+
+      acknowledged.resolve()
+      await expect(composer).not.toHaveText(message)
+      await expect.poll(ordered).toEqual([recent, older])
+      expect(writes).toHaveLength(0)
+      expect(observed.pageErrors).toEqual([])
+      if (queued && !isMobile) {
+        await info.attach(`${label} order after queued input`, { body: await page.screenshot(), contentType: "image/png" })
+      }
+    } finally {
+      acknowledged.resolve()
+    }
+  })
+}
 
 async function keyboardPosition(page: Page, source: Locator, target: Locator, bucket: Locator, before = false) {
   await source.scrollIntoViewIfNeeded()

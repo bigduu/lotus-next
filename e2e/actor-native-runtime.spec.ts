@@ -304,7 +304,7 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
     await page.getByRole("button", { name: "新建会话", exact: true }).click()
     await expect(page.getByRole("heading", { name: "开始新任务", exact: true })).toBeVisible()
     await expect.poll(() => frames.slice(leaveChatFrame).some((f) => f.direction === "sent" && f.value.type === "unsubscribe" && f.value.ch === tree)).toBe(true)
-    await page.getByRole("button", { name: title, exact: true }).click()
+    await page.locator(`[data-sidebar-session="${root}"]`).getByRole("button", { name: title, exact: true }).click()
     await page.getByRole("button", { name: "打开侧边面板" }).click()
     if (!await inspect.isVisible()) await workbench.getByRole("tab", { name: "检查器", exact: true }).click()
     await expect(inspect.locator(`[data-actor-id="${child}"]`)).toBeVisible()
