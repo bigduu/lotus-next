@@ -21,7 +21,7 @@ async function selectSourceText(source: Locator, quote: string) {
   }, quote)
 }
 
-test("selecting a Side Chat quote keeps user and assistant text in place", async ({ page }) => {
+test("selecting a Side Chat quote keeps user and assistant text in place", async ({ page }, testInfo) => {
   const quote = "lockfile mismatch"
   const content = `${"这段文字会自动换行，方便检查选中前后的排版。 ".repeat(8)}Bamboo reported a ${quote} during the build.`
   const messages = (["user", "assistant"] as const).map((role) => ({
@@ -55,6 +55,11 @@ test("selecting a Side Chat quote keeps user and assistant text in place", async
     await expect(ask).toBeVisible()
     expect(await source.evaluate((node) => node.ownerDocument.getSelection()?.toString())).toBe(quote)
     expect(await layout(), `${role} layout while text is selected`).toEqual(before)
+    if (role === "assistant" && testInfo.project.name === "desktop-chromium") {
+      await testInfo.attach("Selected message and Side Chat action", {
+        body: await page.screenshot({ animations: "disabled" }), contentType: "image/png",
+      })
+    }
 
     await source.evaluate((node) => node.ownerDocument.getSelection()?.removeAllRanges())
     await expect(ask).toHaveCount(0)
