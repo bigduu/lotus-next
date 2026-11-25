@@ -73,7 +73,7 @@ export interface ChatSlice {
    * Does NOT call `patchSession` — the backend has already persisted the change
    * (the SSE event implies persistence).
    */
-  applyServerTitle: (sessionId: string, title: string, titleVersion: number) => void;
+  applyServerTitle: (sessionId: string, title: string, titleVersion: number, animate?: boolean) => void;
   /**
    * Apply an authoritative server pinned flag (from a `session_pinned_updated`
    * SSE event). Suppresses replays whose `updatedAt` is older than the local

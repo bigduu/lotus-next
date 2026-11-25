@@ -196,6 +196,7 @@ type ServerFrame = {
   type?: string;
   ch?: string;
   seq?: number;
+  delivery?: unknown;
   event?: unknown;
   control?: { type?: string; [key: string]: unknown };
 };
@@ -463,6 +464,9 @@ export const isFeedOpen = (): boolean =>
   feedChannel !== null &&
   !feedChannel.deliveryFailed &&
   feedChannel.subscribedSince !== null;
+
+/** The open account-feed connection lifetime used to fence local UI feedback. */
+export const feedConnectionIdentity = (): object | null => isFeedOpen() ? socketLiveness : null;
 // Multiple local subscribers may watch the SAME session, so each channel holds
 // a SET of subscribers. One subscribe/unsubscribe frame per wire channel.
 const agentChannels = new Map<string, Set<AgentChannel>>();
@@ -1084,7 +1088,8 @@ const handleFrame = (
       return;
     }
     try {
-      channel.handlers.onChange(change);
+      if (frame.delivery === "live") channel.handlers.onChange(change, "live");
+      else channel.handlers.onChange(change);
     } catch (error) {
       failFeedDelivery(channel, "apply event", error);
       return;

@@ -63,6 +63,7 @@ type Props = {
   onTogglePin: (chat: ChatItem) => void
   onRename: (id: string, title: string) => void | Promise<void>
   onRegenerateTitle: (id: string) => void
+  titleGenerating?: (id: string) => boolean
   onCopySessionId: (id: string) => void
   onClear: (chat: ChatItem) => void
   onDelete: (chat: ChatItem) => void
@@ -468,6 +469,7 @@ export function Sidebar(props: Props) {
               }}
               onTogglePin={() => props.onTogglePin(entry())}
               onRegenerateTitle={() => props.onRegenerateTitle(entry().id)}
+              titleGenerating={props.titleGenerating?.(entry().id)}
               onCopySessionId={() => props.onCopySessionId(entry().id)}
               onClear={() => props.onClear(entry())}
               onDelete={() => props.onDelete(entry())}

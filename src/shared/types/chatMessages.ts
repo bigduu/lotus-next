@@ -276,6 +276,8 @@ export interface ChatItem {
    * the title state machine (callers of `addChat` need not set this).
    */
   titleVersion?: number;
+  /** Transient visual feedback for a confirmed live title change. */
+  titleMotionVersion?: number;
   createdAt: number;
   /** Original server precision for matching an observed session lifetime. */
   createdAtExact?: string;
