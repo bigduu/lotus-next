@@ -10,11 +10,13 @@ const at = "2026-10-28T00:00:00.000Z"
 const prompts = ["Synthetic first question", "Synthetic first follow-up", "Synthetic second follow-up"]
 const answers = ["Synthetic completed answer one.", "Synthetic completed answer two.", "Synthetic completed answer three."]
 const otherAnswer = "Synthetic other session answer."
+const monitoredHandle = "e9511561-7f99-4389-a7de-0c9e7a39ffe7"
 
 type FixtureMessage = {
   id: string; role: "user" | "assistant" | "tool"; content: string; created_at: string
   tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>
   tool_call_id?: string; tool_success?: boolean
+  metadata?: Record<string, unknown>
 }
 const item = (id: string, role: FixtureMessage["role"], content: string): FixtureMessage => ({ id, role, content, created_at: at })
 const backgroundShell = (id: string) => {
@@ -39,7 +41,7 @@ const gate = () => {
   return { promise, release }
 }
 
-async function prepare(page: Page, options: { waitingForCommand?: boolean } = {}) {
+async function prepare(page: Page, options: { waitingForCommand?: boolean; commandStop?: "cancelled" | "unavailable" } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", "all-surface-session")
@@ -47,23 +49,33 @@ async function prepare(page: Page, options: { waitingForCommand?: boolean } = {}
     localStorage.setItem("copilot_ui_theme_v1", "light")
   })
   const observation = await installArtifactRuntime(page, standaloneScenario)
+  let waitingForCommand = Boolean(options.waitingForCommand || options.commandStop)
   const histories: Record<string, FixtureMessage[]> = {
-    [primary]: options.waitingForCommand ? [item("wait-user", "user", prompts[0]), ...toolHistory(1)] : [],
+    [primary]: waitingForCommand ? [item("wait-user", "user", prompts[0]), ...toolHistory(1)] : [],
     [other]: otherHistory,
+  }
+  if (options.commandStop) {
+    histories[primary].push({
+      ...item("command-wait", "assistant", "A command was transferred to background monitoring."),
+      metadata: { runtime_kind: "background_exec_wait", source: "runtime", exec_session_id: monitoredHandle },
+    })
   }
   let running = false, socket: WebSocketRoute | undefined, seq = 0, feedSeq = 0, subscriptions = 0
   let holdNextHistory = false, delayedHistoryRequests = 0, releasedHistoryResponses = 0
   let heldSnapshot: FixtureMessage[] = []
-  const held = gate(), writes: { path: string; body: unknown }[] = [], executions: string[] = []
+  const held = gate(), commandStop = gate(), writes: { path: string; body: unknown }[] = [], executions: string[] = []
+  const generationStops: string[] = []
   const channels = new Set<string>()
   const makeSession = (id: string, title: string) => ({
     id, title, title_version: 1, kind: "root", root_session_id: id, parent_session_id: null,
     model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
     created_at: at, updated_at: at, last_activity_at: at, message_count: histories[id].length,
     is_running: id === primary && running,
-    ...(id === primary && options.waitingForCommand
+    ...(id === primary && waitingForCommand
       ? { last_run_status: "suspended", activity: "waiting_bash" }
-      : { last_run_status: id === primary && running ? "running" : "completed" }),
+      : { last_run_status: id === primary
+        ? running ? "running" : options.commandStop === "cancelled" ? "cancelled" : "completed"
+        : "completed" }),
     permission_mode: "default", has_pending_question: false, spawn_depth: 0, pinned: false,
     bypass_permissions: false, root_orchestration_only: false, thinking_mode: "standard", reasoning_effort: "medium",
     root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
@@ -72,9 +84,10 @@ async function prepare(page: Page, options: { waitingForCommand?: boolean } = {}
   await page.routeWebSocket(/.*/, (ws) => {
     socket = ws
     ws.onMessage((raw) => {
-      const frame = JSON.parse(String(raw)) as { type?: string; ch?: string }
+      const frame = JSON.parse(String(raw)) as { type?: string; ch?: string; session_id?: string }
       if (frame.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
       if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+      if (frame.type === "stop" && frame.session_id) generationStops.push(frame.session_id)
       if (frame.type === "subscribe" && frame.ch) {
         channels.add(frame.ch)
         if (frame.ch === `agent.${primary}`) subscriptions += 1
@@ -86,6 +99,17 @@ async function prepare(page: Page, options: { waitingForCommand?: boolean } = {}
     const request = route.request(), url = new URL(request.url()), path = url.pathname
     const method = request.method()
     if (method !== "GET") writes.push({ path, body: request.postData() ? request.postDataJSON() : null })
+    if (options.commandStop && method === "POST" && path === `/api/v1/sessions/${primary}/background-command-wait/cancel`) {
+      await commandStop.promise
+      if (options.commandStop === "unavailable") return route.fulfill({ status: 404 })
+      waitingForCommand = false
+      return route.fulfill({ json: { status: "cancelled", exec_session_id: monitoredHandle } })
+    }
+    if (options.commandStop && method === "GET" && path === `/api/v1/sessions/${primary}/guidance`) {
+      return route.fulfill({ json: { messages: [{
+        id: "pending-guidance", text: "Queued independently", created_at: at, mode: "after_run",
+      }] } })
+    }
     if (method === "GET" && path === "/api/v1/sessions") {
       const selected = url.searchParams.get("kind") === "child" ? [] : sessions()
       return route.fulfill({ json: { sessions: selected, total: selected.length, limit: 200, offset: 0 } })
@@ -130,7 +154,7 @@ async function prepare(page: Page, options: { waitingForCommand?: boolean } = {}
   await expect(page.getByRole("banner")).toContainText("Synthetic lifecycle A")
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
   const emit = (event: object) => socket!.send(JSON.stringify({ ch: `agent.${primary}`, seq: ++seq, event }))
-  return { observation, writes, executions, channels, emit,
+  return { observation, writes, executions, channels, emit, generationStops, releaseCommandStop: commandStop.release,
     get subscriptions() { return subscriptions },
     get delayedHistoryRequests() { return delayedHistoryRequests },
     get releasedHistoryResponses() { return releasedHistoryResponses },
@@ -338,6 +362,40 @@ test("server-projected command wait keeps observation active and shows the right
   expect(f.executions).toEqual([])
   await page.screenshot({ path: info.outputPath("waiting-for-command.png") })
 })
+
+for (const outcome of ["cancelled", "unavailable"] as const) {
+  test(`stopping a monitored command handles a service response of ${outcome}`, async ({ page }, info) => {
+    const f = await prepare(page, { commandStop: outcome })
+    const wait = page.getByText("正在等待后台命令完成…", { exact: true })
+    const stop = page.getByRole("button", { name: "停止后台命令", exact: true })
+    const queue = page.getByText("队列中 1", { exact: true })
+
+    await expect(wait).toBeVisible()
+    await expect(queue).toBeVisible()
+    await stop.click()
+    await expect(stop).toBeDisabled()
+    await expect(page.getByText("正在停止后台命令…", { exact: true })).toBeVisible()
+    await expect(wait).toBeVisible()
+    await page.screenshot({ path: info.outputPath("stopping-background-command.png"), animations: "disabled" })
+    f.releaseCommandStop()
+
+    if (outcome === "cancelled") {
+      await expect(wait).toHaveCount(0)
+      await expect(stop).toHaveCount(0)
+    } else {
+      await expect(page.getByRole("alert").filter({ hasText: "未能确认后台命令已停止。请刷新会话后重试。" })).toBeVisible()
+      await expect(wait).toBeVisible()
+      await expect(stop).toBeEnabled()
+    }
+    await expect(queue).toBeVisible()
+    await page.screenshot({ path: info.outputPath(`background-command-stop-${outcome}.png`), animations: "disabled" })
+    expect(f.writes.filter(({ path }) => path.includes("/cancel") || path.includes("/stop/") || path.includes("/guidance"))).toEqual([{
+      path: `/api/v1/sessions/${primary}/background-command-wait/cancel`, body: { exec_session_id: monitoredHandle },
+    }])
+    expect(f.generationStops).toEqual([])
+    expect(f.executions).toEqual([])
+  })
+}
 
 test("the final background shell delivers its backend notification after the answer settles", async ({ page }) => {
   const messages = await captureShellNotifications(page)

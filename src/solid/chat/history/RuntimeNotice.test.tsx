@@ -68,8 +68,11 @@ it.each([true, false])("displays a localized runtime notice with metadata=%s", (
   }
 })
 
-it("presents the monitored command wait when the producer marks the session suspended", () => {
-  expect(commandWait(savedNotice(), "suspended")).toMatchObject({ monitoredCommand: true, command: true, yielded: true })
+it.each([true, false])("projects the exact suspended command handle with metadata=%s", (hasMetadata) => {
+  const messages = mapHistory([{ ...notice, metadata: hasMetadata ? notice.metadata : undefined }])
+  expect(commandWait(messages, "suspended")).toMatchObject({
+    monitoredCommand: true, execSessionId: handle, command: true, yielded: true,
+  })
 })
 
 it.each([
