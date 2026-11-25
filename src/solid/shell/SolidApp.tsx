@@ -142,6 +142,13 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const openError = (error: unknown) => reportNotice({ text: getErrorMessage(error), error: true })
   let navigationVersion = 0
   const currentSession = () => chat.currentSessionId
+  const viewingSession = () => {
+    // An open transcript may still be reconciling after the run stops.
+    if (settingsOpen() || chat.streamPhase !== null) return null
+    const current = chat.currentChat
+    const history = current?.config.syncCursor
+    return current && history && history.messageCount >= (current.messageCount ?? 0) ? current.id : null
+  }
   const openLink = (url: string) => setLink({ url, sessionId: currentSession(), navigation: navigationVersion })
   createEffect(currentSession, (id) => {
     if (workflowSession() !== id) setWorkflowSession(null)
@@ -848,7 +855,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
           suspended={settingsOpen() || paletteOpen()} scopeKey={workbench.key()}
           sidebar={<Sidebar
           open={sidebarOpen()} collapsed={sidebarCollapsed()} width="100%"
-          booted={chat.booted} chats={chat.chats} currentSessionId={currentSession()}
+          booted={chat.booted} chats={chat.chats} currentSessionId={currentSession()} viewingSessionId={viewingSession()}
           projects={projects()} sections={sections} ownerAccess={props.ownerAccess}
           suspended={settingsOpen() || paletteOpen() || projectsOpen() || !!projectToEdit() || !!projectWork()}
           isRunning={(entry) => sessionHasLiveWork(entry, executions()[entry.id], backgroundBash())}

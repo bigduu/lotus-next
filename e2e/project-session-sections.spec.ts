@@ -981,11 +981,18 @@ test("search by title or session ID reveals folded project sections", async ({ p
   expect(observation.consoleErrors).toEqual([])
 })
 
-test("running sessions have shortcuts and keep their original section rows", async ({ page }, testInfo) => {
+test("running and unread completion shortcuts keep their original section rows", async ({ page }, testInfo) => {
   const { observation, fixtureSessions, projectWrites } = await installSectionFixture(page)
   const target = fixtureSessions.find(({ id }) => id === "alpha-search")!
   const pinned = fixtureSessions.find(({ id }) => id === "beta-session")!
   pinned.pinned = true
+  fixtureSessions.find(({ id }) => id === "alpha-unsectioned")!.message_count = 1
+  const answer = { id: "background-answer", role: "assistant", content: "The background investigation finished." }
+  let holdHistory: Promise<void> | undefined
+  await page.route((url) => url.pathname === `/api/v1/history/${target.id}`, async (route) => {
+    await holdHistory
+    await route.fulfill({ json: { session_id: target.id, messages: target.message_count ? [{ ...answer, created_at: target.last_activity_at }] : [] } })
+  })
   let socket: WebSocketRoute | undefined
   let subscribed = false
   await page.routeWebSocket(/.*/, (webSocket) => {
@@ -997,16 +1004,16 @@ test("running sessions have shortcuts and keep their original section rows", asy
       if (frame.type === "subscribe" && frame.ch === "feed") subscribed = true
     })
   })
-  const publishRun = (running: boolean, seq: number) => {
+  const publishRun = (session: typeof target, running: boolean, seq: number) => {
     const ts = new Date(Date.parse(at) + seq * 1000).toISOString()
-    target.is_running = running
-    target.last_run_status = running ? "running" : "completed"
-    target.updated_at = ts
-    target.last_activity_at = ts
+    session.is_running = running
+    session.last_run_status = running ? "running" : "completed"
+    session.updated_at = ts
+    session.last_activity_at = ts
     socket!.send(JSON.stringify({
       ch: "feed", seq,
-      event: { seq, ts, session_id: target.id, event: {
-        type: running ? "execution_started" : "complete", session_id: target.id,
+      event: { seq, ts, session_id: session.id, event: {
+        type: running ? "execution_started" : "complete", session_id: session.id,
       } },
     }))
   }
@@ -1042,7 +1049,7 @@ test("running sessions have shortcuts and keep their original section rows", asy
   await disclosure(alpha).click()
   await expect(priority).toHaveCount(0)
 
-  publishRun(true, 1)
+  publishRun(target, true, 1)
   await expect(shortcut).toHaveAccessibleName(target.title)
   await expect(shortcut).toHaveAccessibleDescription("运行中")
   await expectLeadingSpinner(shortcut)
@@ -1071,11 +1078,61 @@ test("running sessions have shortcuts and keep their original section rows", asy
   await expect(page.locator("header").getByText(target.title, { exact: true })).toBeVisible()
   if (phone) await openSidebar(page, true)
 
-  publishRun(false, 2)
+  publishRun(target, false, 2)
   await expect(priority).toHaveCount(0)
   await expect(sessionButton).toBeVisible()
   await expect(sessionButton).toHaveAttribute("aria-current", "page")
   await expect(runningIcon(sessionButton)).toHaveCount(0)
+
+  await pinnedButton.click()
+  await expect(page.locator("header").getByText(pinned.title, { exact: true })).toBeVisible()
+  if (phone) await openSidebar(page, true)
+  publishRun(pinned, true, 3)
+  publishRun(target, true, 4)
+  const shortcuts = priority.locator("[data-sidebar-session-shortcut]")
+  const shortcutOrder = () => shortcuts.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("data-sidebar-session-shortcut")))
+  await expect(shortcuts).toHaveCount(2)
+  await expect(shortcut).toHaveAccessibleDescription("运行中")
+  const runningOrder = await shortcutOrder()
+
+  target.message_count = 1
+  publishRun(target, false, 5)
+  await expect(shortcut).toHaveAccessibleName(target.title)
+  await expect(shortcut).toHaveAccessibleDescription("未读消息")
+  await expect(runningIcon(shortcut)).toHaveCount(0)
+  await expect.poll(shortcutOrder).toEqual(runningOrder)
+
+  const heldHistory = Promise.withResolvers<void>()
+  holdHistory = heldHistory.promise
+  try {
+    await shortcut.click()
+    await expect(page.locator("header").getByText(target.title, { exact: true })).toBeVisible()
+    if (phone) await openSidebar(page, true)
+    await expect(shortcut).toHaveAccessibleDescription("未读消息")
+    await pinnedButton.click()
+    await expect(page.locator("header").getByText(pinned.title, { exact: true })).toBeVisible()
+  } finally {
+    holdHistory = undefined
+    heldHistory.resolve()
+  }
+
+  await page.reload()
+  await openSidebar(page, phone)
+  await expect(page.locator("header").getByText(pinned.title, { exact: true })).toBeVisible()
+  await expect(shortcut).toHaveAccessibleDescription("未读消息")
+  await expect.poll(shortcutOrder).toEqual(runningOrder)
+  const unreadScreenshot = testInfo.outputPath("sidebar-priority-unread.png")
+  await sidebar.screenshot({ path: unreadScreenshot, animations: "disabled" })
+  await testInfo.attach("Unread completion stays in Priority", { path: unreadScreenshot, contentType: "image/png" })
+
+  await shortcut.click()
+  await expect(page.locator("[data-message-list-content]").first()).toContainText(answer.content)
+  if (phone) await openSidebar(page, true)
+  await expect(shortcut).toHaveCount(0)
+  await expect(shortcuts).toHaveCount(1)
+  await expect(sessionRow).toHaveCount(1)
+  await expect(sessionButton).toHaveAttribute("aria-current", "page")
+  await expect(sessionButton).toHaveAccessibleDescription("")
   expect(projectWrites).toEqual([])
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])

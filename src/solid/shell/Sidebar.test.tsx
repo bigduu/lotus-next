@@ -194,7 +194,7 @@ function defaultProps(): Props {
   return {
     open: false, onClose: vi.fn(), collapsed: false, onToggleCollapse: vi.fn(), width: 288,
     chats: Array.from({ length: 7 }, (_, index) => chat(`day-${index}`, 5 - index)),
-    booted: true, currentSessionId: "day-0", onNewChat: vi.fn(), onSelect: vi.fn(),
+    booted: true, currentSessionId: "day-0", viewingSessionId: "day-0", onNewChat: vi.fn(), onSelect: vi.fn(),
     onRename: vi.fn(), onDelete: vi.fn(), onTogglePin: vi.fn(), onCopySessionId: vi.fn(), onOpenSettings: vi.fn(),
     onOpenProjectManager: vi.fn(), onOpenProjectWork: vi.fn(), onClear: vi.fn(), onRegenerateTitle: vi.fn(),
     onError: vi.fn(), ownerAccess: true, isRunning: (chat) => chat.isRunning === true,
@@ -229,13 +229,13 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe("Sidebar running session priority", () => {
+describe("Sidebar session priority", () => {
   it("adds live root shortcuts while keeping pinned and older sessions in place", async () => {
     const [running, setRunning] = createSignal<string[]>([])
     render({
       isRunning: (entry) => running().includes(entry.id),
       chats: [
-        ...props.chats, chat("idle-pinned", 5, { pinned: true }), chat("running-pinned", 4, { pinned: true }),
+        ...props.chats, chat("idle-pinned", 5, { pinned: true, messageCount: 3 }), chat("running-pinned", 4, { pinned: true }),
         chat("old-root", -10), chat("child", 5, { parentSessionId: "day-0" }),
       ],
     })
@@ -261,7 +261,14 @@ describe("Sidebar running session priority", () => {
     expect(props.onSelect).toHaveBeenCalledWith("old-root")
     expect(props.onClose).toHaveBeenCalledOnce()
 
+    render({ currentSessionId: "old-root", viewingSessionId: "old-root" })
+    const pinnedShortcut = shortcut("running-pinned")!
     run(() => setRunning([]))
+    expect(shortcut("old-root")).toBeNull()
+    expect(shortcut("running-pinned")).toBe(pinnedShortcut)
+    expect(pinnedShortcut.querySelector("[data-session-running]")).toBeNull()
+    expect(document.getElementById(pinnedShortcut.getAttribute("aria-describedby")!)?.textContent).toBe("未读消息")
+    render({ currentSessionId: "running-pinned", viewingSessionId: "running-pinned" })
     expect(priority()).toBeNull()
     expect(row("running-pinned")).toBe(pinnedRow)
     expect(row("old-root")).toBe(olderRow)
@@ -275,6 +282,37 @@ describe("Sidebar running session priority", () => {
     search("day-0")
     expect(priority()).toBeNull()
     expect(row("day-0")).not.toBeNull()
+  })
+
+  it("keeps Priority through remount and a hidden conversation until it becomes visible", () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden")
+    const priority = () => container.querySelector('[data-sidebar-session-shortcut="day-0"]')
+    render({ chats: [chat("day-0", 5, { isRunning: true })] })
+    expect(priority()?.querySelector("[data-session-running]")).not.toBeNull()
+
+    unmount()
+    render({ chats: [], booted: false })
+    render({ chats: [chat("day-0", 5)], booted: true })
+    expect(priority()).not.toBeNull()
+    expect(priority()?.querySelector("[data-session-running]")).toBeNull()
+
+    visibility.mockReturnValue("visible")
+    run(() => document.dispatchEvent(new Event("visibilitychange")))
+    expect(priority()).toBeNull()
+    expect(row("day-0")).not.toBeNull()
+  })
+
+  it("keeps observing a live shortcut when another tab clears an earlier one", () => {
+    render({ chats: [chat("day-1", 4, { isRunning: true })] })
+    const shortcut = () => container.querySelector('[data-sidebar-session-shortcut="day-1"]')
+    const key = Object.keys(localStorage).find((entry) => entry.startsWith("lotus.sidebar.priority.v1."))!
+    run(() => {
+      localStorage.removeItem(key)
+      window.dispatchEvent(new StorageEvent("storage", { key, newValue: null }))
+    })
+    render({ chats: [chat("day-1", 4)] })
+    expect(shortcut()).not.toBeNull()
+    expect(shortcut()?.querySelector("[data-session-running]")).toBeNull()
   })
 
   it("offers shortcuts beyond the project preview without expanding the original bucket", () => {
