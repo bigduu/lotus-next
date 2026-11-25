@@ -420,7 +420,7 @@ describe("Solid send admission and Root mode", () => {
     expect(agentClient.stopGeneration).not.toHaveBeenCalled()
     expect(appStore.getState().selectSession).toHaveBeenLastCalledWith(destination)
     if (destination !== null) {
-      expect(history()).toHaveBeenCalledWith(destination)
+      expect(history()).toHaveBeenCalledWith(destination, { throwOnError: true })
     }
     expect(pane.chat.currentSessionId).toBe(destination)
     expect(pane.chat.sending).toBe(false)

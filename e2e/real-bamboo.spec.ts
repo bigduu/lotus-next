@@ -184,7 +184,7 @@ const selectRootSession = async (
 ): Promise<void> => {
   const sidebar = await openSidebar(page, phone);
   await sidebar.getByPlaceholder("搜索会话").fill(title);
-  const session = sidebar.getByRole("button", { name: title, exact: true });
+  const session = sidebar.locator("[data-sidebar-session]").getByRole("button", { name: title, exact: true });
   await expect(session).toBeVisible();
   await session.click();
   await expect(

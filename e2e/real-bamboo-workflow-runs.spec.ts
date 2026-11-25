@@ -139,7 +139,7 @@ test("session Workflow Run panel executes pinned Sequence and Choice, cancels Re
     const cancelled = await json<Run>(fixture.baseUrl, `${endpoint(primary)}/${retried.run_id}`); expect(cancelled.status).toBe("cancelled")
     cases.push({ label: "retry-cancel", run: cancelled })
     await dialog.getByRole("button", { name: "关闭", exact: true }).click()
-    await page.getByRole("button", { name: "Lotus other Project E2E", exact: true }).click()
+    await page.locator(`[data-sidebar-session="${side}"]`).getByRole("button", { name: "Lotus other Project E2E", exact: true }).click()
     dialog = await openMain(page)
     await expect(dialog).toContainText("Lotus other Project E2E")
     await expect(dialog).not.toContainText(sequence.run_id)
