@@ -130,7 +130,8 @@ export function Select(props: SelectProps) {
       gutter={4}
       itemComponent={SelectItem}
     >
-      <SelectPrimitive.HiddenSelect />
+      {/* Keep the hidden form control out of WebKit's scrollable listbox renderer. */}
+      <SelectPrimitive.HiddenSelect size={1} />
       <SelectTrigger label={props.label} size={props.size} class={props.class} describedBy={props.describedBy} placeholder={props.placeholder}
         selectOnly={props.selectOnly} leadingIcon={props.leadingIcon} />
       <SelectContent />
