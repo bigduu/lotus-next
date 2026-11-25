@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { createGuidanceQueue } from "./createGuidanceQueue"
 import { guidanceService } from "@services/chat/guidance"
 import { beginRootModeOperation } from "@/lib/rootModeTransitionState"
+import { clearSessionOrder, sessionOrderSnapshot } from "@/lib/sidebarSessionOrderState"
 const beginRootModeTransition = (id: string, enabled: boolean) => beginRootModeOperation(id, 0, "a".repeat(64), enabled)
 vi.mock("@services/chat/guidance", () => ({ guidanceService: { list: vi.fn(), send: vi.fn(), cancel: vi.fn() } }))
 let dispose: (() => void) | undefined
@@ -20,6 +21,7 @@ function unmount() {
 beforeEach(() => {
   clearSessionCompatibilityObservations()
   localStorage.clear()
+  clearSessionOrder()
   sessionStorage.clear()
   const randomUUID = crypto.randomUUID.bind(crypto)
   vi.stubGlobal("crypto", { randomUUID, subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => Uint8Array.from(bytes).buffer } })
@@ -66,6 +68,7 @@ it("retries uncertain text and image admission with the same identity after remo
   await settle(async () => queue.setMode("after_run"))
   const images = [{ base64: "data:image/png;base64,aGVsbG8=", type: "image/png", name: "test.png" }]
   await settle(async () => { expect((await queue.send("结合图片", images)).kind).toBe("unconfirmed") })
+  expect(sessionOrderSnapshot().activity["s/1"]).toBeUndefined()
   const first = vi.mocked(guidanceService.send).mock.calls[0]
   expect(first[3]).toBe("after_run")
   const receipt = sessionStorage.getItem("lotus-next.guidance-submission.s/1")!
@@ -73,6 +76,7 @@ it("retries uncertain text and image admission with the same identity after remo
   unmount()
   await mount()
   await settle(async () => { expect((await queue.send("结合图片", images)).kind).toBe("accepted") })
+  expect(sessionOrderSnapshot().activity["s/1"]).toBeGreaterThan(0)
   expect(vi.mocked(guidanceService.send).mock.calls[1]).toEqual(first)
   expect(sessionStorage.getItem("lotus-next.guidance-submission.s/1")).toBeNull()
 })
