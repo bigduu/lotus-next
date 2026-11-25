@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu"
 import { createSidebarContextMenu } from "./createSidebarContextMenu"
+import { createSessionTitleMotion } from "./createSessionTitleMotion"
 import { SessionRunningIndicator } from "./SessionRunningIndicator"
 import { createUiText } from "./uiText"
 import { WorktreeStateBadge } from "./WorktreeStateBadge"
@@ -34,6 +35,7 @@ export function SessionRow(props: {
   onRename: (title: string) => void
   onTogglePin: () => void
   onRegenerateTitle: () => void
+  titleGenerating?: boolean
   onCopySessionId: () => void
   onClear: () => void
   onDelete: () => void
@@ -45,6 +47,7 @@ export function SessionRow(props: {
   const [editing, setEditing] = createSignal(false)
   const [draft, setDraft] = createSignal("")
   const context = createSidebarContextMenu()
+  const animateTitle = createSessionTitleMotion(() => props.chat, () => props.active)
   let dragged = false
   let internalPointer = false
 
@@ -147,7 +150,7 @@ export function SessionRow(props: {
                 class={cn("size-1.5 rounded-full bg-primary", running() && "absolute -right-0.5 -top-0.5")} />
             </Show>
           </span>
-          <span class="min-w-0 flex-1 truncate">{props.chat.title || text("new_session_c57c30bc")}</span>
+          <span ref={animateTitle} data-session-title="" class="min-w-0 flex-1 truncate">{props.chat.title || text("new_session_c57c30bc")}</span>
         </button>
         <Show when={props.unread}>
           <span id={unreadId} class="sr-only">{text("unread_messages_519491f4")}</span>
@@ -197,7 +200,9 @@ export function SessionRow(props: {
               {props.chat.pinned ? text("unpin_c92179b7") : text("pin_173f88d2")}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={rename}><Pencil />{text("rename_0d0cbac2")}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={props.onRegenerateTitle}><Sparkles />{text("generate_title_with_ai_f327dbdd")}</DropdownMenuItem>
+            <DropdownMenuItem disabled={props.titleGenerating} onSelect={props.onRegenerateTitle}>
+              <Sparkles />{text(props.titleGenerating ? "session_title_generating" : "generate_title_with_ai_f327dbdd")}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={props.onCopySessionId}><Copy />{text("copy_session_id_7df96a6b")}</DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onSelect={props.onClear}><RotateCcw />{text("conversation_clear_action")}</DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onSelect={props.onDelete}><Trash2 />{text("delete_2f9daa82")}</DropdownMenuItem>

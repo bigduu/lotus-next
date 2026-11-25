@@ -244,7 +244,7 @@ function sessionListUpdate(
       const titleFields =
         remoteTitleVersion > localTitleVersion
           ? { title: c.title, titleVersion: remoteTitleVersion }
-          : { title: prev.title, titleVersion: localTitleVersion };
+          : { title: prev.title, titleVersion: localTitleVersion, titleMotionVersion: prev.titleMotionVersion };
 
       const mergedConfig = {
         ...prevConfig,

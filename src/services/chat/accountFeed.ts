@@ -140,7 +140,7 @@ const OPEN_SESSION_RECONCILE_TYPES = new Set<string>([
   "need_clarification",
 ]);
 
-const applyChange = (change: ChangeEvent): void => {
+const applyChange = (change: ChangeEvent, delivery?: "live"): void => {
   const { event } = change;
   const store = appStore.getState();
   const sessionId = change.session_id ?? event.session_id;
@@ -211,7 +211,8 @@ const applyChange = (change: ChangeEvent): void => {
   switch (event.type) {
     case "session_title_updated":
       if (sessionId && typeof event.title === "string") {
-        store.applyServerTitle(sessionId, event.title, event.title_version ?? 0);
+        store.applyServerTitle(sessionId, event.title, event.title_version ?? 0,
+          delivery === "live" && event.source === "auto" && event.title_generated !== false);
       }
       // Title also affects the list ordering/labels of non-open sessions.
       scheduleRefresh();
@@ -283,9 +284,9 @@ export const startAccountFeed = (): void => {
         refreshSessionsNowAfterReset();
         for (const sessionId of taskListViewers.keys()) refreshTaskSnapshot(sessionId);
       },
-      onChange: (change) => {
+      onChange: (change, delivery) => {
         appStore.getState().setAgentAvailability(true);
-        applyChange(change);
+        applyChange(change, delivery);
         writeCursor(change.seq);
       },
     },

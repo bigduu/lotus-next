@@ -225,6 +225,19 @@ describe("accountFeed cursor and reset lifecycle", () => {
     expect(localStorage.getItem(CURSOR_STORAGE_KEY)).toBe("5");
   });
 
+  it("offers title motion only for an explicitly live model update", () => {
+    startAccountFeed();
+    const { onChange } = capturedHandlers();
+    const title = (seq: number, source: "auto" | "manual" | "fallback") => change(seq, {
+      type: "session_title_updated", title: `Title ${seq}`, title_version: seq, title_generated: true, source,
+    });
+    onChange(title(1, "auto"));
+    onChange(title(2, "manual"), "live");
+    onChange(title(3, "fallback"), "live");
+    onChange(title(4, "auto"), "live");
+    expect(store.applyServerTitle.mock.calls.map((args) => args[3])).toEqual([false, false, false, true]);
+  });
+
   it("clears the cursor before one immediate authoritative reset resync", () => {
     localStorage.setItem(CURSOR_STORAGE_KEY, "8");
     const order: string[] = [];

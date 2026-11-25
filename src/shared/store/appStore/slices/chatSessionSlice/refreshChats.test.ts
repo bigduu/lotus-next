@@ -80,12 +80,52 @@ const chatStore = () =>
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((yes) => { resolve = yes; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
 };
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("session title authority", () => {
+  it("keeps a committed title when an older optimistic rename fails", async () => {
+    const store = chatStore();
+    const initial = sessionSummaryToChatItem(summary("root"));
+    store.setState({ chats: [initial], currentSessionId: "root" });
+    const pending = deferred<void>();
+    vi.spyOn(agentClient, "patchSession").mockReturnValue(pending.promise);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const rename = store.getState().persistSessionTitle("root", "Pending rename");
+    expect(store.getState().chats[0].title).toBe("Pending rename");
+    store.getState().applyServerTitle("root", "Model-generated title", 1, true);
+    pending.reject(new Error("write failed"));
+    await expect(rename).rejects.toThrow("write failed");
+    expect(store.getState().chats[0]).toMatchObject({
+      title: "Model-generated title", titleVersion: 1, titleMotionVersion: 1,
+    });
+  });
+
+  it("rolls concurrent failed optimistic renames back to the server's original title", async () => {
+    const store = chatStore();
+    const initial = sessionSummaryToChatItem(summary("root"));
+    store.setState({ chats: [initial], currentSessionId: "root" });
+    const first = deferred<void>();
+    const second = deferred<void>();
+    vi.spyOn(agentClient, "patchSession").mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const firstRename = store.getState().persistSessionTitle("root", "First rename");
+    const secondRename = store.getState().persistSessionTitle("root", "Second rename");
+    first.reject(new Error("first failed"));
+    await expect(firstRename).rejects.toThrow("first failed");
+    expect(store.getState().chats[0].title).toBe("Second rename");
+    second.reject(new Error("second failed"));
+    await expect(secondRename).rejects.toThrow("second failed");
+    expect(store.getState().chats[0].title).toBe(initial.title);
+  });
 });
 
 describe("lazy session index loading", () => {
