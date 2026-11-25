@@ -2310,6 +2310,19 @@ export class AgentClient {
     await apiClient.post(`stop/${encodeURIComponent(sessionId)}`);
   }
 
+  async stopBackgroundCommand(sessionId: string, execSessionId: string): Promise<void> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(execSessionId)) {
+      throw new Error("Invalid background command identity");
+    }
+    const receipt = await apiClient.postOnce<{ status?: unknown; exec_session_id?: unknown } | null>(
+      `sessions/${encodeURIComponent(sessionId)}/background-command-wait/cancel`,
+      { exec_session_id: execSessionId },
+    );
+    if (receipt?.status !== "cancelled" || receipt.exec_session_id !== execSessionId) {
+      throw new Error("Unconfirmed background command Stop");
+    }
+  }
+
   /**
    * Delete a persisted backend session
    */

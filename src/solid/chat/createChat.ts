@@ -31,6 +31,7 @@ import {
 import { apiClient, getBackendStorageScope } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
 import { backgroundBashIds, hasSessionWorkWait, parseBackgroundBashLaunch } from "@/lib/sessionBackgroundTasks"
+import { transcriptWorkWait } from "./status/transcriptWorkWait"
 import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId, discardUnsentContinuousRetryFence, restoreConfirmedUnstartedRetryFence, readContinuousRetryFence, readOrdinaryRetryFence } from "@/lib/continuousRetryFence"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import {
@@ -445,6 +446,8 @@ export function createChat(
   // later starts a successor in the same session.
   const paneStopFencesRef = cell<Map<string, ContinuousStopFence>>(new Map())
   const stoppingFencesRef = cell(new Set<ContinuousStopFence>())
+  const [stoppingBackgroundCommands, setStoppingBackgroundCommands] = createSignal<ReadonlySet<string>>(new Set())
+  const [unconfirmedBackgroundStop, setUnconfirmedBackgroundStop] = createSignal<string | null>(null)
   const [upstreamRetryFeedback, setUpstreamRetryFeedback] = createSignal<{
     sessionId: string; operationId: number; status: UpstreamRetryFeedback
   } | null>(null)
@@ -2565,7 +2568,55 @@ export function createChat(
       }
     }
 
+  const commandWait = () => transcriptWorkWait({
+    currentChat: currentChat(), pendingQuestion: pendingQuestion(), pendingApproval: pendingApproval(),
+  })
+  const backgroundStopKey = (sessionId: string, handle: string | null, scope = getBackendStorageScope()) =>
+    JSON.stringify([scope, sessionId, handle])
+  const stopBackgroundCommand = async (sessionId: string, handle: string | null) => {
+    const scope = getBackendStorageScope()
+    const key = backgroundStopKey(sessionId, handle, scope)
+    if (stoppingBackgroundCommands().has(key)) return
+    if (!handle) {
+      setUnconfirmedBackgroundStop(key)
+      return
+    }
+    setUnconfirmedBackgroundStop((current) => current === key ? null : current)
+    setStoppingBackgroundCommands((current) => new Set(current).add(key))
+    let confirmed = false
+    try {
+      await agentClient.stopBackgroundCommand(sessionId, handle)
+      confirmed = true
+    } catch (error) {
+      if (getBackendStorageScope() === scope) observeSessionExecutionConflict(sessionId, error)
+    } finally {
+      if (getBackendStorageScope() === scope) {
+        const store = appStore.getState()
+        await Promise.allSettled([
+          store.refreshChatsNow(),
+          store.loadChatHistory(sessionId, { mode: "monotonic" }),
+        ])
+      }
+      setStoppingBackgroundCommands((current) => {
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
+      if (!confirmed && mountedRef.current && sid() === sessionId && getBackendStorageScope() === scope) {
+        setUnconfirmedBackgroundStop(key)
+      }
+    }
+  }
+
   const stop = () => {
+    const displayedSessionId = readSessionId()
+    const wait = commandWait()
+    if (wait.monitoredCommand) {
+      if (displayedSessionId && displayedSessionId === currentChat()?.id) {
+        void stopBackgroundCommand(displayedSessionId, wait.execSessionId)
+      }
+      return
+    }
     const active = activeSendRef.current
     if (active?.phase === "submitting" || active?.phase === "preparing") return
     const targetSessionId = active?.acknowledgedSessionId ?? sid()
@@ -2857,6 +2908,14 @@ export function createChat(
     get upstreamRetryStatus() {
       const feedback = upstreamRetryFeedback()
       return feedback?.sessionId === sid() ? feedback.status : null
+    },
+    get backgroundCommandStopStatus() {
+      const sessionId = sid()
+      const wait = commandWait()
+      if (!sessionId || !wait.monitoredCommand) return null
+      const key = backgroundStopKey(sessionId, wait.execSessionId)
+      if (stoppingBackgroundCommands().has(key)) return "stopping"
+      return unconfirmedBackgroundStop() === key ? "unconfirmed" : null
     },
     get pendingUserText() { return pendingUserText() },
     get pendingUserImages() { return pendingUserImages() },
