@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { isLocalFeaturePreloadError } from "./preloadErrorPolicy"
+import { importWithLocalPreloadRecovery, isClaimedLocalPreloadError, isLocalFeaturePreloadError, mayBeLocalWebKitPreloadError } from "./preloadErrorPolicy"
 
 describe("local feature preload error policy", () => {
   it.each([
+    new Error("Failed to fetch dynamically imported module: /assets/renderMermaid-AbC.js"),
+    "Failed to fetch /assets/recoverMermaidRenderer-AbC.js",
     "Failed to fetch dynamically imported module: https://app.example/assets/Settings-AbC_123.js",
     "Failed to fetch dynamically imported module: https://app.example/assets/SettingsPage-AbC_123.js",
     "Unable to preload CSS for /base/assets/Settings-z9-Y.js?revision=next",
@@ -52,5 +54,19 @@ describe("local feature preload error policy", () => {
     null,
   ])("keeps unrelated or ambiguous preload failures on the existing policy", (payload) => {
     expect(isLocalFeaturePreloadError(payload)).toBe(false)
+  })
+
+  it("claims only the WebKit error rejected by the locally recovering import", async () => {
+    const failure = new TypeError("Importing a module script failed.")
+    const unrelated = new TypeError(failure.message)
+    expect(mayBeLocalWebKitPreloadError(failure)).toBe(false)
+
+    const attempt = importWithLocalPreloadRecovery(() => Promise.reject(failure))
+    expect(mayBeLocalWebKitPreloadError(failure)).toBe(true)
+    expect(mayBeLocalWebKitPreloadError(unrelated)).toBe(true)
+    await expect(attempt).rejects.toBe(failure)
+    expect(isClaimedLocalPreloadError(failure)).toBe(true)
+    expect(isClaimedLocalPreloadError(unrelated)).toBe(false)
+    expect(mayBeLocalWebKitPreloadError(failure)).toBe(false)
   })
 })

@@ -2,7 +2,7 @@ import { Archive, ArchiveRestore, CalendarDays, ChevronRight, Cog, FolderClosed,
 import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, omit, onSettled, Show, untrack } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import { NO_PROJECT_GROUP_KEY, type ProjectManifest } from "@services/project"
-import { getErrorMessage } from "@services/api"
+import { getBackendStorageScope, getErrorMessage } from "@services/api"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { appStore } from "@shared/store/appStore/state"
 import { confirmedProjectRevision } from "@shared/store/appStore/slices/projectSlice"
@@ -35,6 +35,7 @@ import { SupervisorEntry } from "./SupervisorEntry"
 import { createUiLocale, createUiText } from "./uiText"
 
 const GROUPING_KEY = "lotus.sidebar.grouping-mode.v1"
+const PRIORITY_KEY = "lotus.sidebar.priority.v1"
 const PROJECT_PREVIEW_COUNT = 7
 const SidebarProjectDrag = lazy(() => import("./project-drag/SidebarProjectDrag"), { export: "SidebarProjectDrag" })
 type Grouping = "date" | "project"
@@ -48,6 +49,7 @@ type Props = {
   booted: boolean
   chats: ChatItem[]
   currentSessionId: string | null
+  viewingSessionId: string | null
   projects: Record<string, ProjectManifest>
   sections: ReturnType<typeof createProjectSections>
   ownerAccess: boolean
@@ -76,6 +78,21 @@ function readGrouping(): Grouping {
   try { return localStorage.getItem(GROUPING_KEY) === "project" ? "project" : "date" }
   catch { return "date" }
 }
+
+function readPriorityShortcuts(prefix: string): Map<string, string> {
+  const shortcuts = new Map<string, string>()
+  try {
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index)
+      if (!key?.startsWith(prefix)) continue
+      const birth = localStorage.getItem(key)
+      if (birth !== null) shortcuts.set(key.slice(prefix.length), birth)
+    }
+  } catch { /* Priority still works for this page. */ }
+  return shortcuts
+}
+
+const sessionBirth = (chat: ChatItem) => chat.createdAtExact ?? String(chat.createdAt)
 
 function Disclosure(props: {
   expanded: boolean
@@ -119,10 +136,14 @@ export function Sidebar(props: Props) {
   const text = createUiText()
   const locale = createUiLocale()
   const priorityRunningId = createUniqueId()
+  const priorityUnreadId = createUniqueId()
+  const priorityPrefix = `${PRIORITY_KEY}.${encodeURIComponent(getBackendStorageScope())}:`
   const [search, setSearch] = createSignal("")
   const [grouping, setGrouping] = createSignal(readGrouping())
   const [order, setOrder] = createSignal(sessionOrderSnapshot())
   const [readMarkers, setReadMarkers] = createSignal(sessionReadMarkersSnapshot())
+  const [pendingPriority, setPendingPriority] = createSignal(readPriorityShortcuts(priorityPrefix))
+  const [pageVisible, setPageVisible] = createSignal(document.visibilityState !== "hidden")
   const [disclosures, setDisclosures] = createSignal(readProjectDisclosures())
   const [closedDates, setClosedDates] = createSignal(new Set<string>())
   const [olderOpen, setOlderOpen] = createSignal(false)
@@ -163,11 +184,36 @@ export function Sidebar(props: Props) {
   onSettled(() => {
     const updateOrder = () => { setOrder(sessionOrderSnapshot()) }
     const updateRead = () => { setReadMarkers(sessionReadMarkersSnapshot()) }
+    const updateVisibility = () => { setPageVisible(document.visibilityState !== "hidden") }
+    const updatePriority = (event: StorageEvent) => {
+      if (event.key === null) {
+        setPendingPriority(readPriorityShortcuts(priorityPrefix))
+        return
+      }
+      if (!event.key.startsWith(priorityPrefix)) return
+      const id = event.key.slice(priorityPrefix.length)
+      const birth = event.newValue
+      if (birth === null && runningIds().has(id)) return
+      setPendingPriority((previous) => {
+        const next = new Map(previous)
+        if (birth === null) next.delete(id)
+        else next.set(id, birth)
+        return next
+      })
+    }
     const disposeOrder = subscribeSessionOrder(updateOrder)
     const disposeRead = subscribeSessionReadMarkers(updateRead)
+    document.addEventListener("visibilitychange", updateVisibility)
+    window.addEventListener("storage", updatePriority)
     updateOrder()
     updateRead()
-    return () => { disposeRead(); disposeOrder() }
+    updateVisibility()
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility)
+      window.removeEventListener("storage", updatePriority)
+      disposeRead()
+      disposeOrder()
+    }
   })
 
   const query = createMemo(() => search().trim().toLowerCase())
@@ -180,17 +226,55 @@ export function Sidebar(props: Props) {
   const mergeStates = createWorktreeMergeStates(rootChats)
   const supervisor = createMemo(() => props.chats.find(isDefaultSupervisor))
   const runningIds = createMemo(() => {
-    const ids = new Set<string>()
+    const ids = new Map<string, string>()
     for (const chat of rootChats()) {
-      if (props.isRunning(chat)) ids.add(chat.id)
+      if (props.isRunning(chat)) ids.set(chat.id, sessionBirth(chat))
     }
     return ids
-  }, { equals: (previous, next) => previous?.size === next.size && [...previous].every((id) => next.has(id)) })
+  }, { equals: (previous, next) => previous?.size === next.size && [...previous].every(([id, birth]) => next.get(id) === birth) })
+  let observedRunning = new Map<string, string>()
+  let knownBirths = new Map<string, string>()
+  createEffect(
+    () => [rootChats(), runningIds(), pendingPriority(), props.booted, pageVisible() ? props.viewingSessionId : null] as const,
+    ([chats, running, previous, booted, viewed]) => {
+      const next = new Map(previous)
+      let changed = false
+      if (booted) {
+        const births = new Map(chats.map((chat) => [chat.id, sessionBirth(chat)]))
+        for (const [id, birth] of previous) {
+          const current = births.get(id) === birth
+          const removed = !current && knownBirths.get(id) === birth
+          const seen = current && id === viewed && !running.has(id)
+          if (!removed && !seen) continue
+          next.delete(id)
+          changed = true
+          try {
+            const key = priorityPrefix + id
+            if (localStorage.getItem(key) === birth) localStorage.removeItem(key)
+          } catch { /* Keep pending shortcuts for this page. */ }
+        }
+        knownBirths = births
+      }
+      // Remember each live shortcut until the finished conversation is viewed.
+      // The terminal event can arrive before the transcript summary is updated.
+      for (const [id, birth] of running) {
+        if (observedRunning.get(id) === birth) continue
+        next.set(id, birth)
+        changed = true
+        try { localStorage.setItem(priorityPrefix + id, birth) }
+        catch { /* Keep pending shortcuts for this page. */ }
+      }
+      observedRunning = running
+      if (changed) setPendingPriority(next)
+    },
+  )
   const priorityChats = createMemo(() => {
     const ids = runningIds()
-    if (!ids.size) return []
+    const pending = pendingPriority()
+    if (!ids.size && !pending.size) return []
     const sessionOrder = order()
-    return rootChats().filter((chat) => ids.has(chat.id) && matchesQuery(chat))
+    return rootChats().filter((chat) =>
+      (ids.has(chat.id) || pending.get(chat.id) === sessionBirth(chat)) && matchesQuery(chat))
       .sort((left, right) => sessionSortTime(right, sessionOrder) - sessionSortTime(left, sessionOrder))
   })
   const groups = createMemo(() => {
@@ -639,16 +723,23 @@ export function Sidebar(props: Props) {
             <section aria-label={text("sidebar_priority")} class="mb-2">
               <h2 class="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">{text("sidebar_priority")}</h2>
               <span id={priorityRunningId} class="sr-only">{text("running_1f0eb99b")}</span>
+              <span id={priorityUnreadId} class="sr-only">{text("unread_messages_519491f4")}</span>
               <For each={priorityChats()} keyed={(chat) => chat.id}>{(entry) => (
                 <button type="button" data-sidebar-session-shortcut={entry().id}
                   aria-current={props.currentSessionId === entry().id ? "page" : undefined}
-                  aria-describedby={priorityRunningId}
+                  aria-describedby={runningIds().has(entry().id) ? priorityRunningId : priorityUnreadId}
                   class={cn(
                     "mb-0.5 flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring",
                     props.currentSessionId === entry().id && "bg-sidebar-accent font-medium",
                   )}
                   onClick={() => { void select(entry().id) }}>
-                  <SessionRunningIndicator />
+                  <Show when={runningIds().has(entry().id)} fallback={
+                    <span aria-hidden="true" class="flex size-3.5 shrink-0 items-center justify-center">
+                      <span class="size-1.5 rounded-full bg-primary" />
+                    </span>
+                  }>
+                    <SessionRunningIndicator />
+                  </Show>
                   <span class="min-w-0 truncate hover:underline">{entry().title || text("new_session_c57c30bc")}</span>
                 </button>
               )}</For>

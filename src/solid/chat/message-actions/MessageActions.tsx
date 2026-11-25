@@ -27,6 +27,7 @@ export function MessageActions(props: {
   const copied = () => feedback().status === "copied"
   const user = () => props.target.message.role === "user"
   const selection = () => props.sideChat?.selected(props.target.key)
+  const askLabel = () => text("side_chat_ask_selection")
   const ask = (quote: SideChatQuote) => props.sideChat?.ask(props.target.key, quote)
   let menuTarget: MessageTarget | undefined
   let menuCopy: (() => Promise<void>) | undefined
@@ -46,11 +47,17 @@ export function MessageActions(props: {
           {String(i18n.t("components.markdown.copyFailed", { lng: locale() }))}
         </span>
       </Show>
-      <Show when={selection()}>
-        {(quote) => <Button type="button" variant="secondary" size="sm"
-          onMouseDown={(event) => event.preventDefault()} onClick={() => ask(quote())}>
-          <MessageSquarePlus class="size-3.5" aria-hidden="true" />{text("side_chat_ask_selection")}
-        </Button>}
+      <Show when={props.sideChat}>
+        {/* Reserve this space so showing the quote action cannot rewrap the message. */}
+        <div class="size-7 shrink-0">
+          <Show when={selection()}>
+            {(quote) => <Button type="button" variant="secondary" size="icon" class="size-7"
+              aria-label={askLabel()} title={askLabel()}
+              onMouseDown={(event) => event.preventDefault()} onClick={() => ask(quote())}>
+              <MessageSquarePlus class="size-3.5" aria-hidden="true" />
+            </Button>}
+          </Show>
+        </div>
       </Show>
       <button type="button" disabled={!props.target.text} class={cn(actionClass, "hidden size-7 md:inline-flex")}
         aria-label={text("copy_63d90d97")} title={text(copied() ? "copied_8f6f8d97" : "copy_63d90d97")}
@@ -88,7 +95,7 @@ export function MessageActions(props: {
           <DropdownMenuSeparator class="md:hidden" />
           <Show when={props.sideChat}>
             <DropdownMenuItem onSelect={() => ask(menuQuote ?? sideChatQuote(props.target.message.id, props.target.text))}>
-              <MessageSquarePlus aria-hidden="true" />{text("side_chat_ask_selection")}
+              <MessageSquarePlus aria-hidden="true" />{askLabel()}
             </DropdownMenuItem>
           </Show>
           <Show when={user()} fallback={
