@@ -6,6 +6,8 @@ import { expectComposerText } from "./support/composer.js"
 
 const mainId = "all-surface-session"
 const sideId = "model-effort-side-root"
+const provider = "fixture-provider"
+const defaultModel = "fixture-model"
 const alternateModel = "local-analysis-model-with-a-long-responsive-display-name"
 const mainTitle = "Main model and effort"
 const birth = "a".repeat(64)
@@ -57,20 +59,34 @@ function expectStableRightEdge(actual: { x: number; y: number; width: number; he
   expect(actual!.height).toBeCloseTo(expected!.height, 2)
 }
 
+async function installPickerRuntime(page: Page, modelNames: string[]) {
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], {
+    providerInstancesResponse: {
+      default_provider_instance_id: provider,
+      instances: [{ id: provider, type: "openai", label: "Fixture provider", enabled: true,
+        config: { model: defaultModel, runtime_models: modelNames } }],
+      defaults: { chat: { provider, model: defaultModel } },
+      features: { provider_model_ref: true },
+    },
+  })
+  const models = modelNames.map((model) => ({
+    reference: { provider, model }, display_name: model,
+    provider_display_name: "Fixture provider",
+    capabilities: { supports_tools: true, supports_vision: false, supports_reasoning: true },
+  }))
+  await page.route("**/api/v1/bamboo/provider-catalog/fetch-models", (route) =>
+    route.fulfill({ json: { fetched: [{ provider, models }] } }))
+  await page.route("**/api/v1/bamboo/provider-catalog", (route) =>
+    route.fulfill({ json: { providers: [], models } }))
+  return observation
+}
+
 async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>, beforeModeCommit?: () => Promise<void>) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
   }, mainId)
-  const observation = await installArtifactRuntime(page, standaloneScenario, [], {
-    providerInstancesResponse: {
-      default_provider_instance_id: "fixture-provider",
-      instances: [{ id: "fixture-provider", type: "openai", label: "Fixture provider", enabled: true,
-        config: { model: "fixture-model", runtime_models: ["fixture-model", alternateModel] } }],
-      defaults: { chat: { provider: "fixture-provider", model: "fixture-model" } },
-      features: { provider_model_ref: true },
-    },
-  })
+  const observation = await installPickerRuntime(page, [defaultModel, alternateModel])
   const session = (id: string, title: string, effort: string) => ({
     id, title, kind: "root", title_version: 1, root_session_id: id,
     parent_session_id: null, spawn_depth: 0, root_orchestration_only: false,
@@ -86,15 +102,6 @@ async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>,
   const sessions = [main, side]
   const patches: Array<{ id: string; body: Record<string, unknown> }> = []
   const operations: Array<Record<string, unknown>> = []
-  const models = ["fixture-model", alternateModel].map((model) => ({
-    reference: { provider: "fixture-provider", model }, display_name: model,
-    provider_display_name: "Fixture provider",
-    capabilities: { supports_tools: true, supports_vision: false, supports_reasoning: true },
-  }))
-  await page.route("**/api/v1/bamboo/provider-catalog/fetch-models", (route) =>
-    route.fulfill({ json: { fetched: [{ provider: "fixture-provider", models }] } }))
-  await page.route("**/api/v1/bamboo/provider-catalog", (route) =>
-    route.fulfill({ json: { providers: [], models } }))
   let restorationReleased = false
   let restorationGate: Promise<void> | undefined
   await page.route("**/api/v1/sessions?*", async (route) => {
@@ -441,6 +448,95 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   await screenshot(page, info, "combined-picker-after-reload")
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
+})
+
+test("scrolling the model picker keeps the new-session page in place", async ({ page, hasTouch }) => {
+  test.skip(hasTouch, "desktop mouse wheel interaction")
+  await page.setViewportSize({ width: 1200, height: 600 })
+  await page.addInitScript(() => { localStorage.setItem("bodhi_onboarded_v1", "1") })
+  const modelNames = [defaultModel, ...Array.from({ length: 30 }, (_, index) => `extra-model-${index}`)]
+  const observation = await installPickerRuntime(page, modelNames)
+  await page.route("**/api/v1/sessions?*", (route) =>
+    route.fulfill({ json: { sessions: [], total: 0, limit: 200, offset: 0 } }))
+  await page.goto(standaloneScenario.entryUrl)
+
+  const home = page.getByTestId("home-dashboard")
+  await expect(home).toBeVisible()
+  await home.hover({ position: { x: 40, y: 160 } })
+  await page.mouse.wheel(0, 80)
+  await expect.poll(() => home.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+  const scrollState = () => home.evaluate((element) => ({
+    dashboardOffset: element.scrollTop,
+    pageOffset: window.scrollY,
+    bodyOffset: document.body.scrollTop,
+    pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
+  }))
+  const before = await scrollState()
+  expect(before.pageOverflow).toBe(0)
+
+  await modelEffortPicker(page).click()
+  await page.getByTestId("model-picker-model").click()
+  const search = page.getByRole("searchbox", { name: "搜索模型", exact: true })
+  await expect(search).toBeFocused()
+
+  const list = page.getByLabel("模型列表", { exact: true })
+  const options = list.locator("[data-model-option]")
+  await expect(options).toHaveCount(modelNames.length)
+  expect(await scrollState()).toEqual(before)
+  const listOffset = () => list.evaluate((element) => element.scrollTop)
+  const wheel = async (delta: number) => {
+    await page.mouse.wheel(0, delta)
+    // Mouse wheel dispatch completes before the browser applies scrolling.
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    }))
+  }
+  await list.hover()
+  await wheel(140)
+  await expect.poll(listOffset).toBeGreaterThan(0)
+  expect(await scrollState()).toEqual(before)
+
+  await wheel(-3000)
+  await expect.poll(listOffset).toBe(0)
+  await wheel(-240)
+  expect(await scrollState()).toEqual(before)
+
+  await wheel(3000)
+  await expect.poll(() => list.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(1)
+  await wheel(240)
+  expect(await scrollState()).toEqual(before)
+
+  await search.hover()
+  await wheel(240)
+  expect(await scrollState()).toEqual(before)
+
+  await search.fill("extra-model-29")
+  await expect(options).toHaveCount(1)
+  await options.first().hover()
+  await wheel(240)
+  expect(await scrollState()).toEqual(before)
+
+  await search.fill("no matching model")
+  const empty = list.getByRole("status")
+  await expect(empty).toBeVisible()
+  await empty.hover()
+  await wheel(240)
+  expect(await scrollState()).toEqual(before)
+
+  await home.hover({ position: { x: 40, y: 160 } })
+  await wheel(80)
+  await expect.poll(async () => (await scrollState()).dashboardOffset).toBeGreaterThan(before.dashboardOffset)
+  await expect(search).toBeVisible()
+
+  // Chromium has no document overflow here. Check that the search still
+  // cancels an outward wheel event even when the page has nowhere to scroll.
+  const eventCanceled = await search.evaluate((element) => {
+    const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 80 })
+    element.dispatchEvent(event)
+    return event.defaultPrevented
+  })
+  expect(eventCanceled).toBe(true)
+  expect(observation.pageErrors).toEqual([])
 })
 
 test("switching sessions updates only the active session's model and effort", async ({ page }, info) => {
