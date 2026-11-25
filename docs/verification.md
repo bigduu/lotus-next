@@ -121,6 +121,24 @@ digest is deterministic for one resource set. Consumers must verify this file
 before serving or staging an artifact; a dirty source manifest is never a
 release artifact.
 
+The universal manifest includes `dist/lotus-next-bootstrap-requirements.json`
+as a hashed resource. This declaration carries its own schema version and
+repeats the package name, package version, source revision, and dirty state.
+The package check verifies those fields and compares the declaration with the
+same requirements used by the production Bootstrap validator.
+
+A consumer can verify the published archive and universal manifest, then read
+the declaration and match its package and source identity to the exact artifact.
+For a Bootstrap response from the consumer's own Bamboo process, match the
+schema, product, API and realtime names and paths. Each advertised version range
+must include the corresponding declared version. Require the declared
+subprotocol and encoding, all listed capabilities, and the indicated auth
+capability and path when that auth method is enabled. A missing declaration,
+an unsupported declaration schema, or a failed identity or contract check
+provides no positive evidence for an independent update. Older archives may
+omit the declaration. This check covers the Bootstrap contract. Normal runtime
+validation and authentication still apply.
+
 ## Publication and recovery
 
 The committed package version remains the `0.0.0` source placeholder. After

@@ -3,8 +3,10 @@ import { fileURLToPath } from "node:url"
 
 import {
   ARTIFACT_MANIFEST_FILE,
+  BOOTSTRAP_REQUIREMENTS_FILE,
   LOTUS_NEXT_PACKAGE_NAME,
   verifyArtifactManifest,
+  verifyBootstrapRequirements,
 } from "./artifact-manifest.mjs"
 import {
   analyzeBundleBudget,
@@ -39,6 +41,7 @@ const missing = [
   "dist/asset-manifest.json",
   "dist/bundle-ownership.json",
   `dist/${ARTIFACT_MANIFEST_FILE}`,
+  `dist/${BOOTSTRAP_REQUIREMENTS_FILE}`,
 ].filter((file) => !paths.includes(file))
 
 if (!paths.some((file) => file.startsWith("dist/assets/"))) {
@@ -174,8 +177,9 @@ if (
 
 let artifactManifest
 try {
+  const distDirectory = fileURLToPath(new URL("../dist/", import.meta.url))
   artifactManifest = verifyArtifactManifest({
-    distDirectory: fileURLToPath(new URL("../dist/", import.meta.url)),
+    distDirectory,
     expectedPackageName: manifest.name,
     expectedPackageVersion: manifest.version,
     expectedSourceRevision: process.env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION,
@@ -184,6 +188,7 @@ try {
         ? undefined
         : expectedDirtyInput === "true",
   })
+  verifyBootstrapRequirements({ distDirectory, artifactManifest })
 } catch (error) {
   process.stderr.write(
     `Universal artifact verification failed: ${error instanceof Error ? error.message : String(error)}\n`,
