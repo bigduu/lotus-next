@@ -988,10 +988,12 @@ test("running and unread completion shortcuts keep their original section rows",
   pinned.pinned = true
   fixtureSessions.find(({ id }) => id === "alpha-unsectioned")!.message_count = 1
   const answer = { id: "background-answer", role: "assistant", content: "The background investigation finished." }
+  const historyPath = `/api/v1/history/${target.id}`
+  let answerSaved = false
   let holdHistory: Promise<void> | undefined
-  await page.route((url) => url.pathname === `/api/v1/history/${target.id}`, async (route) => {
+  await page.route((url) => url.pathname === historyPath, async (route) => {
     await holdHistory
-    await route.fulfill({ json: { session_id: target.id, messages: target.message_count ? [{ ...answer, created_at: target.last_activity_at }] : [] } })
+    await route.fulfill({ json: { session_id: target.id, messages: answerSaved ? [{ ...answer, created_at: target.last_activity_at }] : [] } })
   })
   let socket: WebSocketRoute | undefined
   let subscribed = false
@@ -1095,7 +1097,8 @@ test("running and unread completion shortcuts keep their original section rows",
   await expect(shortcut).toHaveAccessibleDescription("运行中")
   const runningOrder = await shortcutOrder()
 
-  target.message_count = 1
+  // History has the answer before the list summary reports the new count.
+  answerSaved = true
   publishRun(target, false, 5)
   await expect(shortcut).toHaveAccessibleName(target.title)
   await expect(shortcut).toHaveAccessibleDescription("未读消息")
@@ -1105,8 +1108,11 @@ test("running and unread completion shortcuts keep their original section rows",
   const heldHistory = Promise.withResolvers<void>()
   holdHistory = heldHistory.promise
   try {
+    const historyRead = page.waitForRequest((request) => new URL(request.url()).pathname === historyPath)
     await shortcut.click()
+    await historyRead
     await expect(page.locator("header").getByText(target.title, { exact: true })).toBeVisible()
+    await expect(page.locator("[data-message-list-content]").first()).not.toContainText(answer.content)
     if (phone) await openSidebar(page, true)
     await expect(shortcut).toHaveAccessibleDescription("未读消息")
     await pinnedButton.click()
@@ -1115,6 +1121,7 @@ test("running and unread completion shortcuts keep their original section rows",
     holdHistory = undefined
     heldHistory.resolve()
   }
+  target.message_count = 1
 
   await page.reload()
   await openSidebar(page, phone)

@@ -144,7 +144,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const currentSession = () => chat.currentSessionId
   const viewingSession = () => {
     // An open transcript may still be reconciling after the run stops.
-    if (settingsOpen() || chat.streamPhase !== null) return null
+    if (settingsOpen() || chat.streamPhase !== null || chat.selectionHistoryPending) return null
     const current = chat.currentChat
     const history = current?.config.syncCursor
     return current && history && history.messageCount >= (current.messageCount ?? 0) ? current.id : null

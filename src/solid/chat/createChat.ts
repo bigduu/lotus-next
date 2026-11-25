@@ -1,6 +1,7 @@
 import { supportsContinuousUpstreamRetry, readUpstreamRetryCapability, isRetryRunId, type UpstreamRetrySelection, type UpstreamRetryFeedback } from "@services/chat/upstreamRetry"
 import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { uiText } from "@shared/i18n/text"
+import type { ChatItem } from "@shared/types/chatMessages"
 import { createOutputRate, createSessionExecutionCompatibility } from "./observation"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { createEffect, createMemo, createSignal, onSettled, untrack } from "solid-js"
@@ -367,6 +368,10 @@ export function createChat(
   const readSessionId = () => boundSessionId ? boundSessionId() : appStore.getState().currentSessionId
   const executionCompatibility = createSessionExecutionCompatibility(() => sid())
   const currentChat = createStoreSelector(appStore, (state) => selectSessionById(sid())(state))
+  const [selectionHistory, setSelectionHistory] = createSignal<{
+    id: string
+    cursor: ChatItem["config"]["syncCursor"]
+  } | null>(null)
   const canonicalMessages = createStoreSelector(appStore, (s) => selectSessionById(sid())(s)?.messages ?? [], shallow)
   const observedShellIds = createStoreSelector(appStore, (s) => backgroundBashIds(selectSessionById(sid())(s)?.messages), shallow)
   createEffect(
@@ -1006,8 +1011,15 @@ export function createChat(
       retainTerminalAcrossUnmount()
       stopStream(null)
     }
-    appStore.getState().selectSession(id)
-    void appStore.getState().loadChatHistory(id)
+    const store = appStore.getState()
+    const visit = { id, cursor: selectSessionById(id)(store)?.config.syncCursor }
+    setSelectionHistory(visit)
+    store.selectSession(id)
+    // A cached transcript can already match an older summary. Only a new
+    // history read can confirm what this visit showed.
+    void store.loadChatHistory(id, { throwOnError: true }).then(() => {
+      setSelectionHistory((current) => current === visit ? null : current)
+    }, () => { /* Keep waiting for fresh history for this visit. */ })
   }
 
   // Restored ordinary identities are scoped to this tab's same generation.
@@ -2896,6 +2908,10 @@ export function createChat(
     get chats() { return chats() },
     get currentSessionId() { return sid() },
     get currentChat() { return currentChat() },
+    get selectionHistoryPending() {
+      const visit = selectionHistory()
+      return visit !== null && visit.id === sid() && visit.cursor === currentChat()?.config.syncCursor
+    },
     get messages() { return messages() },
     get streaming() { return streaming() },
     get streamPhase() { return streamPhase() },
