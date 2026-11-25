@@ -30,6 +30,7 @@ import { ProjectSectionDialog, sectionWriteErrorText } from "./ProjectSectionDia
 import { createSidebarProjectDragMoves } from "./project-drag/createSidebarProjectDragMoves"
 import type { SidebarDragParts } from "./project-drag/SidebarProjectDrag"
 import { SessionRow } from "./SessionRow"
+import { SessionRunningIndicator } from "./SessionRunningIndicator"
 import { SupervisorEntry } from "./SupervisorEntry"
 import { createUiLocale, createUiText } from "./uiText"
 
@@ -117,6 +118,7 @@ function Disclosure(props: {
 export function Sidebar(props: Props) {
   const text = createUiText()
   const locale = createUiLocale()
+  const priorityRunningId = createUniqueId()
   const [search, setSearch] = createSignal("")
   const [grouping, setGrouping] = createSignal(readGrouping())
   const [order, setOrder] = createSignal(sessionOrderSnapshot())
@@ -213,22 +215,12 @@ export function Sidebar(props: Props) {
     projectGroups.sort((left, right) => Number(pinned.has(right.key)) - Number(pinned.has(left.key)))
     return pinnedSessions ? [pinnedSessions, ...projectGroups] : projectGroups
   })
-  const regularGroups = createMemo(() => {
-    const ids = runningIds()
-    if (!ids.size) return groups()
-    // Derive visible buckets from the full groups so running work keeps its
-    // project order and drag rank when it returns.
-    return groups().map((group) => ({
-      ...group,
-      chats: group.chats.filter((chat) => !ids.has(chat.id)),
-    })).filter((group) => group.chats.length || (projectMode() && Object.hasOwn(props.projects, group.key)))
-  })
-  const activeGroup = createMemo(() => regularGroups().find((group) => group.chats.some((chat) => chat.id === props.currentSessionId)))
-  const older = createMemo(() => projectMode() ? [] : regularGroups().filter((group) => group.key !== "__pinned").slice(5))
+  const activeGroup = createMemo(() => groups().find((group) => group.chats.some((chat) => chat.id === props.currentSessionId)))
+  const older = createMemo(() => projectMode() ? [] : groups().filter((group) => group.key !== "__pinned").slice(5))
   const olderCount = createMemo(() => older().reduce((count, group) => count + group.chats.length, 0))
   const shownGroups = createMemo(() => {
-    if (!query()) return regularGroups().filter((group) => !older().includes(group))
-    return regularGroups().map((group) => ({
+    if (!query()) return groups().filter((group) => !older().includes(group))
+    return groups().map((group) => ({
       ...group,
       chats: group.chats.filter(matchesQuery),
     })).filter((group) => group.chats.length > 0)
@@ -438,7 +430,7 @@ export function Sidebar(props: Props) {
     return (
       <Disclosure label={group().label} expanded={expanded()} disabled={!!query()} onToggle={toggle}
         projectId={project()?.id} projectBusy={props.sections.busy().has(group().key)} contextMenu={context}
-        detail={text("project_sessions", { count: regularGroups().find((item) => item.key === group().key)?.chats.length ?? group().chats.length })}
+        detail={text("project_sessions", { count: groups().find((item) => item.key === group().key)?.chats.length ?? group().chats.length })}
         wrapHeader={project() ? (header) => <DropTarget target={{ projectId: group().key, sectionId: null }}
           disabled={dragDisabled(group().key)} data-project-drop={group().key} title={text("sidebar_project_drop_hint")}
           class="rounded-md feedback-motion switch-feedback">{header}</DropTarget> : undefined}
@@ -646,7 +638,20 @@ export function Sidebar(props: Props) {
           <Show when={priorityChats().length > 0}>
             <section aria-label={text("sidebar_priority")} class="mb-2">
               <h2 class="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">{text("sidebar_priority")}</h2>
-              <SessionBucket chats={priorityChats()} />
+              <span id={priorityRunningId} class="sr-only">{text("running_1f0eb99b")}</span>
+              <For each={priorityChats()} keyed={(chat) => chat.id}>{(entry) => (
+                <button type="button" data-sidebar-session-shortcut={entry().id}
+                  aria-current={props.currentSessionId === entry().id ? "page" : undefined}
+                  aria-describedby={priorityRunningId}
+                  class={cn(
+                    "mb-0.5 flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring",
+                    props.currentSessionId === entry().id && "bg-sidebar-accent font-medium",
+                  )}
+                  onClick={() => { void select(entry().id) }}>
+                  <SessionRunningIndicator />
+                  <span class="min-w-0 truncate hover:underline">{entry().title || text("new_session_c57c30bc")}</span>
+                </button>
+              )}</For>
             </section>
           </Show>
           <Show when={projectMode() && Object.values(props.projects).some((project) =>

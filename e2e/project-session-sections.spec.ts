@@ -981,7 +981,7 @@ test("search by title or session ID reveals folded project sections", async ({ p
   expect(observation.consoleErrors).toEqual([])
 })
 
-test("running sessions rise above pinned and folded projects until their work finishes", async ({ page }, testInfo) => {
+test("running sessions have shortcuts and keep their original section rows", async ({ page }, testInfo) => {
   const { observation, fixtureSessions, projectWrites } = await installSectionFixture(page)
   const target = fixtureSessions.find(({ id }) => id === "alpha-search")!
   const pinned = fixtureSessions.find(({ id }) => id === "beta-session")!
@@ -1020,34 +1020,62 @@ test("running sessions rise above pinned and folded projects until their work fi
   const alpha = project(page, alphaId)
   const investigation = section(alpha, alphaInvestigation)
   const priority = sidebar.getByRole("region", { name: "优先", exact: true })
-  await expect(row(investigation, target.id)).toBeVisible()
-  await expect(row(sidebar, pinned.id)).toBeVisible()
+  const shortcut = priority.locator(`button[data-sidebar-session-shortcut="${target.id}"]`)
+  const sessionRow = row(investigation, target.id)
+  const sessionButton = sessionRow.getByRole("button", { name: target.title, exact: true })
+  const pinnedButton = row(sidebar, pinned.id).getByRole("button", { name: pinned.title, exact: true })
+  const runningIcon = (button: Locator) => button.locator("[data-session-running]")
+  const expectLeadingSpinner = async (button: Locator) => {
+    const spinner = runningIcon(button)
+    const title = button.getByText(target.title, { exact: true })
+    await expect(spinner).toBeVisible()
+    await expect(spinner).toBeEmpty()
+    await expect(title).toBeVisible()
+    const iconBounds = (await spinner.boundingBox())!
+    const titleBounds = (await title.boundingBox())!
+    expect(iconBounds.x + iconBounds.width).toBeLessThanOrEqual(titleBounds.x)
+  }
+
+  await expect(sessionRow).toBeVisible()
+  await expect(pinnedButton).toBeVisible()
   await disclosure(investigation).click()
   await disclosure(alpha).click()
   await expect(priority).toHaveCount(0)
 
   publishRun(true, 1)
-  const runningRow = row(priority, target.id)
-  const runningBadge = runningRow.locator("[data-session-running]")
-  await expect(runningBadge).toBeVisible()
-  await expect(runningBadge).toHaveText("运行中")
-  await expect(runningRow.getByRole("button", { name: target.title, exact: true })).toHaveAccessibleDescription("运行中")
-  await expect(sidebar.locator("[data-sidebar-session]").first()).toHaveAttribute("data-sidebar-session", target.id)
+  await expect(shortcut).toHaveAccessibleName(target.title)
+  await expect(shortcut).toHaveAccessibleDescription("运行中")
+  await expectLeadingSpinner(shortcut)
   await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "false")
+  await expect(sessionRow).toHaveCount(0)
+
+  await shortcut.click()
+  await expect(page.locator("header").getByText(target.title, { exact: true })).toBeVisible()
+  if (phone) await openSidebar(page, true)
+  await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "true")
+  await expect(disclosure(investigation)).toHaveAttribute("aria-expanded", "true")
+  await expect(sessionButton).toHaveAttribute("aria-current", "page")
+  await expect(sessionButton).toHaveAccessibleDescription("运行中")
+  await expectLeadingSpinner(sessionButton)
+  await expect(row(sidebar, target.id)).toHaveCount(1)
+  await expect(shortcut).toBeVisible()
+
   const screenshot = testInfo.outputPath("sidebar-priority.png")
   await sidebar.screenshot({ path: screenshot, animations: "disabled" })
-  await testInfo.attach("Priority sessions and running badge", { path: screenshot, contentType: "image/png" })
+  await testInfo.attach("Priority shortcut and session in its original section", { path: screenshot, contentType: "image/png" })
 
-  await disclosure(alpha).click()
-  await expect(disclosure(investigation)).toHaveAttribute("aria-expanded", "false")
-  await disclosure(investigation).click()
-  await expect(row(investigation, target.id)).toHaveCount(0)
-  await expect(row(sidebar, target.id)).toHaveCount(1)
+  await pinnedButton.click()
+  await expect(page.locator("header").getByText(pinned.title, { exact: true })).toBeVisible()
+  if (phone) await openSidebar(page, true)
+  await sessionButton.click()
+  await expect(page.locator("header").getByText(target.title, { exact: true })).toBeVisible()
+  if (phone) await openSidebar(page, true)
 
   publishRun(false, 2)
   await expect(priority).toHaveCount(0)
-  await expect(row(investigation, target.id)).toBeVisible()
-  await expect(row(investigation, target.id).locator("[data-session-running]")).toHaveCount(0)
+  await expect(sessionButton).toBeVisible()
+  await expect(sessionButton).toHaveAttribute("aria-current", "page")
+  await expect(runningIcon(sessionButton)).toHaveCount(0)
   expect(projectWrites).toEqual([])
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
