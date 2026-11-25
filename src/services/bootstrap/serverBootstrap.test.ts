@@ -14,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock("../api", () => ({ apiClient: apiMock }));
 
+import bootstrapRequirements from "./bootstrapRequirements.json";
 import {
   classifyServerBootstrapDocument,
   requestServerBootstrap,
@@ -99,6 +100,21 @@ beforeEach(() => {
 describe("Bamboo bootstrap document admission", () => {
   it("accepts the exact post-#1041 fixture without deriving support from version 0.0.0", () => {
     expect(classifyServerBootstrapDocument(exactFixture())).toEqual({ kind: "ready" });
+  });
+
+  it("admits the declared protocol versions within the server ranges and requires their encoding", () => {
+    const document = exactFixture();
+    document.api.max_version = bootstrapRequirements.api.version + 1;
+    document.realtime.max_version = bootstrapRequirements.realtime.version + 1;
+    document.capabilities = [...bootstrapRequirements.capabilities];
+    document.realtime.subprotocols = [{ ...bootstrapRequirements.realtime.subprotocol }];
+    expect(classifyServerBootstrapDocument(document)).toEqual({ kind: "ready" });
+
+    document.realtime.subprotocols[0].encoding = "messagepack";
+    expect(classifyServerBootstrapDocument(document)).toEqual({
+      kind: "incompatible",
+      reason: "realtime-contract",
+    });
   });
 
   it("tolerates additive fields, capabilities, and unique well-formed subprotocols", () => {
