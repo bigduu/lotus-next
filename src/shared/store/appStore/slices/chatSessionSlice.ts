@@ -94,6 +94,9 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   const deferredClears = new Set<string>();
   const replacementRequired = new Set<string>();
   const earlierHistoryReads = new Map<string, object>();
+  const pendingTitleRenames = new Map<string, {
+    baselineTitle: string; title: string; version: number; createdAt: string | number;
+  }>();
   const historyPrefixReads = new Map<string, Set<AbortController>>();
   const retireHistoryPrefixReads = (sessionId: string) => {
     const reads = historyPrefixReads.get(sessionId);
@@ -466,14 +469,21 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   },
 
   persistSessionTitle: async (sessionId, title) => {
-    // Capture previous title for rollback.
-    const previousTitle = get().chats.find((c) => c.id === sessionId)?.title;
-
-    // Optimistic local update.
+    const previous = get().chats.find((chat) => chat.id === sessionId);
+    if (!previous) return;
+    const version = previous.titleVersion ?? 0;
+    const createdAt = previous.createdAtExact ?? previous.createdAt;
+    const pending = pendingTitleRenames.get(sessionId);
+    const baselineTitle = pending?.version === version && pending.createdAt === createdAt
+      && pending.title === previous.title ? pending.baselineTitle : previous.title;
+    const rename = { baselineTitle, title, version, createdAt };
+    pendingTitleRenames.set(sessionId, rename);
     set((state) => ({
       ...state,
       chats: state.chats.map((chat) =>
-        chat.id === sessionId ? { ...chat, title, updatedAt: new Date().toISOString() } : chat,
+        chat.id === sessionId
+          ? { ...chat, title, titleMotionVersion: undefined, updatedAt: new Date().toISOString() }
+          : chat,
       ),
     }));
 
@@ -484,30 +494,34 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       // `session_title_updated` SSE event after the PATCH bumps the version,
       // and `applyServerTitle` will reconcile `titleVersion` locally there.
     } catch (e) {
-      // Roll back to previous title on failure.
-      if (typeof previousTitle === "string") {
+      if (pendingTitleRenames.get(sessionId) === rename) {
         set((state) => ({
           ...state,
           chats: state.chats.map((chat) =>
-            chat.id === sessionId ? { ...chat, title: previousTitle } : chat,
+            chat.id === sessionId && chat.title === title && (chat.titleVersion ?? 0) === version
+              && (chat.createdAtExact ?? chat.createdAt) === createdAt ? { ...chat, title: baselineTitle } : chat,
           ),
         }));
       }
       console.warn(`[ChatSlice] persistSessionTitle failed for ${sessionId}:`, e);
       throw e;
+    } finally {
+      if (pendingTitleRenames.get(sessionId) === rename) pendingTitleRenames.delete(sessionId);
     }
   },
 
-  applyServerTitle: (sessionId, title, titleVersion) =>
+  applyServerTitle: (sessionId, title, titleVersion, animate) =>
     set((state) => {
       const existing = state.chats.find((c) => c.id === sessionId);
       if (!existing) return state;
-      if (titleVersion <= (existing.titleVersion ?? 0)) return state;
+      if (!Number.isSafeInteger(titleVersion) || titleVersion <= (existing.titleVersion ?? 0)) return state;
+      const titleMotionVersion = animate && state.currentSessionId === sessionId && title !== existing.title
+        ? titleVersion : undefined;
       return {
         ...state,
         chats: state.chats.map((chat) =>
           chat.id === sessionId
-            ? { ...chat, title, titleVersion, updatedAt: new Date().toISOString() }
+            ? { ...chat, title, titleVersion, titleMotionVersion, updatedAt: new Date().toISOString() }
             : chat,
         ),
       };

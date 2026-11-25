@@ -32,6 +32,18 @@ test("selecting a Side Chat quote keeps user and assistant text in place", async
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("button", { name: "打开侧聊", exact: true })).toBeVisible()
 
+  const viewport = page.locator("[data-chat-body] [data-history-viewport]")
+  const bottomGap = () => viewport.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop)
+  await expect(viewport).not.toHaveAttribute("aria-busy", "true")
+  await expect.poll(bottomGap).toBeLessThanOrEqual(2)
+  if (await viewport.evaluate((node) => node.scrollTop > 2)) {
+    // A reader scrolls up before selecting older text while the chat follows the latest message.
+    await viewport.hover()
+    await page.mouse.wheel(0, -64)
+    await expect(page.getByRole("button", { name: "滚动到底部", exact: true })).toBeVisible()
+    await expect.poll(bottomGap).toBeGreaterThan(2)
+  }
+
   for (const { id, role } of messages) {
     const row = page.locator(`[data-message-row="${id}"]`)
     const body = row.locator(`[data-message-role="${role}"]`)
@@ -39,12 +51,17 @@ test("selecting a Side Chat quote keeps user and assistant text in place", async
     const ask = row.getByRole("button", { name: "在侧聊中提问", exact: true })
     await expect(source).toHaveText(content)
     await source.scrollIntoViewIfNeeded()
+    await expect(source).toBeInViewport({ ratio: 0.98 })
     await expect(ask).toHaveCount(0)
-    const layout = () => source.evaluate((node) => {
+    const layout = () => source.evaluate(async (node) => {
+      const scrollport = node.closest("[data-history-viewport]")!
+      const view = node.ownerDocument.defaultView!
+      await new Promise<void>((resolve) => view.requestAnimationFrame(() => view.requestAnimationFrame(() => resolve())))
       const range = node.ownerDocument.createRange()
       range.selectNodeContents(node)
       const geometry = ({ x, y, width, height }: DOMRect) => [x, y, width, height]
       return {
+        scrollTop: scrollport.scrollTop,
         bounds: geometry(node.getBoundingClientRect()),
         lines: Array.from(range.getClientRects(), geometry),
       }

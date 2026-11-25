@@ -419,6 +419,7 @@ export interface AgentEvent {
   retry_delay_ms?: number;
   // SessionTitleUpdated event
   title_version?: number;
+  title_generated?: boolean;
   source?: "auto" | "manual" | "fallback";
   updated_at?: string;
   // SessionPinnedUpdated event
@@ -474,7 +475,7 @@ export function readTaskListDelta(event: AgentEvent): TaskListDelta | null {
 
 /** Callbacks for {@link AgentClient.subscribeToAccountStream}. */
 export interface AccountStreamHandlers {
-  onChange: (change: ChangeEvent) => void;
+  onChange: (change: ChangeEvent, delivery?: "live") => void;
   onReset?: () => void;
   onOpen?: () => void;
   onError?: () => void;
@@ -1263,6 +1264,10 @@ export interface SessionTitleUpdatedEvent {
   updated_at: string;
 }
 
+export type SessionTitleGenerationResult =
+  | { status: "updated"; title: string; title_version: number }
+  | { status: "accepted" | "insufficient_context" | "unavailable" | "unchanged" | "superseded" | "busy" };
+
 export interface SessionPinnedUpdatedEvent {
   type: "session_pinned_updated";
   session_id: string;
@@ -1755,9 +1760,29 @@ export class AgentClient {
   /**
    * Manually regenerate a session's auto-title.
    */
-  async regenerateSessionTitle(sessionId: string): Promise<void> {
+  async regenerateSessionTitle(sessionId: string): Promise<SessionTitleGenerationResult> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    await apiClient.post(`sessions/${encodedSessionId}/regenerate-title`);
+    const receipt = await apiClient.postOnce<{
+      status?: unknown; session_id?: unknown; title?: unknown; title_version?: unknown;
+    } | null>(`sessions/${encodedSessionId}/regenerate-title?wait=true`, undefined, { logicalTimeoutMs: 35_000 });
+    if (receipt && (receipt.session_id === undefined || receipt.session_id === sessionId)) {
+      const { status, title, title_version } = receipt;
+      switch (status) {
+        case "accepted": // Older Bamboo returns 202 and still publishes through the feed.
+        case "insufficient_context":
+        case "unavailable":
+        case "unchanged":
+        case "superseded":
+        case "busy":
+          return { status };
+        case "updated":
+          if (typeof title === "string" && title.trim() && typeof title_version === "number"
+            && Number.isSafeInteger(title_version) && title_version > 0) {
+            return { status, title, title_version };
+          }
+      }
+    }
+    throw new Error(uiText("session_title_generation_unavailable"));
   }
 
   /**

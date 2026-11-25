@@ -108,7 +108,7 @@ export function applyReplayableSessionEventToList(
       const incoming = event.title_version;
       const existing = chats[idx].titleVersion ?? 0;
       if (incoming <= existing) return;
-      chats[idx] = { ...chats[idx], title: event.title, titleVersion: incoming };
+      chats[idx] = { ...chats[idx], title: event.title, titleVersion: incoming, titleMotionVersion: undefined };
       return;
     }
     case "session_pinned_updated": {

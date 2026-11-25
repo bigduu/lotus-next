@@ -2,6 +2,7 @@ import { BookText, Bot, ChevronLeft, Container, Download, FileDown, FolderClosed
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, onSettled, Show } from "solid-js"
 import { Dynamic } from "@solidjs/web"
 import { agentClient } from "@services/chat/AgentService"
+import { feedConnectionIdentity } from "@services/chat/v2Stream"
 import { getErrorMessage } from "@services/api/errors"
 import { SIDE_CHAT_FEATURE } from "@services/chat/sideChat"
 import { backendSupports, onBackendFeatures } from "@/lib/backendFeatures"
@@ -54,6 +55,7 @@ import { Sidebar } from "./Sidebar"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"
 import { createProjectSections } from "./createProjectSections"
 import { createSessionDrop } from "./createSessionDrop"
+import { createSessionTitleMotion } from "./createSessionTitleMotion"
 import { createUiText } from "./uiText"
 import { restoreCommandFocus } from "@/lib/commandFocusReturn"
 import { isCommandComposing } from "@/lib/commandComposition"
@@ -123,7 +125,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [notice, setNotice] = createSignal<(ToastNotice & { scope?: object }) | null>(null)
   let noticeId = 0
   const reportNotice = (value: { text: string; error: boolean }) => {
-    setNotice({ id: ++noticeId, message: value.text, kind: value.error ? "error" : "info" })
+    const id = ++noticeId
+    setNotice({ id, message: value.text, kind: value.error ? "error" : "info" })
+    return id
   }
   const [newSession, setNewSession] = createSignal<SectionIntent | null>(null)
   const [sessionToDelete, setSessionToDelete] = createSignal<ChatItem | null>(null)
@@ -140,6 +144,52 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const backgroundBash = createStoreSelector(appStore, (state) => state.backgroundBash)
   const theme = createStoreSelector(themeStore, (state) => state)
   const openError = (error: unknown) => reportNotice({ text: getErrorMessage(error), error: true })
+  const [generatingTitles, setGeneratingTitles] = createSignal(new Set<string>())
+  const animateTitle = createSessionTitleMotion(() => chat.currentChat ?? undefined,
+    () => chat.booted && !settingsOpen() && !paletteOpen())
+  const regenerateTitle = async (id: string) => {
+    if (generatingTitles().has(id)) return
+    const connection = feedConnectionIdentity()
+    setGeneratingTitles((current) => new Set(current).add(id))
+    const pendingNotice = reportNotice({ text: text("session_title_generating"), error: false })
+    const showOutcome = (message: string, error = false) => {
+      const current = notice()
+      if (!current || current.id === pendingNotice) reportNotice({ text: message, error })
+    }
+    try {
+      const result = await agentClient.regenerateSessionTitle(id)
+      switch (result.status) {
+        case "updated":
+          appStore.getState().applyServerTitle(id, result.title, result.title_version,
+            connection !== null && connection === feedConnectionIdentity())
+          break
+        case "unavailable":
+          showOutcome(text("session_title_generation_unavailable"), true)
+          break
+        case "insufficient_context":
+          showOutcome(text("session_title_needs_context"))
+          break
+        case "unchanged":
+        case "superseded":
+          showOutcome(text("session_title_unchanged"))
+          break
+        case "accepted":
+          showOutcome(text("session_title_generation_requested"))
+          break
+        case "busy":
+          showOutcome(text("session_title_generation_busy"))
+          break
+      }
+    } catch (error) { showOutcome(getErrorMessage(error), true) }
+    finally {
+      setNotice((current) => current?.id === pendingNotice ? null : current)
+      setGeneratingTitles((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
+    }
+  }
   let navigationVersion = 0
   const currentSession = () => chat.currentSessionId
   const viewingSession = () => {
@@ -874,7 +924,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             }).catch(openError)
           }}
           onRename={(id, title) => appStore.getState().persistSessionTitle(id, title)}
-          onRegenerateTitle={(id) => { void agentClient.regenerateSessionTitle(id).catch(openError) }}
+          onRegenerateTitle={(id) => { void regenerateTitle(id) }}
+          titleGenerating={(id) => generatingTitles().has(id)}
           onTogglePin={(entry) => {
             const state = appStore.getState()
             if (entry.pinned) state.unpinSession(entry.id)
@@ -1014,7 +1065,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               <PanelLeftOpen class="size-4" />
             </Button>
             <div class={compactHeader() ? "flex min-w-0 flex-1 flex-col gap-0.5" : "flex min-w-0 flex-1 items-center gap-2"}>
-              <h1 class="min-w-0 flex-1 truncate text-sm font-medium">
+              <h1 ref={animateTitle} data-session-title="" class="min-w-0 flex-1 truncate text-sm font-medium">
                 {chat.currentChat?.title || text("new_session_c57c30bc")}
               </h1>
               <Show when={remotePlacement()}>{(placement) => (
