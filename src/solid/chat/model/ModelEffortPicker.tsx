@@ -51,6 +51,7 @@ export function ModelEffortPicker(props: {
   const [query, setQuery] = createSignal("")
   const [preview, setPreview] = createSignal<number | null>(null)
   let searchRef: HTMLInputElement | undefined
+  let modelListRef: HTMLDivElement | undefined
   let sliderRef: HTMLInputElement | undefined
   let modelButtonRef: HTMLButtonElement | undefined
   let pointerActive = false
@@ -83,9 +84,18 @@ export function ModelEffortPicker(props: {
   const providerLabel = () => props.modelGroups.find((group) => group.provider === props.modelProvider)?.label ?? props.modelProvider
   const providerDescription = () => props.model && providerLabel() ? ` · ${providerLabel()}` : ""
   const focus = (screen: "effort" | "models", disabled: boolean) => {
-    if (screen === "models") searchRef?.focus()
-    else if (disabled && !unavailableModels()) modelButtonRef?.focus()
-    else sliderRef?.focus()
+    const target = screen === "models" ? searchRef : disabled && !unavailableModels() ? modelButtonRef : sliderRef
+    target?.focus({ preventScroll: true })
+  }
+  const containModelWheel = (event: WheelEvent) => {
+    if (page() !== "models" || event.ctrlKey || event.deltaY === 0) return
+
+    // WebKit can scroll the document when the list has no overflow or the pointer is over the search field.
+    const list = modelListRef
+    const canScroll = list?.contains(event.target as Node) && (event.deltaY < 0
+      ? list.scrollTop > 0
+      : list.scrollHeight - list.clientHeight - list.scrollTop > 1)
+    if (!canScroll) event.preventDefault()
   }
 
   createEffect(
@@ -124,32 +134,37 @@ export function ModelEffortPicker(props: {
         <Show when={providerDescription()}><span id={`${pickerId}-provider`} class="sr-only">{providerDescription()}</span></Show>
         <ChevronDown class="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       </PopoverTrigger>
-      <PopoverContent class="model-effort-panel w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl p-2.5 shadow-xl"
+      <PopoverContent clipToViewport class="model-effort-panel flex w-64 max-w-[calc(100vw-1.5rem)] flex-col rounded-2xl p-2.5 shadow-xl"
+        style={{ "max-height": page() === "models"
+          ? "min(calc(100dvh - 1rem), var(--kb-popper-content-available-height, 100dvh))"
+          : undefined }}
+        onWheel={containModelWheel}
         onOpenAutoFocus={(event) => { event.preventDefault(); untrack(() => focus(page(), effortDisabled())) }}>
         <Show when={open()}>
           <Show when={page() === "effort"} fallback={
             <>
-              <div class="mb-2 flex items-center gap-1 text-sm text-muted-foreground">
+              <div class="mb-2 flex shrink-0 items-center gap-1 text-sm text-muted-foreground">
                 <button type="button" aria-label={text("back_2d1d8c1e")} onClick={() => { setPage("effort"); setQuery("") }}
                   class="flex size-7 items-center justify-center rounded-full outline-none hover:bg-accent">
                   <ChevronLeft class="size-4" aria-hidden="true" />
                 </button>
                 <span>{text("select_a_model_1afed6a8")}</span>
               </div>
-              <div class="relative mb-2">
+              <div class="relative mb-2 shrink-0">
                 <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <Input ref={(node) => { searchRef = node }} type="text" role="searchbox"
                   aria-label={text("search_models_93a8734c")} placeholder={text("search_models_8ec7b052")}
                   value={query()} onInput={(event) => setQuery(event.currentTarget.value)} class="model-effort-search h-8 pl-8 pr-8 text-xs" />
                 <Show when={query()}>
                   <button type="button" aria-label={text("clear_model_search_ff2b5895")}
-                    onClick={() => { setQuery(""); searchRef?.focus() }}
+                    onClick={() => { setQuery(""); searchRef?.focus({ preventScroll: true }) }}
                     class="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent">
                     <X class="size-3.5" aria-hidden="true" />
                   </button>
                 </Show>
               </div>
-              <div class="max-h-60 overflow-y-auto" aria-label={text("model_list_ea4bf042")}>
+              <div ref={(node) => { modelListRef = node }} class="max-h-60 overflow-y-auto overscroll-y-contain"
+                aria-label={text("model_list_ea4bf042")}>
                 <For each={filtered()} keyed={(group: ModelGroup) => group.provider}
                   fallback={<p role="status" class="px-3 py-6 text-center text-xs text-muted-foreground">{text("no_matching_models_4b5e0ae1")}</p>}>
                   {(group) => (

@@ -1,4 +1,4 @@
-import { createEffect, createSignal, omit, useContext } from "solid-js"
+import { createEffect, createSignal, omit, Show, useContext } from "solid-js"
 import type { ComponentProps, JSX } from "@solidjs/web"
 import * as PopoverPrimitive from "@kobalte/core/popover"
 
@@ -33,7 +33,7 @@ export function PopoverClose(props: ComponentProps<typeof PopoverPrimitive.Close
   return <PopoverPrimitive.CloseButton data-slot="popover-close" {...props} />
 }
 
-export function PopoverContent(props: ComponentProps<typeof PopoverPrimitive.Content>) {
+export function PopoverContent(props: ComponentProps<typeof PopoverPrimitive.Content> & { clipToViewport?: boolean }) {
   const popover = PopoverPrimitive.usePopoverContext()
   const dialogMount = useContext(DialogLayerMount)
   const [content, setContent] = createSignal<HTMLDivElement>()
@@ -80,28 +80,37 @@ export function PopoverContent(props: ComponentProps<typeof PopoverPrimitive.Con
     popover.close()
   }
 
+  const surface = () => (
+    <PopoverPrimitive.Content
+      ref={[setContent, props.ref]}
+      data-slot="popover-content"
+      data-state={popover.isOpen() ? "open" : "closed"}
+      class={cn(
+        "bg-popover text-popover-foreground z-50 w-72 origin-(--kb-popover-content-transform-origin) rounded-md border p-4 shadow-md outline-hidden",
+        surfaceMotion,
+        props.clipToViewport && "pointer-events-auto", props.class,
+      )}
+      {...omit(props, "ref", "class", "clipToViewport", "onKeyDown", "onEscapeKeyDown", "onOpenAutoFocus", "onCloseAutoFocus", "onInteractOutside")}
+      onKeyDown={onKeyDown}
+      onOpenAutoFocus={props.onOpenAutoFocus}
+      onCloseAutoFocus={props.onCloseAutoFocus}
+      onInteractOutside={(event) => {
+        props.onInteractOutside?.(event)
+        if (!event.defaultPrevented && !popover.triggerRef()?.contains(event.target as Node)) {
+          interactedOutside = true
+        }
+      }}
+    />
+  )
+
   return (
     <PopoverPrimitive.Portal mount={dialogMount()}>
-      <PopoverPrimitive.Content
-        ref={[setContent, props.ref]}
-        data-slot="popover-content"
-        data-state={popover.isOpen() ? "open" : "closed"}
-        class={cn(
-          "bg-popover text-popover-foreground z-50 w-72 origin-(--kb-popover-content-transform-origin) rounded-md border p-4 shadow-md outline-hidden",
-          surfaceMotion,
-          props.class,
-        )}
-        {...omit(props, "ref", "class", "onKeyDown", "onEscapeKeyDown", "onOpenAutoFocus", "onCloseAutoFocus", "onInteractOutside")}
-        onKeyDown={onKeyDown}
-        onOpenAutoFocus={props.onOpenAutoFocus}
-        onCloseAutoFocus={props.onCloseAutoFocus}
-        onInteractOutside={(event) => {
-          props.onInteractOutside?.(event)
-          if (!event.defaultPrevented && !popover.triggerRef()?.contains(event.target as Node)) {
-            interactedOutside = true
-          }
-        }}
-      />
+      {/* Floating UI repositions after a resize. Keep its temporary overflow out of the document. */}
+      <Show when={props.clipToViewport && !dialogMount()} fallback={surface()}>
+        <div class="pointer-events-none fixed inset-0 z-50 overflow-clip">
+          {surface()}
+        </div>
+      </Show>
     </PopoverPrimitive.Portal>
   )
 }
