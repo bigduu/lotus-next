@@ -3,6 +3,7 @@ import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@ser
 import { guidanceService, type GuidanceImage, type GuidanceMode, type PendingGuidance } from "@services/chat/guidance"
 import { uiText } from "@shared/i18n/text"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
+import { recordSessionUserInput } from "@/lib/sidebarSessionOrderState"
 import type { SendSubmissionResult } from "../createChat"
 
 type Receipt = { id: string; fingerprint: string }
@@ -114,6 +115,7 @@ export function createGuidanceQueue(sessionId: Accessor<string | null>, running:
 
       const result = await guidanceService.send(target, receipt.id, text, timing, submittedImages)
       if (result.id !== receipt.id) throw new Error("Queue acknowledgement identity mismatch")
+      recordSessionUserInput(target)
       receipts.delete(target)
       try {
         if (readReceipt(target)?.id === receipt.id) sessionStorage.removeItem(receiptKey(target))
