@@ -8,7 +8,7 @@ import { SessionRow } from "./SessionRow"
 vi.mock("@lucide/solid", () => {
   const Icon = (props: Pick<JSX.IntrinsicElements["svg"], "class" | "aria-hidden">) =>
     <svg class={props.class} aria-hidden={props["aria-hidden"]} />
-  return { AlertCircle: Icon, Check: Icon, Copy: Icon, List: Icon, MoreHorizontal: Icon, Pencil: Icon,
+  return { AlertCircle: Icon, Check: Icon, Copy: Icon, List: Icon, LoaderCircle: Icon, MoreHorizontal: Icon, Pencil: Icon,
     Pin: Icon, PinOff: Icon, RotateCcw: Icon, Sparkles: Icon, Trash2: Icon, GitBranch: Icon, GitMerge: Icon }
 })
 

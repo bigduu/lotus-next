@@ -464,8 +464,9 @@ test("background shell outcomes still reach their cards after the answer complet
   }
   const selectSession = async (name: "A" | "B") => {
     const title = `Synthetic lifecycle ${name}`
+    const id = name === "A" ? primary : other
     await revealSidebar(page)
-    await page.getByRole("button", { name: new RegExp(`${title}$`) }).click()
+    await page.locator(`[data-sidebar-session="${id}"]`).getByRole("button", { name: title, exact: true }).click()
     await expect(page.getByRole("banner")).toContainText(title)
   }
 
@@ -579,12 +580,12 @@ test("completed answers survive compression, stale history, follow-ups, session 
   await page.screenshot({ path: info.outputPath("before-session-switch.png"), animations: "disabled" })
 
   await revealSidebar(page)
-  await page.getByRole("button", { name: "Synthetic lifecycle B", exact: true }).click()
+  await page.locator(`[data-sidebar-session="${other}"]`).getByRole("button", { name: "Synthetic lifecycle B", exact: true }).click()
   await expect(page.getByRole("banner")).toContainText("Synthetic lifecycle B")
   await expect(page.getByText(otherAnswer, { exact: true })).toHaveCount(1)
   await expectAnswers(page, [])
   await revealSidebar(page)
-  await page.getByRole("button", { name: "Synthetic lifecycle A", exact: true }).click()
+  await page.locator(`[data-sidebar-session="${primary}"]`).getByRole("button", { name: "Synthetic lifecycle A", exact: true }).click()
   await expect(page.getByRole("banner")).toContainText("Synthetic lifecycle A")
   await expectAnswers(page, answers)
   await expect(page.getByText(otherAnswer, { exact: true })).toHaveCount(0)
