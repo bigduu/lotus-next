@@ -98,6 +98,7 @@ describe("trusted Mermaid security policy", () => {
     initMermaidForExport()
     expect(mermaid.mermaidAPI.getConfig()).toMatchObject({
       securityLevel: "strict",
+      suppressErrorRendering: true,
       htmlLabels: false,
       flowchart: { htmlLabels: false },
       theme: "default",
@@ -106,6 +107,7 @@ describe("trusted Mermaid security policy", () => {
     restoreMermaidAppConfig()
     expect(mermaid.mermaidAPI.getConfig()).toMatchObject({
       securityLevel: "strict",
+      suppressErrorRendering: true,
       htmlLabels: false,
       flowchart: { htmlLabels: false },
       theme: "dark",

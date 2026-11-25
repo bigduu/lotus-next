@@ -27,6 +27,8 @@ function deepFreeze<T>(value: T): DeepReadonly<T> {
 export const MERMAID_STRICT_CONFIG = deepFreeze({
   startOnLoad: false,
   securityLevel: "strict",
+  // The chat card and PDF exporter handle render failures locally.
+  suppressErrorRendering: true,
   htmlLabels: false,
   flowchart: {
     htmlLabels: false,
