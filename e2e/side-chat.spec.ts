@@ -1,4 +1,4 @@
-import { expect, test, type WebSocketRoute } from "@playwright/test"
+import { expect, test, type Locator, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { expectComposerText } from "./support/composer.js"
 
@@ -8,6 +8,59 @@ type FixtureSideChat = {
   preview: string
   turns: Array<{ id: string; message: string; quote: { message_id: string; text: string }; answer: string; status: string }>
 }
+
+async function selectSourceText(source: Locator, quote: string) {
+  await source.evaluate((node, selectedText) => {
+    const document = node.ownerDocument
+    const walker = document.createTreeWalker(node, document.defaultView!.NodeFilter.SHOW_TEXT)
+    let text = walker.nextNode()
+    while (text && !text.textContent?.includes(selectedText)) text = walker.nextNode()
+    if (!text?.textContent) throw new Error("Quote text missing")
+    const start = text.textContent.indexOf(selectedText)
+    document.getSelection()!.setBaseAndExtent(text, start, text, start + selectedText.length)
+  }, quote)
+}
+
+test("selecting a Side Chat quote keeps user and assistant text in place", async ({ page }) => {
+  const quote = "lockfile mismatch"
+  const content = `${"这段文字会自动换行，方便检查选中前后的排版。 ".repeat(8)}Bamboo reported a ${quote} during the build.`
+  const messages = (["user", "assistant"] as const).map((role) => ({
+    id: `selection-${role}`, role, content, created_at: "2026-09-03T00:00:01Z",
+  }))
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  await installArtifactRuntime(page, standaloneScenario, messages, { sessionFeatures: ["session_side_chat"] })
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("button", { name: "打开侧聊", exact: true })).toBeVisible()
+
+  for (const { id, role } of messages) {
+    const row = page.locator(`[data-message-row="${id}"]`)
+    const body = row.locator(`[data-message-role="${role}"]`)
+    const source = role === "assistant" ? body.locator(".assistant-streamdown p") : body.getByText(content, { exact: true })
+    const ask = row.getByRole("button", { name: "在侧聊中提问", exact: true })
+    await expect(source).toHaveText(content)
+    await source.scrollIntoViewIfNeeded()
+    await expect(ask).toHaveCount(0)
+    const layout = () => source.evaluate((node) => {
+      const range = node.ownerDocument.createRange()
+      range.selectNodeContents(node)
+      const geometry = ({ x, y, width, height }: DOMRect) => [x, y, width, height]
+      return {
+        bounds: geometry(node.getBoundingClientRect()),
+        lines: Array.from(range.getClientRects(), geometry),
+      }
+    })
+    const before = await layout()
+    expect(before.lines.length).toBeGreaterThan(1)
+    await selectSourceText(source, quote)
+    await expect(ask).toBeVisible()
+    expect(await source.evaluate((node) => node.ownerDocument.getSelection()?.toString())).toBe(quote)
+    expect(await layout(), `${role} layout while text is selected`).toEqual(before)
+
+    await source.evaluate((node) => node.ownerDocument.getSelection()?.removeAllRanges())
+    await expect(ask).toHaveCount(0)
+    expect(await layout(), `${role} layout after clearing the selection`).toEqual(before)
+  }
+})
 
 test("asks from a selection, stops only the side turn, and restores the side transcript", async ({ page }, testInfo) => {
   const source = "all-surface-session"
@@ -111,19 +164,7 @@ test("asks from a selection, stops only the side turn, and restores the side tra
   await expect(page.getByRole("button", { name: "打开侧聊", exact: true })).toBeVisible()
   await main.fill("主会话已有草稿")
   await expectComposerText(main, "主会话已有草稿")
-  await sourceParagraph.evaluate((node) => {
-    const document = node.ownerDocument
-    const walker = document.createTreeWalker(node, document.defaultView!.NodeFilter.SHOW_TEXT)
-    let text = walker.nextNode()
-    while (text && !text.textContent?.includes("lockfile mismatch")) text = walker.nextNode()
-    if (!text) throw new Error("Quote text missing")
-    const start = text.textContent!.indexOf("lockfile mismatch")
-    const range = document.createRange()
-    range.setStart(text, start)
-    range.setEnd(text, start + "lockfile mismatch".length)
-    document.getSelection()!.removeAllRanges()
-    document.getSelection()!.addRange(range)
-  })
+  await selectSourceText(sourceParagraph, "lockfile mismatch")
   await page.getByRole("button", { name: "在侧聊中提问", exact: true }).click()
   const panel = page.getByRole("region", { name: "侧聊", exact: true })
   const question = panel.getByRole("textbox", { name: "在侧聊中提问…" })
