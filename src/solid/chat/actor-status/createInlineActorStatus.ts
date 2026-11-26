@@ -12,6 +12,8 @@ import { createStoreSelector } from "../../state/createStoreSelector"
 import { createActorSnapshot } from "../../workbench/subagents/createActorSnapshot"
 import type { RenderItem } from "../history/historyProjection"
 
+const REFRESH_NOTICE_DELAY_MS = 750
+
 function subAgentToolGroups(items: readonly RenderItem[]) {
   return items.flatMap((item) => {
     if (item.kind !== "process") return []
@@ -50,13 +52,18 @@ export function createInlineActorStatus(options: {
     if (active() && previous?.parentId === hint.parentId && previous.value !== hint.value) void refresh()
   })
 
+  const visibleSnapshot = createMemo(() => {
+    const snapshot = state().snapshot
+    const root = rootId()
+    return active() && snapshot?.root_actor_id === root && snapshot.subtree_actor_id === root ? snapshot : null
+  })
   const view = createMemo<{ parentId: string | null; rootId: string | null; ids: string[]; agents: Record<string, SubAgentCard> }>((previous) => {
     const parent = parentId()
     const root = rootId()
-    const { snapshot, error, gapReason } = state()
     const sameOwner = previous?.parentId === parent && previous.rootId === root
-    const confirmed = Boolean(active() && snapshot?.root_actor_id === root && !error && !gapReason)
-    const agents = mergeSubAgentView(parent, options.chats(), live(), snapshot, confirmed,
+    // A stream gap can leave the last authorized read usable. The snapshot
+    // reader retains it through a retry and clears it if authority is lost.
+    const agents = mergeSubAgentView(parent, options.chats(), live(), visibleSnapshot(),
       sameOwner ? previous.ids : [], sameOwner ? previous.agents : undefined)
     return sameOwner && previous.agents === agents ? previous : { parentId: parent, rootId: root, ids: Object.keys(agents), agents }
   })
@@ -73,7 +80,21 @@ export function createInlineActorStatus(options: {
     if (!next.delete(id)) next.add(id)
     return next
   })
-  const error = createMemo(() => state().error || (state().gapReason
-    ? text("agent_structure_cannot_be_confirmed_right_now_reload_st_2ba610a7") : null))
+  const deferredNotice = createMemo(() => {
+    const { error, gapReason } = state()
+    return visibleSnapshot() && (error || gapReason) ? rootId() : null
+  })
+  const [noticeReady, setNoticeReady] = createSignal(false)
+  createEffect(deferredNotice, (root) => {
+    setNoticeReady(false)
+    if (!root) return
+    const timer = setTimeout(() => setNoticeReady(true), REFRESH_NOTICE_DELAY_MS)
+    return () => clearTimeout(timer)
+  })
+  const error = createMemo(() => {
+    if (!active() || (deferredNotice() && !noticeReady())) return null
+    return state().error || (state().gapReason
+      ? text("agent_structure_cannot_be_confirmed_right_now_reload_st_2ba610a7") : null)
+  })
   return { groups, expanded, toggle, error, refresh }
 }

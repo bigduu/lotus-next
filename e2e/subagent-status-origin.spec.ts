@@ -39,7 +39,7 @@ async function fixture(page: Page) {
     { id: "answer-1", role: "assistant", content: "First turn answer", created_at: at },
     user("Second turn"), ...spawn("create-3", "actor-2")]
   let socket: WebSocketRoute | undefined, sockets = 0, sequence = 0, reads = 0, denied = false
-  let treeChannel: string | undefined
+  let treeChannel: string | undefined, treeCursor: string | undefined
   const channels = new Set<string>()
   await page.routeWebSocket(/.*/, (ws) => {
     socket = ws; sockets += 1
@@ -50,6 +50,7 @@ async function fixture(page: Page) {
       if (frame.type === "subscribe") channels.add(frame.ch)
       if (frame.type === "subscribe_tree") {
         treeChannel = frame.ch
+        treeCursor = frame.cursor
         ws.send(JSON.stringify({ ch: frame.ch, seq: Number(snapshot.stream_cursor!.split("-").at(-1)), control: { type: "actor_snapshot_required", reason: "initial", cursor: snapshot.stream_cursor } }))
       }
     })
@@ -79,6 +80,8 @@ async function fixture(page: Page) {
   })
   return { snapshot, history, observation, channels, requests,
     get reads() { return reads }, get sockets() { return sockets },
+    get treeSubscribed() { return treeChannel !== undefined },
+    get treeCursor() { return treeCursor },
     setDenied(value: boolean) { denied = value },
     finishRun() { rows[0].is_running = false },
     emit(event: object) { socket!.send(JSON.stringify({ ch: `agent.${rootId}`, seq: ++sequence, event })) },
@@ -132,6 +135,229 @@ test("saved terminal states survive unordered legacy events and reconnect withou
   await page.screenshot({ path: testInfo.outputPath("subagent-terminal-states.png"), animations: "disabled" })
   expect(state.observation.pageErrors).toEqual([])
   expect(state.observation.httpRequests.some(({ method, url }) => method === "POST" && /execute|dispatch/.test(new URL(url).pathname))).toBe(false)
+})
+
+test("a tree gap leaves running transcript cards and the subagent tree stationary until a covering read", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "The transcript and subagent tree must be visible together")
+  const state = await fixture(page)
+  const running = [state.snapshot.nodes[1], state.snapshot.nodes[3]]
+  for (const node of running) {
+    node.logical_state = "active"
+    node.activation!.status = "running"
+  }
+  state.history.unshift(...Array.from({ length: 12 }, (_, index) => user(`Earlier turn ${index}`)))
+
+  let heldReads = 0
+  let waitForSnapshot: Promise<void> | undefined
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, async (route) => {
+    if (waitForSnapshot) {
+      heldReads += 1
+      await waitForSnapshot
+    }
+    await route.fulfill({ json: state.snapshot })
+  })
+
+  await page.goto(standaloneScenario.entryUrl)
+  await page.getByRole("button", { name: "查看子代理树", exact: true }).click()
+  const pane = page.locator("[data-subagents-pane]")
+  const treeRow = pane.locator('[data-actor-id="actor-0"]')
+  await expect(treeRow.locator("[data-actor-status]")).toHaveAttribute("data-actor-status", "running")
+
+  const viewport = page.locator("[data-chat-body] [data-history-viewport]")
+  const first = viewport.locator('[data-subagent-id="actor-0"]')
+  const second = viewport.locator('[data-subagent-id="actor-2"]')
+  const anchor = viewport.getByText("Second turn", { exact: true })
+  await viewport.locator('[data-history-entry-key="collapsed-turn-answer-1"] [data-turn-toggle]').click()
+  await expect(first).toHaveAttribute("data-subagent-status", "running")
+  await expect(second).toHaveAttribute("data-subagent-status", "running")
+  await first.locator("[data-subagent-toggle]").click()
+  await expect(first).toBeInViewport()
+  await expect(second).toBeInViewport()
+  await expect(anchor).toBeInViewport()
+  await expect.poll(() => state.treeSubscribed).toBe(true)
+  await page.evaluate(async () => { await document.fonts.ready })
+  await page.screenshot({ path: testInfo.outputPath("subagent-refresh-before.png"), animations: "disabled" })
+
+  const elements = {
+    viewport: await viewport.elementHandle(), first: await first.elementHandle(), second: await second.elementHandle(),
+    anchor: await anchor.elementHandle(), treeRow: await treeRow.elementHandle(),
+    treeScroll: await pane.locator("[data-actor-tree-scroll]").elementHandle(),
+  }
+  const frameProbe = await page.evaluateHandle(({ viewport, first, second, anchor, treeRow, treeScroll }) => {
+    const round = (value: number) => Math.round(value)
+    const sample = () => ({
+      cards: [first, second].map((card) => ({
+        connected: card.isConnected,
+        status: card.getAttribute("data-subagent-status"),
+        top: round(card.getBoundingClientRect().top),
+        height: round(card.getBoundingClientRect().height),
+      })),
+      anchorConnected: anchor.isConnected,
+      anchorTop: round(anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top),
+      transcriptScroll: round(viewport.scrollTop),
+      distanceFromBottom: round(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+      treeConnected: treeRow.isConnected,
+      treeTop: round(treeRow.getBoundingClientRect().top),
+      treeHeight: round(treeRow.getBoundingClientRect().height),
+      treeViewportHeight: round(treeScroll.getBoundingClientRect().height),
+      treeScroll: round(treeScroll.scrollTop),
+    })
+    const frames = [sample()]
+    let nextFrame: number
+    const collect = () => {
+      frames.push(sample())
+      nextFrame = requestAnimationFrame(collect)
+    }
+    nextFrame = requestAnimationFrame(collect)
+    return { frames, stop: () => cancelAnimationFrame(nextFrame) }
+  }, elements)
+  const frameCount = () => frameProbe.evaluate(({ frames }) => frames.length)
+  await expect.poll(frameCount).toBeGreaterThanOrEqual(2)
+  const { before, startIndex } = await frameProbe.evaluate(({ frames }) => ({ before: frames.at(-1)!, startIndex: frames.length }))
+  expect(before.transcriptScroll).toBeGreaterThan(0)
+  expect(before.cards.every((card) => card.connected && card.status === "running" && card.height > 0)).toBe(true)
+
+  let releaseSnapshot!: () => void
+  waitForSnapshot = new Promise<void>((resolve) => { releaseSnapshot = resolve })
+  try {
+    state.snapshot.stream_cursor = cursor(2)
+    state.refresh("gap")
+    await expect.poll(() => heldReads).toBeGreaterThanOrEqual(2)
+    await expect(pane.locator("[data-actor-gap]")).toBeVisible()
+    await expect.poll(frameCount).toBeGreaterThanOrEqual(startIndex + 6)
+    await expect(page.locator("[data-subagent-error]")).toBeVisible()
+    const noticeIndex = await frameCount()
+    await expect.poll(frameCount).toBeGreaterThanOrEqual(noticeIndex + 6)
+    await page.screenshot({ path: testInfo.outputPath("subagent-refresh-held.png"), animations: "disabled" })
+    const during = await frameProbe.evaluate(({ frames }, start) => frames.slice(start), startIndex)
+    const firstChange = during.find((frame) => JSON.stringify(frame) !== JSON.stringify(before))
+    expect(firstChange ?? before).toEqual(before)
+    await expect(first.locator("[data-subagent-toggle]")).toHaveAttribute("aria-expanded", "true")
+  } finally {
+    running[0].logical_state = "cold"
+    running[0].activation!.status = "succeeded"
+    running[0].revision.actor_directory_revision = 3
+    waitForSnapshot = undefined
+    releaseSnapshot()
+    await frameProbe.evaluate(({ stop }) => stop())
+  }
+
+  await expect(first).toHaveAttribute("data-subagent-status", "done")
+  await expect(second).toHaveAttribute("data-subagent-status", "running")
+  await expect(first.locator("[data-subagent-toggle]")).toHaveAttribute("aria-expanded", "true")
+  await expect(pane.locator("[data-actor-gap]")).toHaveCount(0)
+  await expect(treeRow.locator("[data-actor-status]")).toHaveAttribute("data-actor-status", "completed")
+  await page.screenshot({ path: testInfo.outputPath("subagent-refresh-recovered.png"), animations: "disabled" })
+  expect(state.observation.pageErrors).toEqual([])
+})
+
+test("repeated subagent refreshes preserve scrolled historical messages with the workbench closed", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Main transcript desktop reading regression")
+  const state = await fixture(page)
+  const child = state.snapshot.nodes[3]
+  child.logical_state = "active"
+  child.activation!.status = "running"
+  const detail = "A saved observation from an earlier turn remains visible while the subagent works. "
+  state.history.unshift(...Array.from({ length: 72 }, (_, index) => ({
+    ...user(`earlier-reading-${index}`),
+    content: `Earlier reading message ${index}${index % 3 === 0 ? `\n${detail.repeat(3 + index % 5).trim()}` : ""}`,
+  })))
+
+  let snapshotReads = 0
+  let hold: Promise<void> | undefined
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, async (route) => {
+    snapshotReads += 1
+    await hold
+    await route.fulfill({ json: state.snapshot })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  const workbench = page.locator("#right-workbench")
+  const viewport = page.locator("[data-chat-body] [data-history-viewport]")
+  const card = viewport.locator('[data-subagent-id="actor-2"]')
+  await expect(workbench).toBeHidden()
+  await expect(card).toHaveAttribute("data-subagent-status", "running")
+  await expect.poll(() => state.treeCursor).toBe(cursor(1))
+  await viewport.hover()
+  await page.mouse.wheel(0, -1040)
+  await expect(page.getByRole("button", { name: "滚动到底部", exact: true })).toBeVisible()
+  const anchorText = await viewport.evaluate((element) => {
+    const { top, bottom } = element.getBoundingClientRect()
+    return [...element.querySelectorAll('[data-message-role="user"]')].find((message) => {
+      const bounds = message.getBoundingClientRect()
+      return message.textContent?.startsWith("Earlier reading message ") && bounds.top >= top + 40 && bounds.bottom <= bottom
+    })?.textContent
+  })
+  expect(anchorText).toBeTruthy()
+  const anchor = viewport.getByText(anchorText!, { exact: true })
+  await expect(anchor).toBeInViewport()
+  await page.evaluate(async () => { await document.fonts.ready })
+
+  const trace = await page.evaluateHandle(({ viewport, anchor }) => {
+    const sample = () => ({
+      connected: anchor.isConnected,
+      textTop: Math.round(anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top),
+      scrollTop: Math.round(viewport.scrollTop),
+      scrollHeight: viewport.scrollHeight,
+      viewportHeight: viewport.clientHeight,
+    })
+    const samples = [sample()]
+    let frame: number
+    const collect = () => {
+      samples.push(sample())
+      frame = requestAnimationFrame(collect)
+    }
+    frame = requestAnimationFrame(collect)
+    return { samples, stop: () => cancelAnimationFrame(frame) }
+  }, { viewport: await viewport.elementHandle(), anchor: await anchor.elementHandle() })
+  const frameCount = () => trace.evaluate(({ samples }) => samples.length)
+  await expect.poll(frameCount).toBeGreaterThanOrEqual(6)
+  const { baseline, startIndex } = await trace.evaluate(({ samples }) => ({ baseline: samples.at(-1)!, startIndex: samples.length }))
+  expect(baseline.scrollTop).toBeGreaterThan(0)
+  expect(baseline.scrollHeight - baseline.scrollTop - baseline.viewportHeight).toBeGreaterThan(500)
+
+  const notice = page.locator("[data-subagent-error]")
+  const noticeLayouts: Array<{ inTranscript: boolean; position: string }> = []
+  const stopTrace = () => trace.evaluate(({ samples, stop }, start) => {
+    stop()
+    return samples.slice(start)
+  }, startIndex)
+  let during: Awaited<ReturnType<typeof stopTrace>>
+  try {
+    for (const revision of [2, 3, 4]) {
+      const previousReads = snapshotReads
+      let release!: () => void
+      hold = new Promise<void>((resolve) => { release = resolve })
+      try {
+        state.snapshot.stream_cursor = cursor(revision)
+        state.refresh("gap")
+        await expect.poll(() => snapshotReads).toBeGreaterThan(previousReads)
+        await expect(notice).toBeVisible()
+        const noticeIndex = await frameCount()
+        await expect.poll(frameCount).toBeGreaterThanOrEqual(noticeIndex + 6)
+        noticeLayouts.push(await notice.evaluate((element) => ({
+          inTranscript: !!element.closest("[data-history-viewport]"), position: getComputedStyle(element.parentElement!).position,
+        })))
+        if (revision === 2) await page.screenshot({ path: testInfo.outputPath("subagent-refresh-closed-held.png"), animations: "disabled" })
+        await expect(workbench).toBeHidden()
+      } finally {
+        hold = undefined
+        release()
+      }
+      await expect.poll(() => state.treeCursor).toBe(cursor(revision))
+      await expect(notice).toHaveCount(0)
+    }
+  } finally {
+    during = await stopTrace()
+    await testInfo.attach("historical-message-refresh-frames", {
+      body: JSON.stringify({ anchorText, baseline, during, noticeLayouts }), contentType: "application/json",
+    })
+  }
+  const firstChange = during.find((frame) => JSON.stringify(frame) !== JSON.stringify(baseline))
+  expect(firstChange ?? baseline).toEqual(baseline)
+  expect(noticeLayouts).toEqual(Array(3).fill({ inTranscript: false, position: "absolute" }))
+  await page.getByRole("button", { name: "滚动到底部", exact: true }).click()
+  await expect(card).toHaveAttribute("data-subagent-status", "running")
+  expect(state.observation.pageErrors).toEqual([])
 })
 
 test("new turns, status refreshes and reload keep old cards at their originating activity", async ({ page }, testInfo) => {
