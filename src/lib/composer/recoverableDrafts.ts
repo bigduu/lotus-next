@@ -60,7 +60,8 @@ export function saveComposerDraft(scope: ComposerDraftScope, text: string): void
     if (remaining.length) sessionStorage.setItem(storageKey, JSON.stringify(remaining.slice(0, maxDrafts)))
     else sessionStorage.removeItem(storageKey)
   } catch {
-    // The live composer owns the input when storage is unavailable.
+    // Prefer the live input to a receipt that may no longer reflect it.
+    discardComposerDrafts()
   }
 }
 

@@ -11,7 +11,11 @@ const filePaths = ["README.md", "src/alpha.ts", "docs/设计 文档@v2.md", "pac
 const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 type ChatRequest = { session_id?: string; message: string; images?: Array<{ base64: string; name: string; type: string }> }
 
-async function openComposer(page: Page, history: readonly unknown[] = []) {
+async function openComposer(
+  page: Page,
+  history: readonly unknown[] = [],
+  options?: { selectRoot?: boolean },
+) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_ui_locale_v1", "en-US")
@@ -58,6 +62,7 @@ async function openComposer(page: Page, history: readonly unknown[] = []) {
   })
   await page.goto(standaloneScenario.entryUrl)
   await page.keyboard.press("Escape")
+  if (options?.selectRoot) await selectSession(page, "Composer editor acceptance")
   const editor = page.getByRole("textbox", { name: "Messages", exact: true }).first()
   await expect(editor).toBeVisible()
   await expect(editor).toHaveAttribute("contenteditable", "true")
@@ -444,7 +449,7 @@ async function installBodhiComposerHost(page: Page) {
 
 test("unsent root drafts recover only in the same tab after reload and workspace parking", async ({ page, context }) => {
   await installBodhiComposerHost(page)
-  const { editor, chats, observation } = await openComposer(page)
+  const { editor, chats, observation } = await openComposer(page, [], { selectRoot: true })
   const mainDraft = "Draft kept across Bamboo switching"
   const otherDraft = "Independent draft in another Root session"
   await editor.fill(mainDraft)
@@ -452,6 +457,7 @@ test("unsent root drafts recover only in the same tab after reload and workspace
   await expectComposerText(editor, "")
   await editor.fill(otherDraft)
   await page.reload()
+  await selectSession(page, "Composer editor acceptance")
   await expectComposerText(editor, mainDraft)
   await selectSession(page, "Other composer draft")
   await expectComposerText(editor, otherDraft)
@@ -464,6 +470,7 @@ test("unsent root drafts recover only in the same tab after reload and workspace
   await page.goto(parkedUrl)
   await expect(page.getByRole("heading", { name: "Restarting Bamboo" })).toBeVisible()
   await page.goto(standaloneScenario.entryUrl)
+  await selectSession(page, "Composer editor acceptance")
   await expectComposerText(editor, mainDraft)
 
   // Tabs opened by an existing document receive a clone of sessionStorage.
@@ -471,7 +478,7 @@ test("unsent root drafts recover only in the same tab after reload and workspace
   const [popup] = await Promise.all([page.waitForEvent("popup"), page.evaluate(() => { window.open("about:blank") })])
   try {
     await installBodhiComposerHost(popup)
-    const otherTab = await openComposer(popup)
+    const otherTab = await openComposer(popup, [], { selectRoot: true })
     await expectComposerText(otherTab.editor, "")
   } finally {
     await popup.close()
@@ -481,6 +488,7 @@ test("unsent root drafts recover only in the same tab after reload and workspace
   await editor.press("Enter")
   await expect.poll(() => chats.map((chat) => chat.message)).toEqual([mainDraft])
   await page.reload()
+  await selectSession(page, "Composer editor acceptance")
   await expectComposerText(editor, "")
   await selectSession(page, "Other composer draft")
   await expectComposerText(editor, otherDraft)
@@ -489,9 +497,10 @@ test("unsent root drafts recover only in the same tab after reload and workspace
 
 test("losing local owner access discards saved drafts before another admission", async ({ page }) => {
   await installBodhiComposerHost(page)
-  const { editor, observation } = await openComposer(page)
+  const { editor, observation } = await openComposer(page, [], { selectRoot: true })
   await editor.fill("Private local draft")
   await page.reload()
+  await selectSession(page, "Composer editor acceptance")
   await expectComposerText(editor, "Private local draft")
   const original = observation.bootstrapDocuments.at(-1) as { auth: Record<string, unknown> }
   const denied = {
@@ -505,13 +514,16 @@ test("losing local owner access discards saved drafts before another admission",
 
   document = { ...denied, auth: { ...denied.auth, request_state: "authenticated" } }
   await page.reload()
+  await selectSession(page, "Composer editor acceptance")
   await expectComposerText(editor, "")
   await editor.fill("An unrelated identity has no locally admitted draft")
   await page.reload()
+  await selectSession(page, "Composer editor acceptance")
   await expectComposerText(editor, "")
 
   await page.unroute("**/api/v1/bootstrap")
   await page.reload()
+  await selectSession(page, "Composer editor acceptance")
   await expectComposerText(editor, "")
 })
 
