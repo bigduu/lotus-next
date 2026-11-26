@@ -649,12 +649,30 @@ describe("snapshot-only ActorTree panel", () => {
     const text = warning.textContent
     expect(warning.getAttribute("data-actor-gap-origin")).toBe(actorId)
     expect(text).toContain(actorId)
-    // Layout is verified in Chromium; this guards wrapping without truncating data.
-    expect(warning.classList.contains("[overflow-wrap:anywhere]")).toBe(true)
+    expect(warning.querySelector('[role="status"]')?.textContent).toBe(text)
     for (let index = 0; index < 2; index += 1) {
       await settle(async () => host.querySelector<HTMLButtonElement>('button[aria-label="刷新代理结构"]')!.click())
       expect(host.querySelector('[data-actor-gap]')?.textContent).toBe(text)
     }
+  })
+
+  it("keeps the tree mounted and the saved view refreshable after a transient read error", async () => {
+    await settle(async () => usePanel("root", "root", vi.fn()))
+    const tree = host.querySelector('[role="tree"]')
+    const refresh = host.querySelector<HTMLButtonElement>('button[aria-label="刷新代理结构"]')!
+    vi.mocked(getActorSnapshot).mockRejectedValueOnce(new NetworkRequestError())
+
+    await settle(async () => refresh.click())
+
+    expect(host.querySelector('[role="tree"]')).toBe(tree)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("网络请求未完成")
+    expect(host.querySelector('button[aria-label="刷新代理结构"]')).toBe(refresh)
+
+    await settle(async () => refresh.click())
+
+    expect(host.querySelector('[role="tree"]')).toBe(tree)
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("")
   })
 
   it("reveals an initially selected depth-three child when the snapshot arrives", async () => {

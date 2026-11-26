@@ -12,6 +12,7 @@ import { Button } from "../../ui/button"
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "../../ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover"
 
+import { ActorSnapshotNotice } from "./ActorSnapshotNotice"
 import { ActorTree, type UpdateExpansion } from "./ActorTree"
 import { actorLifecycleLabel, actorTitle } from "./actorLabels"
 import { createActorSnapshot } from "./createActorSnapshot"
@@ -48,7 +49,7 @@ function SubagentPicker(props: {
       if (next) setQuery("")
       setOpen(next)
     }}>
-      <PopoverTrigger as={Button} variant="outline" size="sm" class="min-w-0 max-w-full" aria-label={text("switch_subagent")}>
+      <PopoverTrigger as={Button} variant="outline" size="sm" class="min-w-0 shrink" aria-label={text("switch_subagent")}>
         <span class="truncate">{actorTitle(props.child, text)}</span>
         <ChevronDown />
       </PopoverTrigger>
@@ -100,6 +101,11 @@ export function SubagentsPane(props: SubagentsPaneProps) {
   )
   const snapshot = createMemo(() => state().snapshot)
   const loading = createMemo(() => state().loading)
+  const retainedError = () => snapshot() ? state().error : null
+  const notice = () => (
+    <ActorSnapshotNotice reason={state().gapReason} actorId={state().gapActorId} error={retainedError()}
+      onRetry={state().retryable ? () => void refresh() : undefined} />
+  )
   let previousTree: ActorTreeData | undefined
   const topology = createMemo<ActorTreeData>(() => {
     locale()
@@ -169,27 +175,27 @@ export function SubagentsPane(props: SubagentsPaneProps) {
               }}>
                 <ChevronLeft />{text("return_to_subagent_tree")}
               </Button>
-              <SubagentPicker child={selected()} topology={topology()} onSelect={selectChild} />
+              <div class="flex min-w-0 max-w-full items-center gap-1">
+                <SubagentPicker child={selected()} topology={topology()} onSelect={selectChild} />
+                {notice()}
+              </div>
             </div>
             <p class="max-h-16 overflow-y-auto px-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
               {parentPath(selected(), topology(), text)} / {actorTitle(selected(), text)}
             </p>
           </div>
         )}</Show>
-        <Show when={state().gapReason}>
-          <p role="status" data-actor-gap={state().gapReason} data-actor-gap-origin={state().gapActorId ?? undefined}
-            class="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground">
-            {text("there_is_a_gap_in_subagent_events_state_was_reloaded_bu_463a89f1")}
-          </p>
-        </Show>
         <div hidden={reading()} class={cn("min-h-0 min-w-0 flex-1 flex-col", reading() ? "hidden" : "flex")}>
           <div class="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
             <p class="text-sm text-muted-foreground">{snapshot()?.nodes.length === 1
               ? text("no_subagents_in_session") : text("select_a_subagent_to_load_its_message_history_d73b4879")}</p>
-            <Button size="icon" variant="ghost" disabled={loading()} onClick={() => void refresh()}
-              aria-label={text("refresh_agent_structure_277bb85d")}>
-              <RefreshCw />
-            </Button>
+            <div class="flex shrink-0 items-center gap-1">
+              <Show when={!reading()}>{notice()}</Show>
+              <Button size="icon" variant="ghost" disabled={loading()} onClick={() => void refresh()}
+                aria-label={text("refresh_agent_structure_277bb85d")}>
+                <RefreshCw />
+              </Button>
+            </div>
           </div>
           <ActorTree topology={topology()} selectedActorId={child()?.actorId ?? props.rootId}
             revealSelected={!reading()}
@@ -199,7 +205,7 @@ export function SubagentsPane(props: SubagentsPaneProps) {
               nextFocus = "messages"
               selectChild(id)
             }}
-            error={state().error} onRetry={() => void refresh()} retryable={state().retryable}
+            error={snapshot() ? null : state().error} onRetry={() => void refresh()} retryable={state().retryable}
             class="flex-1" />
         </div>
         <Show when={transcriptId()} keyed>{(actorId) => (

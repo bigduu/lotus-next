@@ -9,7 +9,7 @@ import { Button } from "../ui/button"
 import { VirtualHistory, type HistoryReadingAnchor, type ScrollToHistoryEntry } from "../history/VirtualHistory"
 import { createUiText } from "../shell/uiText"
 import { MessageBody } from "./MessageBody"
-import { InlineActorGroup, InlineActorPrefix } from "./actor-status/InlineActorStatus"
+import { InlineActorGroup, InlineActorNotice, InlineActorPrefix } from "./actor-status/InlineActorStatus"
 import { createInlineActorStatus } from "./actor-status/createInlineActorStatus"
 import { RenderHistoryRow } from "./history/HistoryRow"
 import { createSideChatSources } from "./history/SideChatSourceActions"
@@ -248,6 +248,7 @@ export function ChatViewport(props: {
           </div>
         }
       />
+      <InlineActorNotice status={actorStatus} />
       <Show when={messageActions.notice}>
         {(notice) => <div class="pointer-events-none absolute inset-x-0 bottom-3 z-10 mx-auto w-[calc(100%-1.5rem)] max-w-6xl">
           <p role={notice().error ? "alert" : "status"} class="pointer-events-auto w-fit max-w-full break-words rounded-md border bg-popover px-3 py-2 text-sm">

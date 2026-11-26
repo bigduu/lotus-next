@@ -34,7 +34,7 @@ const sameCard = (previous: SubAgentCard, next: SubAgentCard): boolean =>
  */
 export function mergeSubAgentView(parentId: string | null, chats: readonly ChatItem[],
   live: Record<string, ChildProgress>, snapshot: ActorSubtreeSnapshot | null,
-  confirmed: boolean, previousIds: readonly string[] = [],
+  previousIds: readonly string[] = [],
   previous?: Record<string, SubAgentCard>): Record<string, SubAgentCard> {
   if (!parentId) return {}
   const sessions = chats.filter((chat) => chat.parentSessionId === parentId)
@@ -48,7 +48,7 @@ export function mergeSubAgentView(parentId: string | null, chats: readonly ChatI
   let reusedAll = previous !== undefined && Object.keys(previous).length === order.length
   for (const id of order) {
     const chat = sessionById.get(id), node = nodeById.get(id)
-    const lifecycle = confirmed && node ? actorSnapshotLifecycle(node) : "unknown"
+    const lifecycle = node ? actorSnapshotLifecycle(node) : "unknown"
     const projected: SubAgentCard = {
       title: node?.title || chat?.title || live[id]?.title || chat?.subagentType || undefined,
       status: lifecycle === "cold" ? "idle" : lifecycle === "active" ? "unknown" : lifecycle,
