@@ -56,6 +56,9 @@ describe("AgentClient session event routing", () => {
       "session-1",
       "queued-user",
       interjection,
+      interjection ? {
+        id: "queued-user", role: "user", content: "apply this next", createdAt: "2026-09-21T00:00:00Z",
+      } : undefined,
     )
   })
 

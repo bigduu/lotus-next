@@ -32,6 +32,8 @@ import type { PendingSideChatIntent, SideChatIntent } from "@/lib/sideChatIntent
 import { ChatViewport } from "../chat/ChatViewport"
 import type { MessageNotice } from "../chat/message-actions/createMessageActions"
 import { ComposerPanel } from "../chat/ComposerPanel"
+import { createGuidanceQueue } from "../chat/guidance/createGuidanceQueue"
+import { transcriptWorkWait } from "../chat/status/transcriptWorkWait"
 import { ConversationClearDialog } from "../chat/ConversationClearDialog"
 import { createEnvironment } from "../chat/environment/createEnvironment"
 import { EnvironmentCard, EnvironmentLauncher } from "../chat/environment/Environment"
@@ -137,6 +139,9 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const [image, setImage] = createSignal<string | null>(null)
   const [connectionLost, setConnectionLost] = createSignal(false)
   const chat = createChat(undefined, undefined, { pageVisible: () => !settingsOpen() })
+  const composerRunning = () => chat.currentChat?.isRunning === true
+    || (chat.sending && (chat.streaming !== null || chat.liveAnswerCommitted)) || transcriptWorkWait(chat).monitoredCommand
+  const guidanceQueue = createGuidanceQueue(() => chat.currentSessionId, composerRunning, () => chat.messages)
   const projects = createStoreSelector(appStore, (state) => state.projects)
   const sections = createProjectSections(projects, appStore.getState)
   const availability = createStoreSelector(appStore, (state) => state.agentAvailability)
@@ -1188,7 +1193,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               onPickTemplate={(prefill) => { appStore.getState().setInputContent("", prefill); focusComposer() }} onDescribeTask={focusComposer} />
           </Loading>}>
           <Show when={sessionView()} keyed>{(session) => (
-            <ChatViewport chat={chat} theme={theme().themeMode}
+            <ChatViewport chat={chat} queuedGuidance={guidanceQueue.transcript} theme={theme().themeMode}
               pageVisible={!settingsOpen()} onOpenActor={selectWorkbenchActor}
               onOpenLink={openLink} onPreviewImage={setImage}
               rootAuthority={rootAuthority} onMessageNotice={reportMessageNotice}
@@ -1223,7 +1228,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               <Button size="sm" onClick={openModelSetup}>{text("model_setup_open")}</Button>
             </div>
           </Show>
-          <ComposerPanel chat={chat} inputId="lotus-message-input" workspacePath={displayWorkspace()}
+          <ComposerPanel chat={chat} running={composerRunning()} guidanceQueue={guidanceQueue}
+            inputId="lotus-message-input" workspacePath={displayWorkspace()}
             setupNeedsModel={!currentSession() && Boolean(needsModelSetup())}
             projectId={newSession()?.projectId ?? null} onSelectProject={selectDraftProject}
             onOpenWorkspacePicker={() => setWorkspaceOpen(true)}

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { agentClient } from "@services/chat/AgentService"
 import { appStore, initializeStore } from "@shared/store/appStore/state"
 import { settleChat } from "./chatInteractionTestHarness"
-import { deferred, feedSessions, history, session, useChatStreamFixture } from "./chatStreamTestHarness"
+import { deferred, feedMessages, feedSessions, history, session, useChatStreamFixture, user } from "./chatStreamTestHarness"
 
 vi.mock("@shared/store/appStore/state", async (original) => ({
   ...await original<typeof import("@shared/store/appStore/state")>(),
@@ -53,15 +53,26 @@ describe("Solid chat session binding", () => {
     const id = "split-guidance"
     feedSessions([{ ...session(id), isRunning: true }])
     appStore.getState().markForceSubscribe(id)
-    await mount(id)
+    const { chat } = await mount(id)
     expect(agentClient.subscribeToEvents).toHaveBeenCalledTimes(1)
     const onMessageAppended = vi.mocked(agentClient.subscribeToEvents).mock.calls[0][1].onMessageAppended
     expect(onMessageAppended).toBeTypeOf("function")
 
     await settleChat(() => onMessageAppended?.("different-session", "other-user", true))
     expect(history()).not.toHaveBeenCalled()
-    await settleChat(() => onMessageAppended?.(id, "queued-user", true))
+    const admitted = user("queued-user", "Use the updated location")
+    await settleChat(() => onMessageAppended?.(id, admitted.id, true, admitted))
     expect(history()).toHaveBeenCalledExactlyOnceWith(id, { mode: "monotonic" })
+    expect(chat.liveSegments).toEqual([{ kind: "interjection", messageId: admitted.id, message: admitted }])
+
+    await settleChat(() => onMessageAppended?.(id, admitted.id, true, admitted))
+    expect(chat.liveSegments).toHaveLength(1)
+
+    await settleChat(() => feedMessages(id, [user("earlier-user", admitted.content)]))
+    expect(chat.liveSegments).toHaveLength(1)
+    await settleChat(() => feedMessages(id, [...chat.messages, admitted]))
+    expect(chat.liveSegments).toEqual([])
+    expect(chat.messages).toContainEqual(admitted)
     expect(agentClient.execute).not.toHaveBeenCalled()
   })
 })

@@ -1,16 +1,20 @@
-import { createEffect, createSignal, onSettled, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, onSettled, type Accessor } from "solid-js"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { guidanceService, type GuidanceImage, type GuidanceMode, type PendingGuidance } from "@services/chat/guidance"
 import { uiText } from "@shared/i18n/text"
+import type { Message, UserMessage } from "@shared/types/chatMessages"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrderState"
 import type { SendSubmissionResult } from "../createChat"
 
 type Receipt = { id: string; fingerprint: string }
+export type QueuedGuidanceView = { message: UserMessage; mode: GuidanceMode }
 
 const receiptKey = (id: string) => `lotus-next.guidance-submission.${id}`
 const modeKey = (id: string) => `lotus-next.guidance-mode.${id}`
 const emptyMessages: PendingGuidance[] = []
+const emptyTranscript: readonly QueuedGuidanceView[] = []
+const emptyHistory: readonly Message[] = []
 
 function readReceipt(id: string): Receipt | null {
   try {
@@ -27,8 +31,16 @@ function readMode(id: string | null): GuidanceMode {
   return "after_round"
 }
 
-export function createGuidanceQueue(sessionId: Accessor<string | null>, running: Accessor<boolean>) {
+export function createGuidanceQueue(
+  sessionId: Accessor<string | null>,
+  running: Accessor<boolean>,
+  history: Accessor<readonly Message[]> = () => emptyHistory,
+) {
   const [snapshot, setSnapshot] = createSignal<{ sessionId: string; messages: PendingGuidance[] } | null>(null)
+  // An unclaimed-list disappearance can mean that a delivery was claimed
+  // before history became readable. Retain only locally acknowledged payloads
+  // through that gap, until their exact history ID or a successful withdrawal.
+  const [accepted, setAccepted] = createSignal(new Map<string, readonly QueuedGuidanceView[]>())
   const [failure, setFailure] = createSignal<{ sessionId: string; text: string } | null>(null)
   const [busy, setBusy] = createSignal<string | null>(null)
   const [modeState, setModeState] = createSignal<{ sessionId: string | null; mode: GuidanceMode } | null>(null)
@@ -37,6 +49,52 @@ export function createGuidanceQueue(sessionId: Accessor<string | null>, running:
   let mounted = true
   let revision = 0
   const receipts = new Map<string, Receipt>()
+  const canonicalIds = createMemo(() => new Set(history().flatMap((message) =>
+    message.role === "user" ? [message.id] : [],
+  )))
+  const pending = createMemo(() => {
+    const current = snapshot()
+    if (!current?.messages.length || current.sessionId !== sessionId()) return emptyMessages
+    const confirmed = canonicalIds()
+    const unconfirmed = current.messages.filter((message) => !confirmed.has(message.id))
+    return unconfirmed.length ? unconfirmed : emptyMessages
+  })
+  const transcript = createMemo(() => {
+    const id = sessionId()
+    if (!id) return emptyTranscript
+    const queued = pending()
+    const acknowledged = accepted().get(id)
+    if (!queued.length && !acknowledged?.length) return emptyTranscript
+    const confirmed = canonicalIds()
+    const local = new Map(acknowledged?.map((item) => [item.message.id, item]))
+    const projected = queued.map((item): QueuedGuidanceView => {
+      const known = local.get(item.id)
+      local.delete(item.id)
+      return known ?? {
+        mode: item.mode ?? "after_round",
+        message: { id: item.id, role: "user", content: item.text, createdAt: item.created_at,
+          images: item.images?.map((imageId) => ({
+            id: imageId, url: guidanceService.imageUrl(id, imageId), name: imageId, size: 0, type: "",
+          })) },
+      }
+    })
+    return [...projected, ...[...local.values()].filter((item) => !confirmed.has(item.message.id))]
+  })
+  const removeAccepted = (target: string, remove: (id: string) => boolean) => {
+    setAccepted((current) => {
+      const items = current.get(target)
+      if (!items) return current
+      const remaining = items.filter((item) => !remove(item.message.id))
+      if (remaining.length === items.length) return current
+      const next = new Map(current)
+      if (remaining.length) next.set(target, remaining)
+      else next.delete(target)
+      return next
+    })
+  }
+  createEffect(() => [sessionId(), canonicalIds()] as const, ([activeSessionId, confirmed]) => {
+    if (activeSessionId) removeAccepted(activeSessionId, (id) => confirmed.has(id))
+  })
   const mode = () => {
     const id = sessionId()
     const selected = modeState()
@@ -115,6 +173,19 @@ export function createGuidanceQueue(sessionId: Accessor<string | null>, running:
 
       const result = await guidanceService.send(target, receipt.id, text, timing, submittedImages)
       if (result.id !== receipt.id) throw new Error("Queue acknowledgement identity mismatch")
+      if (mounted && (sessionId() !== target || !canonicalIds().has(receipt.id))) {
+        const view: QueuedGuidanceView = {
+          mode: timing,
+          message: { id: receipt.id, role: "user", content: text, createdAt: new Date().toISOString(),
+            images: submittedImages.map((image, index) => ({
+              id: `${receipt.id}-image-${index}`, base64: image.base64,
+              name: image.name ?? "image", size: image.size ?? 0, type: image.type ?? "image/png",
+            })) },
+        }
+        setAccepted((current) => new Map(current).set(target, [
+          ...(current.get(target) ?? []).filter((item) => item.message.id !== receipt.id), view,
+        ]))
+      }
       recordSessionUserInput(target)
       receipts.delete(target)
       try {
@@ -122,7 +193,7 @@ export function createGuidanceQueue(sessionId: Accessor<string | null>, running:
       } catch { /* An acknowledgement may retire only its own stored receipt. */ }
       if (mounted && sessionId() === target) {
         setUncertain(null)
-        try { await refresh(target) } catch { /* Accepted delivery will appear on the next poll. */ }
+        void refresh(target).catch(() => { /* Keep the acknowledged provisional row. */ })
       }
       return { kind: "accepted", operationId: 0, sessionId: target, navigated: false }
     } catch (error) {
@@ -161,10 +232,13 @@ export function createGuidanceQueue(sessionId: Accessor<string | null>, running:
     setFailure(null)
     try {
       await guidanceService.cancel(target, id)
-      ++revision
-      if (mounted && sessionId() === target) setSnapshot((value) =>
-        value?.sessionId === target ? { ...value, messages: value.messages.filter((item) => item.id !== id) } : value,
-      )
+      if (mounted) {
+        removeAccepted(target, (messageId) => messageId === id)
+        if (sessionId() === target) ++revision
+        setSnapshot((value) =>
+          value?.sessionId === target ? { ...value, messages: value.messages.filter((item) => item.id !== id) } : value,
+        )
+      }
     } catch {
       if (mounted && sessionId() === target) {
         setFailure({ sessionId: target, text: uiText("could_not_withdraw_the_message_may_already_be_applying_f01042f1") })
@@ -178,10 +252,8 @@ export function createGuidanceQueue(sessionId: Accessor<string | null>, running:
   return {
     get mode() { return mode() },
     setMode, send, cancel,
-    get pending() {
-      const current = snapshot()
-      return current?.sessionId === sessionId() ? current.messages : emptyMessages
-    },
+    get pending() { return pending() },
+    get transcript() { return transcript() },
     get error() {
       const current = failure()
       return current?.sessionId === sessionId() ? current.text : null

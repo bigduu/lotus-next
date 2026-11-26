@@ -1,6 +1,6 @@
 import { runtimeNoticeFromMetadata } from "@/lib/chat/runtimeNotices"
 import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
-import { messageOccurrenceKey, type Message } from "@shared/types/chatMessages"
+import { messageOccurrenceKey, type Message, type UserMessage } from "@shared/types/chatMessages"
 
 import type { createUiText } from "../../shell/uiText"
 import type { LiveSegment } from "../createChat"
@@ -124,6 +124,16 @@ export function buildRenderItems(messages: readonly Message[]): RenderItem[] {
   return out
 }
 
+export function liveInterjectionMessage(
+  segment: Extract<LiveSegment, { kind: "interjection" }>,
+  queued?: UserMessage,
+): UserMessage | undefined {
+  const message = segment.message && queued?.images?.length
+    ? { ...segment.message, images: queued.images }
+    : segment.message ?? queued
+  return message && (message.content.trim() || message.images?.length) ? message : undefined
+}
+
 export function buildLiveItems(
   segments: readonly LiveSegment[],
   answer: string | null,
@@ -131,6 +141,7 @@ export function buildLiveItems(
   active: boolean,
   status: string | null,
   text: Text,
+  queued?: ReadonlyMap<string, UserMessage>,
 ): RenderItem[] {
   const out: RenderItem[] = []
   let bodyIndex = 0
@@ -142,7 +153,10 @@ export function buildLiveItems(
     } })
   }
   for (const segment of segments) {
-    if (segment.kind === "text") appendText(segment.text, segment.reasoning)
+    if (segment.kind === "interjection") {
+      const message = liveInterjectionMessage(segment, queued?.get(segment.messageId))
+      if (message) out.push({ kind: "msg", m: message })
+    } else if (segment.kind === "text") appendText(segment.text, segment.reasoning)
     else if (segment.calls.length) appendProcessPart(out, `live-${bodyIndex}`, {
       kind: "tools", items: liveToolMessages(segment, text),
       runningCallIds: new Set(segment.calls.filter((call) => call.status === "running").map((call) => call.toolCallId)),

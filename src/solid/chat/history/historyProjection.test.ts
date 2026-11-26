@@ -86,6 +86,22 @@ it("only marks the active tail as streaming while retaining frozen text and prog
   expect(items[0]).not.toHaveProperty("streaming")
 })
 
+it("places an admitted image-only message between the frozen and active replies", () => {
+  const message = { id: "interjection", role: "user", content: "", createdAt: at } as const
+  const image = { id: "image", url: "/image.png", name: "map", size: 0, type: "image/png" }
+  const queued = new Map([[message.id, { ...message, images: [image] }]])
+  const items = buildLiveItems([
+    { kind: "text", text: "Before", reasoning: null },
+    { kind: "interjection", messageId: message.id, message },
+  ], "After", null, true, null, uiText, queued)
+
+  expect(items).toMatchObject([
+    { kind: "msg", m: { content: "Before" } },
+    { kind: "msg", m: { ...message, images: [image] } },
+    { kind: "msg", streaming: true, m: { content: "After" } },
+  ])
+})
+
 it("shows one local completed body with no mutation target while exact-turn history still has a partial checkpoint", () => {
   const canonical: Message[] = [
     { id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: at },
