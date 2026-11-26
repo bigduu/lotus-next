@@ -255,6 +255,8 @@ export const uiZhCn = {
   "project_work_title": "项目工作",
   "project_work_list": "列表",
   "project_work_board": "看板",
+  "project_work_open_board": "{{project}} 看板",
+  "project_work_choose_board": "项目看板",
   "project_work_todo": "待办",
   "project_work_doing": "进行中",
   "project_work_testing": "待验收",

@@ -4,7 +4,7 @@ Tracks Bamboo-agent #2041, slice D. The backend Project–Work relation is autho
 
 ## Entry and behavior
 
-Open **Project Work** from a project's sidebar action menu. The default list and optional column view show the same explicitly linked Work. Columns are the backend's projection: Draft/Ready → todo, Active → doing, Submitted → awaiting acceptance, Accepted → accepted. Blocked retains its backend resume stage and an additional reason; paused is visible. Cancelled is an opt-in separate group and never appears in accepted. Selecting a Work changes only the local detail view; there are no drag-to-transition or acceptance controls.
+Select **Board** on a project row in the sidebar. In Recent view, select **Project Board** and choose a project. The project action menu also has **Project Work**. The default column view and optional list show the same explicitly linked Work. The backend projects Draft/Ready to todo, Active to doing, Submitted to awaiting acceptance, and Accepted to accepted. Blocked Work retains its resume stage and shows the reason. Paused Work is marked, and cancelled Work has an opt-in group. Selecting a Work opens its details.
 
 Project workspace paths are metadata, not new execution permissions. Selecting Work shows the immutable adopted context, contract, dependencies, active assignment, owner session/run, and current/accepted submission evidence. Historical stale evidence is labelled as such. The project context summary is current project metadata; adopted context comes from the ticket backend snapshot and may be older.
 

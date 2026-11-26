@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, CalendarDays, ChevronRight, Cog, FolderClosed, FolderOpen, GitBranch, List, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, SquarePen, X } from "@lucide/solid"
+import { Archive, ArchiveRestore, CalendarDays, ChevronRight, Cog, FolderClosed, FolderOpen, GitBranch, Kanban, List, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Plus, Search, SquarePen, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, omit, onSettled, Show, untrack } from "solid-js"
 import type { JSX } from "@solidjs/web"
 import { NO_PROJECT_GROUP_KEY, type ProjectManifest } from "@services/project"
@@ -223,6 +223,17 @@ export function Sidebar(props: Props) {
     return !value || chat.title.toLowerCase().includes(value) || chat.id.toLowerCase().includes(value)
   }
   const projectMode = () => grouping() === "project"
+  const boardProjects = createMemo(() => Object.values(props.projects))
+  let boardMenuTrigger: HTMLButtonElement | undefined
+  let selectedBoardProject: string | undefined
+  const openBoardAfterProjectChoice = (event: Event) => {
+    const id = selectedBoardProject
+    selectedBoardProject = undefined
+    if (!id || !props.projects[id]) return
+    event.preventDefault()
+    boardMenuTrigger?.focus({ preventScroll: true })
+    queueMicrotask(() => props.onOpenProjectWork(id))
+  }
   const rootChats = createMemo(() => props.chats.filter((chat) => !chat.parentSessionId && !isDefaultSupervisor(chat)))
   const mergeStates = createWorktreeMergeStates(rootChats)
   const supervisor = createMemo(() => props.chats.find(isDefaultSupervisor))
@@ -521,6 +532,15 @@ export function Sidebar(props: Props) {
           disabled={dragDisabled(group().key)} data-project-drop={group().key} title={text("sidebar_project_drop_hint")}
           class="rounded-md feedback-motion switch-feedback">{header}</DropTarget> : undefined}
         actions={<Show when={project()}>{(current) => <>
+          <button type="button" aria-haspopup="dialog"
+            aria-label={text("project_work_open_board", { project: current().name })}
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true })
+              props.onOpenProjectWork(current().id)
+            }}
+            class="shrink-0 whitespace-nowrap rounded px-1.5 py-1 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+            {text("project_work_board")}
+          </button>
           <button type="button" aria-label={text("new_session_in_1e893198", { v0: current().name })}
             disabled={current().status !== "active"} onClick={() => openNew(current().id)}
             class="shrink-0 rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default">
@@ -690,6 +710,21 @@ export function Sidebar(props: Props) {
           <Button variant="ghost" class="w-full justify-start gap-2" onClick={() => { props.onOpenProjectManager(); props.onClose() }}>
             <FolderClosed class="size-4" />{text("manage_projects_302f96cf")}
           </Button>
+          <Show when={!projectMode()}>
+            <DropdownMenu>
+              <DropdownMenuTrigger as={Button} ref={(element: HTMLButtonElement) => { boardMenuTrigger = element }}
+                variant="ghost" class="w-full justify-start gap-2" disabled={boardProjects().length === 0}>
+                <Kanban class="size-4" aria-hidden="true" />{text("project_work_choose_board")}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent class="min-w-40" onCloseAutoFocus={openBoardAfterProjectChoice}>
+                <For each={boardProjects()} keyed={(project) => project.id}>{(project) => (
+                  <DropdownMenuItem onSelect={() => { selectedBoardProject = project().id }}>
+                    {project().status === "archived" ? text("archived_01a84e81", { v0: project().name }) : project().name}
+                  </DropdownMenuItem>
+                )}</For>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </Show>
         </div>
         <div class="px-3 pb-2">
           <div class="relative">

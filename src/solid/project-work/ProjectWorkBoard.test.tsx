@@ -81,15 +81,15 @@ it("shows unknown counts for incomplete coverage and reloads after cursor expiry
 it("keeps a visible selected view button after focus moves while preserving aria-pressed", async () => {
   await render()
   const find = (name: string) => [...document.querySelectorAll("button")].find((button) => button.textContent === name)!
-  expect(find("List").getAttribute("aria-pressed")).toBe("true")
-  expect(find("List").classList.contains("bg-primary")).toBe(true)
-  expect(find("Board").getAttribute("aria-pressed")).toBe("false")
-  await click("Board")
-  await settle(() => find("Refresh").focus())
   expect(find("Board").getAttribute("aria-pressed")).toBe("true")
   expect(find("Board").classList.contains("bg-primary")).toBe(true)
   expect(find("List").getAttribute("aria-pressed")).toBe("false")
-  expect(find("List").classList.contains("bg-primary")).toBe(false)
+  await click("List")
+  await settle(() => find("Refresh").focus())
+  expect(find("List").getAttribute("aria-pressed")).toBe("true")
+  expect(find("List").classList.contains("bg-primary")).toBe(true)
+  expect(find("Board").getAttribute("aria-pressed")).toBe("false")
+  expect(find("Board").classList.contains("bg-primary")).toBe(false)
 })
 
 it("shows server-authorized pending context separately from the running assignment's adopted version", async () => {

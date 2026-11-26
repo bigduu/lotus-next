@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
 
-test("Solid Project Work opens from the project menu and reads the scoped board on demand", async ({ page, baseURL, isMobile }) => {
+test("Solid Project Work has visible sidebar entries in both groupings and reads the scoped board on demand", async ({ page, baseURL, isMobile }, info) => {
   const entryUrl = new URL("/", baseURL).href
   await page.addInitScript(() => {
     localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
@@ -48,14 +48,19 @@ test("Solid Project Work opens from the project menu and reads the scoped board 
 
   await page.goto(entryUrl)
   if (isMobile) await page.getByRole("button", { name: "菜单", exact: true }).click()
-  const projectMenu = page.getByRole("button", { name: "Fixture project 项目操作", exact: true })
-  await expect(projectMenu).toBeVisible()
+  const projectRow = page.locator(`[data-sidebar-project="${project.id}"]`)
+  const disclosure = projectRow.locator("button[aria-controls]").first()
+  const shortcut = projectRow.getByRole("button", { name: "Fixture project 看板", exact: true })
+  await expect(shortcut).toBeVisible()
+  await disclosure.click()
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false")
+  await expect(shortcut).toHaveText("看板")
+  await expect(shortcut).toBeVisible()
+  await info.attach("project-board-sidebar-entry", { body: await page.screenshot(), contentType: "image/png" })
   expect(boardQueries).toEqual([])
-  await projectMenu.click()
-  await page.getByRole("menuitem", { name: "项目工作", exact: true }).click()
+  await shortcut.click()
   const board = page.getByRole("dialog", { name: "项目工作 · Fixture project" })
-  await expect(board.getByText("Verify this work", { exact: true })).toBeVisible()
-  await board.getByRole("button", { name: "看板", exact: true }).click()
+  await expect(board.getByRole("button", { name: "看板", exact: true })).toHaveAttribute("aria-pressed", "true")
   const card = board.getByRole("region", { name: "待验收", exact: true }).getByRole("button", { name: /Verify this work/ })
   await expect(card).toBeVisible()
   await card.click()
@@ -67,6 +72,17 @@ test("Solid Project Work opens from the project menu and reads the scoped board 
   })))
   await page.keyboard.press("Escape")
   await expect(board).toBeHidden()
-  await expect(projectMenu).toBeVisible()
+  await expect(shortcut).toBeFocused()
+  await page.getByRole("button", { name: "切换为最近视图" }).click()
+  const chooser = page.getByRole("button", { name: "项目看板", exact: true })
+  await expect(chooser).toBeVisible()
+  expect(boardQueries).toHaveLength(2)
+  await chooser.click()
+  await page.getByRole("menuitem", { name: project.name, exact: true }).click()
+  await expect(card).toBeVisible()
+  expect(boardQueries.at(-1)).toMatchObject({ project_id: project.id, include_cancelled: false })
+  await page.keyboard.press("Escape")
+  await expect(board).toBeHidden()
+  await expect(chooser).toBeFocused()
   expect(observation.pageErrors).toEqual([])
 })
