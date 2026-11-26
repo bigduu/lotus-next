@@ -194,6 +194,8 @@ for (const colorScheme of ["light", "dark"] as const) {
     expect(workReads().some((request) => request.url.endsWith("/tickets/project-board"))).toBe(true)
     const listButton = dialog.getByRole("button", { name: "列表", exact: true })
     const boardButton = dialog.getByRole("button", { name: "看板", exact: true })
+    await expect(boardButton).toHaveAttribute("aria-pressed", "true")
+    await listButton.click()
     await expect(listButton).toHaveAttribute("aria-pressed", "true")
     await expect(listButton).toHaveClass(/bg-primary/)
     await boardButton.click()

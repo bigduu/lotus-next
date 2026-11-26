@@ -255,6 +255,8 @@ export const uiEnUs = {
   "project_work_title": "Project Work",
   "project_work_list": "List",
   "project_work_board": "Board",
+  "project_work_open_board": "{{project}} board",
+  "project_work_choose_board": "Project Board",
   "project_work_todo": "To do",
   "project_work_doing": "Doing",
   "project_work_testing": "Awaiting acceptance",

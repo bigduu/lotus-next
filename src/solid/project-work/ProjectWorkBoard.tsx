@@ -45,7 +45,7 @@ function commandAtSnapshot(command: WorkCommandContext | null | undefined, row: 
 export function ProjectWorkBoard(props: ProjectWorkBoardProps) {
   const text = createUiText()
   const locale = createUiLocale()
-  const [mode, setMode] = createSignal<"list" | "board">("list")
+  const [mode, setMode] = createSignal<"list" | "board">("board")
   const [cancelled, setCancelled] = createSignal(false)
   const [selectedId, setSelectedId] = createSignal<string | null>(null)
   const [filter, setFilter] = createSignal<SprintFilter | null>(null)
