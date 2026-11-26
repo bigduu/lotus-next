@@ -188,6 +188,64 @@ test("late fork acknowledgement keeps the newly selected current session", async
   expect(fixture.observation.pageErrors).toEqual([])
 })
 
+for (const failure of [
+  { label: "missing route", status: 404, body: undefined, notice: "分叉失败:当前后端暂不支持会话分叉" },
+  { label: "structured message refusal", status: 404, body: { error: { code: "session_fork_message_not_found", message: "The selected message no longer exists" } },
+    notice: "操作失败", details: "所选消息已不在此会话中。" },
+  { label: "unconfirmed destination", status: 201, body: { session: {} }, notice: "操作失败",
+    details: "后端未确认新会话。请先查看会话列表，再决定是否重试。" },
+  { label: "unconfirmed network request", status: undefined, body: undefined, notice: "操作失败",
+    details: "后端未确认新会话。请先查看会话列表，再决定是否重试。" },
+]) {
+  test(`fork reports ${failure.label} and keeps the source selected`, async ({ page, baseURL, isMobile }) => {
+    const fixture = await prepare(page, baseURL!)
+    await page.route(`**/api/v1/sessions/${id}/fork`, (route) => {
+      fixture.requests.push({ path: "fork", body: route.request().postDataJSON() })
+      if (failure.status === undefined) return route.abort()
+      return route.fulfill({ status: failure.status, ...(failure.body && { json: failure.body }) })
+    })
+    if (isMobile) await (await openMenu(page, answer)).getByRole("menuitem", { name: "从这里分叉", exact: true }).click()
+    else await actions(page, answer).getByRole("button", { name: "从这里分叉", exact: true }).click()
+    const alert = page.getByRole("alert").filter({ hasText: failure.notice })
+    await expect(alert).toBeVisible()
+    if (failure.details) {
+      await alert.locator("..").getByText("显示详情", { exact: true }).click()
+      await expect(page.getByText(failure.details, { exact: true })).toBeVisible()
+    }
+    await expect(page.getByRole("heading", { name: original.title, exact: true })).toBeVisible()
+    expect(fixture.requests).toEqual([{ path: "fork", body: { up_to_message_id: answer } }])
+  })
+}
+
+for (const restoresDestination of [false, true]) {
+  test(`fork keeps its acknowledgement when the session index fails, destination read succeeds=${restoresDestination}`, async ({ page, baseURL, isMobile }) => {
+    const fixture = await prepare(page, baseURL!)
+    await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ status: 503 }))
+    await page.route(`**/api/v1/sessions/${id}/fork`, (route) => {
+      fixture.requests.push({ path: "fork", body: route.request().postDataJSON() })
+      return route.fulfill({ status: 201, json: { session: { id: branched } } })
+    })
+    await page.route(`**/api/v1/sessions/${branched}`, (route) => restoresDestination
+      ? route.fulfill({ json: { session: forkSession }, headers: { ETag: '"1"' } })
+      : route.fulfill({ status: 404, json: { message: "Unavailable in this fixture" } }))
+
+    const destinationRead = page.waitForResponse((response) =>
+      response.request().method() === "GET" && new URL(response.url()).pathname === `/api/v1/sessions/${branched}`,
+    )
+    if (isMobile) await (await openMenu(page, answer)).getByRole("menuitem", { name: "从这里分叉", exact: true }).click()
+    else await actions(page, answer).getByRole("button", { name: "从这里分叉", exact: true }).click()
+    expect((await destinationRead).status()).toBe(restoresDestination ? 200 : 404)
+    if (restoresDestination) {
+      await expect(page.getByRole("heading", { name: forkSession.title, exact: true })).toBeVisible()
+      await expect(page.getByRole("status").filter({ hasText: "已从这里分叉到新会话" })).toBeVisible()
+    } else {
+      await expect(page.getByRole("alert").filter({ hasText: "新会话已创建。请刷新会话列表后打开它。" })).toBeVisible()
+      await expect(page.getByRole("heading", { name: original.title, exact: true })).toBeVisible()
+    }
+    expect(fixture.requests).toEqual([{ path: "fork", body: { up_to_message_id: answer } }])
+  })
+}
+
 for (const destinationError of [false, true]) {
   test(`a successful fork preserves destination notification ownership with a model error=${destinationError}`, async ({ page, baseURL, isMobile }) => {
     const fixture = await prepare(page, baseURL!, destinationError)
