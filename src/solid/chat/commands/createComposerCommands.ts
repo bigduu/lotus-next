@@ -161,6 +161,10 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     return !item || item.id !== id || item.kind === "child" || Boolean(item.parentSessionId)
       || isDefaultSupervisor(item) || Boolean(managed || options.extraSessionRestricted?.())
   }
+  const loopContextUnavailable = (id: string | null) => {
+    if (!id) return uiText("session_loop_open_session")
+    return restricted(id) ? uiText("session_loop_ordinary_only") : null
+  }
   const needsIdle = () => options.running() || chat.currentChat?.lastRunStatus === "suspended"
     || chat.currentChat?.activity === "waiting_bash" || chat.currentChat?.activity === "waiting_children"
     || chat.pendingApproval || chat.pendingQuestion || chat.questionLoading || chat.questionSubmitting
@@ -185,7 +189,8 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
   }
 
   const loopUnavailable = (id: string, action: SessionLoopCommand | "natural") => {
-    if (restricted(id)) return uiText("session_loop_ordinary_only")
+    const contextUnavailable = loopContextUnavailable(id)
+    if (contextUnavailable) return contextUnavailable
     const startsLoop = action === "natural" || (action.action !== "status" && action.action !== "stop")
     if (startsLoop && options.thinkingMode() === "ultra") return uiText("session_loop_standard_only")
     if (blocked(id)) return uiText("session_loop_session_unavailable")
@@ -365,6 +370,14 @@ export function createComposerCommands(options: ComposerCommandsOptions) {
     get canOpenGoal() { return Boolean(chat.currentSessionId && options.openGoal) },
     get canOpenWorkflowRuns() { return Boolean(chat.currentSessionId && options.openWorkflowRuns) },
     get canOpenSideChat() { return Boolean(options.openSideChat?.()) },
+    get loopMenuUnavailable() { return loopContextUnavailable(scope().sessionId) },
+    pickLoop() {
+      const { key, sessionId } = scope()
+      if (slashQuery() === null || loopContextUnavailable(sessionId)) return
+      const state = appStore.getState()
+      const draft = state.getInputState(key)
+      if (state.setInputContentIfRevision(key, draft.contentRevision, "/loop ")) focus()
+    },
     isSideChatCommand: (content: string) => sideChatPrompt(content) !== null,
     selectSideChat() { openSideChat(appStore.getState().getInputState(draftKey()), "") },
     handleSideChat,

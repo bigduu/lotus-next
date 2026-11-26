@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js"
 import { X } from "@lucide/solid"
+import { isSessionLoopCommand } from "@services/chat/sessionLoop"
 import { cn } from "@/lib/utils"
 import { createUiText } from "../../shell/uiText"
 import type { createComposerCommands } from "./createComposerCommands"
@@ -31,6 +32,7 @@ export function ComposerCommandMenus(props: { commands: Commands }) {
           if (control.fileSuggestion === active) active.pick(entry.path)
         } }))
     }
+    if (isSessionLoopCommand(`/${slash}`) && /\s/.test(slash)) return []
     const query = slash.trim().toLowerCase()
     const matches = (name: string, description: string) => name.toLowerCase().includes(query) || description.toLowerCase().includes(query)
     const compactDescription = text("compact_context_command")
@@ -40,6 +42,11 @@ export function ComposerCommandMenus(props: { commands: Commands }) {
       kind: "command", id: "builtin-compact", name: "compact", description: compactDescription,
       unavailable: control.compactUnavailable, select: control.pickCompact,
     } : null
+    const loopDescription = text("session_loop_command_description")
+    const loop: Entry | null = matches("loop", loopDescription) ? {
+      kind: "command", id: "builtin-loop", name: "loop", description: loopDescription,
+      unavailable: control.loopMenuUnavailable, select: control.pickLoop,
+    } : null
     const workflow: Entry | null = control.canOpenWorkflowRuns && matches("workflow", workflowDescription) ? {
       kind: "command", id: "builtin-workflow", name: "workflow", description: workflowDescription, select: control.openWorkflowRuns,
     } : null
@@ -47,13 +54,13 @@ export function ComposerCommandMenus(props: { commands: Commands }) {
     const sideChat: Entry | null = control.canOpenSideChat && matches("side", sideChatDescription) ? {
       kind: "command", id: "builtin-side", name: "side", description: sideChatDescription, select: control.selectSideChat,
     } : null
-    const exact = [compact, workflow, sideChat].find((entry) => entry?.name === query)
+    const exact = [compact, workflow, sideChat, loop].find((entry) => entry?.name === query)
     if (exact) return [exact]
     const goal: Entry | null = control.canOpenGoal && matches("goal", goalDescription) ? {
       kind: "command", id: "builtin-goal", name: "goal", description: text("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8"),
       select: control.openGoal,
     } : null
-    const builtins = [goal, compact, workflow, sideChat].filter((entry): entry is Entry => entry !== null)
+    const builtins = [goal, compact, loop, workflow, sideChat].filter((entry): entry is Entry => entry !== null)
     const skills = control.skills.filter((skill) => matches(skill.name, skill.description)).map<Entry>((skill) => ({
       id: "skill-" + skill.id, kind: "skill", name: skill.name, description: skill.description, select: () => control.pickSkill(skill),
     }))
