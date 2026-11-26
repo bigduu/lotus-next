@@ -16,7 +16,7 @@ import { composerControlClassName, composerIconButtonClassName } from "@/lib/com
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { ComposerFocusSnapshot } from "../composer/ComposerEditor"
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
-import { createGuidanceQueue } from "./guidance/createGuidanceQueue"
+import type { createGuidanceQueue } from "./guidance/createGuidanceQueue"
 import { GuidanceQueueControls, GuidanceTimingControl } from "./guidance/GuidanceQueueControls"
 import type { createRootModeAuthority } from "./model/createRootModeAuthority"
 import type { createTicketIngress } from "./createTicketIngress"
@@ -45,6 +45,8 @@ const ComposerEditor = lazy(() => import("../composer/ComposerEditor"), { export
 
 export function ComposerPanel(props: {
   chat: Chat
+  running: boolean
+  guidanceQueue: ReturnType<typeof createGuidanceQueue>
   workspacePath: string | null
   setupNeedsModel?: boolean
   inputId?: string
@@ -121,8 +123,7 @@ export function ComposerPanel(props: {
   })
   const value = () => inputs()[draftKey()]?.content ?? ""
   const monitoredCommand = () => transcriptWorkWait(props.chat).monitoredCommand
-  const running = () => props.chat.currentChat?.isRunning === true
-    || (props.chat.sending && props.chat.streaming !== null) || monitoredCommand()
+  const running = () => props.running
   const liveRetry = createLiveBootstrapRetry({
     sessionId: () => props.chat.currentSessionId,
     running,
@@ -141,7 +142,7 @@ export function ComposerPanel(props: {
     navigationVersion: props.navigationVersion,
   })
   const [worktreeNotice, setWorktreeNotice] = createSignal<{ message: string; isCurrent: () => boolean } | null>(null)
-  const queue = createGuidanceQueue(() => props.chat.currentSessionId, running)
+  const queue = props.guidanceQueue
   const queuedSend = () => !props.semantic && Boolean(props.chat.currentSessionId && (running() || queue.hasUnconfirmed))
   const interactionBlocked = () => Boolean(props.chat.pendingQuestion || props.chat.pendingApproval ||
     props.chat.executionCompatibility.blocked || isSessionExecutionBlocked(props.chat.currentSessionId))
