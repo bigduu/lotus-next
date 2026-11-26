@@ -8,11 +8,14 @@ import { verifyServerPassword } from "@/services/bootstrap/serverBootstrap"
 import {
   createRootBootstrap,
   diagnosticCopy,
+  resolveComposerDraftOrigin,
   type BootstrapText,
   type RootView,
 } from "@/services/bootstrap/rootBootstrap"
 import { Button } from "@/solid/ui/button"
 import { PasswordGate } from "./PasswordGate"
+import { discardComposerDrafts } from "@/lib/composer/recoverableDrafts"
+import { ComposerDraftOriginContext } from "./composerDraftOrigin"
 
 const OwnerAccessContext = createContext(false)
 
@@ -28,7 +31,28 @@ export function SolidRoot(props: { renderApp: (ownerAccess: boolean) => JSX.Elem
     locale()
     return uiText(key)
   }
-  const bootstrap = createRootBootstrap({ sidecarStartup, text: uiText, onViewChange: setView })
+  const [draftOrigin, setDraftOrigin] = createSignal<string | null>(null)
+  const endDraftScope = () => {
+    setDraftOrigin(null)
+    discardComposerDrafts()
+  }
+  const bootstrap = createRootBootstrap({
+    sidecarStartup,
+    text: uiText,
+    onViewChange: (next) => {
+      if (next.kind === "auth-required" || next.kind === "auth-unsupported" || next.kind === "repair") {
+        endDraftScope()
+      }
+      setView(next)
+    },
+    onReadyRequestState: (state) => {
+      const origin = resolveComposerDraftOrigin(
+        state, runtime.endpointSource === "tauri-sidecar", window.location, Boolean(window.opener) || window.top !== window,
+      )
+      if (origin) setDraftOrigin(origin)
+      else endDraftScope()
+    },
+  })
 
   onSettled(() => {
     const onLanguageChange = () => setLocale(uiLanguage())
@@ -103,7 +127,9 @@ export function SolidRoot(props: { renderApp: (ownerAccess: boolean) => JSX.Elem
       <Match when={app()} keyed>
         {(current) => (
           <OwnerAccessContext value={current.ownerAccess}>
-            {props.renderApp(current.ownerAccess)}
+            <ComposerDraftOriginContext value={draftOrigin}>
+              {props.renderApp(current.ownerAccess)}
+            </ComposerDraftOriginContext>
           </OwnerAccessContext>
         )}
       </Match>
