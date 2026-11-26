@@ -63,7 +63,7 @@ function mountComposer() {
     const ingress = createTicketIngress(() => null, () => false)
     return <ComposerPanel chat={port as Chat} rootAuthority={rootAuthority} ingress={ingress}
       workspacePath={null} projectId={null} selectedWorktreePath={null} draftEpoch={0}
-      navigationVersion={() => 0} semantic={false} reference={null} canSendIngress={false}
+      navigationVersion={() => 0} semantic={false} draftRecoveryMode="ordinary" reference={null} canSendIngress={false}
       onSelectProject={() => {}} captureSessionCreated={() => () => {}} onOpenWorkspacePicker={() => {}}
       onOpenGoal={() => {}} onOpenWorkflowRuns={() => {}} onClearReference={() => {}} onPreviewImage={() => {}} />
   }, host)
