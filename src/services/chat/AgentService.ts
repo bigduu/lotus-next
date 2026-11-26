@@ -16,6 +16,7 @@ import { readSessionLoopStatus, type SessionLoopCommand, type SessionLoopStatus 
 import { isGoalResumeCommand } from "./goalCommand";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
+import type { UserMessage } from "@shared/types/chatMessages";
 
 export type { FeedSubscription } from "./v2Stream";
 
@@ -1312,7 +1313,7 @@ export interface AgentEventHandlers {
     summary?: string,
     error?: string,
   ) => void;
-  onMessageAppended?: (sessionId: string, messageId: string | undefined, interjection: boolean) => void;
+  onMessageAppended?: (sessionId: string, messageId: string | undefined, interjection: boolean, user?: UserMessage) => void;
   onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
@@ -2281,10 +2282,16 @@ export class AgentClient {
         break;
       case "message_appended":
         if (event.session_id) {
+          const interjection = event.role === "user" && event.correlation_id === "session-guidance";
+          const user: UserMessage | undefined = interjection && event.message_id
+            && typeof event.content === "string" && typeof event.created_at === "string"
+            ? { id: event.message_id, role: "user", content: event.content, createdAt: event.created_at }
+            : undefined;
           handlers.onMessageAppended?.(
             event.session_id,
             event.message_id,
-            event.role === "user" && event.correlation_id === "session-guidance",
+            interjection,
+            user,
           );
         }
         break;

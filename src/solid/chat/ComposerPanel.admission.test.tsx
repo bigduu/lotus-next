@@ -3,6 +3,7 @@ import { render, type ComponentProps } from "@solidjs/web"
 import { afterEach, expect, it, vi } from "vitest"
 import { appStore } from "@shared/store/appStore/state"
 import { ComposerPanel } from "./ComposerPanel"
+import { createGuidanceQueue } from "./guidance/createGuidanceQueue"
 import { createRootModeAuthority } from "./model/createRootModeAuthority"
 import { createTicketIngress } from "./createTicketIngress"
 import type { SendSubmissionResult } from "./createChat"
@@ -61,7 +62,9 @@ function mountComposer() {
   dispose = render(() => {
     const rootAuthority = createRootModeAuthority(() => null, () => undefined)
     const ingress = createTicketIngress(() => null, () => false)
-    return <ComposerPanel chat={port as Chat} rootAuthority={rootAuthority} ingress={ingress}
+    const guidanceQueue = createGuidanceQueue(() => null, () => false)
+    return <ComposerPanel chat={port as Chat} running={false} guidanceQueue={guidanceQueue}
+      rootAuthority={rootAuthority} ingress={ingress}
       workspacePath={null} projectId={null} selectedWorktreePath={null} draftEpoch={0}
       navigationVersion={() => 0} semantic={false} draftRecoveryMode="ordinary" reference={null} canSendIngress={false}
       onSelectProject={() => {}} captureSessionCreated={() => () => {}} onOpenWorkspacePicker={() => {}}

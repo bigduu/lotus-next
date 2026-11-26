@@ -15,8 +15,9 @@ import { RenderHistoryRow } from "./history/HistoryRow"
 import { createSideChatSources } from "./history/SideChatSourceActions"
 import { createHistoryReveal, type HistoryRevealRequest } from "./history/createHistoryReveal"
 import { createStickyHistoryFollow } from "./history/createStickyHistoryFollow"
-import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, collectSideChatSourceKeys, renderItemKey } from "./history/historyProjection"
+import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, collectSideChatSourceKeys, liveInterjectionMessage, renderItemKey } from "./history/historyProjection"
 import type { createChat } from "./createChat"
+import type { QueuedGuidanceView } from "./guidance/createGuidanceQueue"
 import { createMessageActions, type MessageNotice } from "./message-actions/createMessageActions"
 import type { createRootModeAuthority } from "./model/createRootModeAuthority"
 import { placeTimelineAttachments, type TimelineAttachment, type TimelineHistoryEntry } from "./interactions/timelineAttachments"
@@ -44,6 +45,7 @@ export function ChatViewport(props: {
   attachments?: readonly TimelineAttachment[]
   pageVisible?: boolean
   onOpenActor?: (id: string) => void
+  queuedGuidance?: readonly QueuedGuidanceView[]
 }) {
   const text = createUiText()
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
@@ -66,16 +68,28 @@ export function ChatViewport(props: {
 
   const rendering = createMemo(() => {
     renderProbe.count("app.MessageList")
+    renderProbe.count("app.MessageList.history")
     return buildRenderItems(props.chat.messages)
+  })
+  const queuedMessages = createMemo(() =>
+    new Map(props.queuedGuidance?.map(({ message }) => [message.id, message])))
+  const visibleQueue = createMemo(() => {
+    const queued = props.queuedGuidance
+    if (!queued?.length) return undefined
+    const admittedIds = new Set(props.chat.liveSegments.flatMap((segment) =>
+      segment.kind === "interjection" && liveInterjectionMessage(segment, queuedMessages().get(segment.messageId))
+        ? [segment.messageId] : []))
+    return queued.filter(({ message }) => !admittedIds.has(message.id))
   })
   const wait = createMemo(() => transcriptWorkWait(props.chat))
   const showCommandWait = () => !props.chat.streaming && wait().command
   const live = createMemo(() => {
     renderProbe.count("app.MessageList")
+    const generating = !props.chat.liveAnswerCommitted && (props.chat.sending || props.chat.streamPhase === "streaming")
     return buildLiveItems(
       props.chat.liveSegments, props.chat.streaming, props.chat.streamingReasoning,
-      !showCommandWait() && (props.chat.sending || props.chat.streamPhase === "streaming" || wait().yielded),
-      wait().delegationHint ? text("process_waiting_for_subagents") : props.chat.streamStatus, text,
+      !showCommandWait() && (generating || wait().yielded),
+      wait().delegationHint ? text("process_waiting_for_subagents") : props.chat.streamStatus, text, queuedMessages(),
     )
   })
   const actorStatus = createInlineActorStatus({
@@ -102,14 +116,14 @@ export function ChatViewport(props: {
   })))
   const emptyTranscript = () => Boolean(props.chat.currentChat?.config.syncCursor)
     && !props.chat.messages.some((message) => message.role !== "system")
-    && !pending().length && !props.chat.streaming && !live().length && !wait().yielded
+    && !pending().length && !visibleQueue()?.length && !props.chat.streaming && !live().length && !wait().yielded
   const before = () => {
     const window = props.chat.currentChat?.historyWindow
     return window && !window.invalidated ? window.beforeMessageId : null
   }
 
   onSettled(() => () => loadRequest?.controller.abort())
-  createEffect(() => [entries(), pending(), live(), timeline()] as const, sticky.follow)
+  createEffect(() => [entries(), pending(), live(), timeline(), visibleQueue()] as const, sticky.follow)
   createEffect(() => props.followRequest, (request) => {
     if (request) sticky.resume()
   })
@@ -230,6 +244,15 @@ export function ChatViewport(props: {
             <For each={live()} keyed={renderItemKey}>{(item) => (
               <RenderHistoryRow item={item()} disclosure={disclosure} theme={props.theme} live afterProcess={afterProcess}
                 onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
+            )}</For>
+            <For each={visibleQueue()} keyed={(entry) => entry.message.id}>{(entry) => (
+              <div data-queued-guidance={entry().message.id}>
+                <MessageBody message={entry().message} theme={props.theme}
+                  onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
+                <p class="mt-1 pr-3.5 text-right text-xs text-muted-foreground">
+                  {text(entry().mode === "after_run" ? "message_queue_after_run" : "message_queue_interject")}
+                </p>
+              </div>
             )}</For>
             <Show when={timeline().tail.length}>
               <div class="flex flex-col gap-2">

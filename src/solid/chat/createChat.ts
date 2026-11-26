@@ -1,7 +1,7 @@
 import { supportsContinuousUpstreamRetry, readUpstreamRetryCapability, isRetryRunId, type UpstreamRetrySelection, type UpstreamRetryFeedback } from "@services/chat/upstreamRetry"
 import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { uiText } from "@shared/i18n/text"
-import type { ChatItem } from "@shared/types/chatMessages"
+import type { ChatItem, UserMessage } from "@shared/types/chatMessages"
 import { createOutputRate, createSessionExecutionCompatibility } from "./observation"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { createEffect, createMemo, createSignal, onSettled, untrack } from "solid-js"
@@ -49,7 +49,7 @@ import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionState"
 import type { Message, MessageImage } from "@shared/types/chat"
-import { projectCompletedAnswers, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
+import { isStreamedAnswerPrefix, matchesCompletedAnswer, projectCompletedAnswers, readAnswerTurn, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import {
   acquireCompletedAnswerLease, getCompletedAnswerHandoffs, invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers,
   newCompletedAnswerHandoffId, reconcileCompletedAnswers, releaseCompletedAnswerLease,
@@ -188,8 +188,7 @@ export type LiveToolCall = {
 export type LiveSegment =
   | { kind: "text"; text: string; reasoning: string | null }
   | { kind: "tools"; calls: LiveToolCall[] }
-
-type BufferedLiveSegment = LiveSegment | { kind: "interjection"; messageId: string }
+  | { kind: "interjection"; messageId: string; message?: UserMessage }
 
 export type StreamPhase = "streaming" | "finalizing" | null
 
@@ -550,8 +549,8 @@ export function createChat(
   const childBufRef = cell<Record<string, string>>({})
   // The current run's frozen live timeline (finished text rounds + tool groups).
   // Mutations happen on the ref; a RAF flush clones into state ≤1×/frame.
-  const [liveSegmentsState, setLiveSegmentsState] = createSignal<BufferedLiveSegment[]>([])
-  const liveSegRef = cell<BufferedLiveSegment[]>([])
+  const [liveSegmentsState, setLiveSegmentsState] = createSignal<LiveSegment[]>([])
+  const liveSegRef = cell<LiveSegment[]>([])
   const segRafRef = cell<number | null>(null)
   const toolCallsByIdRef = cell<Map<string, LiveToolCall>>(new Map())
   // One-line "what is the agent doing" status (tool running / compacting…),
@@ -565,6 +564,8 @@ export function createChat(
   // history reconciliation contains that exact terminal assistant message.
   const retainedTerminalRef = createObservableCell<RetainedTerminal | null>(null)
   const answerLeaseRef = createObservableCell<ReturnType<typeof acquireCompletedAnswerLease> | null>(null)
+  const streamAnswerBaselineIdsRef = createObservableCell<ReadonlySet<string>>(new Set())
+  const [liveHistoryCommitted, setLiveHistoryCommitted] = createSignal(false)
   const retainTerminalAcrossUnmount = () => {
     const retained = retainedTerminalRef.current
     if (!retained) return
@@ -600,8 +601,40 @@ export function createChat(
   const cachedSameRun = createMemo(() => !retainedTerminal() && streamSid() === sid() && knownRun() && completedHandoffs().some((entry) =>
     entry.sessionId === sid() && entry.runId === knownRun() && entry.text.startsWith(streamingText() ?? "")))
   const answerLeaseValid = createMemo(() => (completedHandoffs(), answerLeaseRef.current?.valid !== false))
-  const streaming = createMemo(() => streamSid() === sid() && !retainedTerminalIsHydrated() && !cachedSameRun() && answerLeaseValid() ? streamingText() : null)
-  const streamingReasoning = createMemo(() => streamSid() === sid() && answerLeaseValid() ? streamingReasoningText() : null)
+  // Account history can arrive before the agent channel's Complete frame.
+  // Resolve the candidate rows only on history or turn-identity changes.
+  const recordedLiveAnswers = createMemo(() => {
+    completedHandoffs()
+    const lease = answerLeaseRef.current
+    if (!lease || lease.sessionId !== sid() || streamSid() !== sid() || !answerLeaseValid()) return null
+    const turn = readAnswerTurn(canonicalMessages(), {
+      acknowledgedMessageId: streamUserMessageIdRef.current,
+      baselineMessageId: streamBaselineMessageIdRef.current,
+      baselineMessageIds: streamAnswerBaselineIdsRef.current,
+      excludedCanonicalIds: lease.excludedCanonicalIds,
+      anchorSeen: false,
+    })
+    return turn && turn.anchor >= 0 ? turn : null
+  })
+  const canonicalOwnsLiveAnswer = createMemo(() => {
+    if (retainedTerminalIsHydrated()) return true
+    const turn = recordedLiveAnswers()
+    if (!turn) return false
+    const { recordedFinals, freshUnphasedTail } = turn
+    if (!recordedFinals.length && !freshUnphasedTail) return false
+    const preview = streamingText() ?? ""
+    if (recordedFinals.some((answer) => matchesCompletedAnswer(answer.content, preview))) return true
+    // A final checkpoint confirms the complete tool and assistant tail. With
+    // that proof, account for preview batching and phase-less conversations.
+    return liveHistoryCommitted() && (
+      freshUnphasedTail !== null && matchesCompletedAnswer(freshUnphasedTail.content, preview)
+      || freshUnphasedTail === null && recordedFinals.length === 1 && isStreamedAnswerPrefix(recordedFinals[0].content, preview)
+    )
+  })
+  const canonicalOwnsCommittedLiveSegments = createMemo(() =>
+    retainedTerminalIsHydrated() || liveHistoryCommitted() && canonicalOwnsLiveAnswer())
+  const streaming = createMemo(() => streamSid() === sid() && !canonicalOwnsLiveAnswer() && !cachedSameRun() && answerLeaseValid() ? streamingText() : null)
+  const streamingReasoning = createMemo(() => streamSid() === sid() && !canonicalOwnsLiveAnswer() && answerLeaseValid() ? streamingReasoningText() : null)
   const canonicalUserIds = createMemo(() => new Set(
     canonicalMessages().flatMap((message) => message.role === "user" ? [message.id] : []),
   ))
@@ -612,6 +645,7 @@ export function createChat(
     const checkpoint = liveSegmentsState().findLastIndex((segment) => segment.kind === "interjection"
       && canonicalUserIds().has(segment.messageId))
     const segments = checkpoint < 0 ? liveSegmentsState() : liveSegmentsState().slice(checkpoint + 1)
+    if (canonicalOwnsCommittedLiveSegments()) return segments.filter((segment) => segment.kind === "interjection")
     if (streamPhaseState() !== null) return segments
     // Failed history reads retain terminal tool evidence without keeping a run
     // active. Only results after this stream's latest acknowledged user can confirm
@@ -628,7 +662,7 @@ export function createChat(
       "type" in message && message.type === "tool_result" && !streamBaselineToolResultIdsRef.current.has(message.id)
         ? [message.toolCallId] : []))
     let hydrated = false
-    const remaining = segments.flatMap<BufferedLiveSegment>((segment) => {
+    const remaining = segments.flatMap<LiveSegment>((segment) => {
       if (segment.kind !== "tools") return [segment]
       const calls = segment.calls.filter((call) => !persistedToolIds.has(call.toolCallId))
       hydrated ||= calls.length !== segment.calls.length
@@ -636,8 +670,7 @@ export function createChat(
     })
     return hydrated ? remaining : segments
   })
-  const liveSegments = createMemo(() => uncommittedSegments().length
-    ? uncommittedSegments().filter((segment) => segment.kind !== "interjection") : EMPTY_SEGMENTS)
+  const liveSegments = createMemo(() => uncommittedSegments().length ? uncommittedSegments() : EMPTY_SEGMENTS)
   const streamStatus = createMemo(() => streamSid() === sid() && answerLeaseValid() ? streamStatusState() : null)
   const contextCompression = createMemo(() => {
     const current = compressionState()
@@ -733,7 +766,7 @@ export function createChat(
 
   const publishSegments = () => {
     segRafRef.current = null
-    // Clone tools and their calls so React sees new references for mutated rows.
+    // Publish new references for mutated tool rows.
     setLiveSegmentsState(liveSegRef.current.map((segment) =>
       segment.kind === "tools" ? { ...segment, calls: segment.calls.map((call) => ({ ...call })) } : segment,
     ))
@@ -867,12 +900,16 @@ export function createChat(
       if (operationId !== undefined && streamOperationRef.current !== operationId) return
       const partialAnswer = retain === "partial-answer"
       const visibleText = partialAnswer ? streamBufRef.current : final
-      const retainedSegments = retain ? liveSegRef.current.flatMap<BufferedLiveSegment>((segment) => {
-        if (segment.kind === "interjection") return [segment]
+      const retainedSegments = liveSegRef.current.flatMap<LiveSegment>((segment) => {
+        if (segment.kind === "interjection") {
+          return (retain || operationId !== undefined && answerLeaseRef.current?.valid)
+            && !canonicalUserIds().has(segment.messageId) ? [segment] : []
+        }
+        if (!retain) return []
         if (segment.kind === "text") return partialAnswer ? [segment] : []
         const calls = segment.calls.filter((call) => call.status !== "running").map((call) => ({ ...call }))
         return calls.length ? [{ ...segment, calls }] : []
-      }) : EMPTY_SEGMENTS
+      })
       const compression = compressionRef.current
       if (compression && compression.operationId === streamOperationRef.current) {
         const value = compressionRunEnded(compression.value)
@@ -897,7 +934,7 @@ export function createChat(
         answerLeaseRef.current = null
         retainedTerminalRef.current = null
         setStreamPhaseState(null)
-        if (!retainedSegments.some((segment) => segment.kind === "tools")) setStreamSid(null)
+        if (!retainedSegments.length) setStreamSid(null)
       } else {
         setStreamPhaseState("finalizing")
       }
@@ -1207,11 +1244,14 @@ export function createChat(
       noteSessionOperation(runSid, operationId)
       setUpstreamRetryFeedback(null)
       streamOperationRef.current = operationId
+      setLiveHistoryCommitted(false)
       const baselineMessages = appStore
         .getState()
         .chats.find((chat) => chat.id === runSid)
         ?.messages ?? []
       streamBaselineMessageIdRef.current = baselineMessages.findLast((message) => message.role !== "system")?.id ?? null
+      const baselineMessageIds = new Set(baselineMessages.map((message) => message.id))
+      streamAnswerBaselineIdsRef.current = baselineMessageIds
       streamBaselineToolResultIdsRef.current = new Set(baselineMessages.flatMap((message) =>
         "type" in message && message.type === "tool_result" ? [message.id] : []))
       streamUserMessageIdRef.current = opts?.acknowledgedMessageId ?? null
@@ -1415,7 +1455,7 @@ export function createChat(
               baselineMessageText: baseline?.role === "assistant" && baseline.type === "text" ? baseline.content : null,
               excludedCanonicalIds: new Set(answerLease.excludedCanonicalIds),
               acknowledgedMessageId,
-              baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
+              baselineMessageIds,
               anchorSeen: acknowledgedMessageId !== null && observed.some((message) => message.role === "user" && message.id === acknowledgedMessageId),
             }
             const retained = { ...handoff, lease: answerLease }
@@ -1777,20 +1817,19 @@ export function createChat(
               }
             })()
           },
-          onMessageAppended: (appendedSessionId, messageId, interjection) => {
+          onMessageAppended: (appendedSessionId, messageId, interjection, user) => {
             if (appendedSessionId !== runSid) return
             if (ownsRunEvent() && interjection && messageId && !interjections.has(messageId)
-                && !baselineMessages.some((message) => message.id === messageId)) {
+                && !baselineMessageIds.has(messageId)) {
               interjections.add(messageId)
               streamUserMessageIdRef.current = messageId
               freezeTextSegment()
-              liveSegRef.current.push({ kind: "interjection", messageId })
+              liveSegRef.current.push({ kind: "interjection", messageId, message: user })
               flushSegments(true)
             }
             // Queued guidance is checkpointed before this event is published.
-            // Re-read immediately from the session stream so every visible
-            // pane (including a bound split pane) renders the admitted user
-            // message without waiting for the account feed or a reload.
+            // Load history immediately so the committed timeline can replace
+            // the prefix through this interjection in each observing pane.
             void appStore.getState().loadChatHistory(runSid, {
               mode: "monotonic",
             })
@@ -1805,6 +1844,7 @@ export function createChat(
             }),
           onSessionHistoryCommitted: (committedSessionId) => {
             if (committedSessionId !== runSid) return
+            if (ownsStream() && !ac.signal.aborted && mountedRef.current) setLiveHistoryCommitted(true)
             // This event is the server's post-persistence barrier. Re-read once;
             // the retained terminal effect above swaps the live tail out only
             // after this authoritative history lands in the store.
@@ -2922,6 +2962,7 @@ export function createChat(
     },
     get messages() { return messages() },
     get streaming() { return streaming() },
+    get liveAnswerCommitted() { return canonicalOwnsLiveAnswer() },
     get streamPhase() { return streamPhase() },
     get streamingReasoning() { return streamingReasoning() },
     get liveSegments() { return liveSegments() },
