@@ -37,7 +37,7 @@ import { ChatRunStatus } from "./status/ChatRunStatus"
 import { transcriptWorkWait } from "./status/transcriptWorkWait"
 import { createLiveBootstrapRetry } from "./status/live-retry/createLiveBootstrapRetry"
 import { useComposerDraftOrigin } from "../bootstrap/composerDraftOrigin"
-import { createComposerDraftRecovery } from "./createComposerDraftRecovery"
+import { createComposerDraftRecovery, type ComposerDraftMode } from "./createComposerDraftRecovery"
 import { LiveBootstrapRetryNotice } from "./status/live-retry/LiveBootstrapRetryNotice"
 
 type Chat = ReturnType<typeof createChat>
@@ -60,6 +60,7 @@ export function ComposerPanel(props: {
   rootAuthority: ReturnType<typeof createRootModeAuthority>
   ingress: ReturnType<typeof createTicketIngress>
   semantic: boolean
+  draftRecoveryMode: ComposerDraftMode
   reference: { work_id: string; id: string; title: string } | null
   onClearReference: () => void
   canSendIngress: boolean
@@ -82,7 +83,8 @@ export function ComposerPanel(props: {
   const draftRecovery = createComposerDraftRecovery(
     useComposerDraftOrigin(),
     () => props.chat.currentSessionId,
-    () => props.rootAuthority.authority?.birthToken,
+    () => props.rootAuthority.isRoot && !props.rootAuthority.unsafe ? props.rootAuthority.authority?.birthToken : undefined,
+    () => props.reference ? "work" : props.draftRecoveryMode,
   )
   const focusEditor = () => {
     if (props.pageVisible !== false) surface.querySelector<HTMLElement>('[data-composer-editor][contenteditable="true"]')?.focus()
@@ -457,7 +459,10 @@ export function ComposerPanel(props: {
               inputRef={commands.setInputRef}
               mentionsEnabled={Boolean(mentionWorkspace())}
               mentionScope={mentionWorkspace()}
-              onChange={(content) => appStore.getState().setInputContent(entry.key, content)}
+              onChange={(content) => {
+                draftRecovery.noteEditorInput(entry.key, content)
+                appStore.getState().setInputContent(entry.key, content)
+              }}
               onSubmit={() => { void send() }}
               onAddFiles={(files) => { void addFiles(files) }}
               onSuggestionChange={commands.setFileSuggestion}

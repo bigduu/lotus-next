@@ -260,7 +260,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   })
   const ingress = createTicketIngress(currentSession, () => rootAuthority.unsafe || chat.executionCompatibility.blocked)
   const ticketScope = () => tickets.state?.current.scope
-  const semanticComposer = () => !tickets.negotiated || ingress.pending ||
+  const semanticIngress = () => ingress.pending ||
     (ticketScope()?.capabilities?.semantic_messages_v1 === true && ticketScope()?.mutation_enabled === true &&
       ticketScope()?.binding.supervisor_session_id === currentSession())
   const [workReference, setWorkReference] = createSignal<{ scope: ReturnType<typeof sessionView>; request: PendingRequest } | null>(null)
@@ -1229,7 +1229,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             onOpenWorkspacePicker={() => setWorkspaceOpen(true)}
             pageVisible={!settingsOpen()}
             selectedWorktreePath={selectedWorktreePath()} draftEpoch={draftEpoch()} navigationVersion={() => navigationVersion}
-            rootAuthority={rootAuthority} ingress={ingress} semantic={semanticComposer()}
+            rootAuthority={rootAuthority} ingress={ingress} semantic={!tickets.negotiated || semanticIngress()}
+            draftRecoveryMode={workEnabled() || ingress.pending || ticketScope() ? "work" : !tickets.negotiated ? "unresolved" : "ordinary"}
             reference={ticketReference()} onClearReference={() => setWorkReference(null)} canSendIngress={tickets.canSendIngress}
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}
             onOpenWorkflowRuns={(id) => { if (id === currentSession()) setWorkflowSession(id) }}

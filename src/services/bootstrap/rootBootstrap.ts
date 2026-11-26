@@ -1,5 +1,7 @@
 import type { uiEnUs } from "@shared/i18n/resources/ui-en-US"
 import { ServiceFactory } from "@services/common/ServiceFactory"
+import { getBackendStorageScope } from "@services/api"
+import { localDraftOrigin } from "@/lib/composer/recoverableDrafts"
 import { requestServerBootstrap, type BootstrapOutcome, type BootstrapRequestState } from "./serverBootstrap"
 
 const RETRY_DELAYS_MS = [250, 500] as const
@@ -10,6 +12,17 @@ type NonReadyBootstrapOutcome = Exclude<BootstrapOutcome, { kind: "ready" }>
 type DiagnosticOutcome = Exclude<NonReadyBootstrapOutcome, { kind: "auth-required" }>
 
 export type BootstrapText = (key: keyof typeof uiEnUs) => string
+
+export function resolveComposerDraftOrigin(
+  requestState: BootstrapRequestState,
+  isTauriSidecar: boolean,
+  location: Location,
+  hasOpener: boolean,
+): string | null {
+  if (requestState !== "local_bypass" || !isTauriSidecar) return null
+  try { return localDraftOrigin(new URL(getBackendStorageScope()).origin, location, hasOpener) }
+  catch { return null }
+}
 
 export type RootView =
   | { kind: "loading" }

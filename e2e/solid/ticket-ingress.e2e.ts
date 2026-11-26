@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test"
 import type { TicketScope, WorkView } from "../../src/services/tickets/types.js"
 import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
 
-test("Solid Supervisor references a Work question without answering it", async ({ page, baseURL }) => {
+test("Solid Supervisor references a Work question without answering it or recovering an unsubmitted reply", async ({ page, baseURL }) => {
   const id = "bamboo-default-supervisor"
   const entryUrl = new URL("/", baseURL).href
   const createdAt = "2026-10-05T00:00:00Z"
@@ -41,10 +41,14 @@ test("Solid Supervisor references a Work question without answering it", async (
       semantic_messages_v1: true, message_references_v1: true,
     },
   }
-  await page.addInitScript((id) => {
+  await page.addInitScript(({ id, port }) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
-  }, id)
+    Object.assign(window, {
+      __TAURI_INTERNALS__: { invoke: async () => null },
+      __BAMBOO_BACKEND_PORT__: port,
+    })
+  }, { id, port: Number(new URL(entryUrl).port) })
   const observation = await installArtifactRuntime(page, {
     ...standaloneScenario, origin: new URL(entryUrl).origin, entryUrl,
   }, [], { serveStaticFromLocalServer: true, sessionId: id })
@@ -72,15 +76,27 @@ test("Solid Supervisor references a Work question without answering it", async (
     return route.fulfill({ json: { session_id: id, status: "started", run_id: "fixture-work-run" } })
   })
   await page.goto(entryUrl)
-  const status = page.getByTestId("ticket-work-status")
-  await expect(status).toContainText("1 项工作")
-  await status.click()
-  await page.getByTestId("supervisor-overview").getByRole("button", { name: "查看全部工作", exact: true }).click()
-  const overview = page.getByTestId("ticket-work-overview")
-  await expect(overview).toContainText(work.ticket.contract.title)
-  await overview.getByRole("button", { name: "在普通输入中引用此请求" }).click()
-  await expect(page.getByTestId("ticket-reference")).toContainText(work.ticket.contract.title)
+  const referenceQuestion = async () => {
+    const status = page.getByTestId("ticket-work-status")
+    await expect(status).toContainText("1 项工作")
+    await status.click()
+    await page.getByTestId("supervisor-overview").getByRole("button", { name: "查看全部工作", exact: true }).click()
+    const overview = page.getByTestId("ticket-work-overview")
+    await expect(overview).toContainText(work.ticket.contract.title)
+    await overview.getByRole("button", { name: "在普通输入中引用此请求" }).click()
+    await expect(page.getByTestId("ticket-reference")).toContainText(work.ticket.contract.title)
+  }
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
+  await referenceQuestion()
+  await composer.fill("Unsubmitted Work reply")
+  await expect(composer).toContainText("Unsubmitted Work reply")
+  await page.reload()
+  await expect(page.getByTestId("ticket-work-status")).toContainText("1 项工作")
+  await expect(composer).toBeVisible()
+  await expect(composer).not.toContainText("Unsubmitted Work reply")
+  expect(messages).toEqual([])
+
+  await referenceQuestion()
   await composer.fill("Please describe this question")
   await expect(page.getByRole("button", { name: "发送消息" })).toBeEnabled()
   await composer.press("Enter")

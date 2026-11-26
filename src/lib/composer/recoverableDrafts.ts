@@ -43,6 +43,11 @@ function readDrafts(now: number): Draft[] {
   }
 }
 
+function writeDrafts(drafts: Draft[]): void {
+  if (drafts.length) sessionStorage.setItem(storageKey, JSON.stringify(drafts.slice(0, maxDrafts)))
+  else sessionStorage.removeItem(storageKey)
+}
+
 export function readComposerDraft(scope: ComposerDraftScope): string | undefined {
   try {
     return readDrafts(Date.now()).find((draft) => matches(draft, scope))?.text
@@ -57,10 +62,19 @@ export function saveComposerDraft(scope: ComposerDraftScope, text: string): void
     const remaining = readDrafts(now).filter((draft) => !matches(draft, scope))
     const draft = { ...scope, text, savedAt: now }
     if (isDraft(draft, now)) remaining.unshift(draft)
-    if (remaining.length) sessionStorage.setItem(storageKey, JSON.stringify(remaining.slice(0, maxDrafts)))
-    else sessionStorage.removeItem(storageKey)
+    writeDrafts(remaining)
   } catch {
     // Prefer the live input to a receipt that may no longer reflect it.
+    discardComposerDrafts()
+  }
+}
+
+export function discardComposerDraftForSession(origin: string, sessionId: string): void {
+  try {
+    const drafts = readDrafts(Date.now())
+    const remaining = drafts.filter((draft) => draft.origin !== origin || draft.sessionId !== sessionId)
+    if (remaining.length !== drafts.length) writeDrafts(remaining)
+  } catch {
     discardComposerDrafts()
   }
 }

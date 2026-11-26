@@ -8,12 +8,13 @@ import { verifyServerPassword } from "@/services/bootstrap/serverBootstrap"
 import {
   createRootBootstrap,
   diagnosticCopy,
+  resolveComposerDraftOrigin,
   type BootstrapText,
   type RootView,
 } from "@/services/bootstrap/rootBootstrap"
 import { Button } from "@/solid/ui/button"
 import { PasswordGate } from "./PasswordGate"
-import { discardComposerDrafts, localDraftOrigin } from "@/lib/composer/recoverableDrafts"
+import { discardComposerDrafts } from "@/lib/composer/recoverableDrafts"
 import { ComposerDraftOriginContext } from "./composerDraftOrigin"
 
 const OwnerAccessContext = createContext(false)
@@ -45,9 +46,9 @@ export function SolidRoot(props: { renderApp: (ownerAccess: boolean) => JSX.Elem
       setView(next)
     },
     onReadyRequestState: (state) => {
-      const origin = state === "local_bypass" && runtime.endpointSource === "tauri-sidecar"
-        ? localDraftOrigin(runtime.endpoints.origin, window.location, Boolean(window.opener) || window.top !== window)
-        : null
+      const origin = resolveComposerDraftOrigin(
+        state, runtime.endpointSource === "tauri-sidecar", window.location, Boolean(window.opener) || window.top !== window,
+      )
       if (origin) setDraftOrigin(origin)
       else endDraftScope()
     },
