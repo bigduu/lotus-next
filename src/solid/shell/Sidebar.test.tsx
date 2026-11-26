@@ -30,7 +30,7 @@ vi.mock("@lucide/solid", () => {
   const Icon = () => <svg aria-hidden="true" />
   const glyphs = [
     "AlertCircle", "Archive", "ArchiveRestore", "CalendarDays", "ChevronRight", "Circle", "CircleDot", "Cog",
-    "FolderClosed", "FolderOpen", "GitBranch", "List", "LoaderCircle", "MoreHorizontal", "PanelLeftClose", "Pencil", "Pin",
+    "FolderClosed", "FolderOpen", "GitBranch", "Kanban", "List", "LoaderCircle", "MoreHorizontal", "PanelLeftClose", "Pencil", "Pin",
     "PinOff", "Plus", "RotateCcw", "Search", "SquarePen", "Trash2", "X",
   ]
   return Object.fromEntries(glyphs.map((name) => [name, Icon]))
@@ -466,7 +466,7 @@ describe("Sidebar navigation hierarchy", () => {
     search("no match")
     expect(button("Renamed assistant")).toBe(entry)
     expect(container.querySelectorAll("[data-session]")).toHaveLength(0)
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     search("")
     expect(row(supervisor.id)).toBeNull()
     expect(row("ordinary")).not.toBeNull()
@@ -585,7 +585,7 @@ describe("Sidebar project grouping", () => {
   it("keeps legacy sections empty until explicit server moves and scopes same-name folds independently", async () => {
     const { updateProject, snapshots } = installProjectBackend({ p1: project("p1", "Zenith", "lotus"), p2: project("p2", "Nova", "lotus") })
     render({ chats: [projectChat("zenith-chat", "p1"), projectChat("nova-chat", "p2")] })
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     const zenith = container.querySelector('[data-sidebar-project="p1"]')!
     const nova = container.querySelector('[data-sidebar-project="p2"]')!
     const lotusA = zenith.querySelector('[data-project-section="lotus"]')!
@@ -766,7 +766,7 @@ describe("Sidebar server sections", () => {
     p2.sidebar!.sections.push({ id: lotusB, name: "lotus" })
     const backend = installProjectBackend({ p1, p2 })
     render({ chats: [projectChat("first", "p1"), projectChat("second", "p1"), projectChat("foreign", "p2"), projectChat("pinned", "p1", { pinned: true })] })
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     return backend
   }
 
@@ -1045,7 +1045,7 @@ describe("Sidebar server sections", () => {
     } }))
     const { updateProject } = installProjectBackend({ p1: project("p1", "Zenith", "Development") })
     render({ chats: [projectChat("first", "p1")] })
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     await settle(async () => {})
     expect(container.querySelector('[data-project-section="Stale local"]')).toBeNull()
     expect(container.querySelector('[data-section-id="none"]')!.contains(row("first"))).toBe(true)
@@ -1057,7 +1057,7 @@ describe("Sidebar server sections", () => {
     const { updateProject, snapshots } = installProjectBackend({ p1: project("p1", "Zenith", "lotus") })
     const chats = [projectChat("first", "p1"), projectChat("untouched", "p1")]
     await settle(() => render({ chats }))
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     expect(container.querySelector('[data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
     const trigger = buttonByLabel("Zenith 项目操作")
     await settle(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
@@ -1113,7 +1113,7 @@ describe("Sidebar session ordering", () => {
   it("reorders a session dropped on another row without writing to the server", async () => {
     const { updateProject } = installProjectBackend({ p1: project("p1", "Zenith") })
     render({ chats: [projectChat("first", "p1"), projectChat("second", "p1")] })
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     const bucket = () => container.querySelector('[data-section-project="p1"][data-section-id="none"]')!
     expect(renderedSessions(bucket())).toEqual(["first", "second"])
 
@@ -1134,7 +1134,7 @@ describe("Sidebar session ordering", () => {
     p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
     const { updateProject, snapshots } = installProjectBackend({ p1 })
     render({ chats: [projectChat("first", "p1"), projectChat("second", "p1")] })
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     await clickAndSave("Move first to lotus")
     await dropOnRow("second", "first", true, lotusA)
 
@@ -1150,7 +1150,7 @@ describe("Sidebar session ordering", () => {
     p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
     const { updateProject, snapshots } = installProjectBackend({ p1 })
     render({ chats: [projectChat("first", "p1"), projectChat("second", "p1")] })
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     await clickAndSave("Move first to lotus")
 
     const persist = updateProject.getMockImplementation()!
@@ -1183,7 +1183,7 @@ describe("Sidebar session ordering", () => {
     p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
     const { updateProject, snapshots } = installProjectBackend({ p1 })
     render({ chats: [projectChat("first", "p1"), projectChat("second", "p1"), projectChat("third", "p1")] })
-    click("项目")
+    run(() => buttonByLabel("切换为项目视图").click())
     // Destination starts as [first, second]; third stays behind for the drop.
     await clickAndSave("Move first to lotus")
     await clickAndSave("Move second to lotus")
