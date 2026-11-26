@@ -433,6 +433,88 @@ test("session changes and settings remount preserve exact plain-text drafts with
   expect(observation.pageErrors).toEqual([])
 })
 
+async function installBodhiComposerHost(page: Page) {
+  await page.addInitScript((port) => {
+    Object.assign(window, {
+      __TAURI_INTERNALS__: { invoke: async () => null },
+      __BAMBOO_BACKEND_PORT__: port,
+    })
+  }, Number(new URL(standaloneScenario.origin).port))
+}
+
+test("unsent root drafts recover only in the same tab after reload and workspace parking", async ({ page, context }) => {
+  await installBodhiComposerHost(page)
+  const { editor, chats, observation } = await openComposer(page)
+  const mainDraft = "Draft kept across Bamboo switching"
+  const otherDraft = "Independent draft in another Root session"
+  await editor.fill(mainDraft)
+  await selectSession(page, "Other composer draft")
+  await expectComposerText(editor, "")
+  await editor.fill(otherDraft)
+  await page.reload()
+  await expectComposerText(editor, mainDraft)
+  await selectSession(page, "Other composer draft")
+  await expectComposerText(editor, otherDraft)
+
+  const parkedUrl = "http://127.0.0.1:4179/bodhi-kernel-transition"
+  await page.route(parkedUrl, (route) => route.fulfill({
+    contentType: "text/html",
+    body: "<!doctype html><h1>Restarting Bamboo</h1>",
+  }))
+  await page.goto(parkedUrl)
+  await expect(page.getByRole("heading", { name: "Restarting Bamboo" })).toBeVisible()
+  await page.goto(standaloneScenario.entryUrl)
+  await expectComposerText(editor, mainDraft)
+
+  // Tabs opened by an existing document receive a clone of sessionStorage.
+  // The cloned receipt must remain confined to its original workspace.
+  const [popup] = await Promise.all([page.waitForEvent("popup"), page.evaluate(() => { window.open("about:blank") })])
+  try {
+    await installBodhiComposerHost(popup)
+    const otherTab = await openComposer(popup)
+    await expectComposerText(otherTab.editor, "")
+  } finally {
+    await popup.close()
+  }
+  expect(context.pages()).toContain(page)
+  await expectComposerText(editor, mainDraft)
+  await editor.press("Enter")
+  await expect.poll(() => chats.map((chat) => chat.message)).toEqual([mainDraft])
+  await page.reload()
+  await expectComposerText(editor, "")
+  await selectSession(page, "Other composer draft")
+  await expectComposerText(editor, otherDraft)
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("losing local owner access discards saved drafts before another admission", async ({ page }) => {
+  await installBodhiComposerHost(page)
+  const { editor, observation } = await openComposer(page)
+  await editor.fill("Private local draft")
+  await page.reload()
+  await expectComposerText(editor, "Private local draft")
+  const original = observation.bootstrapDocuments.at(-1) as { auth: Record<string, unknown> }
+  const denied = {
+    ...original,
+    auth: { ...original.auth, request_state: "unauthenticated", policy: "credential_required", password_enabled: true },
+  }
+  let document = denied
+  await page.route("**/api/v1/bootstrap", (route) => route.fulfill({ json: document }))
+  await page.reload()
+  await expect(page.getByRole("heading", { name: "Enter access password" })).toBeVisible()
+
+  document = { ...denied, auth: { ...denied.auth, request_state: "authenticated" } }
+  await page.reload()
+  await expectComposerText(editor, "")
+  await editor.fill("An unrelated identity has no locally admitted draft")
+  await page.reload()
+  await expectComposerText(editor, "")
+
+  await page.unroute("**/api/v1/bootstrap")
+  await page.reload()
+  await expectComposerText(editor, "")
+})
+
 test("file picker and image paste retain the draft, remove safely, and submit the remaining attachment", async ({ page }) => {
   const { editor, chats, observation } = await openComposer(page)
   const composer = page.locator("[data-composer-surface]")

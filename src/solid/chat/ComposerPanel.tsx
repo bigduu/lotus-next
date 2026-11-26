@@ -36,6 +36,8 @@ import { ContextUsageRing } from "./compact/ContextUsageRing"
 import { ChatRunStatus } from "./status/ChatRunStatus"
 import { transcriptWorkWait } from "./status/transcriptWorkWait"
 import { createLiveBootstrapRetry } from "./status/live-retry/createLiveBootstrapRetry"
+import { useComposerDraftOrigin } from "../bootstrap/composerDraftOrigin"
+import { createComposerDraftRecovery } from "./createComposerDraftRecovery"
 import { LiveBootstrapRetryNotice } from "./status/live-retry/LiveBootstrapRetryNotice"
 
 type Chat = ReturnType<typeof createChat>
@@ -77,6 +79,11 @@ export function ComposerPanel(props: {
   const [moreOpen, setMoreOpen] = createSignal(false)
   const [moreLayer, setMoreLayer] = createSignal<HTMLDivElement | undefined>(undefined, { ownedWrite: true })
   const draftKey = () => props.chat.currentSessionId ?? ""
+  const draftRecovery = createComposerDraftRecovery(
+    useComposerDraftOrigin(),
+    () => props.chat.currentSessionId,
+    () => props.rootAuthority.authority?.birthToken,
+  )
   const focusEditor = () => {
     if (props.pageVisible !== false) surface.querySelector<HTMLElement>('[data-composer-editor][contenteditable="true"]')?.focus()
   }
@@ -218,6 +225,7 @@ export function ComposerPanel(props: {
   const send = async () => {
     const key = draftKey()
     const draft = appStore.getState().getInputState(key)
+    const suppressDraftSubmission = draftRecovery.captureSubmission()
     if (commands.handleSideChat(draft) || commands.handleCompact(draft)) return
     const images = attachments()
     const submittedAttachmentRevision = attachmentRevision
@@ -286,6 +294,7 @@ export function ComposerPanel(props: {
         }
       }
       if (origin.isCurrent()) props.onSubmitMessage?.()
+      const finishDraftSubmission = suppressDraftSubmission(draft.contentRevision)
       const result = semantic && key
         ? await props.ingress.send({
             session_id: key,
@@ -301,6 +310,7 @@ export function ComposerPanel(props: {
         isOriginCurrent: origin.prepare ? origin.isCurrent : undefined,
         ...(liveBootstrapResume ? { liveBootstrapResume: true } : {}),
       })
+      finishDraftSubmission(result.kind !== "accepted" && result.kind !== "unconfirmed")
       if (result.kind === "unconfirmed" && origin.isCurrent()) focusEditor()
       if (result.kind !== "accepted") return
       if (!key && submission.projectId) sessionCreated(result.sessionId)

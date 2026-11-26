@@ -1,6 +1,6 @@
 import type { uiEnUs } from "@shared/i18n/resources/ui-en-US"
 import { ServiceFactory } from "@services/common/ServiceFactory"
-import { requestServerBootstrap, type BootstrapOutcome } from "./serverBootstrap"
+import { requestServerBootstrap, type BootstrapOutcome, type BootstrapRequestState } from "./serverBootstrap"
 
 const RETRY_DELAYS_MS = [250, 500] as const
 const SIDECAR_STARTUP_RETRY_WINDOW_MS = 60_000
@@ -94,10 +94,12 @@ export function createRootBootstrap({
   sidecarStartup,
   text,
   onViewChange,
+  onReadyRequestState,
 }: {
   sidecarStartup: boolean
   text: BootstrapText
   onViewChange: (view: RootView) => void
+  onReadyRequestState?: (state: BootstrapRequestState) => void
 }) {
   let view: RootView = { kind: "loading" }
   let generation = 0
@@ -148,10 +150,10 @@ export function createRootBootstrap({
   const runBootstrap = async (operation: ActiveOperation) => {
     for (let attempt = 0; ; attempt += 1) {
       let outcome: BootstrapOutcome
-      let ownerAccess = false
+      const auth: { requestState?: BootstrapRequestState } = {}
       try {
         outcome = await requestServerBootstrap(operation.controller.signal, (state) => {
-          ownerAccess = state === "local_bypass" || state === "authenticated"
+          auth.requestState = state
         })
       } catch {
         if (isCurrent(operation)) {
@@ -181,7 +183,9 @@ export function createRootBootstrap({
       }
 
       if (outcome.kind === "ready") {
-        await resolveSetup(operation, ownerAccess)
+        const requestState = auth.requestState
+        if (requestState) onReadyRequestState?.(requestState)
+        await resolveSetup(operation, requestState === "local_bypass" || requestState === "authenticated")
         return
       }
 
