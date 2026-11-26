@@ -1755,6 +1755,7 @@ export const uiZhCn = {
   "compact_context_unchanged": "上下文未改动，当前没有符合条件的内容可压缩。",
   "compact_context_unconfirmed": "未能确认上下文压缩结果，草稿已保留。",
   "compact_context_not_found": "会话不可用，或当前 Bamboo 版本暂不支持 /compact。",
+  "session_loop_command_description": "在当前会话中定时重复执行任务，例如 5m <任务>。",
   "session_loop_usage": "使用 /loop <任务> 让模型决定间隔，或使用 /loop 5m <任务> 指定间隔。可用 /loop status、/loop stop 和 /loop resume 管理循环。",
   "session_loop_open_session": "请先打开一个会话，再使用 /loop。",
   "session_loop_ordinary_only": "普通会话支持管理循环任务。",
