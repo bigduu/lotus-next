@@ -2,7 +2,7 @@ import { createRoot, flush } from "solid-js"
 import { expect, it, vi } from "vitest"
 import { uiText } from "@shared/i18n/text"
 import { appStore } from "@shared/store/appStore/state"
-import type { UserMessage } from "@shared/types/chatMessages"
+import type { AssistantTextMessage, UserMessage } from "@shared/types/chatMessages"
 import type { createChat } from "../createChat"
 import { buildHistoryEntries, buildRenderItems } from "../history/historyProjection"
 import { createMessageActions } from "./createMessageActions"
@@ -43,6 +43,43 @@ it("clears fork progress after a callback rejects and retains the failure detail
     expect(onNotice).toHaveBeenCalledExactlyOnceWith({
       text: uiText("operation_failed_0c3b4cf7"), error: true, details: "fork unavailable",
     })
+  } finally {
+    dispose()
+    appStore.setState({ currentSessionId: previous })
+  }
+})
+
+it("does not fork a projected assistant text row with a different stored message ID", () => {
+  const origin = "tool-text-fork-origin"
+  const projected: AssistantTextMessage = {
+    id: "stored-tool-request_text", role: "assistant", type: "text", phase: "final_answer",
+    content: "Text before a tool", createdAt: "2026-11-23T00:00:00Z",
+    metadata: { backendMessageId: "stored-tool-request" },
+  }
+  const [entry] = buildHistoryEntries(buildRenderItems([projected]))
+  const previous = appStore.getState().currentSessionId
+  const fork = vi.fn()
+  type Chat = ReturnType<typeof createChat>
+  const ports: Partial<Chat> = {
+    currentSessionId: origin, messages: [projected], fork,
+    executionCompatibility: { blocked: false, observed: true, loading: false, legacy: false, readError: false,
+      report: null, refresh: async () => {} },
+  }
+  appStore.setState({ currentSessionId: origin })
+  const { dispose, controller } = createRoot((cleanup) => ({
+    dispose: cleanup,
+    controller: createMessageActions({
+      chat: ports as Chat, entries: () => [entry], viewport: () => null, rootAuthority: () => undefined,
+      onNotice: () => undefined, onForking: () => undefined,
+    }),
+  }))
+  try {
+    flush()
+    const target = controller.target(entry.key)!
+    expect(controller.allows("delete", target)).toBe(true)
+    expect(controller.allows("fork", target)).toBe(false)
+    controller.fork(target)
+    expect(fork).not.toHaveBeenCalled()
   } finally {
     dispose()
     appStore.setState({ currentSessionId: previous })

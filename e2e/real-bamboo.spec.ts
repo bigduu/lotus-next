@@ -1107,6 +1107,121 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
   }
 });
 
+test("production UI forks and independently continues a persisted message through Bamboo", async ({
+  context,
+  page,
+}, testInfo) => {
+  const contract = readRuntimeContract();
+  const sourceTitle = "Lotus real message fork";
+  const create = await page.request.post(new URL("/api/v1/sessions", contract.baseUrl).href, {
+    data: { title: sourceTitle, title_generated: true, model: "gpt-4o-mini",
+      model_ref: { provider: "e2e-openai", model: "gpt-4o-mini" } },
+  });
+  expect(create.status()).toBe(201);
+  const sourceId = stringField(asRecord(asRecord(await create.json())?.session), "id");
+  expect(sourceId).toBeTruthy();
+  const sessionPath = `/api/v1/sessions/${encodeURIComponent(sourceId!)}`;
+  const sourceHistory = new URL(`${sessionPath}/history`, contract.baseUrl);
+  const observation = observePage(page, "message-fork-real-bamboo");
+  const scriptErrors: Error[] = [];
+  page.on("pageerror", (error) => scriptErrors.push(error));
+
+  await installSessionEntry(context, { ...contract, sessionId: sourceId! });
+  try {
+    await page.goto(contract.baseUrl.href);
+    await assertBootstrap(observation);
+    await assertLiveSocket(observation, contract.baseUrl.origin);
+    const bootstrap = asRecord(observation.bootstrapDocuments.at(-1));
+    const supportsFork = Array.isArray(bootstrap?.capabilities) &&
+      bootstrap.capabilities.includes("http.session_message_fork.v1");
+    if (process.env.LOTUS_REAL_REQUIRE_SESSION_MESSAGE_FORK === "1") {
+      expect(supportsFork, "the tested Bamboo must advertise message fork").toBe(true);
+    }
+
+    const composer = page.getByRole("textbox", { name: "消息", exact: true });
+    const send = page.getByRole("button", { name: "发送消息", exact: true });
+    await expect(page.getByRole("heading", { name: sourceTitle, exact: true })).toBeVisible();
+    const clientHistoryPath = `/api/v1/history/${encodeURIComponent(sourceId!)}`;
+    await expect.poll(() => successfulResponse(observation, "GET", clientHistoryPath)).toBe(true);
+    await composer.fill(contract.userMarker);
+    await expect(send).toBeEnabled();
+    await send.click();
+    await assertRealAssistantRenderer(page, contract.assistantMarker);
+    await expect.poll(() => hasTerminalFrame(observation, sourceId!)).toBe(true);
+    await expect.poll(async () => persistedMarkerState(
+      await fetchJson(sourceHistory), contract.userMarker, contract.assistantMarker,
+    )).toMatchObject({ user: true, assistant: true });
+
+    const source = asRecord(await fetchJson(sourceHistory));
+    const sourceMessages = (source!.messages as unknown[]).map(asRecord);
+    const anchorIndex = sourceMessages.findIndex((message) =>
+      message?.role === "user" && message.content === contract.userMarker,
+    );
+    const anchorId = stringField(sourceMessages[anchorIndex], "id");
+    expect(anchorId).toBeTruthy();
+    expect(sourceMessages.slice(anchorIndex + 1)).toContainEqual(expect.objectContaining({
+      role: "assistant", content: contract.assistantMarker,
+    }));
+
+    const forkPath = `${sessionPath}/fork`;
+    const forkResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname === forkPath,
+    );
+    const action = page.locator(`[data-message-actions="${anchorId}"]`)
+      .getByRole("button", { name: "从这里分叉", exact: true });
+    await expect(action).toBeEnabled();
+    await action.click();
+    const response = await forkResponse;
+    expect(response.request().postDataJSON()).toEqual({ up_to_message_id: anchorId });
+
+    if (supportsFork) {
+      expect(response.status()).toBe(201);
+      const destination = asRecord(asRecord(await response.json())?.session);
+      const destinationId = stringField(destination, "id");
+      expect(destinationId).toBeTruthy();
+      expect(destinationId).not.toBe(sourceId);
+      expect(destination).toMatchObject({ kind: "root", root_session_id: destinationId });
+      const destinationHistory = new URL(`/api/v1/sessions/${encodeURIComponent(destinationId!)}/history`, contract.baseUrl);
+      const history = asRecord(await fetchJson(destinationHistory));
+      const asTranscript = (messages: unknown[]) => messages.map((value) => {
+        const message = asRecord(value);
+        return { role: message?.role, content: message?.content };
+      });
+      expect(asTranscript(history!.messages as unknown[]))
+        .toEqual(asTranscript(sourceMessages.slice(0, anchorIndex + 1)));
+      await expect(page.getByRole("status").filter({ hasText: "已从这里分叉到新会话" })).toBeVisible();
+      await expect(page.getByText(contract.assistantMarker, { exact: true })).toHaveCount(0);
+      await assertSingleVisibleText(page, contract.userMarker, "the fork must show the selected message");
+      const screenshot = testInfo.outputPath("forked-transcript.png");
+      await page.screenshot({ path: screenshot });
+      await testInfo.attach("forked transcript", { path: screenshot, contentType: "image/png" });
+
+      const followUp = `${contract.userMarker}:fork-follow-up`;
+      await composer.fill(followUp);
+      await expect(send).toBeEnabled();
+      await send.click();
+      await assertRealAssistantRenderer(page, contract.assistantMarker);
+      await expect.poll(() => hasTerminalFrame(observation, destinationId!)).toBe(true);
+      await expect.poll(async () => persistedMarkerState(
+        await fetchJson(destinationHistory), followUp, contract.assistantMarker,
+      )).toMatchObject({ user: true, assistant: true });
+    } else {
+      expect(response.status()).toBe(404);
+      expect(await response.text()).toBe("");
+      await expect(page.getByRole("alert").filter({ hasText: "当前后端暂不支持会话分叉" })).toBeVisible();
+      await assertRealAssistantRenderer(page, contract.assistantMarker);
+    }
+
+    expect(asRecord(await fetchJson(sourceHistory))?.messages).toEqual(source?.messages);
+    expect(observation.requests.filter((request) =>
+      request.method === "POST" && new URL(request.url).pathname === forkPath,
+    )).toHaveLength(1);
+    expect(scriptErrors).toEqual([]);
+  } finally {
+    await observation.stop();
+  }
+});
+
 test("production Provider add discovers models, accepts custom IDs, and repairs defaults", async ({
   context,
   page,

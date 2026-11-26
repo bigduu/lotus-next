@@ -1,7 +1,7 @@
 import { createMemo, createSignal, onSettled, type Accessor } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import type { Message } from "@shared/types/chatMessages"
-import { getErrorMessage } from "@services/api/errors"
+import { getApiErrorCode, getErrorMessage, isApiError, isRequestError } from "@services/api/errors"
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionState"
 import { createUiText } from "../../shell/uiText"
@@ -75,6 +75,9 @@ export function createMessageActions(options: {
     if (!id || active !== null || managed() || !sameTarget(targets().get(target.key), target) ||
       uniqueIds().get(target.message.id) !== 1 || chat.executionCompatibility.blocked ||
       isSessionExecutionBlocked(id) || getRootModeFenceState(id) !== "clear" || rootBlocked()) return false
+    const message = target.message
+    if (action === "fork" && message.role === "assistant" && message.type === "text" &&
+      typeof message.metadata?.backendMessageId === "string" && message.metadata.backendMessageId !== message.id) return false
     if (action === "edit" || action === "regenerate") {
       if (running() || chat.pendingQuestion || chat.pendingApproval) return false
       return action === "edit" ? target.message.role === "user" : latestRegenerable() === target.key
@@ -116,8 +119,8 @@ export function createMessageActions(options: {
         const id = await chat.fork(target.message.id, { isOriginCurrent: () => owns(origin) })
         if (id && appStore.getState().currentSessionId === id) {
           publish({ text: text("forked_into_a_new_session_from_here_b0abc6b8"), error: false, ifVacant: true })
-        } else if (!id && owns(origin)) {
-          publish({ text: text("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"), error: true })
+        } else if (id && owns(origin)) {
+          publish({ text: text("session_fork_created_not_opened"), error: true })
         }
         return
       }
@@ -130,8 +133,28 @@ export function createMessageActions(options: {
         publish({ text: text("operation_failed_0c3b4cf7"), error: true })
       }
     } catch (error) {
-      if (owns(origin)) publish({ text: text("operation_failed_0c3b4cf7"), error: true,
-        details: action === "fork" ? getErrorMessage(error) : undefined })
+      if (!owns(origin)) return
+      let details: string | undefined
+      if (action === "fork") {
+        const httpError = isApiError(error) ? error : undefined
+        if (httpError?.status === 404 && !httpError.body?.trim()) {
+          publish({ text: text("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"), error: true })
+          return
+        }
+        const code = httpError && getApiErrorCode(httpError)
+        switch (code) {
+          case "session_fork_source_not_found":
+          case "session_fork_message_not_found":
+          case "session_fork_invalid_message":
+            details = text(code)
+            break
+          default:
+            details = isRequestError(error) && error.kind !== "http"
+              ? text("session_fork_response_missing_destination")
+              : httpError?.status === 404 && code ? httpError.message : getErrorMessage(error)
+        }
+      }
+      publish({ text: text("operation_failed_0c3b4cf7"), error: true, details })
     } finally {
       active = null
       if (action === "fork") options.onForking()?.(false)

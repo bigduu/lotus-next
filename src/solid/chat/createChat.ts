@@ -2805,23 +2805,31 @@ export function createChat(
     if (!sessionId || options?.isOriginCurrent?.() === false || isSessionExecutionBlocked(sessionId)
       || getRootModeFenceState(sessionId) !== "clear") return undefined
     const origin = navigationRef.current
-    let newId: string | undefined
+    const ownsOrigin = () => mountedRef.current && readSessionId() === sessionId && navigationRef.current === origin
+      && options?.isOriginCurrent?.() !== false
+    let acknowledged: { session?: { id?: string; session_id?: string } }
     try {
-      const res = await apiClient.post<{ session?: { id?: string; session_id?: string } }>(
+      acknowledged = await apiClient.postOnce(
         `sessions/${encodeURIComponent(sessionId)}/fork`, { up_to_message_id: messageId },
       )
-      const candidate = res?.session?.id ?? res?.session?.session_id
-      if (typeof candidate !== "string" || !candidate || candidate.trim() !== candidate || candidate === sessionId) return undefined
-      newId = candidate
-      await appStore.getState().refreshChatsNow()
-      if (!mountedRef.current || readSessionId() !== sessionId || navigationRef.current !== origin
-        || options?.isOriginCurrent?.() === false) return newId
-      if (isBound) onSessionCreated?.(newId)
-      else appStore.getState().selectSession(newId)
-      await appStore.getState().loadChatHistory(newId)
     } catch (failure) {
       observeSessionExecutionConflict(sessionId, failure)
+      throw failure
     }
+    const newId = acknowledged?.session?.id ?? acknowledged?.session?.session_id
+    if (typeof newId !== "string" || !newId || newId.trim() !== newId || newId === sessionId) {
+      throw new Error(uiText("session_fork_response_missing_destination"))
+    }
+
+    await appStore.getState().refreshChatsNow().catch(() => {})
+    if (!ownsOrigin()) return newId
+    if (!appStore.getState().chats.some((chat) => chat.id === newId)) {
+      const restored = await appStore.getState().restoreSession(newId).catch(() => false)
+      if (!ownsOrigin() || !restored) return newId
+    }
+    if (isBound) onSessionCreated?.(newId)
+    else appStore.getState().selectSession(newId)
+    await appStore.getState().loadChatHistory(newId)
     return newId
   }
 
