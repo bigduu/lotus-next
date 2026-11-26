@@ -1757,6 +1757,7 @@ export const uiEnUs = {
   "compact_context_unchanged": "Context unchanged. There was nothing eligible to compact.",
   "compact_context_unconfirmed": "Context compaction could not be confirmed. Your draft was kept.",
   "compact_context_not_found": "This session is unavailable or its Bamboo version does not support /compact.",
+  "session_loop_command_description": "Schedule a recurring task in this chat, e.g. 5m <task>.",
   "session_loop_usage": "Use /loop <task> for automatic intervals or /loop 5m <task> for fixed intervals. Use /loop status, /loop stop, or /loop resume to manage a loop.",
   "session_loop_open_session": "Open a chat session before using /loop.",
   "session_loop_ordinary_only": "Loop controls are available in ordinary chat sessions.",
