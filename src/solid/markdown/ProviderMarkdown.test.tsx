@@ -104,3 +104,67 @@ it("keeps an undecorated prose mention of a built-in tool visible during streami
   expect(host.querySelector(pending)).toBeNull()
   expect(host.querySelector(content)?.textContent).toBe(prose)
 })
+
+const inlineTool = '[data-provider-tool="edit_sample"]'
+const script = "# This is a script comment\n\n# Another comment\n<sample>literal text</sample>"
+
+it("folds inline function arguments on replay and renders their expanded source literally", () => {
+  const source = `<function=edit_sample><parameter=text>\n${script}\n</parameter></function>`
+  const { host } = mount(`Preparing the sample:${source}\n\n## Actual heading`, false)
+  expect(host.querySelector(content)?.textContent).toBe("Preparing the sample:")
+  expect([...host.querySelectorAll("h1,h2")].map((heading) => heading.textContent)).toEqual(["Actual heading"])
+  expect(host.textContent).not.toContain("This is a script comment")
+
+  const toggle = host.querySelector<HTMLButtonElement>(`${inlineTool} button`)!
+  expect(toggle.getAttribute("aria-expanded")).toBe("false")
+  toggle.click()
+  flush()
+  expect(host.querySelector(`${inlineTool} pre`)?.textContent).toBe(source)
+  expect(host.querySelector(`${inlineTool} sample, ${inlineTool} h1`)).toBeNull()
+})
+
+it("folds an incoming tool payload through streaming, completion, and a truncated replay", () => {
+  const intro = "Preparing the sample"
+  const view = mount(`${intro}\n\n<tool_call>\n<function=edit_`, true)
+  expect(view.host.querySelector(pending)?.getAttribute("role")).toBe("status")
+  expect(view.host.querySelector(content)?.textContent).toBe(intro)
+  expect(view.host.textContent).not.toContain("<function=")
+
+  const incomplete = `${intro}\n\n<tool_call>\n<function=edit_sample>\n<parameter=text>\n${script}`
+  view.update(incomplete, true)
+  expect(view.host.querySelector(inlineTool)).not.toBeNull()
+  expect(view.host.textContent).not.toContain("This is a script comment")
+
+  view.update(`${incomplete}\n</parameter>\n</function>\n</tool_call>\n\nStill **writing`, true)
+  expect(view.host.querySelector(`.${live}`)?.textContent).toBe("Still writing")
+  expect(view.host.querySelectorAll(inlineTool)).toHaveLength(1)
+
+  view.update(incomplete, false)
+  expect(view.host.querySelector(inlineTool)).not.toBeNull()
+  expect(view.host.querySelector("h1")).toBeNull()
+})
+
+it("restores prose and both tool disclosures around adjacent calls", () => {
+  const first = "<function=edit_sample><parameter=text>first</parameter></function>"
+  const second = "<tool_call>\n<function=read_sample>\n</function>\n</tool_call>"
+  const { host } = mount(`Before ${first} In between ${second}\n\nAfter`, false)
+  expect([...host.querySelectorAll(content)].map((node) => node.textContent)).toEqual(["Before", "In between", "After"])
+  expect([...host.querySelectorAll("[data-provider-tool]")].map((node) => node.getAttribute("data-provider-tool")))
+    .toEqual(["edit_sample", "read_sample"])
+})
+
+it("keeps quoted protocol examples and ordinary marker mentions in Markdown", () => {
+  const example = "<function=edit_sample><parameter=text>example</parameter></function>"
+  const source = [
+    `The literal syntax is \`${example}\`.`, "",
+    "> ```xml", `> ${example}`, "> ```", "",
+    `    ${example}`, "",
+    "Use <function=edit_sample> to name the example.", "",
+    `\\${example}`,
+  ].join("\n")
+  const { host } = mount(source, false)
+  expect(host.querySelectorAll(inlineTool)).toHaveLength(0)
+  expect(host.querySelector('[data-streamdown="inline-code"]')?.textContent).toBe(example)
+  expect(host.querySelector("blockquote pre")?.textContent).toContain(example)
+  expect(host.textContent).toContain("Use <function=edit_sample> to name the example.")
+})
