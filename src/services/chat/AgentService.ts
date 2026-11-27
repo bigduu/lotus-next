@@ -895,6 +895,8 @@ export interface SessionSummary {
   is_running: boolean;
   last_run_status?: string;
   last_run_error?: string;
+  /** Detail only. The backend has confirmed that this interrupted run can be resumed. */
+  resume_interrupted?: boolean;
   /** Detail only; index/list rows omit it. Validate before presentation. */
   last_run_diagnostic?: unknown;
   /** Active plan mode runtime state mirrored from backend session summary. */
@@ -1583,6 +1585,18 @@ export class AgentClient {
   /** Get one session summary, including its root tree size. */
   async getSession(sessionId: string): Promise<GetSessionResponse> {
     return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+  }
+
+  /** Start from this session's saved context without appending a message. */
+  async resumeInterruptedSession(sessionId: string): Promise<ExecuteResponse> {
+    const response = await apiClient.postOnce<ExecuteResponse>(`execute/${encodeURIComponent(sessionId)}`, {
+      resume_interrupted: true,
+    });
+    if (response?.session_id !== sessionId || !isRetryRunId(response.run_id)
+      || (response.status !== "started" && response.status !== "already_running")) {
+      throw new Error(uiText("resume_interrupted_chat_not_started"));
+    }
+    return response;
   }
 
   /** Open the canonical Supervisor without starting a run or enabling Tickets. */

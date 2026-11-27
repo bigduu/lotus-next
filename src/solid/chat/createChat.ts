@@ -1189,6 +1189,7 @@ export function createChat(
       runSid: string,
       opts?: {
         resume?: boolean
+        resumeInterrupted?: boolean
         upstreamRetry?: UpstreamRetrySelection
         liveBootstrapResume?: boolean
         operationId?: number
@@ -1335,6 +1336,16 @@ export function createChat(
       let confirmedRunId: string | null = null
       let reconcileTimer: ReturnType<typeof setTimeout> | undefined
       const clearReconcileTimer = () => clearTimeout(reconcileTimer)
+      let subscriptionOpen = true
+      const releaseSubscription = () => {
+        subscriptionOpen = false
+        clearReconcileTimer()
+        ac.signal.removeEventListener("abort", clearReconcileTimer)
+        if (subscriptionRef.current === subscription) {
+          subscriptionRef.current = null
+          subscribedSidRef.current = null
+        }
+      }
       ac.signal.addEventListener("abort", clearReconcileTimer, { once: true })
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
@@ -1357,9 +1368,12 @@ export function createChat(
         let previousPaneFence: ContinuousStopFence | undefined
         const execution = opts?.upstreamRetry
           ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
-          : startOrdinaryExecution(runSid, operationId, () => opts?.liveBootstrapResume
-            ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
-            : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef), getObservedRunId)
+          : startOrdinaryExecution(runSid, operationId, () => {
+            if (opts?.resumeInterrupted) return agentClient.resumeInterruptedSession(runSid)
+            return opts?.liveBootstrapResume
+              ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
+              : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef)
+          }, getObservedRunId)
         if (opts?.upstreamRetry) {
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
           // A Stop clicked before Execute returns waits for that exact ACK. It
@@ -1433,6 +1447,12 @@ export function createChat(
           stopStream(null, operationId)
           ac.abort()
         })
+        // A subscription opened before Bamboo accepts a resume can replay the
+        // predecessor's terminal event and close before the new run starts.
+        if (opts?.resumeInterrupted && (!await execution.then(() => true, () => false) || !ownsRunEvent())) {
+          releaseSubscription()
+          return
+        }
       }
 
       const settleCompleted = (historyReady = false): void => {
@@ -1572,7 +1592,6 @@ export function createChat(
       // Start only after execute acknowledges admission, and confirm idle twice
       // with fresh detail reads so a stale pre-start summary cannot stop a run.
       let observedIdle = false
-      let subscriptionOpen = true
       const canReconcile = () => ownsStream() && subscriptionOpen && !ac.signal.aborted && !terminal.settlement
       const reconcileOwnedRun = async () => {
         if (!canReconcile()) return
@@ -1864,15 +1883,7 @@ export function createChat(
         },
         ac,
         ...(observation ? [observation] : []),
-      ).finally(() => {
-        subscriptionOpen = false
-        clearReconcileTimer()
-        ac.signal.removeEventListener("abort", clearReconcileTimer)
-        if (subscriptionRef.current === subscription) {
-          subscriptionRef.current = null
-          subscribedSidRef.current = null
-        }
-      })
+      ).finally(releaseSubscription)
       if (terminal.settlement) {
         await terminal.settlement
       } else if (ownsStream()) {
@@ -2015,6 +2026,48 @@ export function createChat(
     }),
   )
 
+  // The list can retain "running" after a worker disappears. Check the exact
+  // idle session detail before offering continuation, including after reload.
+  const interruptedResumeTarget = createMemo(() => {
+    const session = currentChat()
+    if (!owned() || !pageVisible() || session?.kind !== "root" || session.isRunning !== false
+        || !session.messages.some((message) => message.role !== "system")
+        || !["running", "pending", "cancelled", "error", "timeout", "failed"].includes(session.lastRunStatus ?? "")
+        || sending() || shouldObserve() || stoppingInPane()
+        || session.activity === "running" || session.activity === "waiting_user" || hasSessionWorkWait(session.activity)
+        || session.planMode?.status === "awaiting_approval") return null
+    return [session.id, session.createdAtExact, session.updatedAt, session.lastRunStatus] as const
+  }, { equals: shallow })
+  const [interruptResumeConfirmed, setInterruptResumeConfirmed] = createSignal<ReturnType<typeof interruptedResumeTarget>>(null)
+  createEffect(interruptedResumeTarget, (target) => {
+    if (!target) return
+    let current = true
+    let recheck: ReturnType<typeof setTimeout> | undefined
+    const [id, createdAt, , status] = target
+    const readDetail = (allowRecheck: boolean) => {
+      void agentClient.getSession(id).then(({ session }) => {
+        if (!current || session.id !== id || createdAt && session.created_at !== createdAt
+            || session.is_running !== false || session.has_pending_question === true) return
+        if (session.resume_interrupted === true) setInterruptResumeConfirmed(target)
+        // The owner's lease can expire without changing the persisted summary.
+        else if (allowRecheck && status === "running" && session.resume_interrupted === false) {
+          recheck = setTimeout(() => readDetail(false), 60_000)
+        }
+      }).catch(() => {})
+    }
+    readDetail(true)
+    return () => {
+      current = false
+      clearTimeout(recheck)
+    }
+  })
+  const canResumeInterrupted = () => {
+    const target = interruptedResumeTarget()
+    return target !== null && target === interruptResumeConfirmed()
+      && !hasPendingQuestion() && !pendingQuestion() && !pendingApproval()
+      && !questionSubmitRef.current && sendFailure()?.kind !== "submission-unconfirmed"
+  }
+
   // ── Stranded-terminal reconcile ───────────────────────────────────────
   // If the summary settles (is_running=false via the feed) while we still hold
   // a live subscription for that session, the agent channel probably missed
@@ -2104,12 +2157,13 @@ export function createChat(
     return () => document.removeEventListener("visibilitychange", onVisibility)
   })
 
-  // Re-run the conversation after a server-side truncate/restore (regenerate,
-  // retry, edit). Shows the streaming placeholder + reloads history on done.
+  // Start another execution (regenerate, retry, continue, edit) and attach it
+  // to this pane's stream. Some callers prepare the history first.
   const rerun = async (
       runSid: string,
       opts?: {
         prepare?: () => Promise<unknown>
+        resumeInterrupted?: boolean
         upstreamRetry?: UpstreamRetrySelection
         expectedFailureOperationId?: number
         pendingOperationId?: number
@@ -2179,9 +2233,11 @@ export function createChat(
 
         const stillAtOrigin =
           mountedRef.current &&
+          readSessionId() === operation.originSessionId &&
           navigationRef.current.sessionId === operation.originSessionId &&
           navigationRef.current.epoch === operation.originNavigationEpoch
         if (!stillAtOrigin) {
+          if (opts?.resumeInterrupted) return false
           // Preparation can be destructive (retry truncate / edit restore). If
           // the user left meanwhile, finish that exact session in the
           // background without taking over the new pane's subscription or Stop
@@ -2216,6 +2272,7 @@ export function createChat(
         if (mountedRef.current) setSubmissionPending(false)
         const stream = runStream(runSid, {
           upstreamRetry: opts?.upstreamRetry,
+          resumeInterrupted: opts?.resumeInterrupted,
           modelSelection,
           reasoningEffort: selectedReasoningEffort ?? null,
           operationId: operation.id,
@@ -2272,6 +2329,12 @@ export function createChat(
         invalidateCompletedAnswers(sessionId, { messages, targetId: messages.findLast((message) => message.role === "user")?.id ?? null })
       },
     })
+  }
+
+  const resumeInterrupted = async (): Promise<boolean> => {
+    const sessionId = readSessionId()
+    if (!sessionId || sessionId !== sid() || !canResumeInterrupted()) return false
+    return rerun(sessionId, { resumeInterrupted: true })
   }
 
   const retry = async (failure?: GenerationFailure, options?: { upstreamRetry?: UpstreamRetrySelection }) => {
@@ -2996,6 +3059,8 @@ export function createChat(
     fork,
     regenerate,
     retry,
+    get canResumeInterrupted() { return canResumeInterrupted() },
+    resumeInterrupted,
     editMessage,
     get sendFailure() { return sendFailure() },
     get pendingQuestion() { return pendingQuestion() },
