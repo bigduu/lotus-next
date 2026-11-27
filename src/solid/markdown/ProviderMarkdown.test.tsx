@@ -153,6 +153,34 @@ it("restores prose and both tool disclosures around adjacent calls", () => {
     .toEqual(["edit_sample", "read_sample"])
 })
 
+it("keeps literal closing tags inside streamed and saved parameter values", () => {
+  const partial = [
+    "<tool_call>", "<function=edit_sample>", "<parameter=before>",
+    'print("</function>")', "# First script comment",
+  ].join("\n")
+  const view = mount(partial, true)
+  expect(view.host.textContent).not.toContain("First script comment")
+
+  const call = [
+    partial, "</parameter>", "<parameter=after>",
+    'print("</parameter>")', 'print("</tool_call>")', "# Second script comment",
+    "</parameter>", "</function>", "</tool_call>",
+  ].join("\n")
+  view.update(`${call}\n\n## Actual heading`, false)
+  expect([...view.host.querySelectorAll("h1,h2")].map((heading) => heading.textContent)).toEqual(["Actual heading"])
+
+  view.host.querySelector<HTMLButtonElement>(`${inlineTool} button`)!.click()
+  flush()
+  expect(view.host.querySelector(`${inlineTool} pre`)?.textContent).toBe(call)
+})
+
+it.each([">", "> >"])("preserves indented code in a blockquote starting with %s", (quote) => {
+  const example = "<function=edit_sample><parameter=text>example</parameter></function>"
+  const { host } = mount(`${quote}     ${example}`, false)
+  expect(host.querySelector(inlineTool)).toBeNull()
+  expect(host.querySelector("blockquote pre")?.textContent).toContain(example)
+})
+
 it("keeps quoted protocol examples and ordinary marker mentions in Markdown", () => {
   const example = "<function=edit_sample><parameter=text>example</parameter></function>"
   const source = [

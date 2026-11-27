@@ -17,6 +17,21 @@ function inlineCodeEnd(source: string, offset: number, length: number, streaming
   return streaming ? source.length : offset
 }
 
+function findToolClose(source: string, offset: number): RegExpExecArray | null {
+  const tags = /<parameter=|<\/(?:function|tool_call)>/g
+  // Parameter values are literal text. Only a closing parameter tag followed
+  // by another protocol delimiter takes us back outside the value.
+  const parameterEnd = /<\/parameter>(?=\s*(?:<parameter=|<\/(?:function|tool_call)>))/g
+  tags.lastIndex = offset
+  for (let tag; (tag = tags.exec(source));) {
+    if (tag[0] !== PARAMETER_OPEN) return tag
+    parameterEnd.lastIndex = tags.lastIndex
+    if (!parameterEnd.test(source)) return null
+    tags.lastIndex = parameterEnd.lastIndex
+  }
+  return null
+}
+
 function readToolBlock(source: string, start: number, streaming: boolean): ToolBlock | null {
   const wrapped = source.startsWith(CALL_OPEN, start)
   const header = source.slice(start + (wrapped ? CALL_OPEN.length : 0)).trimStart()
@@ -35,10 +50,8 @@ function readToolBlock(source: string, start: number, streaming: boolean): ToolB
   if (!wrapped && !delimiters.some((delimiter) =>
     body.startsWith(delimiter) || (streaming && delimiter.startsWith(body)))) return null
 
-  const closing = /<\/(?:function|tool_call)>/g
-  closing.lastIndex = bodyOffset
-  const close = closing.exec(source)
-  let end = close ? closing.lastIndex : source.length
+  const close = findToolClose(source, bodyOffset)
+  let end = close ? close.index + close[0].length : source.length
   if (close?.[0] === FUNCTION_CLOSE) {
     const tail = source.slice(end).trimStart()
     if (tail.startsWith(CALL_CLOSE)) end = source.length - tail.length + CALL_CLOSE.length
@@ -53,6 +66,8 @@ export function* findInlineToolBlocks(source: string, streaming: boolean): Gener
   // Match fenced and inline code delimiters before looking for tool markup.
   const tokens = /^(?: {0,3}>[ \t]?)* {0,3}(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})([^\r\n]*)|(`+)|\\[\\`<]|<(?:tool_call(?=>|$)|function(?:=|$))/gm
   let fence = ""
+  let lineEnd = -1
+  let indentedCode = false
   for (let token; (token = tokens.exec(source));) {
     const [value, delimiter, tail, ticks] = token
     if (fence) {
@@ -70,8 +85,14 @@ export function* findInlineToolBlocks(source: string, streaming: boolean): Gener
       continue
     }
     if (value.startsWith("\\")) continue
-    const lineStart = source.lastIndexOf("\n", token.index - 1) + 1
-    if (/^(?: {4}| {0,3}\t)/.test(source.slice(lineStart, lineStart + 4))) continue
+    if (token.index > lineEnd) {
+      const lineBreak = source.indexOf("\n", token.index)
+      lineEnd = lineBreak === -1 ? source.length : lineBreak
+      const lineStart = source.lastIndexOf("\n", token.index - 1) + 1
+      const prefix = source.slice(lineStart, token.index).replace(/^(?: {0,3}>[ \t]?)+/, "")
+      indentedCode = /^(?: {4}| {0,3}\t)/.test(prefix)
+    }
+    if (indentedCode) continue
 
     const block = readToolBlock(source, token.index, streaming)
     if (block) {
