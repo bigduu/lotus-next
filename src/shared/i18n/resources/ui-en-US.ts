@@ -1255,6 +1255,8 @@ export const uiEnUs = {
   "sending_2d88d503": "Sending",
   "add_to_queue_bc3b684c": "Add to queue",
   "send_message_00881483": "Send message",
+  "resume_interrupted_chat": "Continue conversation",
+  "resume_interrupted_chat_not_started": "Could not continue this conversation. Refresh and try again.",
   "stop_generation_9ad0aac3": "Stop generation",
   "context_tokens_34cb163e": "Context {{v0}} / {{v1}} tokens ({{v2}}%)",
   "previous_completed_round_836ba413": "Previous completed round",

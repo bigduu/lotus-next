@@ -22,7 +22,7 @@ vi.mock("@lucide/solid", () => {
   return {
     AlertCircle: Icon, ArrowUp: Icon, BookText: Icon, Check: Icon, ChevronDown: Icon, ChevronLeft: Icon,
     ChevronRight: Icon, Circle: Icon, Ellipsis: Icon, FolderClosed: Icon, FolderGit2: Icon, GitBranch: Icon,
-    Info: Icon, LoaderCircle: Icon, Paperclip: Icon, RefreshCw: Icon, RotateCcw: Icon, Search: Icon,
+    Info: Icon, LoaderCircle: Icon, Paperclip: Icon, Play: Icon, RefreshCw: Icon, RotateCcw: Icon, Search: Icon,
     ShieldAlert: Icon, Sparkles: Icon, Square: Icon, X: Icon,
   }
 })

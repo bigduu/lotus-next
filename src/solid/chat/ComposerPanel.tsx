@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, LoaderCircle, Paperclip, Square, X } from "@lucide/solid"
+import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, LoaderCircle, Paperclip, Play, Square, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, onSettled, Show, untrack } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
@@ -150,6 +150,8 @@ export function ComposerPanel(props: {
   const [submitting, setSubmitting] = createSignal(false)
   let active = false
   const [attachments, setAttachments] = createSignal<ChatImageAttachment[]>([])
+  const hasDraft = () => Boolean(value().trim() || attachments().length)
+  const showResume = () => !hasDraft() && !props.semantic && !queuedSend() && props.chat.canResumeInterrupted
   createEffect(attachments, (current) => { props.onAttachmentsChange?.(current) })
   const [commandNotice, setCommandNotice] = createSignal<{ key: string; message: string } | null>(null)
   let attachmentRevision = 0
@@ -526,11 +528,19 @@ export function ComposerPanel(props: {
             }>
               <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand() || loopDraft()}>
                 <Button size="icon" class="size-8 rounded-full" type="button"
-                  aria-label={text(queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
-                  disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
-                    (!sideChatCommand() && submissionUnavailable())}
-                  onClick={() => { void send() }}>
-                  <ArrowUp />
+                  aria-label={text(showResume() ? "resume_interrupted_chat"
+                    : queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
+                  title={showResume() ? text("resume_interrupted_chat") : undefined}
+                  disabled={!props.chat.booted || (showResume()
+                    ? blocked()
+                    : !hasDraft() || (!sideChatCommand() && submissionUnavailable()))}
+                  onClick={() => {
+                    if (showResume()) void props.chat.resumeInterrupted()
+                    else void send()
+                  }}>
+                  <Show when={showResume()} fallback={<ArrowUp />}>
+                    <Play class="size-4" fill="currentColor" aria-hidden="true" />
+                  </Show>
                 </Button>
               </Show>
             </Show>

@@ -1253,6 +1253,8 @@ export const uiZhCn = {
   "sending_2d88d503": "正在发送",
   "add_to_queue_bc3b684c": "加入队列",
   "send_message_00881483": "发送消息",
+  "resume_interrupted_chat": "继续对话",
+  "resume_interrupted_chat_not_started": "未能继续此对话。请刷新后重试。",
   "stop_generation_9ad0aac3": "停止生成",
   "context_tokens_34cb163e": "上下文 {{v0}} / {{v1}} tokens ({{v2}}%)",
   "previous_completed_round_836ba413": "上一次已完成轮次",
