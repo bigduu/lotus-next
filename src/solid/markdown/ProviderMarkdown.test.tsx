@@ -181,6 +181,27 @@ it.each([">", "> >"])("preserves indented code in a blockquote starting with %s"
   expect(host.querySelector("blockquote pre")?.textContent).toContain(example)
 })
 
+it.each([
+  ["```xml", "> ```", "", "```"],
+  ["> ```xml", "> > ```", "> ", "> ```"],
+  ["1. ```xml", "   - ```", "   ", "   ```"],
+  ["- > ```xml", "  > > ```", "  > ", "  > ````"],
+])("keeps fence-like text inside %s in the original code block", (open, literal, prefix, close) => {
+  const example = "<function=edit_sample><parameter=text>example</parameter></function>"
+  const source = [open, literal, `${prefix}${example}`, close, "", "<function=read_sample></function>"].join("\n")
+  const { host } = mount(source, false)
+  expect(host.querySelector(inlineTool)).toBeNull()
+  expect(host.querySelector("pre")?.textContent).toContain(example)
+  expect(host.querySelector('[data-provider-tool="read_sample"]')).not.toBeNull()
+})
+
+it("finds a tool call after an implicitly closed quoted fence", () => {
+  const source = "> ```xml\n> Quoted code\n\n<function=read_sample></function>"
+  const { host } = mount(source, false)
+  expect(host.querySelector("blockquote pre")?.textContent).toContain("Quoted code")
+  expect(host.querySelector('[data-provider-tool="read_sample"]')).not.toBeNull()
+})
+
 it("keeps quoted protocol examples and ordinary marker mentions in Markdown", () => {
   const example = "<function=edit_sample><parameter=text>example</parameter></function>"
   const source = [

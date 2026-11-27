@@ -5,6 +5,45 @@ const FUNCTION_CLOSE = "</function>"
 const PARAMETER_OPEN = "<parameter="
 
 type ToolBlock = { start: number; end: number; name?: string }
+type FenceContainer = { kind: "quote" } | { kind: "list"; padding: string }
+
+function fenceContainers(prefix: string): FenceContainer[] | null {
+  const container = / {0,3}(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+)/y
+  const containers: FenceContainer[] = []
+  let offset = 0
+  for (let match; (match = container.exec(prefix));) {
+    const marker = match[0]
+    containers.push(marker.trimStart().startsWith(">")
+      ? { kind: "quote" }
+      : { kind: "list", padding: " ".repeat(marker.length) })
+    offset = container.lastIndex
+  }
+  return /^ {0,3}$/.test(prefix.slice(offset)) ? containers : null
+}
+
+function fencedCodeEnd(source: string, offset: number, delimiter: string, containers: FenceContainer[]): number {
+  const lines = /(?:\r\n?|\n)([^\r\n]*)/g
+  lines.lastIndex = offset
+  for (let line; (line = lines.exec(source));) {
+    let content = line[1]!
+    const start = lines.lastIndex - content.length
+    // Remove only the opener's containers. Extra quote or list markers belong
+    // to the code, while the container ending implicitly closes its fence.
+    for (const container of containers) {
+      if (container.kind === "list") {
+        if (!content.startsWith(container.padding) && content.trim()) return start
+        content = content.slice(container.padding.length)
+        continue
+      }
+      const quote = /^ {0,3}>[ \t]?/.exec(content)
+      if (!quote) return start
+      content = content.slice(quote[0].length)
+    }
+    const close = /^ {0,3}(`+|~+)[ \t]*$/.exec(content)?.[1]
+    if (close?.[0] === delimiter[0] && close.length >= delimiter.length) return lines.lastIndex
+  }
+  return source.length
+}
 
 function inlineCodeEnd(source: string, offset: number, length: number, streaming: boolean): number {
   // An inline code span can cross a line break within its paragraph.
@@ -63,36 +102,38 @@ function readToolBlock(source: string, start: number, streaming: boolean): ToolB
 export function* findInlineToolBlocks(source: string, streaming: boolean): Generator<ToolBlock> {
   if (!source.includes("<function") && !source.includes("<tool_call")) return
 
-  // Match fenced and inline code delimiters before looking for tool markup.
-  const tokens = /^(?: {0,3}>[ \t]?)* {0,3}(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})([^\r\n]*)|(`+)|\\[\\`<]|<(?:tool_call(?=>|$)|function(?:=|$))/gm
-  let fence = ""
+  const tokens = /(`+)|(~{3,})|\\[\\`<]|<(?:tool_call(?=>|$)|function(?:=|$))/gm
+  const lineBreaks = /\r\n?|\n/g
   let lineEnd = -1
   let indentedCode = false
   for (let token; (token = tokens.exec(source));) {
-    const [value, delimiter, tail, ticks] = token
-    if (fence) {
-      if (delimiter?.[0] === fence[0] && delimiter.length >= fence.length && !tail?.trim()) fence = ""
-      continue
-    }
-    if (delimiter && (delimiter[0] === "~" || !tail?.includes("`"))) {
-      fence = delimiter
-      continue
-    }
-    const backticks = delimiter ?? ticks
-    if (backticks) {
-      const offset = tokens.lastIndex - (tail?.length ?? 0)
-      tokens.lastIndex = inlineCodeEnd(source, offset, backticks.length, streaming)
-      continue
-    }
-    if (value.startsWith("\\")) continue
+    const [value, backticks, tildes] = token
     if (token.index > lineEnd) {
-      const lineBreak = source.indexOf("\n", token.index)
-      lineEnd = lineBreak === -1 ? source.length : lineBreak
-      const lineStart = source.lastIndexOf("\n", token.index - 1) + 1
-      const prefix = source.slice(lineStart, token.index).replace(/^(?: {0,3}>[ \t]?)+/, "")
-      indentedCode = /^(?: {4}| {0,3}\t)/.test(prefix)
+      let lineStart = lineBreaks.lastIndex
+      let lineBreak = lineBreaks.exec(source)
+      while (lineBreak && lineBreak.index < token.index) {
+        lineStart = lineBreaks.lastIndex
+        lineBreak = lineBreaks.exec(source)
+      }
+      lineEnd = lineBreak?.index ?? source.length
+      const prefix = source.slice(lineStart, token.index)
+      const relativePrefix = prefix.replace(/^(?: {0,3}>[ \t]?)+/, "")
+      indentedCode = /^(?: {4}| {0,3}\t)/.test(relativePrefix)
+
+      const delimiter = backticks ?? tildes
+      if (delimiter && delimiter.length >= 3) {
+        const containers = fenceContainers(prefix)
+        if (containers && (tildes || !source.slice(tokens.lastIndex, lineEnd).includes("`"))) {
+          tokens.lastIndex = fencedCodeEnd(source, lineEnd, delimiter, containers)
+          continue
+        }
+      }
     }
-    if (indentedCode) continue
+    if (indentedCode || tildes || value.startsWith("\\")) continue
+    if (backticks) {
+      tokens.lastIndex = inlineCodeEnd(source, tokens.lastIndex, backticks.length, streaming)
+      continue
+    }
 
     const block = readToolBlock(source, token.index, streaming)
     if (block) {
