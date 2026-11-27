@@ -221,12 +221,16 @@ test("queued guidance appears immediately and the live transcript hands off each
   await sendGuidance("after_round")
   await expect.poll(() => queueRefreshRequested).toBe(true)
   const queuedRow = transcript.locator(`[data-queued-guidance="${queued!.id}"]`)
+  const withdrawInterjection = queuedRow.getByRole("button", { name: "撤回", exact: true })
   await expect(queuedRow).toContainText("插话 · 队列中，下一次模型回复前发送")
   await expect(rows).toHaveText([...initialRows, previousReply, guidanceText])
   await expectComposerText(composer, "")
+  await expect(queue).toHaveCount(0)
+  await expect(withdrawInterjection).toHaveCount(0)
   const userCounts = await observeMessageCount("user", guidanceText)
   releaseQueueRefresh()
-  await expect(queue).toBeVisible()
+  await expect(withdrawInterjection).toBeEnabled()
+  await expect(queue).toHaveCount(0)
 
   emit({ type: "tool_complete", tool_call_id: "lookup", result: { success: true, result: "Found it" } })
   const user = {
@@ -247,6 +251,7 @@ test("queued guidance appears immediately and the live transcript hands off each
   // The server may remove the queue entry before the live event or the history
   // request reaches the browser. The acknowledged row should stay visible.
   await expect.poll(() => queueDrained).toBe(true)
+  await expect(withdrawInterjection).toHaveCount(0)
   await expect(queue).toHaveCount(0)
   await expect(rows).toHaveText([...initialRows, previousReply, guidanceText])
   const appended = { ...user, type: "message_appended", session_id: session.id, message_id: user.id }
