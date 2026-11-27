@@ -21,15 +21,16 @@ async function mount(messages: PendingGuidance[]) {
   vi.mocked(guidanceService.cancel).mockResolvedValue(undefined)
   const host = document.body.appendChild(document.createElement("div"))
   const preview = vi.fn()
+  let queue!: ReturnType<typeof createGuidanceQueue>
   const dispose = render(() => {
-    const queue = createGuidanceQueue(() => sessionId, () => true)
+    queue = createGuidanceQueue(() => sessionId, () => true)
     return <GuidanceQueueControls sessionId={sessionId} queue={queue} onPreview={preview} />
   }, host)
   cleanup = () => { dispose(); host.remove() }
   flush()
   await vi.waitFor(() => {
     flush()
-    expect(host.querySelector("details") !== null).toBe(messages.length > 0)
+    expect(queue.pending).toHaveLength(messages.length)
   })
   return { host, preview }
 }
@@ -49,21 +50,26 @@ it("collapses queued text and images without adding another input", async () => 
   expect(guidanceService.cancel).toHaveBeenCalledWith(sessionId, "m")
 })
 
-it("shows no control when there is no queued message", async () => {
-  const { host } = await mount([])
+it("shows no control when only interjections are queued", async () => {
+  const { host } = await mount([
+    { id: "a", text: "interjection", created_at: "now", mode: "after_round" },
+    { id: "b", text: "legacy interjection", created_at: "now" },
+  ])
   expect(guidanceService.list).toHaveBeenCalledWith(sessionId)
   expect(host.textContent).toBe("")
   expect(host.querySelector("details, button, input")).toBeNull()
 })
 
-it("keeps full queued text and distinguishes interjection from after-run delivery", async () => {
+it("only counts after-run messages and keeps their full text when both timings are queued", async () => {
   const text = "长消息".repeat(1200) + "完整末尾"
   const { host } = await mount([
-    { id: "a", text, created_at: "now", mode: "after_round" },
-    { id: "b", text: "later", created_at: "now", mode: "after_run" },
+    { id: "a", text: "interjection", created_at: "now", mode: "after_round" },
+    { id: "b", text, created_at: "now", mode: "after_run" },
   ])
+  expect(host.querySelector("summary")?.textContent).toBe("队列中 1")
   expect(host.textContent).toContain(text)
-  expect(host.textContent).toContain("插话 · 队列中，下一次模型回复前发送")
+  expect(host.textContent).not.toContain("interjection")
+  expect(host.textContent).not.toContain("插话")
   expect(host.textContent).toContain("队列中 · 本次运行结束后发送")
   expect(host.textContent).not.toContain("已送达")
   expect(host.querySelector(".\\[overflow-wrap\\:anywhere\\]")).not.toBeNull()

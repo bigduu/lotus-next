@@ -17,7 +17,7 @@ import { createHistoryReveal, type HistoryRevealRequest } from "./history/create
 import { createStickyHistoryFollow } from "./history/createStickyHistoryFollow"
 import { buildDisplayItems, buildHistoryEntries, buildLiveItems, buildRenderItems, collectSideChatSourceKeys, liveInterjectionMessage, renderItemKey } from "./history/historyProjection"
 import type { createChat } from "./createChat"
-import type { QueuedGuidanceView } from "./guidance/createGuidanceQueue"
+import type { createGuidanceQueue } from "./guidance/createGuidanceQueue"
 import { createMessageActions, type MessageNotice } from "./message-actions/createMessageActions"
 import type { createRootModeAuthority } from "./model/createRootModeAuthority"
 import { placeTimelineAttachments, type TimelineAttachment, type TimelineHistoryEntry } from "./interactions/timelineAttachments"
@@ -45,9 +45,11 @@ export function ChatViewport(props: {
   attachments?: readonly TimelineAttachment[]
   pageVisible?: boolean
   onOpenActor?: (id: string) => void
-  queuedGuidance?: readonly QueuedGuidanceView[]
+  guidanceQueue: ReturnType<typeof createGuidanceQueue>
+  canWithdrawGuidance: boolean
 }) {
   const text = createUiText()
+  const queue = props.guidanceQueue
   const [loadingEarlier, setLoadingEarlier] = createSignal(false)
   const [earlierError, setEarlierError] = createSignal(false)
   const sticky = createStickyHistoryFollow(untrack(() => !props.initialReadingAnchor))
@@ -71,11 +73,13 @@ export function ChatViewport(props: {
     renderProbe.count("app.MessageList.history")
     return buildRenderItems(props.chat.messages)
   })
-  const queuedMessages = createMemo(() =>
-    new Map(props.queuedGuidance?.map(({ message }) => [message.id, message])))
+  const queuedMessages = createMemo(() => new Map(queue.transcript.map(({ message }) => [message.id, message])))
+  const pendingInterjections = createMemo(() => new Set(queue.pending
+    .filter((item) => item.mode !== "after_run")
+    .map(({ id }) => id)))
   const visibleQueue = createMemo(() => {
-    const queued = props.queuedGuidance
-    if (!queued?.length) return undefined
+    const queued = queue.transcript
+    if (!queued.length) return undefined
     const admittedIds = new Set(props.chat.liveSegments.flatMap((segment) =>
       segment.kind === "interjection" && liveInterjectionMessage(segment, queuedMessages().get(segment.messageId))
         ? [segment.messageId] : []))
@@ -245,15 +249,28 @@ export function ChatViewport(props: {
               <RenderHistoryRow item={item()} disclosure={disclosure} theme={props.theme} live afterProcess={afterProcess}
                 onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
             )}</For>
-            <For each={visibleQueue()} keyed={(entry) => entry.message.id}>{(entry) => (
-              <div data-queued-guidance={entry().message.id}>
-                <MessageBody message={entry().message} theme={props.theme}
-                  onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
-                <p class="mt-1 pr-3.5 text-right text-xs text-muted-foreground">
-                  {text(entry().mode === "after_run" ? "message_queue_after_run" : "message_queue_interject")}
-                </p>
-              </div>
-            )}</For>
+            <For each={visibleQueue()} keyed={(entry) => entry.message.id}>{(entry) => {
+              const sessionId = untrack(() => props.chat.currentSessionId)
+              return (
+                <div data-queued-guidance={entry().message.id}>
+                  <MessageBody message={entry().message} theme={props.theme}
+                    onOpenLink={props.onOpenLink} onPreviewImage={props.onPreviewImage} />
+                  <div class="mt-1 flex flex-wrap items-center justify-end gap-x-2 pr-3.5 text-right text-xs text-muted-foreground">
+                    <span>{text(entry().mode === "after_run" ? "message_queue_after_run" : "message_queue_interject")}</span>
+                    <Show when={props.canWithdrawGuidance && pendingInterjections().has(entry().message.id)}>
+                      <Button type="button" size="sm" variant="ghost" class="h-6 px-2 text-xs" disabled={queue.busy}
+                        onClick={() => {
+                          const { id } = entry().message
+                          if (props.canWithdrawGuidance && sessionId === props.chat.currentSessionId &&
+                            pendingInterjections().has(id)) void queue.cancel(id)
+                        }}>
+                        {text("withdraw_6b581989")}
+                      </Button>
+                    </Show>
+                  </div>
+                </div>
+              )
+            }}</For>
             <Show when={timeline().tail.length}>
               <div class="flex flex-col gap-2">
                 <For each={timeline().tail} keyed={(attachment) => attachment.key}>{(attachment) => <>{attachment().render()}</>}</For>

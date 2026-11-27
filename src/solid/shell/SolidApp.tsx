@@ -268,6 +268,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
   const semanticIngress = () => ingress.pending ||
     (ticketScope()?.capabilities?.semantic_messages_v1 === true && ticketScope()?.mutation_enabled === true &&
       ticketScope()?.binding.supervisor_session_id === currentSession())
+  const composerUsesSemanticIngress = () => !tickets.negotiated || semanticIngress()
   const [workReference, setWorkReference] = createSignal<{ scope: ReturnType<typeof sessionView>; request: PendingRequest } | null>(null)
   const ticketReference = () => {
     const replay = ingress.pending ? ingress.references : null
@@ -1193,7 +1194,8 @@ export function SolidApp(props: { ownerAccess: boolean }) {
               onPickTemplate={(prefill) => { appStore.getState().setInputContent("", prefill); focusComposer() }} onDescribeTask={focusComposer} />
           </Loading>}>
           <Show when={sessionView()} keyed>{(session) => (
-            <ChatViewport chat={chat} queuedGuidance={guidanceQueue.transcript} theme={theme().themeMode}
+            <ChatViewport chat={chat} guidanceQueue={guidanceQueue}
+              canWithdrawGuidance={!composerUsesSemanticIngress()} theme={theme().themeMode}
               pageVisible={!settingsOpen()} onOpenActor={selectWorkbenchActor}
               onOpenLink={openLink} onPreviewImage={setImage}
               rootAuthority={rootAuthority} onMessageNotice={reportMessageNotice}
@@ -1235,7 +1237,7 @@ export function SolidApp(props: { ownerAccess: boolean }) {
             onOpenWorkspacePicker={() => setWorkspaceOpen(true)}
             pageVisible={!settingsOpen()}
             selectedWorktreePath={selectedWorktreePath()} draftEpoch={draftEpoch()} navigationVersion={() => navigationVersion}
-            rootAuthority={rootAuthority} ingress={ingress} semantic={!tickets.negotiated || semanticIngress()}
+            rootAuthority={rootAuthority} ingress={ingress} semantic={composerUsesSemanticIngress()}
             draftRecoveryMode={workEnabled() || ingress.pending || ticketScope() ? "work" : !tickets.negotiated ? "unresolved" : "ordinary"}
             reference={ticketReference()} onClearReference={() => setWorkReference(null)} canSendIngress={tickets.canSendIngress}
             onOpenGoal={(id) => { if (id === currentSession()) openWorkbenchTab("inspector") }}

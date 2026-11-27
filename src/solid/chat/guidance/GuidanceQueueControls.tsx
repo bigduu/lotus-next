@@ -1,5 +1,5 @@
 import { Clock3 } from "@lucide/solid"
-import { For, Show } from "solid-js"
+import { createMemo, For, Show } from "solid-js"
 import { guidanceService, type PendingGuidance } from "@services/chat/guidance"
 import { createUiText } from "../../shell/uiText"
 import { Button } from "../../ui/button"
@@ -40,6 +40,7 @@ export function GuidanceQueueControls(props: {
   onPreview?: (url: string) => void
 }) {
   const text = createUiText()
+  const afterRun = createMemo(() => props.queue.pending.filter((item) => item.mode === "after_run"))
   return <>
     <Show when={props.queue.error}>
       <div role="alert" class="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-full rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">
@@ -48,19 +49,19 @@ export function GuidanceQueueControls(props: {
     </Show>
     <Show when={props.sessionId} keyed>
       {(sessionId) => (
-        <Show when={props.queue.pending.length > 0}>
+        <Show when={afterRun().length > 0}>
           <details aria-label={text("message_queue_9dc5a845")} class="group mx-auto mb-2 w-full max-w-6xl rounded-lg border bg-card text-xs">
-            <summary aria-label={text("queued_messages_daa57141", { v0: props.queue.pending.length, count: props.queue.pending.length })}
+            <summary aria-label={text("queued_messages_daa57141", { v0: afterRun().length, count: afterRun().length })}
               class="cursor-pointer whitespace-nowrap rounded px-3 py-2 tabular-nums text-muted-foreground hover:bg-accent">
-              {text("queued_f9e719c6")} {props.queue.pending.length}
+              {text("queued_f9e719c6")} {afterRun().length}
             </summary>
             <div class="max-h-[min(12rem,25dvh)] overflow-y-auto overscroll-contain border-t px-3 py-1">
-              <For each={props.queue.pending} keyed={(item: PendingGuidance) => item.id}>
+              <For each={afterRun()} keyed={(item: PendingGuidance) => item.id}>
                 {(item) => (
                   <div class="flex items-start gap-2 border-b py-2 last:border-0">
                     <div class="min-w-0 flex-1">
                       <div class="mb-1 whitespace-pre-wrap break-words text-muted-foreground">
-                        {text(item().mode === "after_run" ? "message_queue_after_run" : "message_queue_interject")}
+                        {text("message_queue_after_run")}
                       </div>
                       <Show when={item().text}>
                         <div class="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{item().text}</div>
