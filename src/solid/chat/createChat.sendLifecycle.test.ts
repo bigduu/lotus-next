@@ -2,7 +2,7 @@ import { createEffect, createRoot, createSignal } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient } from "@services/api"
 import { NetworkRequestError } from "@services/api/errors"
-import { agentClient, type AgentEventHandlers, type ChatResponse } from "@services/chat/AgentService"
+import { agentClient, type AgentEventHandlers, type ChatResponse, type ExecuteResponse, type SessionSummary } from "@services/chat/AgentService"
 import { clearSessionCompatibilityObservations } from "@services/chat/sessionExecutionCompatibility"
 import { appStore } from "@shared/store/appStore/state"
 import { providerStore } from "@shared/store/appStore/slices/providerState"
@@ -345,6 +345,91 @@ describe("createChat pending user reconciliation", () => {
     await settleChat(() => initialHistory.resolve())
     expect(chat.pendingUserText).toBeNull()
     expect(chat.pendingUserImages).toHaveLength(0)
+  })
+})
+
+describe("createChat interrupted continuation", () => {
+  const id = "interrupted-session"
+  const messages: Message[] = [
+    user("interrupted-user", "Use the existing conversation"),
+    { id: "partial-answer", role: "assistant", type: "text", content: "Saved partial answer", createdAt: timestamp },
+  ]
+
+  function interruptedSession(detail: Partial<SessionSummary> = {}, chat: Partial<ChatItem> = {}) {
+    appStore.setState({ chats: [{ ...session(id, messages), kind: "root", lastRunStatus: "cancelled",
+      isRunning: false, messageCount: messages.length, ...chat }] })
+    vi.mocked(agentClient.getSession).mockResolvedValue({ session: {
+      id, kind: "root", root_session_id: id, spawn_depth: 0, title: id, title_version: 0, pinned: false,
+      model, created_at: timestamp, updated_at: timestamp, last_activity_at: timestamp,
+      message_count: messages.length, has_attachments: false, is_running: false, has_pending_question: false,
+      last_run_status: "cancelled", resume_interrupted: true, ...detail,
+    } })
+    return vi.spyOn(apiClient, "postOnce").mockResolvedValue({
+      session_id: id, status: "started", run_id: "resume-run", events_url: "/v2/stream",
+    })
+  }
+
+  it.each(["cancelled", "running"])("continues saved %s history through one exact execution without sending or truncating", async (status) => {
+    const continueExecution = interruptedSession({ last_run_status: status }, { lastRunStatus: status })
+    const { chat } = await mount(id)
+    await vi.waitFor(() => expect(chat.canResumeInterrupted).toBe(true))
+    const continuation = chat.resumeInterrupted()
+    await expect(chat.resumeInterrupted()).resolves.toBe(false)
+    await settleChat()
+    expect(continueExecution).toHaveBeenCalledExactlyOnceWith(`execute/${id}`, { resume_interrupted: true })
+    expect(agentClient.sendMessage).not.toHaveBeenCalled()
+    expect(agentClient.truncateSessionMessages).not.toHaveBeenCalled()
+    expect(chat.pendingUserText).toBeNull()
+    expect(chat.messages).toEqual(messages)
+
+    await settleChat(() => vi.mocked(agentClient.subscribeToEvents).mock.calls[0][1].onComplete?.(undefined))
+    await expect(continuation).resolves.toBe(true)
+  })
+
+  it("attaches the stream only after the interrupted execute is acknowledged", async () => {
+    const receipt = deferred<ExecuteResponse>()
+    const continueExecution = interruptedSession().mockReturnValueOnce(receipt.promise)
+    const { chat } = await mount(id)
+    await vi.waitFor(() => expect(chat.canResumeInterrupted).toBe(true))
+
+    const continuation = chat.resumeInterrupted()
+    await settleChat()
+    expect(continueExecution).toHaveBeenCalledOnce()
+    expect(agentClient.subscribeToEvents).not.toHaveBeenCalled()
+
+    await settleChat(() => receipt.resolve({
+      session_id: id, status: "started", run_id: "resume-run", events_url: "/v2/stream",
+    }))
+    const subscriptions = vi.mocked(agentClient.subscribeToEvents).mock.calls
+    expect(subscriptions).toHaveLength(1)
+    expect(subscriptions[0][0]).toBe(id)
+    await settleChat(() => subscriptions[0][1].onComplete?.(undefined))
+    await expect(continuation).resolves.toBe(true)
+  })
+
+  it.each([
+    { reason: "the server did not authorize a resume", detail: { resume_interrupted: false }, chat: {} },
+    { reason: "the server has no resume support", detail: { resume_interrupted: undefined }, chat: {} },
+    { reason: "the session is running", detail: {}, chat: { isRunning: true } },
+  ])("refuses to continue when $reason", async ({ detail, chat: override }) => {
+    const continueExecution = interruptedSession(detail, override)
+    const { chat } = await mount(id)
+    expect(chat.canResumeInterrupted).toBe(false)
+    await expect(chat.resumeInterrupted()).resolves.toBe(false)
+    expect(continueExecution).not.toHaveBeenCalled()
+  })
+
+  it("does not resume while a clarification is waiting for an answer", async () => {
+    const continueExecution = interruptedSession()
+    vi.mocked(agentClient.getPendingQuestion).mockResolvedValue({
+      has_pending_question: true, interaction_kind: "clarification", permission_request: null,
+      question: "Which branch?", options: ["main"], allow_custom: true, tool_call_id: "question/one",
+    })
+    const { chat } = await mount(id)
+    await vi.waitFor(() => expect(chat.pendingQuestion?.tool_call_id).toBe("question/one"))
+    expect(chat.canResumeInterrupted).toBe(false)
+    await expect(chat.resumeInterrupted()).resolves.toBe(false)
+    expect(continueExecution).not.toHaveBeenCalled()
   })
 })
 

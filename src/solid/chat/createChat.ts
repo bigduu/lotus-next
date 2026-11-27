@@ -1,7 +1,7 @@
 import { supportsContinuousUpstreamRetry, readUpstreamRetryCapability, isRetryRunId, type UpstreamRetrySelection, type UpstreamRetryFeedback } from "@services/chat/upstreamRetry"
 import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { uiText } from "@shared/i18n/text"
-import type { ChatItem } from "@shared/types/chatMessages"
+import type { ChatItem, UserMessage } from "@shared/types/chatMessages"
 import { createOutputRate, createSessionExecutionCompatibility } from "./observation"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { createEffect, createMemo, createSignal, onSettled, untrack } from "solid-js"
@@ -49,7 +49,7 @@ import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionState"
 import type { Message, MessageImage } from "@shared/types/chat"
-import { projectCompletedAnswers, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
+import { isStreamedAnswerPrefix, matchesCompletedAnswer, projectCompletedAnswers, readAnswerTurn, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import {
   acquireCompletedAnswerLease, getCompletedAnswerHandoffs, invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers,
   newCompletedAnswerHandoffId, reconcileCompletedAnswers, releaseCompletedAnswerLease,
@@ -188,8 +188,7 @@ export type LiveToolCall = {
 export type LiveSegment =
   | { kind: "text"; text: string; reasoning: string | null }
   | { kind: "tools"; calls: LiveToolCall[] }
-
-type BufferedLiveSegment = LiveSegment | { kind: "interjection"; messageId: string }
+  | { kind: "interjection"; messageId: string; message?: UserMessage }
 
 export type StreamPhase = "streaming" | "finalizing" | null
 
@@ -550,8 +549,8 @@ export function createChat(
   const childBufRef = cell<Record<string, string>>({})
   // The current run's frozen live timeline (finished text rounds + tool groups).
   // Mutations happen on the ref; a RAF flush clones into state ≤1×/frame.
-  const [liveSegmentsState, setLiveSegmentsState] = createSignal<BufferedLiveSegment[]>([])
-  const liveSegRef = cell<BufferedLiveSegment[]>([])
+  const [liveSegmentsState, setLiveSegmentsState] = createSignal<LiveSegment[]>([])
+  const liveSegRef = cell<LiveSegment[]>([])
   const segRafRef = cell<number | null>(null)
   const toolCallsByIdRef = cell<Map<string, LiveToolCall>>(new Map())
   // One-line "what is the agent doing" status (tool running / compacting…),
@@ -565,6 +564,8 @@ export function createChat(
   // history reconciliation contains that exact terminal assistant message.
   const retainedTerminalRef = createObservableCell<RetainedTerminal | null>(null)
   const answerLeaseRef = createObservableCell<ReturnType<typeof acquireCompletedAnswerLease> | null>(null)
+  const streamAnswerBaselineIdsRef = createObservableCell<ReadonlySet<string>>(new Set())
+  const [liveHistoryCommitted, setLiveHistoryCommitted] = createSignal(false)
   const retainTerminalAcrossUnmount = () => {
     const retained = retainedTerminalRef.current
     if (!retained) return
@@ -600,8 +601,40 @@ export function createChat(
   const cachedSameRun = createMemo(() => !retainedTerminal() && streamSid() === sid() && knownRun() && completedHandoffs().some((entry) =>
     entry.sessionId === sid() && entry.runId === knownRun() && entry.text.startsWith(streamingText() ?? "")))
   const answerLeaseValid = createMemo(() => (completedHandoffs(), answerLeaseRef.current?.valid !== false))
-  const streaming = createMemo(() => streamSid() === sid() && !retainedTerminalIsHydrated() && !cachedSameRun() && answerLeaseValid() ? streamingText() : null)
-  const streamingReasoning = createMemo(() => streamSid() === sid() && answerLeaseValid() ? streamingReasoningText() : null)
+  // Account history can arrive before the agent channel's Complete frame.
+  // Resolve the candidate rows only on history or turn-identity changes.
+  const recordedLiveAnswers = createMemo(() => {
+    completedHandoffs()
+    const lease = answerLeaseRef.current
+    if (!lease || lease.sessionId !== sid() || streamSid() !== sid() || !answerLeaseValid()) return null
+    const turn = readAnswerTurn(canonicalMessages(), {
+      acknowledgedMessageId: streamUserMessageIdRef.current,
+      baselineMessageId: streamBaselineMessageIdRef.current,
+      baselineMessageIds: streamAnswerBaselineIdsRef.current,
+      excludedCanonicalIds: lease.excludedCanonicalIds,
+      anchorSeen: false,
+    })
+    return turn && turn.anchor >= 0 ? turn : null
+  })
+  const canonicalOwnsLiveAnswer = createMemo(() => {
+    if (retainedTerminalIsHydrated()) return true
+    const turn = recordedLiveAnswers()
+    if (!turn) return false
+    const { recordedFinals, freshUnphasedTail } = turn
+    if (!recordedFinals.length && !freshUnphasedTail) return false
+    const preview = streamingText() ?? ""
+    if (recordedFinals.some((answer) => matchesCompletedAnswer(answer.content, preview))) return true
+    // A final checkpoint confirms the complete tool and assistant tail. With
+    // that proof, account for preview batching and phase-less conversations.
+    return liveHistoryCommitted() && (
+      freshUnphasedTail !== null && matchesCompletedAnswer(freshUnphasedTail.content, preview)
+      || freshUnphasedTail === null && recordedFinals.length === 1 && isStreamedAnswerPrefix(recordedFinals[0].content, preview)
+    )
+  })
+  const canonicalOwnsCommittedLiveSegments = createMemo(() =>
+    retainedTerminalIsHydrated() || liveHistoryCommitted() && canonicalOwnsLiveAnswer())
+  const streaming = createMemo(() => streamSid() === sid() && !canonicalOwnsLiveAnswer() && !cachedSameRun() && answerLeaseValid() ? streamingText() : null)
+  const streamingReasoning = createMemo(() => streamSid() === sid() && !canonicalOwnsLiveAnswer() && answerLeaseValid() ? streamingReasoningText() : null)
   const canonicalUserIds = createMemo(() => new Set(
     canonicalMessages().flatMap((message) => message.role === "user" ? [message.id] : []),
   ))
@@ -612,6 +645,7 @@ export function createChat(
     const checkpoint = liveSegmentsState().findLastIndex((segment) => segment.kind === "interjection"
       && canonicalUserIds().has(segment.messageId))
     const segments = checkpoint < 0 ? liveSegmentsState() : liveSegmentsState().slice(checkpoint + 1)
+    if (canonicalOwnsCommittedLiveSegments()) return segments.filter((segment) => segment.kind === "interjection")
     if (streamPhaseState() !== null) return segments
     // Failed history reads retain terminal tool evidence without keeping a run
     // active. Only results after this stream's latest acknowledged user can confirm
@@ -628,7 +662,7 @@ export function createChat(
       "type" in message && message.type === "tool_result" && !streamBaselineToolResultIdsRef.current.has(message.id)
         ? [message.toolCallId] : []))
     let hydrated = false
-    const remaining = segments.flatMap<BufferedLiveSegment>((segment) => {
+    const remaining = segments.flatMap<LiveSegment>((segment) => {
       if (segment.kind !== "tools") return [segment]
       const calls = segment.calls.filter((call) => !persistedToolIds.has(call.toolCallId))
       hydrated ||= calls.length !== segment.calls.length
@@ -636,8 +670,7 @@ export function createChat(
     })
     return hydrated ? remaining : segments
   })
-  const liveSegments = createMemo(() => uncommittedSegments().length
-    ? uncommittedSegments().filter((segment) => segment.kind !== "interjection") : EMPTY_SEGMENTS)
+  const liveSegments = createMemo(() => uncommittedSegments().length ? uncommittedSegments() : EMPTY_SEGMENTS)
   const streamStatus = createMemo(() => streamSid() === sid() && answerLeaseValid() ? streamStatusState() : null)
   const contextCompression = createMemo(() => {
     const current = compressionState()
@@ -733,7 +766,7 @@ export function createChat(
 
   const publishSegments = () => {
     segRafRef.current = null
-    // Clone tools and their calls so React sees new references for mutated rows.
+    // Publish new references for mutated tool rows.
     setLiveSegmentsState(liveSegRef.current.map((segment) =>
       segment.kind === "tools" ? { ...segment, calls: segment.calls.map((call) => ({ ...call })) } : segment,
     ))
@@ -867,12 +900,16 @@ export function createChat(
       if (operationId !== undefined && streamOperationRef.current !== operationId) return
       const partialAnswer = retain === "partial-answer"
       const visibleText = partialAnswer ? streamBufRef.current : final
-      const retainedSegments = retain ? liveSegRef.current.flatMap<BufferedLiveSegment>((segment) => {
-        if (segment.kind === "interjection") return [segment]
+      const retainedSegments = liveSegRef.current.flatMap<LiveSegment>((segment) => {
+        if (segment.kind === "interjection") {
+          return (retain || operationId !== undefined && answerLeaseRef.current?.valid)
+            && !canonicalUserIds().has(segment.messageId) ? [segment] : []
+        }
+        if (!retain) return []
         if (segment.kind === "text") return partialAnswer ? [segment] : []
         const calls = segment.calls.filter((call) => call.status !== "running").map((call) => ({ ...call }))
         return calls.length ? [{ ...segment, calls }] : []
-      }) : EMPTY_SEGMENTS
+      })
       const compression = compressionRef.current
       if (compression && compression.operationId === streamOperationRef.current) {
         const value = compressionRunEnded(compression.value)
@@ -897,7 +934,7 @@ export function createChat(
         answerLeaseRef.current = null
         retainedTerminalRef.current = null
         setStreamPhaseState(null)
-        if (!retainedSegments.some((segment) => segment.kind === "tools")) setStreamSid(null)
+        if (!retainedSegments.length) setStreamSid(null)
       } else {
         setStreamPhaseState("finalizing")
       }
@@ -1152,6 +1189,7 @@ export function createChat(
       runSid: string,
       opts?: {
         resume?: boolean
+        resumeInterrupted?: boolean
         upstreamRetry?: UpstreamRetrySelection
         liveBootstrapResume?: boolean
         operationId?: number
@@ -1207,11 +1245,14 @@ export function createChat(
       noteSessionOperation(runSid, operationId)
       setUpstreamRetryFeedback(null)
       streamOperationRef.current = operationId
+      setLiveHistoryCommitted(false)
       const baselineMessages = appStore
         .getState()
         .chats.find((chat) => chat.id === runSid)
         ?.messages ?? []
       streamBaselineMessageIdRef.current = baselineMessages.findLast((message) => message.role !== "system")?.id ?? null
+      const baselineMessageIds = new Set(baselineMessages.map((message) => message.id))
+      streamAnswerBaselineIdsRef.current = baselineMessageIds
       streamBaselineToolResultIdsRef.current = new Set(baselineMessages.flatMap((message) =>
         "type" in message && message.type === "tool_result" ? [message.id] : []))
       streamUserMessageIdRef.current = opts?.acknowledgedMessageId ?? null
@@ -1295,6 +1336,16 @@ export function createChat(
       let confirmedRunId: string | null = null
       let reconcileTimer: ReturnType<typeof setTimeout> | undefined
       const clearReconcileTimer = () => clearTimeout(reconcileTimer)
+      let subscriptionOpen = true
+      const releaseSubscription = () => {
+        subscriptionOpen = false
+        clearReconcileTimer()
+        ac.signal.removeEventListener("abort", clearReconcileTimer)
+        if (subscriptionRef.current === subscription) {
+          subscriptionRef.current = null
+          subscribedSidRef.current = null
+        }
+      }
       ac.signal.addEventListener("abort", clearReconcileTimer, { once: true })
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
@@ -1317,9 +1368,12 @@ export function createChat(
         let previousPaneFence: ContinuousStopFence | undefined
         const execution = opts?.upstreamRetry
           ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
-          : startOrdinaryExecution(runSid, operationId, () => opts?.liveBootstrapResume
-            ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
-            : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef), getObservedRunId)
+          : startOrdinaryExecution(runSid, operationId, () => {
+            if (opts?.resumeInterrupted) return agentClient.resumeInterruptedSession(runSid)
+            return opts?.liveBootstrapResume
+              ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
+              : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef)
+          }, getObservedRunId)
         if (opts?.upstreamRetry) {
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
           // A Stop clicked before Execute returns waits for that exact ACK. It
@@ -1393,6 +1447,12 @@ export function createChat(
           stopStream(null, operationId)
           ac.abort()
         })
+        // A subscription opened before Bamboo accepts a resume can replay the
+        // predecessor's terminal event and close before the new run starts.
+        if (opts?.resumeInterrupted && (!await execution.then(() => true, () => false) || !ownsRunEvent())) {
+          releaseSubscription()
+          return
+        }
       }
 
       const settleCompleted = (historyReady = false): void => {
@@ -1415,7 +1475,7 @@ export function createChat(
               baselineMessageText: baseline?.role === "assistant" && baseline.type === "text" ? baseline.content : null,
               excludedCanonicalIds: new Set(answerLease.excludedCanonicalIds),
               acknowledgedMessageId,
-              baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
+              baselineMessageIds,
               anchorSeen: acknowledgedMessageId !== null && observed.some((message) => message.role === "user" && message.id === acknowledgedMessageId),
             }
             const retained = { ...handoff, lease: answerLease }
@@ -1532,7 +1592,6 @@ export function createChat(
       // Start only after execute acknowledges admission, and confirm idle twice
       // with fresh detail reads so a stale pre-start summary cannot stop a run.
       let observedIdle = false
-      let subscriptionOpen = true
       const canReconcile = () => ownsStream() && subscriptionOpen && !ac.signal.aborted && !terminal.settlement
       const reconcileOwnedRun = async () => {
         if (!canReconcile()) return
@@ -1777,20 +1836,19 @@ export function createChat(
               }
             })()
           },
-          onMessageAppended: (appendedSessionId, messageId, interjection) => {
+          onMessageAppended: (appendedSessionId, messageId, interjection, user) => {
             if (appendedSessionId !== runSid) return
             if (ownsRunEvent() && interjection && messageId && !interjections.has(messageId)
-                && !baselineMessages.some((message) => message.id === messageId)) {
+                && !baselineMessageIds.has(messageId)) {
               interjections.add(messageId)
               streamUserMessageIdRef.current = messageId
               freezeTextSegment()
-              liveSegRef.current.push({ kind: "interjection", messageId })
+              liveSegRef.current.push({ kind: "interjection", messageId, message: user })
               flushSegments(true)
             }
             // Queued guidance is checkpointed before this event is published.
-            // Re-read immediately from the session stream so every visible
-            // pane (including a bound split pane) renders the admitted user
-            // message without waiting for the account feed or a reload.
+            // Load history immediately so the committed timeline can replace
+            // the prefix through this interjection in each observing pane.
             void appStore.getState().loadChatHistory(runSid, {
               mode: "monotonic",
             })
@@ -1805,6 +1863,7 @@ export function createChat(
             }),
           onSessionHistoryCommitted: (committedSessionId) => {
             if (committedSessionId !== runSid) return
+            if (ownsStream() && !ac.signal.aborted && mountedRef.current) setLiveHistoryCommitted(true)
             // This event is the server's post-persistence barrier. Re-read once;
             // the retained terminal effect above swaps the live tail out only
             // after this authoritative history lands in the store.
@@ -1824,15 +1883,7 @@ export function createChat(
         },
         ac,
         ...(observation ? [observation] : []),
-      ).finally(() => {
-        subscriptionOpen = false
-        clearReconcileTimer()
-        ac.signal.removeEventListener("abort", clearReconcileTimer)
-        if (subscriptionRef.current === subscription) {
-          subscriptionRef.current = null
-          subscribedSidRef.current = null
-        }
-      })
+      ).finally(releaseSubscription)
       if (terminal.settlement) {
         await terminal.settlement
       } else if (ownsStream()) {
@@ -1975,6 +2026,48 @@ export function createChat(
     }),
   )
 
+  // The list can retain "running" after a worker disappears. Check the exact
+  // idle session detail before offering continuation, including after reload.
+  const interruptedResumeTarget = createMemo(() => {
+    const session = currentChat()
+    if (!owned() || !pageVisible() || session?.kind !== "root" || session.isRunning !== false
+        || !session.messages.some((message) => message.role !== "system")
+        || !["running", "pending", "cancelled", "error", "timeout", "failed"].includes(session.lastRunStatus ?? "")
+        || sending() || shouldObserve() || stoppingInPane()
+        || session.activity === "running" || session.activity === "waiting_user" || hasSessionWorkWait(session.activity)
+        || session.planMode?.status === "awaiting_approval") return null
+    return [session.id, session.createdAtExact, session.updatedAt, session.lastRunStatus] as const
+  }, { equals: shallow })
+  const [interruptResumeConfirmed, setInterruptResumeConfirmed] = createSignal<ReturnType<typeof interruptedResumeTarget>>(null)
+  createEffect(interruptedResumeTarget, (target) => {
+    if (!target) return
+    let current = true
+    let recheck: ReturnType<typeof setTimeout> | undefined
+    const [id, createdAt, , status] = target
+    const readDetail = (allowRecheck: boolean) => {
+      void agentClient.getSession(id).then(({ session }) => {
+        if (!current || session.id !== id || createdAt && session.created_at !== createdAt
+            || session.is_running !== false || session.has_pending_question === true) return
+        if (session.resume_interrupted === true) setInterruptResumeConfirmed(target)
+        // The owner's lease can expire without changing the persisted summary.
+        else if (allowRecheck && status === "running" && session.resume_interrupted === false) {
+          recheck = setTimeout(() => readDetail(false), 60_000)
+        }
+      }).catch(() => {})
+    }
+    readDetail(true)
+    return () => {
+      current = false
+      clearTimeout(recheck)
+    }
+  })
+  const canResumeInterrupted = () => {
+    const target = interruptedResumeTarget()
+    return target !== null && target === interruptResumeConfirmed()
+      && !hasPendingQuestion() && !pendingQuestion() && !pendingApproval()
+      && !questionSubmitRef.current && sendFailure()?.kind !== "submission-unconfirmed"
+  }
+
   // ── Stranded-terminal reconcile ───────────────────────────────────────
   // If the summary settles (is_running=false via the feed) while we still hold
   // a live subscription for that session, the agent channel probably missed
@@ -2064,12 +2157,13 @@ export function createChat(
     return () => document.removeEventListener("visibilitychange", onVisibility)
   })
 
-  // Re-run the conversation after a server-side truncate/restore (regenerate,
-  // retry, edit). Shows the streaming placeholder + reloads history on done.
+  // Start another execution (regenerate, retry, continue, edit) and attach it
+  // to this pane's stream. Some callers prepare the history first.
   const rerun = async (
       runSid: string,
       opts?: {
         prepare?: () => Promise<unknown>
+        resumeInterrupted?: boolean
         upstreamRetry?: UpstreamRetrySelection
         expectedFailureOperationId?: number
         pendingOperationId?: number
@@ -2139,9 +2233,11 @@ export function createChat(
 
         const stillAtOrigin =
           mountedRef.current &&
+          readSessionId() === operation.originSessionId &&
           navigationRef.current.sessionId === operation.originSessionId &&
           navigationRef.current.epoch === operation.originNavigationEpoch
         if (!stillAtOrigin) {
+          if (opts?.resumeInterrupted) return false
           // Preparation can be destructive (retry truncate / edit restore). If
           // the user left meanwhile, finish that exact session in the
           // background without taking over the new pane's subscription or Stop
@@ -2176,6 +2272,7 @@ export function createChat(
         if (mountedRef.current) setSubmissionPending(false)
         const stream = runStream(runSid, {
           upstreamRetry: opts?.upstreamRetry,
+          resumeInterrupted: opts?.resumeInterrupted,
           modelSelection,
           reasoningEffort: selectedReasoningEffort ?? null,
           operationId: operation.id,
@@ -2232,6 +2329,12 @@ export function createChat(
         invalidateCompletedAnswers(sessionId, { messages, targetId: messages.findLast((message) => message.role === "user")?.id ?? null })
       },
     })
+  }
+
+  const resumeInterrupted = async (): Promise<boolean> => {
+    const sessionId = readSessionId()
+    if (!sessionId || sessionId !== sid() || !canResumeInterrupted()) return false
+    return rerun(sessionId, { resumeInterrupted: true })
   }
 
   const retry = async (failure?: GenerationFailure, options?: { upstreamRetry?: UpstreamRetrySelection }) => {
@@ -2765,23 +2868,31 @@ export function createChat(
     if (!sessionId || options?.isOriginCurrent?.() === false || isSessionExecutionBlocked(sessionId)
       || getRootModeFenceState(sessionId) !== "clear") return undefined
     const origin = navigationRef.current
-    let newId: string | undefined
+    const ownsOrigin = () => mountedRef.current && readSessionId() === sessionId && navigationRef.current === origin
+      && options?.isOriginCurrent?.() !== false
+    let acknowledged: { session?: { id?: string; session_id?: string } }
     try {
-      const res = await apiClient.post<{ session?: { id?: string; session_id?: string } }>(
+      acknowledged = await apiClient.postOnce(
         `sessions/${encodeURIComponent(sessionId)}/fork`, { up_to_message_id: messageId },
       )
-      const candidate = res?.session?.id ?? res?.session?.session_id
-      if (typeof candidate !== "string" || !candidate || candidate.trim() !== candidate || candidate === sessionId) return undefined
-      newId = candidate
-      await appStore.getState().refreshChatsNow()
-      if (!mountedRef.current || readSessionId() !== sessionId || navigationRef.current !== origin
-        || options?.isOriginCurrent?.() === false) return newId
-      if (isBound) onSessionCreated?.(newId)
-      else appStore.getState().selectSession(newId)
-      await appStore.getState().loadChatHistory(newId)
     } catch (failure) {
       observeSessionExecutionConflict(sessionId, failure)
+      throw failure
     }
+    const newId = acknowledged?.session?.id ?? acknowledged?.session?.session_id
+    if (typeof newId !== "string" || !newId || newId.trim() !== newId || newId === sessionId) {
+      throw new Error(uiText("session_fork_response_missing_destination"))
+    }
+
+    await appStore.getState().refreshChatsNow().catch(() => {})
+    if (!ownsOrigin()) return newId
+    if (!appStore.getState().chats.some((chat) => chat.id === newId)) {
+      const restored = await appStore.getState().restoreSession(newId).catch(() => false)
+      if (!ownsOrigin() || !restored) return newId
+    }
+    if (isBound) onSessionCreated?.(newId)
+    else appStore.getState().selectSession(newId)
+    await appStore.getState().loadChatHistory(newId)
     return newId
   }
 
@@ -2914,6 +3025,7 @@ export function createChat(
     },
     get messages() { return messages() },
     get streaming() { return streaming() },
+    get liveAnswerCommitted() { return canonicalOwnsLiveAnswer() },
     get streamPhase() { return streamPhase() },
     get streamingReasoning() { return streamingReasoning() },
     get liveSegments() { return liveSegments() },
@@ -2947,6 +3059,8 @@ export function createChat(
     fork,
     regenerate,
     retry,
+    get canResumeInterrupted() { return canResumeInterrupted() },
+    resumeInterrupted,
     editMessage,
     get sendFailure() { return sendFailure() },
     get pendingQuestion() { return pendingQuestion() },

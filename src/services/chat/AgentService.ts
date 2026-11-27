@@ -16,6 +16,7 @@ import { readSessionLoopStatus, type SessionLoopCommand, type SessionLoopStatus 
 import { isGoalResumeCommand } from "./goalCommand";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
+import type { UserMessage } from "@shared/types/chatMessages";
 
 export type { FeedSubscription } from "./v2Stream";
 
@@ -894,6 +895,8 @@ export interface SessionSummary {
   is_running: boolean;
   last_run_status?: string;
   last_run_error?: string;
+  /** Detail only. The backend has confirmed that this interrupted run can be resumed. */
+  resume_interrupted?: boolean;
   /** Detail only; index/list rows omit it. Validate before presentation. */
   last_run_diagnostic?: unknown;
   /** Active plan mode runtime state mirrored from backend session summary. */
@@ -1312,7 +1315,7 @@ export interface AgentEventHandlers {
     summary?: string,
     error?: string,
   ) => void;
-  onMessageAppended?: (sessionId: string, messageId: string | undefined, interjection: boolean) => void;
+  onMessageAppended?: (sessionId: string, messageId: string | undefined, interjection: boolean, user?: UserMessage) => void;
   onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
@@ -1582,6 +1585,18 @@ export class AgentClient {
   /** Get one session summary, including its root tree size. */
   async getSession(sessionId: string): Promise<GetSessionResponse> {
     return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+  }
+
+  /** Start from this session's saved context without appending a message. */
+  async resumeInterruptedSession(sessionId: string): Promise<ExecuteResponse> {
+    const response = await apiClient.postOnce<ExecuteResponse>(`execute/${encodeURIComponent(sessionId)}`, {
+      resume_interrupted: true,
+    });
+    if (response?.session_id !== sessionId || !isRetryRunId(response.run_id)
+      || (response.status !== "started" && response.status !== "already_running")) {
+      throw new Error(uiText("resume_interrupted_chat_not_started"));
+    }
+    return response;
   }
 
   /** Open the canonical Supervisor without starting a run or enabling Tickets. */
@@ -2281,10 +2296,16 @@ export class AgentClient {
         break;
       case "message_appended":
         if (event.session_id) {
+          const interjection = event.role === "user" && event.correlation_id === "session-guidance";
+          const user: UserMessage | undefined = interjection && event.message_id
+            && typeof event.content === "string" && typeof event.created_at === "string"
+            ? { id: event.message_id, role: "user", content: event.content, createdAt: event.created_at }
+            : undefined;
           handlers.onMessageAppended?.(
             event.session_id,
             event.message_id,
-            event.role === "user" && event.correlation_id === "session-guidance",
+            interjection,
+            user,
           );
         }
         break;

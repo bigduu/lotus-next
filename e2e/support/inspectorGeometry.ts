@@ -24,7 +24,8 @@ export async function expectInspectorGeometry(panel: Locator, testInfo: TestInfo
       range.selectNodeContents(node)
       return Array.from(range.getClientRects(), ({ left, right, top, bottom }) => ({ left, right, top, bottom }))
     }
-    const gap = section.querySelector('[data-actor-gap]')
+    const gap = section.querySelector('[data-actor-gap] button')
+    const gapDetails = section.ownerDocument.querySelector('[data-actor-notice-details][data-state="open"]')
     const heading = section.firstElementChild!.querySelector('span')!
     const titlePrefixes = Array.from(section.querySelectorAll('[role="treeitem"] [data-actor-title]') as ArrayLike<typeof section>, (title) => {
       const text = String(title.textContent ?? "")
@@ -37,10 +38,11 @@ export async function expectInspectorGeometry(panel: Locator, testInfo: TestInfo
       viewport: { width: view.innerWidth, height: view.innerHeight, dpr: view.devicePixelRatio },
       workbench: measure(workbench),
       tabpanel: measure(tabpanel), embedded: measure(embedded), scroller: measure(scroller), panel: measure(section),
-      refresh: rect(section.querySelector('button')!),
+      refresh: rect(section.querySelector('button[aria-label="刷新代理结构"]')!),
       heading: { text: heading.textContent, rects: textRects(heading) },
       titlePrefixes,
-      gap: gap ? { text: gap.textContent, rects: textRects(gap), overflowWrap: view.getComputedStyle(gap).overflowWrap } : null,
+      gap: gap && rect(gap),
+      gapDetails: gapDetails ? { rect: rect(gapDetails), text: gapDetails.textContent, rects: textRects(gapDetails) } : null,
     }
   })
   // Keep concrete geometry even on assertion failure, alongside the screenshot/trace.
@@ -63,9 +65,19 @@ export async function expectInspectorGeometry(panel: Locator, testInfo: TestInfo
   const ancestors = [geometry.workbench, geometry.tabpanel, geometry.embedded, geometry.scroller, geometry.panel]
   const visibleLeft = Math.max(0, ...ancestors.map((layer) => layer.rect.left))
   const visibleRight = Math.min(geometry.viewport.width, ...ancestors.map((layer) => layer.rect.right))
-  const readable = [geometry.refresh, ...geometry.heading.rects, ...(geometry.gap?.rects ?? []), ...geometry.titlePrefixes.flatMap((title) => title.rects)]
+  const readable = [geometry.refresh, ...geometry.heading.rects, ...geometry.titlePrefixes.flatMap((title) => title.rects)]
+  if (geometry.gap) readable.push(geometry.gap)
   expect(geometry.heading.rects.length, `${phase}: heading text is rendered`).toBeGreaterThan(0)
-  if (geometry.gap) expect(geometry.gap.rects.length, `${phase}: complete gap text is rendered`).toBeGreaterThan(0)
+  if (geometry.gapDetails) {
+    const { rect, rects } = geometry.gapDetails
+    expect(rects.length, `${phase}: complete gap text is rendered`).toBeGreaterThan(0)
+    for (const box of [rect, ...rects]) {
+      expect(box.left, `${phase}: gap text stays inside viewport left`).toBeGreaterThanOrEqual(-1)
+      expect(box.right, `${phase}: gap text stays inside viewport right`).toBeLessThanOrEqual(geometry.viewport.width + 1)
+      expect(box.left, `${phase}: gap text stays inside details left`).toBeGreaterThanOrEqual(rect.left - 1)
+      expect(box.right, `${phase}: gap text stays inside details right`).toBeLessThanOrEqual(rect.right + 1)
+    }
+  }
   expect(geometry.titlePrefixes.length, `${phase}: tree titles are rendered`).toBeGreaterThan(0)
   for (const title of geometry.titlePrefixes) expect(title.rects.length, `${phase}: title prefix ${title.text}`).toBeGreaterThan(0)
   for (const box of readable) {

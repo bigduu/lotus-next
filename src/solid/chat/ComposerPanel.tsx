@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, LoaderCircle, Paperclip, Square, X } from "@lucide/solid"
+import { ArrowUp, ChevronDown, Ellipsis, FolderGit2, LoaderCircle, Paperclip, Play, Square, X } from "@lucide/solid"
 import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, Loading, onSettled, Show, untrack } from "solid-js"
 import { appStore } from "@shared/store/appStore/state"
 import { newSessionPermissionStore } from "@shared/store/newSessionPermissionState"
@@ -16,7 +16,7 @@ import { composerControlClassName, composerIconButtonClassName } from "@/lib/com
 import { createStoreSelector } from "../state/createStoreSelector"
 import type { ComposerFocusSnapshot } from "../composer/ComposerEditor"
 import { isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
-import { createGuidanceQueue } from "./guidance/createGuidanceQueue"
+import type { createGuidanceQueue } from "./guidance/createGuidanceQueue"
 import { GuidanceQueueControls, GuidanceTimingControl } from "./guidance/GuidanceQueueControls"
 import type { createRootModeAuthority } from "./model/createRootModeAuthority"
 import type { createTicketIngress } from "./createTicketIngress"
@@ -45,6 +45,8 @@ const ComposerEditor = lazy(() => import("../composer/ComposerEditor"), { export
 
 export function ComposerPanel(props: {
   chat: Chat
+  running: boolean
+  guidanceQueue: ReturnType<typeof createGuidanceQueue>
   workspacePath: string | null
   setupNeedsModel?: boolean
   inputId?: string
@@ -121,8 +123,7 @@ export function ComposerPanel(props: {
   })
   const value = () => inputs()[draftKey()]?.content ?? ""
   const monitoredCommand = () => transcriptWorkWait(props.chat).monitoredCommand
-  const running = () => props.chat.currentChat?.isRunning === true
-    || (props.chat.sending && props.chat.streaming !== null) || monitoredCommand()
+  const running = () => props.running
   const liveRetry = createLiveBootstrapRetry({
     sessionId: () => props.chat.currentSessionId,
     running,
@@ -141,7 +142,7 @@ export function ComposerPanel(props: {
     navigationVersion: props.navigationVersion,
   })
   const [worktreeNotice, setWorktreeNotice] = createSignal<{ message: string; isCurrent: () => boolean } | null>(null)
-  const queue = createGuidanceQueue(() => props.chat.currentSessionId, running)
+  const queue = props.guidanceQueue
   const queuedSend = () => !props.semantic && Boolean(props.chat.currentSessionId && (running() || queue.hasUnconfirmed))
   const interactionBlocked = () => Boolean(props.chat.pendingQuestion || props.chat.pendingApproval ||
     props.chat.executionCompatibility.blocked || isSessionExecutionBlocked(props.chat.currentSessionId))
@@ -149,6 +150,8 @@ export function ComposerPanel(props: {
   const [submitting, setSubmitting] = createSignal(false)
   let active = false
   const [attachments, setAttachments] = createSignal<ChatImageAttachment[]>([])
+  const hasDraft = () => Boolean(value().trim() || attachments().length)
+  const showResume = () => !hasDraft() && !props.semantic && !queuedSend() && props.chat.canResumeInterrupted
   createEffect(attachments, (current) => { props.onAttachmentsChange?.(current) })
   const [commandNotice, setCommandNotice] = createSignal<{ key: string; message: string } | null>(null)
   let attachmentRevision = 0
@@ -525,11 +528,19 @@ export function ComposerPanel(props: {
             }>
               <Show when={!props.chat.sending || queuedSend() || props.semantic || sideChatCommand() || loopDraft()}>
                 <Button size="icon" class="size-8 rounded-full" type="button"
-                  aria-label={text(queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
-                  disabled={!props.chat.booted || (!value().trim() && !attachments().length) ||
-                    (!sideChatCommand() && submissionUnavailable())}
-                  onClick={() => { void send() }}>
-                  <ArrowUp />
+                  aria-label={text(showResume() ? "resume_interrupted_chat"
+                    : queuedSend() && !sideChatCommand() && !loopDraft() ? "add_to_queue_bc3b684c" : "send_message_00881483")}
+                  title={showResume() ? text("resume_interrupted_chat") : undefined}
+                  disabled={!props.chat.booted || (showResume()
+                    ? blocked()
+                    : !hasDraft() || (!sideChatCommand() && submissionUnavailable()))}
+                  onClick={() => {
+                    if (showResume()) void props.chat.resumeInterrupted()
+                    else void send()
+                  }}>
+                  <Show when={showResume()} fallback={<ArrowUp />}>
+                    <Play class="size-4" fill="currentColor" aria-hidden="true" />
+                  </Show>
                 </Button>
               </Show>
             </Show>

@@ -24,6 +24,100 @@ beforeEach(() => {
 })
 
 describe("Solid terminal history settlement", () => {
+  it("uses an early recorded final once while the Complete frame and final refresh are pending", async () => {
+    vi.useFakeTimers()
+    const id = "history-first-terminal"
+    const answer = "The same final body is valid in two different turns."
+    const previous = user("previous-user", "Earlier request", at)
+    const oldAnswer = { ...assistant("previous-answer", answer), phase: "final_answer" as const }
+    const input = user("current-user", "Current request", at)
+    const savedAnswer = { ...assistant("current-answer", answer), phase: "final_answer" as const }
+    const terminalRead = deferred<void>()
+    feedSessions([session(id, [previous, oldAnswer])])
+    const stream = queueStream(id, input.id)
+    const { chat } = await mount(id)
+    await send(chat, input.content)
+    const prefix = "The same final body"
+    await settleChat(async () => {
+      stream.handlers.onToken(prefix)
+      await vi.advanceTimersByTimeAsync(32)
+    })
+    expect(chat.streaming).toBe(prefix)
+    await settleChat(() => feedMessages(id, [previous, oldAnswer, input]))
+    expect(chat.streaming).toBe(prefix)
+
+    history().mockImplementationOnce(async () => feedMessages(id, [previous, oldAnswer, input, savedAnswer]))
+    await settleChat(() => stream.handlers.onSessionHistoryCommitted(id))
+    expect(chat.messages).toEqual([previous, oldAnswer, input, savedAnswer])
+    expect(chat).toMatchObject({ streaming: null, sending: true, streamPhase: "streaming" })
+
+    history().mockReturnValueOnce(terminalRead.promise)
+    await settleChat(() => {
+      stream.handlers.onToken(answer.slice(prefix.length))
+      stream.handlers.onComplete(undefined)
+    })
+    expect(chat).toMatchObject({ streaming: null, sending: true, streamPhase: "finalizing" })
+    await settleChat(() => terminalRead.resolve())
+    expect(chat.messages).toEqual([previous, oldAnswer, input, savedAnswer])
+    expect(chat).toMatchObject({ streaming: null, sending: false, streamPhase: null })
+  })
+
+  it("shows different later live text after observing a canonical final with the same prefix", async () => {
+    vi.useFakeTimers()
+    const id = "history-first-observed"
+    const input = user("current-user", "Observed request", at)
+    const saved = { ...assistant("recorded-final", "Shared prefix with the recorded ending."), phase: "final_answer" as const }
+    feedSessions([{ ...session(id, [input]), isRunning: true }])
+    const stream = queueStream(id)
+    appStore.getState().markForceSubscribe(id)
+    const { chat } = await mount(id)
+    expect(agentClient.execute).not.toHaveBeenCalled()
+    await settleChat(async () => {
+      stream.handlers.onToken("Shared prefix")
+      await vi.advanceTimersByTimeAsync(32)
+    })
+    expect(chat.streaming).toBe("Shared prefix")
+    await settleChat(() => feedMessages(id, [input, saved]))
+    expect(chat.streaming).toBe("Shared prefix")
+    await settleChat(() => stream.handlers.onSessionHistoryCommitted(id))
+    expect(chat.streaming).toBeNull()
+    await settleChat(async () => {
+      stream.handlers.onToken(" with a different ending.")
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(chat.streaming).toBe("Shared prefix with a different ending.")
+    expect(chat.messages).toEqual([input, saved])
+  })
+
+  it.each([false, true])("requires an exact answer at the history barrier when proof is ambiguous (typed=%s)", async (typed) => {
+    vi.useFakeTimers()
+    const id = `history-first-ambiguous-${typed}`
+    const input = user("current-user", "Current request", at)
+    const prefix = "Shared prefix"
+    const ending = " with the current ending."
+    const answer = assistant("recorded-final", prefix + ending)
+    const competing = { ...assistant("other-final", "Shared prefix with a different ending."), phase: "final_answer" as const }
+    const canonical = typed ? [input, competing, { ...answer, phase: "final_answer" as const }] : [input, answer]
+    feedSessions([session(id)])
+    const stream = queueStream(id, input.id)
+    const { chat } = await mount(id)
+    await send(chat, input.content)
+    await settleChat(async () => {
+      stream.handlers.onToken(prefix)
+      await vi.advanceTimersByTimeAsync(32)
+    })
+    await settleChat(() => feedMessages(id, canonical))
+    await settleChat(() => stream.handlers.onSessionHistoryCommitted(id))
+    expect(chat.streaming).toBe(prefix)
+
+    await settleChat(async () => {
+      stream.handlers.onToken(ending)
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(chat.streaming).toBeNull()
+    expect(chat.messages).toEqual(canonical)
+  })
+
   it.each(["complete", "error"] as const)("waits for %s terminal settlement after the transport closes", async (ending) => {
     const id = "terminal-session"
     const payload = "optimistic terminal payload"

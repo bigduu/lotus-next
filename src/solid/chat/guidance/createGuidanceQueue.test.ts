@@ -1,13 +1,17 @@
 import { ApiError } from "@services/api/errors"
 import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
-import { createRoot, flush } from "solid-js"
+import { createRoot, createSignal, flush, type Accessor } from "solid-js"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import type { Message } from "@shared/types/chatMessages"
 import { createGuidanceQueue } from "./createGuidanceQueue"
 import { guidanceService } from "@services/chat/guidance"
 import { beginRootModeOperation } from "@/lib/rootModeTransitionState"
 import { clearSessionOrder, sessionOrderSnapshot } from "@/lib/sidebarSessionOrderState"
 const beginRootModeTransition = (id: string, enabled: boolean) => beginRootModeOperation(id, 0, "a".repeat(64), enabled)
-vi.mock("@services/chat/guidance", () => ({ guidanceService: { list: vi.fn(), send: vi.fn(), cancel: vi.fn() } }))
+vi.mock("@services/chat/guidance", () => ({ guidanceService: {
+  list: vi.fn(), send: vi.fn(), cancel: vi.fn(),
+  imageUrl: (sessionId: string, id: string) => `${sessionId}/image/${id}`,
+} }))
 let dispose: (() => void) | undefined
 let queue: ReturnType<typeof createGuidanceQueue>
 async function settle(action?: () => unknown) {
@@ -33,11 +37,11 @@ afterEach(() => {
   vi.resetAllMocks()
   vi.unstubAllGlobals()
 })
-const mount = async () => {
+const mount = async (sessionId = () => "s/1", history?: Accessor<readonly Message[]>) => {
   unmount()
   createRoot((cleanup) => {
     dispose = cleanup
-    queue = createGuidanceQueue(() => "s/1", () => true)
+    queue = createGuidanceQueue(sessionId, () => true, history)
   })
   flush()
   await settle()
@@ -83,13 +87,92 @@ it("retries uncertain text and image admission with the same identity after remo
 it("accepts an image-only message and assigns a new identity after acknowledgement", async () => {
   await mount()
   const images = [{ base64: "data:image/png;base64,aGVsbG8=" }]
+  vi.mocked(guidanceService.send).mockImplementationOnce(async (_session, id) => {
+    vi.mocked(guidanceService.list).mockResolvedValueOnce({
+      messages: [{ id, text: "", created_at: "", images: ["stored-image"] }],
+    })
+    return { id, activation_pending: false }
+  })
   await settle(async () => { expect((await queue.send("", images)).kind).toBe("accepted") })
+  const initialId = vi.mocked(guidanceService.send).mock.calls[0][1]
+  expect(queue.pending.map((item) => item.id)).toEqual([initialId])
+  expect(queue.transcript.map((item) => item.message.id)).toEqual([initialId])
+
   await settle(async () => { expect((await queue.send("", images)).kind).toBe("accepted") })
   const calls = vi.mocked(guidanceService.send).mock.calls
   expect(calls[0][1]).not.toBe(calls[1][1])
   expect(calls[0][2]).toBe("")
   expect(calls[0][4]).toEqual(images)
 })
+
+it("shows the acknowledged guidance before polling and waits for its exact history ID", async () => {
+  const [history, setHistory] = createSignal<Message[]>([])
+  await mount(undefined, history)
+  await settle(() => queue.setMode("after_run"))
+  let releaseList!: () => void
+  vi.mocked(guidanceService.list).mockReturnValueOnce(new Promise((resolve) => {
+    releaseList = () => resolve({ messages: [] })
+  }))
+  const image = { base64: "aGVsbG8=", type: "image/png", name: "test.png" }
+  const submission = queue.send("repeat this", [image])
+  const settled = vi.fn()
+  void submission.then(settled)
+  try {
+    await vi.waitFor(() => {
+      flush()
+      expect(settled).toHaveBeenCalledWith(expect.objectContaining({ kind: "accepted" }))
+      expect(guidanceService.list).toHaveBeenCalledTimes(2)
+      expect(queue.busy).toBe(false)
+      expect(queue.transcript).toHaveLength(1)
+    })
+  } finally {
+    releaseList()
+    await settle(() => submission)
+  }
+  const id = vi.mocked(guidanceService.send).mock.calls[0][1]
+  expect(queue.transcript[0]).toMatchObject({
+    mode: "after_run", message: { id, role: "user", content: "repeat this", images: [image] },
+  })
+  expect(queue.pending).toEqual([])
+  expect(queue.transcript[0].message.id).toBe(id)
+  await settle(() => setHistory([{ id: "older", role: "user", content: "repeat this", createdAt: "" }]))
+  expect(queue.transcript[0].message.id).toBe(id)
+  await settle(() => setHistory([{ id, role: "user", content: "repeat this", createdAt: "" }]))
+  expect(queue.transcript).toEqual([])
+})
+
+it("keeps a late acknowledgement in its originating session and removes it on successful withdrawal", async () => {
+  const [sessionId, setSessionId] = createSignal("s/1")
+  await mount(sessionId)
+  let acknowledge!: () => void
+  vi.mocked(guidanceService.send).mockImplementationOnce((_session, id) => new Promise((resolve) => {
+    acknowledge = () => resolve({ id, activation_pending: false })
+  }))
+  const submission = queue.send("queued")
+  await vi.waitFor(() => {
+    expect(guidanceService.send).toHaveBeenCalledOnce()
+  })
+  const id = vi.mocked(guidanceService.send).mock.calls[0][1]
+  await settle(() => setSessionId("s/2"))
+  acknowledge()
+  await settle(() => submission)
+  expect(queue.transcript).toEqual([])
+  vi.mocked(guidanceService.list).mockResolvedValueOnce({
+    messages: [{ id, text: "queued", created_at: "", mode: "after_round" }],
+  })
+  await settle(() => setSessionId("s/1"))
+  expect(queue.transcript.map((item) => item.message.id)).toEqual([id])
+  await vi.waitFor(() => {
+    flush()
+    expect(queue.pending.map((item) => item.id)).toEqual([id])
+  })
+
+  vi.mocked(guidanceService.cancel).mockResolvedValueOnce(undefined)
+  await settle(() => queue.cancel(id))
+  expect(guidanceService.cancel).toHaveBeenCalledExactlyOnceWith("s/1", id)
+  expect(queue.transcript).toEqual([])
+})
+
 it("retains queued images if withdrawal loses the claim race", async () => {
   vi.mocked(guidanceService.list).mockResolvedValue({ messages: [{ id: "m", text: "", images: ["image"], created_at: "now" }] })
   vi.mocked(guidanceService.cancel).mockRejectedValueOnce(new Error("claimed"))

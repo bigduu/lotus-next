@@ -118,11 +118,6 @@ export function InlineActorPrefix(props: { status: InlineActorStatus; onOpen?: (
   const count = createMemo(() => Object.keys(group().folded).length)
   return (
     <div class="flex w-full flex-col gap-2 empty:hidden">
-      <Show when={props.status.error()}>{(error) => (
-        <div role="status" class="text-xs text-muted-foreground" data-subagent-error="">
-          {error()}<Button variant="ghost" size="sm" onClick={() => void props.status.refresh()}>{text("subagent_refresh")}</Button>
-        </div>
-      )}</Show>
       <Show when={count() > 0}>
         <div data-cleared-subagents="">
           <button type="button" data-cleared-subagents-toggle="" aria-expanded={expanded() ? "true" : "false"}
@@ -139,4 +134,17 @@ export function InlineActorPrefix(props: { status: InlineActorStatus; onOpen?: (
       <InlineActorGroup agents={group().unplaced} status={props.status} onOpen={props.onOpen} originUnconfirmed />
     </div>
   )
+}
+
+export function InlineActorNotice(props: { status: InlineActorStatus }) {
+  const text = createUiText()
+  return <Show when={props.status.error()}>{(error) => (
+    <div class="pointer-events-none absolute inset-x-0 top-2 z-10 mx-auto flex w-[calc(100%-1.5rem)] max-w-6xl justify-end">
+      <div role="status" class="pointer-events-auto flex max-w-full flex-wrap items-center gap-1 rounded-md border bg-popover px-2 py-1 text-xs text-muted-foreground shadow-sm"
+        data-subagent-error="">
+        <span>{error()}</span>
+        <Button variant="ghost" size="sm" onClick={() => void props.status.refresh()}>{text("subagent_refresh")}</Button>
+      </div>
+    </div>
+  )}</Show>
 }
