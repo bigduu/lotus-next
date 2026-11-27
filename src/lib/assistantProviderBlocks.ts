@@ -1,3 +1,5 @@
+import { findInlineToolBlocks } from "./assistantInlineToolBlocks"
+
 // Matches a provider "built-in tool" block the model narrates inline:
 //   **🌐 Z.ai Built-in Tool: analyze_image**  ... **Output:** ...  (up to a blank line)
 // Conservative: requires BOTH the "Built-in Tool: <name>" header and an
@@ -31,10 +33,10 @@ export function findPendingProviderBlock(text: string): { index: number; name?: 
 
 export type AssistantProviderPart =
   | { kind: "prose"; source: string; streaming: boolean }
-  | { kind: "tool"; name: string; source: string }
-  | { kind: "pending"; name?: string }
+  | { kind: "tool"; name: string; source: string; literal?: true }
+  | { kind: "pending"; name?: string; literal?: true }
 
-export function splitAssistantProviderBlocks(source: string, streaming: boolean): AssistantProviderPart[] {
+function splitBuiltInToolBlocks(source: string, streaming: boolean): AssistantProviderPart[] {
   const parts: AssistantProviderPart[] = []
   let remaining = source
 
@@ -57,4 +59,20 @@ export function splitAssistantProviderBlocks(source: string, streaming: boolean)
     parts.push({ kind: "tool", name: complete[1]!, source: complete[0].trim() })
     remaining = remaining.slice(complete.index + complete[0].length).replace(/^\n+/, "")
   }
+}
+
+export function splitAssistantProviderBlocks(source: string, streaming: boolean): AssistantProviderPart[] {
+  const parts: AssistantProviderPart[] = []
+  let cursor = 0
+  for (const block of findInlineToolBlocks(source, streaming)) {
+    const before = source.slice(cursor, block.start).trimEnd()
+    if (before) parts.push(...splitBuiltInToolBlocks(before, false))
+    parts.push(block.name
+      ? { kind: "tool", name: block.name, source: source.slice(block.start, block.end), literal: true }
+      : { kind: "pending", literal: true })
+    cursor = block.end
+  }
+  const tail = source.slice(cursor)
+  if (!parts.length || tail.trim()) parts.push(...splitBuiltInToolBlocks(tail, streaming))
+  return parts
 }
