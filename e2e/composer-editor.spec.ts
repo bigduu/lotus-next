@@ -153,12 +153,15 @@ async function chooseFile(page: Page, editor: Locator, query: string, path: stri
 }
 
 async function selectSession(page: Page, title: string) {
-  const row = page.getByRole("button", { name: title, exact: true })
-  const box = await row.boundingBox()
-  if (!box || box.x < 0 || box.x + box.width > page.viewportSize()!.width) {
-    await page.getByRole("button", { name: "Menu", exact: true }).click()
+  const sidebar = page.locator('[data-slot="sidebar"]')
+  const menu = page.getByRole("button", { name: "Menu", exact: true })
+  const sidebarClosed = /(?:^|\s)-translate-x-full(?:\s|$)/
+  await sidebar.waitFor({ state: "attached" })
+  if (await menu.isVisible() && sidebarClosed.test(await sidebar.getAttribute("class") ?? "")) {
+    await menu.click()
   }
-  await row.click()
+  await sidebar.getByRole("button", { name: title, exact: true }).click()
+  if (await menu.isVisible()) await expect(sidebar).toHaveClass(sidebarClosed)
 }
 
 test("file suggestions expose keyboard selection without submitting or stealing focus", async ({ page }) => {
