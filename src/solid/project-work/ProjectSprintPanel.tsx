@@ -18,6 +18,8 @@ export function ProjectSprintPanel(props: {
   snapshot: SnapshotRef | null
   owner: boolean
   filter: SprintFilter | null
+  planningOpen: boolean
+  onPlanningToggle: (open: boolean) => void
   onFilterChange: (filter: SprintFilter | null) => void
   onRefresh: () => void
 }) {
@@ -31,6 +33,9 @@ export function ProjectSprintPanel(props: {
   createEffect(() => sprints.status() === "available" ? {
     projectId: props.projectId, selectedId: selectedId(), view: selected() ?? null, list: sprints.list()?.data ?? [],
   } : null, (available) => { if (available) setRetained(available) })
+  createEffect(() => sprints.request()?.status, (status) => {
+    if (status === "unknown") props.onPlanningToggle(true)
+  })
   const editor = () => {
     const candidate = retained()
     return candidate?.projectId === props.projectId && candidate.selectedId === selectedId() ? candidate : null
@@ -64,12 +69,11 @@ export function ProjectSprintPanel(props: {
       <Show when={sprints.status() === "unsupported" && props.owner}>
         <p role="status" class="mt-2 text-xs text-muted-foreground">{text("project_sprint_unsupported")}</p>
       </Show>
-      <Show when={sprints.error()}><p role="status" class="mt-2 break-words text-xs text-destructive">{text("project_sprint_error")} {sprints.error()}</p></Show>
+      <Show when={sprints.status() === "error" && sprints.error()}>{(error) => (
+        <p role="status" class="mt-2 break-words text-xs text-destructive">{text("project_sprint_error")} {error()}</p>
+      )}</Show>
       <Show when={sprints.status() === "loading" && props.owner}>
         <p role="status" class="mt-2 text-xs text-muted-foreground">{text("project_work_loading")}</p>
-      </Show>
-      <Show when={sprints.list() && !sprints.list()!.data.length}>
-        <p class="mt-2 text-xs text-muted-foreground">{text("project_sprint_no_sprints")}</p>
       </Show>
       <Show when={props.filter?.kind === "backlog"}><p class="mt-2 text-xs text-muted-foreground">{text("project_sprint_backlog_hint")}</p></Show>
       <Show when={selected()}>{(selection) => (
@@ -113,16 +117,22 @@ export function ProjectSprintPanel(props: {
         </div>
       )}</Show>
       <Show when={props.owner && editor()}>{(current) => (
-        <div class="mt-3">
-          <p class="mb-2 text-xs text-muted-foreground">{text("project_sprint_scope_hint")}</p>
-          <Show when={!sprints.canWrite() && !sprints.sending() && !sprints.request()}>
-            <p role="status" class="mb-2 text-xs text-muted-foreground">{text("project_sprint_scope_stale")}</p>
-          </Show>
-          <SprintOwnerControls projectId={props.projectId} view={current().view} sprints={current().list}
-            canWrite={sprints.canWrite() && props.projectActive} busy={sprints.sending()} request={sprints.request()}
-            onCommand={async (id, action) => { if (props.projectActive) await sprints.command(id, action) }}
-            onReconcile={sprints.reconcile} onReviewLatest={sprints.reviewLatest} copy={sprintOwnerControlsCopy(text)} />
-        </div>
+        <details class="mt-2" data-testid="project-sprint-planning" open={props.planningOpen}
+          onToggle={(event) => props.onPlanningToggle(event.currentTarget.open)}>
+          <summary class="cursor-pointer text-xs">{text("project_sprint_title")}</summary>
+          <div class="mt-2">
+            <Show when={sprints.list() && !sprints.list()!.data.length}>
+              <p class="mb-2 text-xs text-muted-foreground">{text("project_sprint_no_sprints")}</p>
+            </Show>
+            <Show when={!sprints.canWrite() && !sprints.sending() && !sprints.request()}>
+              <p role="status" class="mb-2 text-xs text-muted-foreground">{text("project_sprint_scope_stale")}</p>
+            </Show>
+            <SprintOwnerControls projectId={props.projectId} view={current().view} sprints={current().list}
+              canWrite={sprints.canWrite() && props.projectActive} busy={sprints.sending()} request={sprints.request()}
+              onCommand={async (id, action) => { if (props.projectActive) await sprints.command(id, action) }}
+              onReconcile={sprints.reconcile} onReviewLatest={sprints.reviewLatest} copy={sprintOwnerControlsCopy(text)} />
+          </div>
+        </details>
       )}</Show>
     </section>
   )
