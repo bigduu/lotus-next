@@ -243,7 +243,9 @@ test("Project scan controls live in System Settings and the board shows scoped a
 
   await openScanSettings()
   await chooseProject(project.name)
-  await controls.getByRole("button", { name: "关闭扫描" }).click()
+  const turnOff = controls.getByRole("button", { name: "关闭扫描" })
+  await turnOff.focus()
+  await turnOff.press("Enter")
   await expect(controls.getByRole("status")).toHaveText("已关闭")
   await expect(controls.getByRole("button", { name: "开启扫描" })).toBeFocused()
   expect(scanCommands).toEqual(["enable", "pause", "resume", "disable"].map((action) => ({ projectId: project.id, action })))
