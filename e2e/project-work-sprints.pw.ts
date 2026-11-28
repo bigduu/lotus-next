@@ -208,6 +208,8 @@ async function installMock(page: Page, options: MockOptions = {}) {
     if (request.method() === "POST" && pathname === "/api/v1/tickets/project-board") {
       if (body.project_id !== projectId || (options.denyFilter && body.sprint_filter?.kind === "sprint")) await respond({ error: "scope_denied: Sprint Project mismatch" }, 403)
       else await respond(model.board(body))
+    } else if (request.method() === "GET" && pathname === `/api/v1/projects/${projectId}/scan`) {
+      await respond({ error: "not found" }, 404)
     } else if (request.method() === "GET" && pathname === "/api/v1/tickets/scope") await respond(model.scope())
     else if (request.method() === "POST" && pathname === "/api/v1/tickets/changes") await respond(model.changes())
     else if (request.method() === "POST" && pathname === "/api/v1/tickets/sprints/list") {

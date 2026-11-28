@@ -109,7 +109,7 @@ test("chat offers executable Workflow Runs while preserving the user's draft", a
   await expect(dialog).toHaveCount(0)
   await expectComposerText(composer, "/workflow")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole("button", { name: "关闭", exact: true })).toBeFocused()
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
   await expectComposerText(composer, "/workflow")
