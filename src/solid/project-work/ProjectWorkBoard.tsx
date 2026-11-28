@@ -10,7 +10,9 @@ import type { SnapshotRef } from "@services/tickets/types"
 
 import { createUiLocale, createUiText } from "../shell/uiText"
 import { Button } from "../ui/button"
+import { createProjectScan } from "./createProjectScan"
 import { createProjectWorkBoard } from "./createProjectWorkBoard"
+import { ProjectScanSummary } from "./ProjectScanSummary"
 import { ProjectSprintPanel } from "./ProjectSprintPanel"
 import { ProjectWorkOwnerControls, ProjectWorkPlanningControls, type ProjectWorkOwnerControlsProps, type ProjectWorkPlanningControlsProps } from "./ProjectWorkControls"
 import { projectWorkControlsCopy } from "./projectWorkControlsCopy"
@@ -49,7 +51,15 @@ export function ProjectWorkBoard(props: ProjectWorkBoardProps) {
   const [cancelled, setCancelled] = createSignal(false)
   const [selectedId, setSelectedId] = createSignal<string | null>(null)
   const [filter, setFilter] = createSignal<SprintFilter | null>(null)
-  const board = createProjectWorkBoard(() => props.project.id, cancelled, filter, () => props.ownerAccess)
+  const [planningOpen, setPlanningOpen] = createSignal(false)
+  const scan = createProjectScan(() => props.ownerAccess && props.project.status === "active" ? props.project.id : "")
+  const board = createProjectWorkBoard(
+    () => props.project.id, cancelled, filter, () => props.ownerAccess,
+    (displayed) => {
+      const id = selectedId()
+      return !planningOpen() && (!id || !displayed.data.rows.some((row) => row.ticket.id === id))
+    },
+  )
   const page = board.page
   const rows = () => page()?.data.rows ?? []
   const unplaced = createMemo(() => rows().filter((row) => row.stage === null))
@@ -120,7 +130,6 @@ export function ProjectWorkBoard(props: ProjectWorkBoardProps) {
   )
   return (
     <div ref={(element) => { root = element }} class="min-h-0 overflow-y-auto p-4" data-testid="project-work-board">
-      <p class="mb-3 text-xs text-muted-foreground">{text("project_work_readonly")}</p>
       <div class="mb-3 flex flex-wrap items-center gap-2">
         <For each={["list", "board"] as const}>{(choice) => (
           <Button size="sm" variant={mode() === choice ? "default" : "outline"} aria-pressed={mode() === choice ? "true" : "false"}
@@ -130,11 +139,18 @@ export function ProjectWorkBoard(props: ProjectWorkBoardProps) {
           <input type="checkbox" checked={cancelled()} onChange={(event) => { setSelectedId(null); setCancelled(event.currentTarget.checked) }} />
           {text("project_work_cancelled")}
         </label>
-        <Button size="sm" variant="ghost" disabled={board.busy() || !props.ownerAccess} onClick={board.refresh}>{text("refresh_aee88743")}</Button>
+        <Button size="sm" variant="ghost" disabled={board.busy() || !props.ownerAccess} onClick={() => {
+          board.refresh()
+          scan.refresh()
+        }}>{text("refresh_aee88743")}</Button>
       </div>
+      <Show when={props.ownerAccess && props.project.status === "active"}>
+        <ProjectScanSummary scan={scan} />
+      </Show>
       <ProjectSprintPanel projectId={props.project.id} projectActive={props.project.status === "active"} snapshot={page()?.snapshot ?? null}
         owner={props.ownerAccess} filter={filter()} onRefresh={board.refresh}
-        onFilterChange={(next) => { setSelectedId(null); setFilter(next) }} />
+        planningOpen={planningOpen()} onPlanningToggle={setPlanningOpen}
+        onFilterChange={(next) => { setSelectedId(null); setPlanningOpen(false); setFilter(next) }} />
       <details class="mb-3 rounded-lg border p-3 text-xs">
         <summary class="cursor-pointer">{text("project_work_context")}</summary>
         <p class="mt-2"><ContextRevision context={{ project_id: props.project.id, project_revision: props.project.revision, resource_revision: props.project.resource_revision }} /></p>

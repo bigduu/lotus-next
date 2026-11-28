@@ -157,6 +157,7 @@ function createModel(options: MockOptions = {}) {
   }
   return {
     board, inspect,
+    changes: () => envelope(seq, []),
     list: () => envelope(seq, Object.values(sprints).map(summary)),
     scope: () => ({ available: true, readable: true, mutation_enabled: true, dispatch_enabled: false,
       ...(scopeHealth === "missing" ? {} : { health: scopeHealth }),
@@ -207,7 +208,10 @@ async function installMock(page: Page, options: MockOptions = {}) {
     if (request.method() === "POST" && pathname === "/api/v1/tickets/project-board") {
       if (body.project_id !== projectId || (options.denyFilter && body.sprint_filter?.kind === "sprint")) await respond({ error: "scope_denied: Sprint Project mismatch" }, 403)
       else await respond(model.board(body))
+    } else if (request.method() === "GET" && pathname === `/api/v1/projects/${projectId}/scan`) {
+      await respond({ error: "not found" }, 404)
     } else if (request.method() === "GET" && pathname === "/api/v1/tickets/scope") await respond(model.scope())
+    else if (request.method() === "POST" && pathname === "/api/v1/tickets/changes") await respond(model.changes())
     else if (request.method() === "POST" && pathname === "/api/v1/tickets/sprints/list") {
       if (options.unavailable) await respond({ error: "not found" }, 404)
       else await respond(model.list())
@@ -227,15 +231,24 @@ const scopeRequests = (mock: Mock) => mock.records.filter((record) => record.pat
 const board = (page: Page) => page.getByTestId("project-work-board")
 const controls = (page: Page) => page.getByTestId("sprint-owner-controls")
 const filter = (page: Page) => page.getByTestId("project-sprint-filter")
+const planning = (page: Page) => page.getByTestId("project-sprint-planning")
+async function openPlanning(page: Page) {
+  const disclosure = planning(page)
+  await expect(disclosure.locator("summary")).toBeVisible()
+  if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click()
+  await expect(controls(page)).toBeVisible()
+}
 async function open(page: Page, theme = "light", locale = "zh-CN") {
   await page.goto(`/e2e/fixtures/project-sprints.html?theme=${theme}&locale=${locale}&source=${initialSource.head.slice(0, 12)}${initialSource.frozen ? "" : "%2Buncommitted"}`)
   await expect(page.getByTestId(`project-work-${workId}`)).toBeVisible()
   await expect(filter(page).locator('option[value="sprint:a"]')).toHaveCount(1)
+  await expect(controls(page)).toBeHidden()
+  await openPlanning(page)
 }
 async function selectSprint(page: Page, id: string) {
   await filter(page).selectOption(`sprint:${id}`)
   await expect(page.getByTestId("project-sprint-summary")).toBeVisible()
-  await expect(controls(page)).toBeVisible()
+  await openPlanning(page)
 }
 async function recordEvidence(page: Page, mock: Mock, info: TestInfo, screenshotName?: string) {
   await mkdir(path.join(output, "cases"), { recursive: true })
@@ -455,6 +468,7 @@ for (const profile of [
       await expect(page.getByTestId(`project-work-${historicalId}`)).toBeVisible()
       await filter(page).selectOption("all")
       await expect(page.getByTestId(`project-work-${workId}`)).toBeVisible()
+      await openPlanning(page)
       await expect(controls(page).getByRole("button", { name: "创建 Sprint", exact: true })).toBeDisabled()
       expect(boardRequests(mock).at(-1)?.body).toMatchObject({ cursor: null, fixed_commit: null })
       expect(boardRequests(mock).at(-1)?.body.sprint_filter).toBeUndefined()

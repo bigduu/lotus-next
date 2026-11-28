@@ -21,7 +21,7 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     }
     await page.route("**/api/v1/task/all-surface-session", (route) => route.fulfill({ json: { session_id: "all-surface-session", items: [] } }))
     const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64")
-    let queue: Array<{ id: string; text: string; created_at: string; mode: string; images: string[] }> = []
+    let queue: Array<{ id: string; text: string; created_at: string; mode?: string; images: string[] }> = []
     let queuedImages: Array<{ base64: string }> = []
     await page.route("**/api/v1/sessions/all-surface-session/attachments/*", (route) => route.fulfill({ body: pixel, contentType: "image/png" }))
     let goalPatch: unknown
@@ -38,7 +38,7 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
       if (route.request().method() === "POST") {
         const body = route.request().postDataJSON() as { id: string; text: string; mode: string; images: Array<{ base64: string }> }
         queuedImages = body.images
-        queue.push({ ...body, images: body.images.map((_image, index) => `image-${index}`), created_at: new Date().toISOString() })
+        queue.push({ ...body, images: body.images.map((_image, index) => `${body.id}-image-${index}`), created_at: new Date().toISOString() })
         await route.fulfill({ status: 202, json: { id: body.id, activation_pending: false } })
       } else await route.fulfill({ json: { messages: queue } })
     })
@@ -51,7 +51,7 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     const surface = scenario.embedded ? page.frameLocator('iframe[title="Lotus Next embedded surface"]') : page
     const input = surface.getByRole("textbox", { name: "消息", exact: true })
     const pending = surface.getByLabel("待发送队列", { exact: true })
-    const queuedMessage = surface.locator("[data-queued-guidance]")
+    const queuedMessage = (id: string) => surface.locator(`[data-queued-guidance="${id}"]`)
     const draftImage = surface.locator("[data-composer-attachments]").getByAltText("queued.png", { exact: true })
     await expect(input).toBeVisible()
     await expect(pending).toHaveCount(0)
@@ -65,9 +65,10 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     await expectComposerText(input, "")
     expect(queue[0]?.mode).toBe("after_run")
     expect(queuedImages[0]?.base64).toBe(pixel.toString("base64"))
+    const afterRun = queuedMessage(queue[0].id)
     await expect(draftImage).toHaveCount(0)
-    await expect(queuedMessage.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
-    await expect(queuedMessage.getByAltText("queued.png", { exact: true })).toBeVisible()
+    await expect(afterRun.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
+    await expect(afterRun.getByAltText("queued.png", { exact: true })).toBeVisible()
     await pending.locator("summary").click()
     await expect(pending.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
     await expect(pending.getByAltText("待发图片 1")).toBeVisible()
@@ -79,27 +80,37 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     expect(messageBox!.height).toBeGreaterThan(100)
     expect(messageBox!.y + messageBox!.height).toBeLessThanOrEqual(pendingBox!.y)
     await testInfo.attach("pending-above-composer", { body: await page.screenshot(), contentType: "image/png" })
-    await page.reload({ waitUntil: "domcontentloaded" })
-    await pending.locator("summary").click()
-    await expect(pending.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
-    await expect(pending.getByAltText("待发图片 1")).toBeVisible()
-    await expect(queuedMessage.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
-    await surface.getByRole("button", { name: "撤回", exact: true }).click()
-    await expect(pending).toHaveCount(0)
-    await expect(queuedMessage).toHaveCount(0)
-    await expect(surface.getByText("未能撤回，消息可能已经开始应用。", { exact: true })).toHaveCount(0)
-    await expect(surface.getByText("保留已有内容，并补充验证结果。", { exact: true })).toHaveCount(0)
+
     await surface.locator('input[type="file"]').setInputFiles({ name: "only-image.png", mimeType: "image/png", buffer: pixel })
     await surface.getByRole("combobox", { name: "发送时机" }).selectOption("after_round")
     await surface.getByRole("button", { name: "加入队列", exact: true }).click()
-    await expect.poll(() => queue.length).toBe(1)
-    expect(queue[0].text).toBe("")
-    expect(queue[0].mode).toBe("after_round")
+    await expect.poll(() => queue.length).toBe(2)
+    const interjection = queue[1]
+    expect(interjection).toMatchObject({ text: "", mode: "after_round" })
+    const interjectionRow = queuedMessage(interjection.id)
+    const withdrawInterjection = interjectionRow.getByRole("button", { name: "撤回", exact: true })
+    await expect(interjectionRow.getByAltText("only-image.png", { exact: true })).toBeVisible()
+    await expect(withdrawInterjection).toBeEnabled()
+    await expect(pending.locator("summary")).toHaveText("队列中 1")
+    await expect(pending.getByAltText("待发图片 1")).toHaveCount(1)
+
+    // Older server snapshots can omit the timing for an interjection.
+    delete interjection.mode
+    await page.reload({ waitUntil: "domcontentloaded" })
     await pending.locator("summary").click()
     await expect(pending.getByAltText("待发图片 1")).toBeVisible()
-    await expect(queuedMessage.getByAltText("only-image.png", { exact: true })).toBeVisible()
-    await surface.getByRole("button", { name: "撤回", exact: true }).click()
+    await expect(afterRun.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
+    await expect(interjectionRow.getByAltText(interjection.images[0], { exact: true })).toBeVisible()
+    await expect(pending.locator("summary")).toHaveText("队列中 1")
+    await pending.getByRole("button", { name: "撤回", exact: true }).click()
     await expect(pending).toHaveCount(0)
+    await expect(afterRun).toHaveCount(0)
+    await expect(interjectionRow).toBeVisible()
+    await expect(withdrawInterjection).toBeEnabled()
+    await testInfo.attach("interjection-in-transcript", { body: await page.screenshot(), contentType: "image/png" })
+    await withdrawInterjection.click()
+    await expect(interjectionRow).toHaveCount(0)
+    expect(queue).toHaveLength(0)
     await expect(surface.getByText("未能撤回，消息可能已经开始应用。", { exact: true })).toHaveCount(0)
     await surface.getByRole("button", { name: "打开侧边面板", exact: true }).click()
     await workbenchPanel(surface).getByRole("button", { name: /检查器.*查看当前会话/ }).click()

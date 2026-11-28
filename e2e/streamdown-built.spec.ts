@@ -112,3 +112,51 @@ test("folds a provider tool before the lazy Markdown parser is available", async
   expect(observation.pageErrors).toEqual([])
   expect(observation.failedRequests).toEqual([])
 })
+
+test("keeps textual tool arguments out of restored Markdown", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "en-US")
+  })
+  const intro = "Preparing the example"
+  const script = "# A script comment\n\n# An internal label\n" + "sample".repeat(120)
+  const call = `<function=edit_sample><parameter=text>\n${script}\n</parameter></function>`
+  const observation = await installArtifactRuntime(page, standaloneScenario, [{
+    role: "assistant",
+    content: `${intro}:${call}\n\n## Result summary`,
+    timestamp: "2026-09-03T00:00:00.000Z",
+  }])
+  const parser = await artifactFileForSource("src/solid/markdown/AssistantMarkdown.tsx")
+  let releaseParser!: () => void
+  const heldParser = new Promise<void>((resolve) => { releaseParser = resolve })
+  await page.route(`**/${parser}`, async (route) => {
+    await heldParser
+    await route.fallback()
+  })
+
+  const transcript = page.locator("[data-message-list-content]")
+  const toggle = transcript.getByRole("button", { name: "Tool · edit_sample" })
+  try {
+    await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+    await expect(transcript.locator("[data-assistant-markdown-fallback]", { hasText: intro })).toBeVisible()
+    await expect(toggle).toHaveAttribute("aria-expanded", "false")
+    await expect(transcript).not.toContainText("A script comment")
+  } finally {
+    releaseParser()
+  }
+
+  await expect(transcript.getByRole("heading", { name: "Result summary", level: 2 })).toBeVisible()
+  await expect(transcript.getByRole("heading", { name: "A script comment" })).toHaveCount(0)
+  if (testInfo.project.name === "desktop-chromium") {
+    await testInfo.attach("Folded tool text in the transcript", {
+      body: await transcript.screenshot(),
+      contentType: "image/png",
+    })
+  }
+  await toggle.click()
+  const details = transcript.locator('[data-provider-tool="edit_sample"] pre')
+  await expect(details).toBeVisible()
+  expect(await details.textContent()).toBe(call)
+  expect(await details.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0)
+  expect(observation.pageErrors).toEqual([])
+})
