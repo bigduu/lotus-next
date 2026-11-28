@@ -7,6 +7,7 @@ import { Skeleton } from "../../ui/skeleton"
 import { AccessPasswordSettings } from "./AccessPasswordSettings"
 import { createSystemConfig } from "./createSystemConfig"
 import { AppMaintenanceSettings, SessionMaintenanceSettings } from "./MaintenanceSettings"
+import { ProjectScanSettings } from "./ProjectScanSettings"
 import { ContextManagementSettings, ImageHookSettings, MemorySettings, ProxySettings, SubagentSettings, ToolSettings } from "./RuntimeConfigSections"
 import { TailscaleSettings } from "./TailscaleSettings"
 import { WorkSettings } from "./WorkSettings"
@@ -38,7 +39,12 @@ export function SettingsSystem(props: { ownerAccess: boolean }) {
             <Button size="sm" variant="secondary" onClick={() => { void system.reload() }}>{text("retry_b8784c8d")}</Button>
           </section>
         )}</Show>
-        <Show when={workFlags()}>{(flags) => <WorkSettings flags={flags()} saveSection={system.saveSection} />}</Show>
+        <Show when={workFlags()}>{(flags) => (
+          <>
+            <WorkSettings flags={flags()} saveSection={system.saveSection} />
+            <ProjectScanSettings />
+          </>
+        )}</Show>
         <Show when={advanced() && system.config()}>{(config) => (
           <>
             <ProxySettings config={config()} saveSection={system.saveSection} />

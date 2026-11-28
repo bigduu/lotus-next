@@ -10,7 +10,9 @@ import type { SnapshotRef } from "@services/tickets/types"
 
 import { createUiLocale, createUiText } from "../shell/uiText"
 import { Button } from "../ui/button"
+import { createProjectScan } from "./createProjectScan"
 import { createProjectWorkBoard } from "./createProjectWorkBoard"
+import { ProjectScanSummary } from "./ProjectScanSummary"
 import { ProjectSprintPanel } from "./ProjectSprintPanel"
 import { ProjectWorkOwnerControls, ProjectWorkPlanningControls, type ProjectWorkOwnerControlsProps, type ProjectWorkPlanningControlsProps } from "./ProjectWorkControls"
 import { projectWorkControlsCopy } from "./projectWorkControlsCopy"
@@ -50,6 +52,7 @@ export function ProjectWorkBoard(props: ProjectWorkBoardProps) {
   const [selectedId, setSelectedId] = createSignal<string | null>(null)
   const [filter, setFilter] = createSignal<SprintFilter | null>(null)
   const [planningOpen, setPlanningOpen] = createSignal(false)
+  const scan = createProjectScan(() => props.ownerAccess && props.project.status === "active" ? props.project.id : "")
   const board = createProjectWorkBoard(
     () => props.project.id, cancelled, filter, () => props.ownerAccess,
     (displayed) => {
@@ -136,8 +139,14 @@ export function ProjectWorkBoard(props: ProjectWorkBoardProps) {
           <input type="checkbox" checked={cancelled()} onChange={(event) => { setSelectedId(null); setCancelled(event.currentTarget.checked) }} />
           {text("project_work_cancelled")}
         </label>
-        <Button size="sm" variant="ghost" disabled={board.busy() || !props.ownerAccess} onClick={board.refresh}>{text("refresh_aee88743")}</Button>
+        <Button size="sm" variant="ghost" disabled={board.busy() || !props.ownerAccess} onClick={() => {
+          board.refresh()
+          scan.refresh()
+        }}>{text("refresh_aee88743")}</Button>
       </div>
+      <Show when={props.ownerAccess && props.project.status === "active"}>
+        <ProjectScanSummary scan={scan} />
+      </Show>
       <ProjectSprintPanel projectId={props.project.id} projectActive={props.project.status === "active"} snapshot={page()?.snapshot ?? null}
         owner={props.ownerAccess} filter={filter()} onRefresh={board.refresh}
         planningOpen={planningOpen()} onPlanningToggle={setPlanningOpen}
