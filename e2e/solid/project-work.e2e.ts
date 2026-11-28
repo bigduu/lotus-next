@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "../support/artifactRuntime.js"
 
-test("Solid Project Work has visible sidebar entries in both groupings and reads the scoped board on demand", async ({ page, baseURL, isMobile }, info) => {
+test("Project Work opens from both sidebar groupings and follows submission on the scoped board", async ({ page, baseURL, isMobile }, info) => {
   const entryUrl = new URL("/", baseURL).href
   await page.addInitScript(() => {
     localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
@@ -29,6 +29,10 @@ test("Solid Project Work has visible sidebar entries in both groupings and reads
     },
     stage, context: null, adopted_context: null,
   }))
+  let phase: "initial" | "executing" | "submitted" = "initial"
+  const submittedSnapshot = { ...snapshot, commit: "fixture-submitted-cursor", seq: 11 }
+  const currentEnvelope = () => phase === "submitted"
+    ? { ...envelope, snapshot: submittedSnapshot, index_seq: submittedSnapshot.seq } : envelope
   const boardQueries: unknown[] = []
   await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [project] } }))
   await page.route(`**/api/v1/projects/${project.id}`, (route) => route.fulfill({ json: project }))
@@ -36,10 +40,22 @@ test("Solid Project Work has visible sidebar entries in both groupings and reads
   await page.route("**/api/v1/tickets/project-board", (route) => {
     const body = route.request().postDataJSON()
     boardQueries.push(body)
-    return route.fulfill({ json: { ...envelope, data: {
-      project_id: project.id, counts: { todo: 0, doing: 0, testing: 1, done: 0, blocked: 0, cancelled: 1, total: 2 },
-      rows: body.include_cancelled ? rows : rows.slice(0, 1),
+    const doing = phase === "executing"
+    const item = {
+      ...rows[0], stage: doing ? "doing" : "testing",
+      ticket: { ...rows[0].ticket, state: doing ? "active" : "submitted",
+        current_submission: phase === "submitted" ? "verified-submission" : null },
+    }
+    return route.fulfill({ json: { ...currentEnvelope(), data: {
+      project_id: project.id, counts: { todo: 0, doing: doing ? 1 : 0, testing: doing ? 0 : 1, done: 0, blocked: 0, cancelled: 1, total: 2 },
+      rows: body.include_cancelled ? [item, rows[1]] : [item],
     } } })
+  })
+  await page.route("**/api/v1/tickets/changes", (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({ since_seq: snapshot.seq })
+    return route.fulfill({ json: {
+      ...currentEnvelope(), data: phase === "submitted" ? [{ seq: submittedSnapshot.seq, entity: "work", id: rows[0].ticket.id }] : [],
+    } })
   })
   await page.route("**/api/v1/tickets/inspect", (route) => {
     expect(route.request().postDataJSON()).toMatchObject({ ids: ["fixture-testing"], fixed_commit: snapshot.commit })
@@ -61,6 +77,8 @@ test("Solid Project Work has visible sidebar entries in both groupings and reads
   await shortcut.click()
   const board = page.getByRole("dialog", { name: "项目工作 · Fixture project" })
   await expect(board.getByRole("button", { name: "看板", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(board.getByText("当前后端不支持 Sprint 规划，仍可查看全部工作。", { exact: true })).toBeVisible()
+  await expect(board.getByText("无法读取 Sprint 规划", { exact: false })).toHaveCount(0)
   const card = board.getByRole("region", { name: "待验收", exact: true }).getByRole("button", { name: /Verify this work/ })
   await expect(card).toBeVisible()
   await card.click()
@@ -78,9 +96,13 @@ test("Solid Project Work has visible sidebar entries in both groupings and reads
   await expect(chooser).toBeVisible()
   expect(boardQueries).toHaveLength(2)
   await chooser.click()
+  phase = "executing"
   await page.getByRole("menuitem", { name: project.name, exact: true }).click()
-  await expect(card).toBeVisible()
+  await expect(board.getByRole("region", { name: "进行中", exact: true }).getByRole("button", { name: /Verify this work/ })).toBeVisible()
+  phase = "submitted"
+  await expect(card).toContainText("存在提交", { timeout: 12_000 })
   expect(boardQueries.at(-1)).toMatchObject({ project_id: project.id, include_cancelled: false })
+  await info.attach("project-board-completed-work", { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
   await page.keyboard.press("Escape")
   await expect(board).toBeHidden()
   await expect(chooser).toBeFocused()
